@@ -187,7 +187,8 @@ MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored -
 ### 5.4 打包与分发
 
 - `MBX_BLAZE=false cargo build --release -p threadbase-server` 成功。
-- 在 `/tmp` 运行 release 二进制（不依赖工作区 `web/`），`/api/health`、SPA、`/assets/*` 均 200；内嵌资源有效。
+- 在 `/tmp` 运行 release 二进制（不依赖工作区 `web/`），`/api/health`、SPA、`/assets/*` 均 200；把 `web/dist` 临时移走后仍返回 200，证明发布产物使用内嵌资源。
+- release 二进制 + fake ACP agent 完整跑通：setup → project → thread → “stream” → tool card → “permission” → 审批 → `permission_resolved`，共 16 条事件。
 - `threadbase doctor`：识别 Rust/Node/git、SQLite、四条 adapter（codex/claude/opencode/pi），并给出 `CODEX_PATH`/adapter 信息。
 - `threadbase service install --print` 生成 systemd 单元；Linux/macOS 分支实现。
 - `threadbase upgrade` 用本地 HTTP 发布的 `.sha256` fixture 验证：下载、SHA256 校验、替换当前二进制、执行新二进制均成功。
