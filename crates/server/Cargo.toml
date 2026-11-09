@@ -41,9 +41,12 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 ulid.workspace = true
 url.workspace = true
+yrs.workspace = true
+y-sync.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio-tungstenite = "0.30"
 
 [lints]
 workspace = true

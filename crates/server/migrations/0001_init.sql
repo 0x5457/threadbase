@@ -235,6 +235,7 @@ CREATE TABLE draft_updates (
 
 CREATE TABLE draft_snapshots (
     thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+    upto_seq INTEGER NOT NULL DEFAULT 0,
     state_blob BLOB NOT NULL,
     updated_at INTEGER NOT NULL
 );

@@ -40,6 +40,14 @@ pub struct UpdateUserRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct InboxReadRequest {
+    pub thread_id: Option<ThreadId>,
+    pub all: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct AuthStatusResponse {
     pub status: AuthStatusDto,
 }

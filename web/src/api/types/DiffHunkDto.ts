@@ -4,6 +4,7 @@ import type { DiffLineDto } from "./DiffLineDto";
 export type DiffHunkDto = {
   id: string;
   header: string;
+  contextHash: string;
   oldStart: number;
   oldLines: number;
   newStart: number;

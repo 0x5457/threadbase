@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
+use y_sync::awareness::Awareness;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{
@@ -33,9 +34,9 @@ pub struct DraftBlock {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DraftDoc {
-    doc: Doc,
+    awareness: Awareness,
 }
 
 impl Default for DraftDoc {
@@ -47,7 +48,9 @@ impl Default for DraftDoc {
 impl DraftDoc {
     #[must_use]
     pub fn new() -> Self {
-        Self { doc: Doc::new() }
+        Self {
+            awareness: Awareness::new(Doc::new()),
+        }
     }
 
     /// Load a persisted document snapshot.
@@ -59,56 +62,70 @@ impl DraftDoc {
             let mut txn = doc.transact_mut();
             txn.apply_update(update);
         }
-        Ok(Self { doc })
+        Ok(Self {
+            awareness: Awareness::new(doc),
+        })
     }
 
     #[must_use]
     pub fn doc(&self) -> &Doc {
-        &self.doc
+        self.awareness.doc()
+    }
+
+    #[must_use]
+    pub fn awareness(&self) -> &Awareness {
+        &self.awareness
+    }
+
+    pub fn awareness_mut(&mut self) -> &mut Awareness {
+        &mut self.awareness
     }
 
     #[must_use]
     pub fn state_vector(&self) -> Vec<u8> {
-        let _ = self.doc.get_or_insert_array("blocks");
-        let txn = self.doc.transact();
+        let _ = self.awareness.doc().get_or_insert_array("blocks");
+        let txn = self.awareness.doc().transact();
         txn.state_vector().encode_v1()
     }
 
     #[must_use]
     pub fn encode_update(&self, state_vector: &[u8]) -> Vec<u8> {
-        let _ = self.doc.get_or_insert_array("blocks");
-        let txn = self.doc.transact();
+        let _ = self.awareness.doc().get_or_insert_array("blocks");
+        let txn = self.awareness.doc().transact();
         let sv = yrs::StateVector::decode_v1(state_vector).unwrap_or_default();
         txn.encode_state_as_update_v1(&sv)
     }
 
     #[must_use]
     pub fn encode_full(&self) -> Vec<u8> {
-        let _ = self.doc.get_or_insert_array("blocks");
-        let txn = self.doc.transact();
+        let _ = self.awareness.doc().get_or_insert_array("blocks");
+        let txn = self.awareness.doc().transact();
         txn.encode_state_as_update_v1(&yrs::StateVector::default())
     }
 
     pub fn apply_update(&mut self, bytes: &[u8]) -> Result<(), DraftError> {
         let update = Update::decode_v1(bytes)
             .map_err(|error| DraftError::InvalidUpdate(error.to_string()))?;
-        let _ = self.doc.get_or_insert_array("blocks");
-        let mut txn = self.doc.transact_mut();
+        let _ = self.awareness.doc().get_or_insert_array("blocks");
+        let mut txn = self.awareness.doc().transact_mut();
         txn.apply_update(update);
         Ok(())
     }
 
     #[must_use]
     pub fn blocks(&self) -> Vec<DraftBlock> {
-        self.snapshot()
+        let mut blocks: Vec<DraftBlock> = self
+            .snapshot()
             .into_iter()
             .map(|(block, _)| block)
-            .collect()
+            .collect();
+        sort_blocks(&mut blocks);
+        blocks
     }
 
     fn snapshot(&self) -> Vec<(DraftBlock, u32)> {
-        let blocks = self.doc.get_or_insert_array("blocks");
-        let txn = self.doc.transact();
+        let blocks = self.awareness.doc().get_or_insert_array("blocks");
+        let txn = self.awareness.doc().transact();
         let mut out = Vec::new();
         for index in 0..blocks.len(&txn) {
             let Some(value) = blocks.get(&txn, index) else {
@@ -143,8 +160,8 @@ impl DraftDoc {
         if self.total_bytes() + text.len() > MAX_THREAD_DRAFT_BYTES {
             return Err(DraftError::ThreadTooLarge);
         }
-        let blocks = self.doc.get_or_insert_array("blocks");
-        let mut txn = self.doc.transact_mut();
+        let blocks = self.awareness.doc().get_or_insert_array("blocks");
+        let mut txn = self.awareness.doc().transact_mut();
         let position = blocks.len(&txn);
         let map = blocks.insert(&mut txn, position, MapPrelim::<i32>::from(HashMap::new()));
         map.insert(&mut txn, "id", id.to_owned());
@@ -161,8 +178,8 @@ impl DraftDoc {
         if text.len() > MAX_BLOCK_BYTES {
             return Err(DraftError::BlockTooLarge);
         }
-        let blocks = self.doc.get_or_insert_array("blocks");
-        let mut txn = self.doc.transact_mut();
+        let blocks = self.awareness.doc().get_or_insert_array("blocks");
+        let mut txn = self.awareness.doc().transact_mut();
         for index in 0..blocks.len(&txn) {
             let Some(value) = blocks.get(&txn, index) else {
                 continue;
@@ -188,27 +205,22 @@ impl DraftDoc {
         Ok(())
     }
 
-    /// Remove the trailing run of non-empty blocks and return it in display
-    /// order. Trailing empty blocks are removed as well.
+    /// Remove all non-empty blocks and return them in deterministic author
+    /// order. Empty blocks are dropped. The CRDT array itself may converge in a
+    /// different order, so display order comes from `createdAt`, then `id`.
     pub fn take_trailing(&mut self) -> Vec<DraftBlock> {
-        let blocks = self.doc.get_or_insert_array("blocks");
+        let blocks = self.awareness.doc().get_or_insert_array("blocks");
         let snapshot = self.snapshot();
-        let mut end = snapshot.len();
-        while end > 0 && snapshot[end - 1].0.text.trim().is_empty() {
-            end -= 1;
-        }
-        let mut start = end;
-        while start > 0 && !snapshot[start - 1].0.text.trim().is_empty() {
-            start -= 1;
-        }
-        let taken: Vec<DraftBlock> = snapshot[start..end]
-            .iter()
-            .map(|(block, _)| block.clone())
+        let mut taken: Vec<DraftBlock> = snapshot
+            .into_iter()
+            .map(|(block, _)| block)
+            .filter(|block| !block.text.trim().is_empty())
             .collect();
-        let mut txn = self.doc.transact_mut();
+        sort_blocks(&mut taken);
+        let mut txn = self.awareness.doc().transact_mut();
         let len = blocks.len(&txn);
-        if (start as u32) < len {
-            blocks.remove_range(&mut txn, start as u32, len - start as u32);
+        if len > 0 {
+            blocks.remove_range(&mut txn, 0, len);
         }
         drop(txn);
         taken
@@ -218,6 +230,14 @@ impl DraftDoc {
     pub fn total_bytes(&self) -> usize {
         self.blocks().iter().map(|block| block.text.len()).sum()
     }
+}
+
+fn sort_blocks(blocks: &mut [DraftBlock]) {
+    blocks.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
 }
 
 fn read_string<T: ReadTxn>(txn: &T, map: &MapRef, key: &str) -> String {
@@ -289,5 +309,17 @@ mod tests {
         doc.append_block("b1", "alice", "hello", 1).unwrap();
         doc.set_block_text("b1", "goodbye").unwrap();
         assert_eq!(doc.blocks()[0].text, "goodbye");
+    }
+}
+
+impl DraftDoc {
+    /// Remove every block, used after a send transaction has consumed them.
+    pub fn reset(&mut self) {
+        let blocks = self.awareness.doc().get_or_insert_array("blocks");
+        let mut txn = self.awareness.doc().transact_mut();
+        let len = blocks.len(&txn);
+        if len > 0 {
+            blocks.remove_range(&mut txn, 0, len);
+        }
     }
 }

@@ -7,7 +7,7 @@ use threadbase_shared::{
     now_ms, Actor, ActorKind, ApiError, Delivery, EventEnvelope, EventsPageDto, Origin,
     ThreadEvent, ThreadId,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EventStoreError {
@@ -34,15 +34,23 @@ pub struct EventMeta {
 pub struct EventStore {
     pool: SqlitePool,
     append_lock: Arc<Mutex<()>>,
+    event_tx: broadcast::Sender<EventEnvelope>,
 }
 
 impl EventStore {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
+        let (event_tx, _) = broadcast::channel(4096);
         Self {
             pool,
             append_lock: Arc::new(Mutex::new(())),
+            event_tx,
         }
+    }
+
+    #[must_use]
+    pub fn subscribe(&self) -> broadcast::Receiver<EventEnvelope> {
+        self.event_tx.subscribe()
     }
 
     #[must_use]
@@ -111,6 +119,7 @@ impl EventStore {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        let _ = self.event_tx.send(envelope.clone());
         Ok(envelope)
     }
 
