@@ -2,7 +2,9 @@
 //! into the single binary.
 
 use axum::body::Body;
-use axum::http::{header, StatusCode, Uri};
+#[cfg(debug_assertions)]
+use axum::http::Uri;
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 #[cfg(debug_assertions)]
