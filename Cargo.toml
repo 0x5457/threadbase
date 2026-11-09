@@ -1,0 +1,70 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/shared",
+    "crates/core",
+    "crates/draft",
+    "crates/agent",
+    "crates/workspace",
+    "crates/server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/threadbase/threadbase"
+authors = ["Threadbase contributors"]
+
+[workspace.dependencies]
+threadbase-shared = { path = "crates/shared" }
+threadbase-core = { path = "crates/core" }
+threadbase-draft = { path = "crates/draft" }
+threadbase-agent = { path = "crates/agent" }
+threadbase-workspace = { path = "crates/workspace" }
+
+agent-client-protocol = { version = "5.1", features = ["process", "unstable_subagents"] }
+anyhow = "1.0"
+argon2 = "0.6"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["macros", "ws"] }
+bytes = "1.10"
+futures-util = "0.3"
+hex = "0.4"
+mime_guess = "2.0"
+notify = "8.2"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rust-embed = "8.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+similar = "3.2"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "derive", "macros"] }
+tempfile = "3.27"
+thiserror = "2.0"
+tokio = { version = "1.54", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["compression-gzip", "fs", "trace", "timeout"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+ts-rs = { version = "12.0", features = ["format", "no-serde-warnings", "serde-json-impl"] }
+ulid = "1.2"
+url = "2.5"
+yrs = "0.17"
+y-sync = "0.4"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# blaze: expand dprint's proc macro natively; it cannot run in the WASM sandbox.
+[workspace.metadata.blaze]
+native-proc-macros = ["dprint-core-macros", "sqlx-macros"]

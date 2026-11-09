@@ -1,0 +1,19 @@
+[package]
+name = "threadbase-draft"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+threadbase-shared.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+y-sync.workspace = true
+yrs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

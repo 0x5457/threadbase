@@ -1,0 +1,113 @@
+//! Delivery policy for messages sent while a turn may be running.
+
+use threadbase_shared::DeliveryMode;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendAction {
+    /// Start a regular prompt; no turn is running.
+    Prompt,
+    /// Fold the input into the running turn.
+    Inject,
+    /// Cancel the running turn and immediately prompt with the input.
+    StopAndSend,
+    /// Persist the input in the thread queue.
+    Queue,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DeliveryContext {
+    pub turn_running: bool,
+    pub steering_supported: bool,
+}
+
+impl DeliveryContext {
+    #[must_use]
+    pub fn idle() -> Self {
+        Self {
+            turn_running: false,
+            steering_supported: false,
+        }
+    }
+}
+
+/// Resolve a requested delivery mode against the current agent capabilities.
+///
+/// The default when a turn is running mirrors the documented priority:
+/// steering, then stop-and-send, then an explicit queue. `Queue` is never
+/// selected implicitly; it is only used when the caller asks for it.
+#[must_use]
+pub fn resolve_delivery(mode: DeliveryMode, ctx: DeliveryContext) -> SendAction {
+    match mode {
+        DeliveryMode::Queue => SendAction::Queue,
+        DeliveryMode::Inject => {
+            if ctx.turn_running && ctx.steering_supported {
+                SendAction::Inject
+            } else if ctx.turn_running {
+                SendAction::StopAndSend
+            } else {
+                SendAction::Prompt
+            }
+        }
+        DeliveryMode::StopAndSend => {
+            if ctx.turn_running {
+                SendAction::StopAndSend
+            } else {
+                SendAction::Prompt
+            }
+        }
+        DeliveryMode::Auto => {
+            if !ctx.turn_running {
+                SendAction::Prompt
+            } else if ctx.steering_supported {
+                SendAction::Inject
+            } else {
+                SendAction::StopAndSend
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_auto_starts_a_prompt() {
+        assert_eq!(
+            resolve_delivery(DeliveryMode::Auto, DeliveryContext::idle()),
+            SendAction::Prompt
+        );
+    }
+
+    #[test]
+    fn running_auto_prefers_steering() {
+        let ctx = DeliveryContext {
+            turn_running: true,
+            steering_supported: true,
+        };
+        assert_eq!(
+            resolve_delivery(DeliveryMode::Auto, ctx),
+            SendAction::Inject
+        );
+    }
+
+    #[test]
+    fn running_auto_without_steering_stops_and_sends() {
+        let ctx = DeliveryContext {
+            turn_running: true,
+            steering_supported: false,
+        };
+        assert_eq!(
+            resolve_delivery(DeliveryMode::Auto, ctx),
+            SendAction::StopAndSend
+        );
+    }
+
+    #[test]
+    fn explicit_queue_always_queues() {
+        assert_eq!(
+            resolve_delivery(DeliveryMode::Queue, DeliveryContext::idle()),
+            SendAction::Queue
+        );
+    }
+}

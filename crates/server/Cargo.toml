@@ -1,0 +1,49 @@
+[package]
+name = "threadbase-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "threadbase_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "threadbase"
+path = "src/main.rs"
+
+[dependencies]
+threadbase-agent.workspace = true
+threadbase-core.workspace = true
+threadbase-draft.workspace = true
+threadbase-shared.workspace = true
+threadbase-workspace.workspace = true
+anyhow.workspace = true
+argon2.workspace = true
+axum.workspace = true
+bytes.workspace = true
+directories = "6.0"
+futures-util.workspace = true
+hex.workspace = true
+mime_guess.workspace = true
+reqwest.workspace = true
+rust-embed = "8.13"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ulid.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
