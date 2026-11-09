@@ -19,6 +19,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/threads/{thread_id}/messages", post(send_message))
         .route("/api/threads/{thread_id}/cancel", post(cancel))
+        .route("/api/threads/{thread_id}/read", post(mark_read))
         .route(
             "/api/threads/{thread_id}/subagents/{subagent_id}/cancel",
             post(cancel_subagent),
@@ -189,4 +190,30 @@ fn queue_dto(row: QueueRow) -> QueueItemDto {
         created_at: row.created_at,
         superseded: row.superseded != 0,
     }
+}
+
+async fn mark_read(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let last_seq: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM events WHERE thread_id = ?")
+            .bind(&thread_id)
+            .fetch_one(&state.pool)
+            .await?;
+    sqlx::query(
+        "INSERT INTO thread_reads(thread_id, user_id, last_read_seq, updated_at)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(thread_id, user_id) DO UPDATE SET
+            last_read_seq = excluded.last_read_seq, updated_at = excluded.updated_at",
+    )
+    .bind(&thread_id)
+    .bind(user.user.id.as_str())
+    .bind(last_seq)
+    .bind(now_ms())
+    .execute(&state.pool)
+    .await?;
+    Ok(Json(OkResponse { ok: true }))
 }

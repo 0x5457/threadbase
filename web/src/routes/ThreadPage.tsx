@@ -12,7 +12,13 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { decideApproval, respondElicitation, updateThread } from "@/api/endpoints";
+import {
+  cancelSubagent,
+  decideApproval,
+  markThreadRead,
+  respondElicitation,
+  updateThread,
+} from "@/api/endpoints";
 import {
   queryKeys,
   useMe,
@@ -31,6 +37,7 @@ import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
 import {
   Badge,
+  Button,
   EmptyState,
   ErrorState,
   Skeleton,
@@ -110,7 +117,35 @@ export function ThreadPage() {
   }, [navigate, projectId, subagentId, threadId]);
 
   const [commentAnchor, setCommentAnchor] = useState<CommentAnchor | null>(null);
+  const cancelSubagentMutation = useMutation({
+    mutationFn: (subagentId: string) =>
+      cancelSubagent(threadId ?? "", subagentId),
+    onSuccess: () => {
+      if (threadId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadBundle(threadId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadEvents(threadId),
+        });
+      }
+    },
+  });
   const [commentOpen, setCommentOpen] = useState(false);
+  useEffect(() => {
+    if (!threadId) {
+      return;
+    }
+    void markThreadRead(threadId)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadBundle(threadId),
+        });
+      })
+      .catch(() => undefined);
+  }, [threadId, queryClient]);
+
   const archive = useMutation({
     mutationFn: (archived: boolean) =>
       updateThread(threadId ?? "", {
@@ -321,6 +356,7 @@ export function ThreadPage() {
             loading={events.isLoading}
             error={events.error}
             onRetry={() => void events.refetch()}
+            onCancel={() => cancelSubagentMutation.mutate(selectedSubagent.id)}
           />
         ) : (
           <ThreadTimeline
@@ -370,6 +406,7 @@ function SubagentView({
   loading,
   error,
   onRetry,
+  onCancel,
 }: {
   subagent: SubagentDto;
   threadId: string;
@@ -380,6 +417,7 @@ function SubagentView({
   loading: boolean;
   error: unknown;
   onRetry: () => void;
+  onCancel: () => void;
 }) {
   return (
     <div className="flex min-h-full flex-col">
@@ -415,6 +453,11 @@ function SubagentView({
                 </span>
               </div>
             </div>
+            {subagent.canCancel ? (
+              <Button size="sm" variant="danger" onClick={onCancel}>
+                Cancel subagent
+              </Button>
+            ) : null}
             <Link
               to={`/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
                 threadId,

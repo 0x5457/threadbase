@@ -156,7 +156,17 @@ export function Composer({
   }
 
   return (
-    <div className="border-t border-border bg-panel/80 px-3 py-2.5">
+    <div
+      className="border-t border-border bg-panel/80 px-3 py-2.5"
+      onKeyDown={(event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          event.preventDefault();
+          if (synced && hasText && !send.isPending) {
+            send.mutate("auto");
+          }
+        }
+      }}
+    >
       <div className="mx-auto w-full max-w-3xl">
         <div className="rounded-lg border border-border bg-surface">
           <div className="max-h-64 overflow-y-auto px-3 pt-2">
@@ -421,11 +431,6 @@ function DraftBlockEditor({
           awareness.setLocalStateField("blockId", block.get("id"))
         }
         onBlur={() => awareness.setLocalStateField("blockId", null)}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-          }
-        }}
         placeholder={isMine ? "Write a message…" : "Edit this shared draft…"}
         className="mt-0.5 w-full resize-none bg-transparent text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint"
       />

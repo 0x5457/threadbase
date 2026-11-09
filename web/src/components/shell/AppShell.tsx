@@ -85,6 +85,12 @@ export function AppShell({
         setDrawerOpen(true);
         return;
       }
+      if (modifier && event.shiftKey && !event.altKey && key === "m") {
+        event.preventDefault();
+        setDrawerTab("comments");
+        setDrawerOpen(true);
+        return;
+      }
       if (modifier && event.altKey && key === "m") {
         event.preventDefault();
         setDrawerTab("comments");

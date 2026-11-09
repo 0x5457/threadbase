@@ -32,6 +32,7 @@ import type { LoginResponse } from "@/api/types/LoginResponse";
 import type { OkResponse } from "@/api/types/OkResponse";
 import type { ProjectId } from "@/api/types/ProjectId";
 import type { ProjectResponse } from "@/api/types/ProjectResponse";
+import type { ProjectOverviewResponse } from "@/api/types/ProjectOverviewResponse";
 import type { ProjectsResponse } from "@/api/types/ProjectsResponse";
 import type { SearchResponseDto } from "@/api/types/SearchResponseDto";
 import type { SettingsPatch } from "@/api/types/SettingsPatch";
@@ -59,6 +60,8 @@ export const endpoints = {
   authMe: "/api/auth/me",
   projects: "/api/projects",
   project: (projectId: ProjectId) => `/api/projects/${segment(projectId)}`,
+  projectOverview: (projectId: ProjectId) =>
+    `/api/projects/${segment(projectId)}/overview`,
   projectThreads: (projectId: ProjectId, includeArchived = false) =>
     `/api/projects/${segment(projectId)}/threads${includeArchived ? "?include_archived=true" : ""}`,
   threads: "/api/threads",
@@ -66,6 +69,9 @@ export const endpoints = {
     `/api/threads/${segment(threadId)}/bundle`,
   sendMessage: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/messages`,
+  markRead: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/read`,
+  cancelSubagent: (threadId: ThreadId, subagentId: string) =>
+    `/api/threads/${segment(threadId)}/subagents/${segment(subagentId)}/cancel`,
   threadChanges: (threadId: ThreadId, kind = "base_branch", commit = "") =>
     `/api/threads/${segment(threadId)}/changes?kind=${encodeURIComponent(kind)}${commit ? `&commit=${encodeURIComponent(commit)}` : ""}`,
   threadFileDiff: (threadId: ThreadId, path: string, kind = "base_branch") =>
@@ -146,6 +152,12 @@ export function fetchProject(projectId: ProjectId): Promise<ProjectResponse> {
   return api<ProjectResponse>(endpoints.project(projectId));
 }
 
+export function fetchProjectOverview(
+  projectId: ProjectId,
+): Promise<ProjectOverviewResponse> {
+  return api<ProjectOverviewResponse>(endpoints.projectOverview(projectId));
+}
+
 export function fetchProjectThreads(
   projectId: ProjectId,
   includeArchived = false,
@@ -177,6 +189,19 @@ export function createThread(
 
 export function fetchWorkspaceThreads(): Promise<ThreadsResponse> {
   return api<ThreadsResponse>(endpoints.threads);
+}
+
+export function markThreadRead(threadId: ThreadId): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.markRead(threadId), { method: "POST" });
+}
+
+export function cancelSubagent(
+  threadId: ThreadId,
+  subagentId: string,
+): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.cancelSubagent(threadId, subagentId), {
+    method: "POST",
+  });
 }
 
 export function sendMessage(

@@ -9,6 +9,7 @@ import {
   fetchInbox,
   fetchMe,
   fetchProject,
+  fetchProjectOverview,
   fetchProjectThreads,
   fetchProjects,
   fetchState,
@@ -24,6 +25,8 @@ export const queryKeys = {
   me: ["auth", "me"] as const,
   projects: ["projects"] as const,
   project: (projectId: string) => ["projects", projectId] as const,
+  projectOverview: (projectId: string) =>
+    ["projects", projectId, "overview"] as const,
   projectThreads: (projectId: string, includeArchived = false) =>
     ["projects", projectId, "threads", includeArchived] as const,
   threads: ["threads"] as const,
@@ -76,6 +79,15 @@ export function useProject(projectId: string | undefined) {
   });
 }
 
+export function useProjectOverview(projectId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.projectOverview(projectId ?? ""),
+    queryFn: () => fetchProjectOverview(projectId ?? ""),
+    enabled: Boolean(projectId),
+    refetchInterval: 10_000,
+  });
+}
+
 export function useProjectThreads(
   projectId: string | undefined,
   includeArchived = false,
@@ -115,6 +127,7 @@ export function useChanges(threadId: string | undefined, kind: string) {
     queryKey: queryKeys.changes(threadId ?? "", kind),
     queryFn: () => fetchChanges(threadId ?? "", kind),
     enabled: Boolean(threadId),
+    refetchInterval: 3_000,
   });
 }
 

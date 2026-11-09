@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useOutletContext, useParams } from "react-router-dom";
-import { useProject, useProjectThreads } from "@/api/queries";
+import { useProject, useProjectOverview, useProjectThreads } from "@/api/queries";
 import { Archive } from "lucide-react";
 import type { ThreadDto } from "@/api/types/ThreadDto";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
@@ -99,6 +99,7 @@ export function ProjectPage() {
   const [showArchived, setShowArchived] = useState(false);
   const project = useProject(projectId);
   const threads = useProjectThreads(projectId, showArchived);
+  const overview = useProjectOverview(projectId);
 
   if (!projectId) {
     return (
@@ -253,6 +254,74 @@ export function ProjectPage() {
             </p>
           </div>
         </div>
+
+        {overview.data ? (
+          <div className="mt-5 grid gap-2 md:grid-cols-2">
+            <section className="rounded-xl border border-border bg-panel">
+              <div className="border-b border-border px-3 py-2">
+                <h2 className="text-[11px] font-semibold text-fg">
+                  Waiting approvals
+                </h2>
+              </div>
+              {overview.data.overview.waitingApprovals.length === 0 ? (
+                <p className="px-3 py-3 text-[10.5px] text-faint">
+                  No approvals waiting.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {overview.data.overview.waitingApprovals.map((approval) => (
+                    <li key={approval.id} className="px-3 py-2">
+                      <Link
+                        to={`/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
+                          approval.threadId,
+                        )}`}
+                        className="text-[11px] text-fg hover:underline"
+                      >
+                        {approval.title}
+                      </Link>
+                      <p className="text-[9.5px] text-faint">
+                        {approval.agent} · {approval.kind}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section className="rounded-xl border border-border bg-panel">
+              <div className="border-b border-border px-3 py-2">
+                <h2 className="text-[11px] font-semibold text-fg">
+                  Recent activity
+                </h2>
+              </div>
+              {overview.data.overview.recentActivity.length === 0 ? (
+                <p className="px-3 py-3 text-[10.5px] text-faint">
+                  No activity yet.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {overview.data.overview.recentActivity.map((activity, index) => (
+                    <li
+                      key={`${activity.threadId}-${activity.ts}-${index}`}
+                      className="px-3 py-2"
+                    >
+                      <Link
+                        to={`/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
+                          activity.threadId,
+                        )}`}
+                        className="text-[10.5px] text-fg hover:underline"
+                      >
+                        {activity.actor.displayName} {activity.summary}
+                      </Link>
+                      <p className="truncate text-[9.5px] text-faint">
+                        {activity.threadTitle} · {formatRelativeTime(activity.ts)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </div>
+        ) : null}
 
         <div className="mt-6 overflow-hidden rounded-xl border border-border bg-panel">
           <div className="flex items-center justify-between border-b border-border px-3 py-2">

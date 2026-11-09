@@ -168,6 +168,18 @@ function noticeForEvent(event: EventEnvelope): NoticeItem | null {
         label: "Notice",
         text: payload.message,
       };
+    case "usage_updated":
+      return {
+        kind: "notice",
+        key,
+        tone: "muted",
+        label: "Usage",
+        text: `${payload.usage.totalTokens} tokens${
+          payload.usage.contextUsed && payload.usage.contextSize
+            ? ` · context ${payload.usage.contextUsed}/${payload.usage.contextSize}`
+            : ""
+        }`,
+      };
     case "changes_updated":
       return {
         kind: "notice",

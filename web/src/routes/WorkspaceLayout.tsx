@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -85,7 +85,10 @@ export function WorkspaceLayout() {
   const [followUserName, setFollowUserName] = useState<string | null>(null);
 
   const projectList = projects.data?.projects ?? [];
-  const threadList = threads.data?.threads ?? [];
+  const threadList = useMemo(
+    () => threads.data?.threads ?? [],
+    [threads.data?.threads],
+  );
   const activeThread =
     bundle.data?.bundle.thread ??
     threadList.find((thread) => thread.id === params.threadId) ??
@@ -273,6 +276,33 @@ export function WorkspaceLayout() {
         void navigator.clipboard.writeText(url.toString());
         toast.success(selection ? "Link to selection copied" : "Link copied");
       }
+      if (event.ctrlKey && key === "tab" && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        const ordered = [...threadList].sort(
+          (left, right) => Number(right.updatedAt) - Number(left.updatedAt),
+        );
+        if (ordered.length > 0) {
+          const index = ordered.findIndex(
+            (thread) => thread.id === activeThread?.id,
+          );
+          const direction = event.shiftKey ? -1 : 1;
+          const next =
+            ordered[(index + direction + ordered.length) % ordered.length];
+          if (next) {
+            navigate(
+              `/p/${encodeURIComponent(next.projectId)}/t/${encodeURIComponent(
+                next.id,
+              )}`,
+            );
+          }
+        }
+        return;
+      }
+      if (modifier && event.altKey && !event.shiftKey && key === "o" && activeThread) {
+        event.preventDefault();
+        navigate(`/p/${encodeURIComponent(activeThread.projectId)}`);
+        return;
+      }
       if (modifier && event.altKey && !event.shiftKey && key === "f") {
         event.preventDefault();
         const candidates = presence.focuses
@@ -293,7 +323,15 @@ export function WorkspaceLayout() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeThread, followUserId, me.data?.user.id, participants, presence.focuses]);
+  }, [
+    activeThread,
+    followUserId,
+    me.data?.user.id,
+    navigate,
+    participants,
+    presence.focuses,
+    threadList,
+  ]);
 
   const outletContext: WorkspaceOutletContext = {
     openNewProject: () => setNewProjectOpen(true),
