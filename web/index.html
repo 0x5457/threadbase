@@ -6,6 +6,17 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#101214" />
     <title>Threadbase</title>
+    <script>
+      try {
+        const theme = localStorage.getItem("threadbase.theme");
+        if (theme === "light" || theme === "dark") {
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+        }
+      } catch {
+        // Storage may be unavailable in hardened browser contexts.
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
