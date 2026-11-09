@@ -1,0 +1,1313 @@
+//! Production ACP harness.
+//!
+//! One [`AcpHarness`] owns one adapter subprocess and one ACP v1 connection.
+//! Protocol types stay in this module: everything the rest of the server sees
+//! is a [`RawAgentEvent`].
+
+use std::collections::{BTreeMap, HashMap};
+use std::io;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use agent_client_protocol::schema::ProtocolVersion;
+use agent_client_protocol::v1::schema::{
+    CancelNotification, ClientCapabilities, ContentBlock, CreateElicitationRequest,
+    CreateElicitationResponse, ElicitationAcceptAction, ElicitationAction as AcpElicitationAction,
+    ElicitationCapabilities, ElicitationContentValue, ElicitationFormCapabilities, ElicitationMode,
+    ElicitationScope, FileSystemCapabilities, IdleStopReason, InitializeRequest,
+    LoadSessionRequest, McpServer, NewSessionRequest, PermissionOptionId, PermissionOptionKind,
+    Plan as AcpPlan, PlanEntry as AcpPlanEntry, PlanEntryPriority as AcpPlanPriority,
+    PlanEntryStatus as AcpPlanStatus, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    SelectedPermissionOutcome, SessionId as AcpSessionId, SessionNotification, SessionUpdate,
+    StateUpdate, StopReason, SubagentCapabilities, SubagentUpdate, TextContent, ToolCall,
+    ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind as AcpToolKind, Usage as AcpUsage,
+    UsageUpdate, WriteTextFileRequest, WriteTextFileResponse,
+};
+use agent_client_protocol::v1::{ConnectionTo, Responder};
+use agent_client_protocol::{Agent, Client, Lines};
+use futures_util::{Sink, Stream};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use threadbase_shared::{
+    ApprovalDecision, ElicitationAction, PlanEntry, PlanPriority, PlanStatus, SubagentStatus,
+    ToolKind, ToolLocation, ToolStatus, Usage,
+};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::{broadcast, oneshot, watch};
+
+use crate::profile::{self, AgentProfile, ResolvedProfile};
+use crate::{
+    Capabilities, Harness, HarnessError, HarnessResult, LaunchCtx, NewSession, PermissionOption,
+    PermissionRequest, RawAgentEvent, SessionId, SteeringOutcome, SubagentEvent, ToolCallEvent,
+    TurnHandle,
+};
+
+const EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+type OutgoingLines = Pin<Box<dyn Sink<String, Error = io::Error> + Send>>;
+type IncomingLines = Pin<Box<dyn Stream<Item = io::Result<String>> + Send>>;
+
+/// Identity reported by the adapter during `initialize`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentIdentity {
+    pub name: String,
+    pub version: String,
+}
+
+/// ACP v1 harness driving one adapter subprocess.
+pub struct AcpHarness {
+    profile: AgentProfile,
+    bus: EventBus,
+    state: Arc<Mutex<HarnessState>>,
+    connection: Option<ConnectionTo<Agent>>,
+    session: Option<SessionId>,
+    cwd: Option<PathBuf>,
+    capabilities: Capabilities,
+    agent_info: Option<AgentIdentity>,
+    shutdown: Option<watch::Sender<bool>>,
+    driver: Option<tokio::task::JoinHandle<()>>,
+    stopping: Arc<AtomicBool>,
+}
+
+impl AcpHarness {
+    #[must_use]
+    pub fn new(profile: AgentProfile) -> Self {
+        Self {
+            profile,
+            bus: EventBus::new(),
+            state: Arc::new(Mutex::new(HarnessState::default())),
+            connection: None,
+            session: None,
+            cwd: None,
+            capabilities: Capabilities::default(),
+            agent_info: None,
+            shutdown: None,
+            driver: None,
+            stopping: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Capabilities observed while starting the harness.
+    #[must_use]
+    pub fn capabilities(&self) -> Capabilities {
+        self.capabilities
+    }
+
+    /// Adapter identity reported during `initialize`.
+    #[must_use]
+    pub fn agent_info(&self) -> Option<&AgentIdentity> {
+        self.agent_info.as_ref()
+    }
+
+    fn stop_signal(&mut self) {
+        self.stopping.store(true, Ordering::SeqCst);
+        if let Some(stop) = self.shutdown.take() {
+            let _ = stop.send(true);
+        }
+    }
+
+    fn connection(&self) -> HarnessResult<&ConnectionTo<Agent>> {
+        self.connection.as_ref().ok_or(HarnessError::NotRunning)
+    }
+
+    fn active_session(&self) -> HarnessResult<&SessionId> {
+        self.session.as_ref().ok_or_else(|| {
+            HarnessError::SessionNotFound("no ACP session has been created".to_owned())
+        })
+    }
+
+    fn send_cancel(&self, session: &str) -> HarnessResult<()> {
+        self.connection()?
+            .send_notification(CancelNotification::new(AcpSessionId::new(session)))
+            .map_err(|error| HarnessError::Protocol(error.to_string()))
+    }
+}
+
+#[async_trait::async_trait]
+impl Harness for AcpHarness {
+    fn id(&self) -> &'static str {
+        self.profile.id
+    }
+
+    async fn start(&mut self, ctx: LaunchCtx) -> HarnessResult<Capabilities> {
+        if self.connection.is_some() {
+            return Err(HarnessError::Protocol(
+                "ACP harness is already running".to_owned(),
+            ));
+        }
+        self.stopping.store(false, Ordering::SeqCst);
+
+        let resolved = profile::resolve(&self.profile);
+        if resolved.via_npx {
+            tracing::info!(
+                program = %resolved.program,
+                args = ?resolved.args,
+                "launching ACP adapter through npx"
+            );
+        }
+        let mut child = spawn_adapter(&resolved, &ctx)?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| HarnessError::Process("adapter stdin is unavailable".to_owned()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| HarnessError::Process("adapter stdout is unavailable".to_owned()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| HarnessError::Process("adapter stderr is unavailable".to_owned()))?;
+
+        spawn_stderr_reader(stderr, self.bus.clone());
+
+        let incoming: IncomingLines = Box::pin(incoming_lines(stdout, self.bus.clone()));
+        let outgoing: OutgoingLines = Box::pin(futures_util::sink::unfold(
+            stdin,
+            |mut stdin, line: String| async move {
+                stdin.write_all(line.as_bytes()).await?;
+                stdin.write_all(b"\n").await?;
+                stdin.flush().await?;
+                Ok::<_, io::Error>(stdin)
+            },
+        ));
+
+        let (connection_tx, connection_rx) = oneshot::channel();
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let stop_for_driver = stop_rx.clone();
+        let stopping = self.stopping.clone();
+        let driver_bus = self.bus.clone();
+        let update_state = self.state.clone();
+        let update_bus = self.bus.clone();
+        let permission_state = self.state.clone();
+        let permission_bus = self.bus.clone();
+        let elicitation_state = self.state.clone();
+        let elicitation_bus = self.bus.clone();
+
+        let driver = tokio::spawn(async move {
+            let result = Client
+                .v1()
+                .name("threadbase")
+                .on_receive_notification(
+                    async move |notification: SessionNotification, _connection| {
+                        handle_session_notification(&update_state, &update_bus, notification);
+                        Ok(())
+                    },
+                    agent_client_protocol::on_receive_notification!(),
+                )
+                .on_receive_request(
+                    async move |request: RequestPermissionRequest, responder, _connection| {
+                        let (request_id, previous) = {
+                            let mut state = lock_state(&permission_state);
+                            state.request_seq += 1;
+                            let request_id = format!("perm-{}", state.request_seq);
+                            let previous = state
+                                .tools
+                                .get(&request.tool_call.tool_call_id.0.to_string())
+                                .cloned();
+                            state.permissions.insert(
+                                request_id.clone(),
+                                PendingPermission {
+                                    responder,
+                                    options: request
+                                        .options
+                                        .iter()
+                                        .map(|option| (option.kind, option.option_id.clone()))
+                                        .collect(),
+                                },
+                            );
+                            (request_id, previous)
+                        };
+                        permission_bus.send(RawAgentEvent::PermissionRequest {
+                            request: build_permission_request(
+                                request_id,
+                                &request,
+                                previous.as_ref(),
+                            ),
+                        });
+                        Ok(())
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |request: CreateElicitationRequest, responder, _connection| {
+                        let request_id = {
+                            let mut state = lock_state(&elicitation_state);
+                            state.request_seq += 1;
+                            let request_id = format!("elicit-{}", state.request_seq);
+                            state
+                                .elicitations
+                                .insert(request_id.clone(), PendingElicitation { responder });
+                            request_id
+                        };
+                        elicitation_bus.send(RawAgentEvent::ElicitationRequest {
+                            request: build_elicitation_request(request_id, &request),
+                        });
+                        Ok(())
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |request: ReadTextFileRequest, responder, _connection| {
+                        match tokio::fs::read_to_string(&request.path).await {
+                            Ok(content) => responder.respond(ReadTextFileResponse::new(
+                                read_window(&content, request.line, request.limit),
+                            )),
+                            Err(error) => responder.respond_with_error(
+                                agent_client_protocol::Error::internal_error().data(format!(
+                                    "failed to read {}: {error}",
+                                    request.path.display()
+                                )),
+                            ),
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |request: WriteTextFileRequest, responder, _connection| {
+                        match tokio::fs::write(&request.path, request.content).await {
+                            Ok(()) => responder.respond(WriteTextFileResponse::new()),
+                            Err(error) => responder.respond_with_error(
+                                agent_client_protocol::Error::internal_error().data(format!(
+                                    "failed to write {}: {error}",
+                                    request.path.display()
+                                )),
+                            ),
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_with(Lines::new(outgoing, incoming), async move |connection| {
+                    let _ = connection_tx.send(connection.clone());
+                    let mut stop_rx = stop_for_driver;
+                    tokio::select! {
+                        _ = stop_rx.changed() => {}
+                        () = connection.incoming_closed() => {}
+                    }
+                    Ok(())
+                })
+                .await;
+
+            if let Err(error) = result {
+                if !stopping.load(Ordering::SeqCst) {
+                    driver_bus.send(RawAgentEvent::Error {
+                        message: format!("ACP connection ended: {error}"),
+                    });
+                }
+            }
+        });
+
+        let connection = match connection_rx.await {
+            Ok(connection) => connection,
+            Err(_) => {
+                self.stop_signal();
+                driver.abort();
+                return Err(HarnessError::Process(
+                    "ACP connection closed before it was established".to_owned(),
+                ));
+            }
+        };
+
+        let client_capabilities = client_capabilities(ctx.subagents);
+        let initialize = InitializeRequest::new(ProtocolVersion::V1)
+            .client_capabilities(client_capabilities)
+            .client_info(agent_client_protocol::v1::schema::Implementation::new(
+                "threadbase",
+                env!("CARGO_PKG_VERSION"),
+            ));
+        let response = connection
+            .send_request(initialize)
+            .block_task()
+            .await
+            .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        if response.protocol_version != ProtocolVersion::V1 {
+            self.stop_signal();
+            driver.abort();
+            return Err(HarnessError::Protocol(format!(
+                "adapter selected unsupported protocol version {}",
+                response.protocol_version.as_u16()
+            )));
+        }
+
+        let steering = response
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("steering"))
+            .and_then(|steering| steering.get("supported"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        self.agent_info = response.agent_info.map(|info| AgentIdentity {
+            name: info.name,
+            version: info.version,
+        });
+        self.capabilities = Capabilities {
+            steering,
+            subagents: ctx.subagents,
+            elicitation_form: true,
+            elicitation_url: false,
+            terminal: false,
+        };
+        self.cwd = Some(ctx.cwd);
+        self.connection = Some(connection);
+        self.shutdown = Some(stop_tx);
+        self.driver = Some(driver);
+        self.stopping.store(false, Ordering::SeqCst);
+
+        spawn_process_monitor(child, stop_rx, self.bus.clone());
+
+        Ok(self.capabilities)
+    }
+
+    async fn new_session(&mut self, req: NewSession) -> HarnessResult<SessionId> {
+        let connection = self.connection()?.clone();
+        let mcp_servers = parse_mcp_servers(&req.mcp_servers)?;
+        let response = connection
+            .send_request(NewSessionRequest::new(req.cwd).mcp_servers(mcp_servers))
+            .block_task()
+            .await
+            .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        let session = SessionId(response.session_id.0.to_string());
+        reset_session(&mut lock_state(&self.state), &session.0);
+        self.session = Some(session.clone());
+        Ok(session)
+    }
+
+    async fn load_session(&mut self, id: &SessionId) -> HarnessResult<()> {
+        let connection = self.connection()?.clone();
+        let cwd = self.cwd.clone().ok_or(HarnessError::NotRunning)?;
+        connection
+            .send_request(LoadSessionRequest::new(
+                AcpSessionId::new(id.0.as_str()),
+                cwd,
+            ))
+            .block_task()
+            .await
+            .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        reset_session(&mut lock_state(&self.state), &id.0);
+        self.session = Some(id.clone());
+        Ok(())
+    }
+
+    async fn prompt(&mut self, parts: Vec<String>) -> HarnessResult<TurnHandle> {
+        let connection = self.connection()?.clone();
+        let session = self.active_session()?.clone();
+        let turn_id = {
+            let mut state = lock_state(&self.state);
+            state.turn_seq += 1;
+            let turn_id = format!("turn-{}", state.turn_seq);
+            state.running_turn = Some(turn_id.clone());
+            turn_id
+        };
+        let handle = TurnHandle {
+            turn_id: turn_id.clone(),
+        };
+        let request = PromptRequest::new(
+            AcpSessionId::new(session.0.as_str()),
+            parts
+                .into_iter()
+                .map(|text| ContentBlock::Text(TextContent::new(text)))
+                .collect(),
+        );
+        let bus = self.bus.clone();
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            let result = connection.send_request(request).block_task().await;
+            if let Ok(response) = &result {
+                if let Some(usage) = &response.usage {
+                    bus.send(RawAgentEvent::Usage {
+                        usage: usage_from_acp(usage),
+                    });
+                }
+                bus.send(RawAgentEvent::PromptDone {
+                    stop_reason: stop_reason_name(&response.stop_reason),
+                });
+            }
+            if let Err(error) = result {
+                bus.send(RawAgentEvent::Error {
+                    message: format!("prompt failed: {error}"),
+                });
+            }
+            let mut state = lock_state(&state);
+            if state.running_turn.as_deref() == Some(turn_id.as_str()) {
+                state.running_turn = None;
+            }
+        });
+        Ok(handle)
+    }
+
+    async fn cancel(&mut self, turn: &TurnHandle) -> HarnessResult<()> {
+        let session = self.active_session()?.0.clone();
+        {
+            let mut state = lock_state(&self.state);
+            if let Some(running) = state.running_turn.as_deref() {
+                if running != turn.turn_id {
+                    return Err(HarnessError::Protocol(format!(
+                        "turn {} is not running",
+                        turn.turn_id
+                    )));
+                }
+            }
+            state.running_turn = None;
+            for (_, pending) in state.permissions.drain() {
+                let _ = pending.responder.respond(RequestPermissionResponse::new(
+                    RequestPermissionOutcome::Cancelled,
+                ));
+            }
+            for (_, pending) in state.elicitations.drain() {
+                let _ = pending
+                    .responder
+                    .respond(CreateElicitationResponse::new(AcpElicitationAction::Cancel));
+            }
+        }
+        self.send_cancel(&session)
+    }
+
+    async fn decide(&mut self, request_id: &str, decision: ApprovalDecision) -> HarnessResult<()> {
+        let pending = lock_state(&self.state)
+            .permissions
+            .remove(request_id)
+            .ok_or_else(|| HarnessError::RequestNotFound(request_id.to_owned()))?;
+        let outcome = option_for_decision(decision, &pending.options)
+            .map(|option_id| {
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id))
+            })
+            .unwrap_or(RequestPermissionOutcome::Cancelled);
+        pending
+            .responder
+            .respond(RequestPermissionResponse::new(outcome))
+            .map_err(|error| HarnessError::Protocol(error.to_string()))
+    }
+
+    async fn respond_elicitation(
+        &mut self,
+        request_id: &str,
+        action: ElicitationAction,
+        values: Option<Value>,
+    ) -> HarnessResult<()> {
+        let response_action = match action {
+            ElicitationAction::Accept => {
+                let content = match values {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Object(fields)) => Some(
+                        serde_json::from_value::<BTreeMap<String, ElicitationContentValue>>(
+                            Value::Object(fields),
+                        )
+                        .map_err(|error| {
+                            HarnessError::Protocol(format!(
+                                "invalid elicitation response content: {error}"
+                            ))
+                        })?,
+                    ),
+                    Some(_) => {
+                        return Err(HarnessError::Protocol(
+                            "elicitation response content must be a JSON object".to_owned(),
+                        ));
+                    }
+                };
+                AcpElicitationAction::Accept(ElicitationAcceptAction::new().content(content))
+            }
+            ElicitationAction::Decline => AcpElicitationAction::Decline,
+            ElicitationAction::Cancel => AcpElicitationAction::Cancel,
+        };
+        let pending = lock_state(&self.state)
+            .elicitations
+            .remove(request_id)
+            .ok_or_else(|| HarnessError::RequestNotFound(request_id.to_owned()))?;
+        pending
+            .responder
+            .respond(CreateElicitationResponse::new(response_action))
+            .map_err(|error| HarnessError::Protocol(error.to_string()))
+    }
+
+    async fn cancel_subagent(&mut self, subagent_id: &str) -> HarnessResult<()> {
+        let can_cancel = lock_state(&self.state)
+            .subagents
+            .get(subagent_id)
+            .map(|subagent| subagent.can_cancel)
+            .ok_or_else(|| HarnessError::SessionNotFound(subagent_id.to_owned()))?;
+        if !can_cancel {
+            return Err(HarnessError::Protocol(format!(
+                "subagent {subagent_id} did not declare cancel support"
+            )));
+        }
+        self.send_cancel(subagent_id)
+    }
+
+    async fn shutdown(&mut self) -> HarnessResult<()> {
+        self.stop_signal();
+        if let Some(driver) = self.driver.take() {
+            let _ = driver.await;
+        }
+        self.connection = None;
+        self.session = None;
+        self.capabilities = Capabilities::default();
+        Ok(())
+    }
+
+    fn events(&self) -> broadcast::Receiver<RawAgentEvent> {
+        self.bus.subscribe()
+    }
+
+    async fn steer(&mut self, parts: Vec<String>) -> HarnessResult<SteeringOutcome> {
+        if !self.capabilities.steering {
+            return Err(HarnessError::Unavailable(
+                "agent did not advertise steering support".to_owned(),
+            ));
+        }
+        let connection = self.connection()?.clone();
+        let session = self.active_session()?.0.clone();
+        let request = SteeringRequest {
+            session_id: AcpSessionId::new(session),
+            prompt: parts
+                .into_iter()
+                .map(|text| ContentBlock::Text(TextContent::new(text)))
+                .collect(),
+            meta: Some(steering_meta()),
+        };
+        let response = connection
+            .send_request(request)
+            .block_task()
+            .await
+            .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        let outcome = match response.outcome.as_str() {
+            "injected" => SteeringOutcome::Injected,
+            "startedNewTurn" => SteeringOutcome::StartedNewTurn,
+            "promptRequired" => SteeringOutcome::PromptRequired,
+            "failed" => SteeringOutcome::Failed {
+                reason: response.reason.clone(),
+            },
+            other => SteeringOutcome::Failed {
+                reason: Some(format!("unknown steering outcome `{other}`")),
+            },
+        };
+        if let SteeringOutcome::Failed { reason } = &outcome {
+            self.bus.send(RawAgentEvent::Notice {
+                message: match reason {
+                    Some(reason) => format!("steering failed: {reason}"),
+                    None => "steering failed".to_owned(),
+                },
+            });
+        }
+        Ok(outcome)
+    }
+}
+
+impl Drop for AcpHarness {
+    fn drop(&mut self) {
+        self.stop_signal();
+        if let Some(driver) = self.driver.take() {
+            driver.abort();
+        }
+    }
+}
+
+#[derive(Default)]
+struct HarnessState {
+    session_id: Option<String>,
+    turn_seq: u64,
+    request_seq: u64,
+    running_turn: Option<String>,
+    tools: HashMap<String, ToolCallEvent>,
+    subagents: HashMap<String, SubagentEvent>,
+    permissions: HashMap<String, PendingPermission>,
+    elicitations: HashMap<String, PendingElicitation>,
+}
+
+struct PendingPermission {
+    responder: Responder<RequestPermissionResponse>,
+    options: Vec<(PermissionOptionKind, PermissionOptionId)>,
+}
+
+struct PendingElicitation {
+    responder: Responder<CreateElicitationResponse>,
+}
+
+fn lock_state(state: &Mutex<HarnessState>) -> MutexGuard<'_, HarnessState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn reset_session(state: &mut HarnessState, session: &str) {
+    state.session_id = Some(session.to_owned());
+    state.tools.clear();
+    state.subagents.clear();
+    state.running_turn = None;
+}
+
+#[derive(Clone)]
+struct EventBus {
+    sender: Arc<Mutex<Option<broadcast::Sender<RawAgentEvent>>>>,
+}
+
+impl EventBus {
+    fn new() -> Self {
+        let (sender, _receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        Self {
+            sender: Arc::new(Mutex::new(Some(sender))),
+        }
+    }
+
+    fn send(&self, event: RawAgentEvent) {
+        let sender = self
+            .sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(sender) = sender.as_ref() {
+            let _ = sender.send(event);
+        }
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<RawAgentEvent> {
+        let sender = self
+            .sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match sender.as_ref() {
+            Some(sender) => sender.subscribe(),
+            None => {
+                let (sender, receiver) = broadcast::channel(1);
+                drop(sender);
+                receiver
+            }
+        }
+    }
+
+    fn close(&self) {
+        self.sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+    }
+}
+
+fn spawn_adapter(resolved: &ResolvedProfile, ctx: &LaunchCtx) -> HarnessResult<Child> {
+    let mut command = Command::new(&resolved.program);
+    command
+        .args(&resolved.args)
+        .current_dir(&ctx.cwd)
+        .envs(
+            ctx.env
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command.spawn().map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            HarnessError::Unavailable(format!(
+                "agent adapter `{}` was not found in PATH or through npx",
+                resolved.program
+            ))
+        } else {
+            HarnessError::Io(error)
+        }
+    })
+}
+
+fn spawn_stderr_reader(stderr: tokio::process::ChildStderr, bus: EventBus) {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if !line.trim().is_empty() {
+                bus.send(RawAgentEvent::Notice {
+                    message: format!("agent stderr: {line}"),
+                });
+            }
+        }
+    });
+}
+
+fn spawn_process_monitor(mut child: Child, mut stop: watch::Receiver<bool>, bus: EventBus) {
+    tokio::spawn(async move {
+        let status = tokio::select! {
+            status = child.wait() => status,
+            _ = stop.changed() => {
+                let _ = child.start_kill();
+                child.wait().await
+            }
+        };
+        match status {
+            Ok(status) => bus.send(RawAgentEvent::ProcessExited {
+                code: status.code(),
+                signal: exit_signal(&status),
+            }),
+            Err(error) => bus.send(RawAgentEvent::Error {
+                message: format!("failed to observe agent process exit: {error}"),
+            }),
+        }
+        bus.close();
+    });
+}
+
+#[cfg(unix)]
+fn exit_signal(status: &std::process::ExitStatus) -> Option<String> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal().map(|signal| signal.to_string())
+}
+
+#[cfg(not(unix))]
+fn exit_signal(_status: &std::process::ExitStatus) -> Option<String> {
+    None
+}
+
+fn incoming_lines(
+    stdout: tokio::process::ChildStdout,
+    bus: EventBus,
+) -> impl Stream<Item = io::Result<String>> {
+    futures_util::stream::unfold(
+        (BufReader::new(stdout), bus),
+        |(mut reader, bus)| async move {
+            let mut line = String::new();
+            match reader.read_line(&mut line).await {
+                Ok(0) => None,
+                Ok(_) => {
+                    let line = line.trim_end_matches(['\r', '\n']).to_owned();
+                    if let Err(message) = validate_jsonrpc_line(&line) {
+                        bus.send(RawAgentEvent::Error { message });
+                    }
+                    Some((Ok(line), (reader, bus)))
+                }
+                Err(error) => Some((Err(error), (reader, bus))),
+            }
+        },
+    )
+}
+
+fn validate_jsonrpc_line(line: &str) -> Result<(), String> {
+    let value: Value = serde_json::from_str(line)
+        .map_err(|error| format!("malformed JSON-RPC message from agent: {error}"))?;
+    let Some(object) = value.as_object() else {
+        return Err("malformed JSON-RPC message from agent: expected an object".to_owned());
+    };
+    if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+        return Err("malformed JSON-RPC message from agent: missing jsonrpc 2.0".to_owned());
+    }
+    let is_request_or_notification = object.contains_key("method");
+    let is_response = object.contains_key("result") || object.contains_key("error");
+    if !is_request_or_notification && !is_response {
+        return Err(
+            "malformed JSON-RPC message from agent: neither method nor response payload".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn client_capabilities(subagents: bool) -> ClientCapabilities {
+    let capabilities = ClientCapabilities::new()
+        .fs(FileSystemCapabilities::new()
+            .read_text_file(true)
+            .write_text_file(true))
+        .terminal(false)
+        .elicitation(ElicitationCapabilities::new().form(ElicitationFormCapabilities::new()));
+    if subagents {
+        capabilities.subagents(SubagentCapabilities::new())
+    } else {
+        capabilities
+    }
+}
+
+fn parse_mcp_servers(values: &[Value]) -> HarnessResult<Vec<McpServer>> {
+    values
+        .iter()
+        .map(|value| {
+            serde_json::from_value(value.clone()).map_err(|error| {
+                HarnessError::Protocol(format!("invalid MCP server configuration: {error}"))
+            })
+        })
+        .collect()
+}
+
+fn handle_session_notification(
+    state: &Mutex<HarnessState>,
+    bus: &EventBus,
+    notification: SessionNotification,
+) {
+    let origin = notification.session_id.0.to_string();
+    match notification.update {
+        SessionUpdate::AgentMessageChunk(chunk) => {
+            if let Some(text) = content_text(&chunk.content) {
+                bus.send(RawAgentEvent::AgentMessageChunk { text });
+            }
+        }
+        SessionUpdate::AgentThoughtChunk(chunk) => {
+            if let Some(text) = content_text(&chunk.content) {
+                bus.send(RawAgentEvent::AgentThoughtChunk { text });
+            }
+        }
+        SessionUpdate::ToolCall(call) => {
+            let event = tool_call_event(&call);
+            lock_state(state)
+                .tools
+                .insert(event.id.clone(), event.clone());
+            bus.send(RawAgentEvent::ToolCall { call: event });
+        }
+        SessionUpdate::ToolCallUpdate(update) => {
+            let mut state = lock_state(state);
+            let id = update.tool_call_id.0.to_string();
+            let event = apply_tool_update(state.tools.remove(&id), &update);
+            state.tools.insert(id, event.clone());
+            drop(state);
+            bus.send(RawAgentEvent::ToolCallUpdate { call: event });
+        }
+        SessionUpdate::Plan(plan) => {
+            bus.send(RawAgentEvent::Plan {
+                entries: plan_entries(&plan),
+            });
+        }
+        SessionUpdate::UsageUpdate(usage) => {
+            bus.send(RawAgentEvent::Usage {
+                usage: usage_from_update(&usage),
+            });
+        }
+        SessionUpdate::Notice(notice) => {
+            let message = match notice.description {
+                Some(description) => format!("{}: {description}", notice.title),
+                None => notice.title,
+            };
+            bus.send(RawAgentEvent::Notice { message });
+        }
+        SessionUpdate::SubagentUpdate(update) => {
+            handle_subagent_update(state, bus, &origin, &update);
+        }
+        _ => {}
+    }
+}
+
+fn content_text(block: &ContentBlock) -> Option<String> {
+    match block {
+        ContentBlock::Text(text) => Some(text.text.clone()),
+        _ => None,
+    }
+}
+
+fn tool_call_event(call: &ToolCall) -> ToolCallEvent {
+    ToolCallEvent {
+        id: call.tool_call_id.0.to_string(),
+        title: call.title.clone(),
+        kind: map_tool_kind(call.kind),
+        status: map_tool_status(call.status),
+        input: call.raw_input.as_ref().map(Value::to_string),
+        output: call.raw_output.as_ref().map(Value::to_string),
+        locations: map_locations(&call.locations),
+        terminal_id: terminal_id(&call.content),
+        raw: to_value(call),
+    }
+}
+
+fn apply_tool_update(previous: Option<ToolCallEvent>, update: &ToolCallUpdate) -> ToolCallEvent {
+    let fields = &update.fields;
+    let mut event = previous.unwrap_or_else(|| ToolCallEvent {
+        id: update.tool_call_id.0.to_string(),
+        title: fields
+            .title
+            .clone()
+            .unwrap_or_else(|| "Tool call".to_owned()),
+        kind: fields.kind.map(map_tool_kind).unwrap_or(ToolKind::Other),
+        status: fields
+            .status
+            .map(map_tool_status)
+            .unwrap_or(ToolStatus::Pending),
+        input: None,
+        output: None,
+        locations: Vec::new(),
+        terminal_id: None,
+        raw: Value::Null,
+    });
+    if let Some(title) = &fields.title {
+        event.title.clone_from(title);
+    }
+    if let Some(kind) = fields.kind {
+        event.kind = map_tool_kind(kind);
+    }
+    if let Some(status) = fields.status {
+        event.status = map_tool_status(status);
+    }
+    if let Some(input) = &fields.raw_input {
+        event.input = Some(input.to_string());
+    }
+    if let Some(output) = &fields.raw_output {
+        event.output = Some(output.to_string());
+    }
+    if let Some(locations) = &fields.locations {
+        event.locations = map_locations(locations);
+    }
+    if let Some(content) = &fields.content {
+        event.terminal_id = terminal_id(content);
+    }
+    event.raw = to_value(update);
+    event
+}
+
+fn map_tool_kind(kind: AcpToolKind) -> ToolKind {
+    match kind {
+        AcpToolKind::Read => ToolKind::Read,
+        AcpToolKind::Edit => ToolKind::Edit,
+        AcpToolKind::Delete => ToolKind::Delete,
+        AcpToolKind::Move => ToolKind::Move,
+        AcpToolKind::Search => ToolKind::Search,
+        AcpToolKind::Execute => ToolKind::Execute,
+        AcpToolKind::Think => ToolKind::Think,
+        AcpToolKind::Fetch => ToolKind::Fetch,
+        _ => ToolKind::Other,
+    }
+}
+
+fn map_tool_status(status: ToolCallStatus) -> ToolStatus {
+    match status {
+        ToolCallStatus::Pending => ToolStatus::Pending,
+        ToolCallStatus::InProgress => ToolStatus::InProgress,
+        ToolCallStatus::Completed => ToolStatus::Completed,
+        ToolCallStatus::Failed => ToolStatus::Failed,
+        _ => ToolStatus::Pending,
+    }
+}
+
+fn map_locations(
+    locations: &[agent_client_protocol::v1::schema::ToolCallLocation],
+) -> Vec<ToolLocation> {
+    locations
+        .iter()
+        .map(|location| ToolLocation {
+            path: location.path.to_string_lossy().into_owned(),
+            line: location.line,
+        })
+        .collect()
+}
+
+fn terminal_id(content: &[ToolCallContent]) -> Option<String> {
+    content.iter().find_map(|item| match item {
+        ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.0.to_string()),
+        _ => None,
+    })
+}
+
+fn plan_entries(plan: &AcpPlan) -> Vec<PlanEntry> {
+    plan.entries
+        .iter()
+        .map(|entry: &AcpPlanEntry| PlanEntry {
+            content: entry.content.clone(),
+            priority: map_plan_priority(&entry.priority),
+            status: map_plan_status(&entry.status),
+        })
+        .collect()
+}
+
+fn map_plan_priority(priority: &AcpPlanPriority) -> PlanPriority {
+    match priority {
+        AcpPlanPriority::High => PlanPriority::High,
+        AcpPlanPriority::Medium => PlanPriority::Medium,
+        AcpPlanPriority::Low => PlanPriority::Low,
+        _ => PlanPriority::Medium,
+    }
+}
+
+fn map_plan_status(status: &AcpPlanStatus) -> PlanStatus {
+    match status {
+        AcpPlanStatus::Pending => PlanStatus::Pending,
+        AcpPlanStatus::InProgress => PlanStatus::InProgress,
+        AcpPlanStatus::Completed => PlanStatus::Completed,
+        _ => PlanStatus::Pending,
+    }
+}
+
+fn usage_from_update(update: &UsageUpdate) -> Usage {
+    Usage {
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        context_used: Some(update.used),
+        context_size: Some(update.size),
+    }
+}
+
+fn usage_from_acp(usage: &AcpUsage) -> Usage {
+    Usage {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.total_tokens,
+        context_used: None,
+        context_size: None,
+    }
+}
+
+fn handle_subagent_update(
+    state: &Mutex<HarnessState>,
+    bus: &EventBus,
+    origin: &str,
+    update: &SubagentUpdate,
+) {
+    let child_id = update.session_id.0.to_string();
+    let mut state = lock_state(state);
+    let parent_id = if child_id == origin {
+        state
+            .subagents
+            .get(&child_id)
+            .and_then(|subagent| subagent.parent_id.clone())
+    } else if state.session_id.as_deref() == Some(origin) {
+        None
+    } else if state.subagents.contains_key(origin) {
+        Some(origin.to_owned())
+    } else {
+        None
+    };
+
+    let fallback_title = format!("Subagent {child_id}");
+    let event = state
+        .subagents
+        .entry(child_id.clone())
+        .or_insert_with(|| SubagentEvent {
+            id: child_id.clone(),
+            parent_id: parent_id.clone(),
+            title: fallback_title.clone(),
+            description: None,
+            status: SubagentStatus::Running,
+            cwd: None,
+            can_cancel: false,
+            usage: None,
+        });
+
+    if event.parent_id.is_none() {
+        event.parent_id = parent_id;
+    }
+    match update.title.as_opt_ref() {
+        None => {}
+        Some(None) => event.title = fallback_title,
+        Some(Some(title)) => event.title.clone_from(title),
+    }
+    match update.description.as_opt_ref() {
+        None => {}
+        Some(Some(description)) => event.description = Some(description.clone()),
+        Some(None) => event.description = None,
+    }
+    match update.capabilities.as_opt_ref() {
+        None => {}
+        Some(Some(capabilities)) => event.can_cancel = capabilities.cancel.is_some(),
+        Some(None) => event.can_cancel = false,
+    }
+    match update.cwd.as_opt_ref() {
+        None => {}
+        Some(Some(cwd)) => event.cwd = Some(cwd.to_string_lossy().into_owned()),
+        Some(None) => event.cwd = None,
+    }
+    if let Some(Some(subagent_state)) = update.state.as_opt_ref() {
+        apply_subagent_state(event, subagent_state);
+    }
+
+    let event = event.clone();
+    drop(state);
+    bus.send(RawAgentEvent::Subagent { event });
+}
+
+fn apply_subagent_state(event: &mut SubagentEvent, state: &StateUpdate) {
+    match state {
+        StateUpdate::Running(_) => event.status = SubagentStatus::Running,
+        StateUpdate::RequiresAction(_) => event.status = SubagentStatus::RequiresAction,
+        StateUpdate::Idle(idle) => {
+            event.status = match &idle.stop_reason {
+                Some(IdleStopReason::Cancelled) => SubagentStatus::Cancelled,
+                Some(IdleStopReason::Error(_)) => SubagentStatus::Error,
+                _ => SubagentStatus::Idle,
+            };
+            if let Some(usage) = &idle.usage {
+                event.usage = Some(usage_from_acp(usage));
+            }
+        }
+        StateUpdate::Unknown(_) => event.status = SubagentStatus::Idle,
+        _ => {}
+    }
+}
+
+fn build_permission_request(
+    id: String,
+    request: &RequestPermissionRequest,
+    previous: Option<&ToolCallEvent>,
+) -> PermissionRequest {
+    let tool_call = &request.tool_call;
+    let raw_input: Option<Value> = tool_call.fields.raw_input.clone().or_else(|| {
+        previous
+            .and_then(|call| call.input.as_deref())
+            .and_then(|input| serde_json::from_str(input).ok())
+    });
+    PermissionRequest {
+        id,
+        title: tool_call
+            .fields
+            .title
+            .clone()
+            .or_else(|| previous.map(|call| call.title.clone()))
+            .unwrap_or_else(|| "Permission requested".to_owned()),
+        kind: tool_call
+            .fields
+            .kind
+            .map(map_tool_kind)
+            .or_else(|| previous.map(|call| call.kind))
+            .unwrap_or(ToolKind::Other),
+        command: raw_input
+            .as_ref()
+            .and_then(|input| input.get("command"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        cwd: raw_input
+            .as_ref()
+            .and_then(|input| input.get("cwd"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        paths: tool_call
+            .fields
+            .locations
+            .as_deref()
+            .map(|locations| {
+                locations
+                    .iter()
+                    .map(|location| location.path.to_string_lossy().into_owned())
+                    .collect()
+            })
+            .or_else(|| {
+                previous.map(|call| {
+                    call.locations
+                        .iter()
+                        .map(|location| location.path.clone())
+                        .collect()
+                })
+            })
+            .unwrap_or_default(),
+        options: request
+            .options
+            .iter()
+            .map(|option| PermissionOption {
+                id: option.option_id.to_string(),
+                kind: permission_kind_name(option.kind).to_owned(),
+                label: option.name.clone(),
+            })
+            .collect(),
+        raw: to_value(request),
+    }
+}
+
+fn permission_kind_name(kind: PermissionOptionKind) -> &'static str {
+    match kind {
+        PermissionOptionKind::AllowOnce => "allow_once",
+        PermissionOptionKind::AllowAlways => "allow_always",
+        PermissionOptionKind::RejectOnce => "reject_once",
+        PermissionOptionKind::RejectAlways => "reject_always",
+        _ => "other",
+    }
+}
+
+fn option_for_decision(
+    decision: ApprovalDecision,
+    options: &[(PermissionOptionKind, PermissionOptionId)],
+) -> Option<PermissionOptionId> {
+    let preferred: &[PermissionOptionKind] = match decision {
+        ApprovalDecision::AllowOnce => &[
+            PermissionOptionKind::AllowOnce,
+            PermissionOptionKind::AllowAlways,
+        ],
+        ApprovalDecision::AllowSession | ApprovalDecision::AllowThread => &[
+            PermissionOptionKind::AllowAlways,
+            PermissionOptionKind::AllowOnce,
+        ],
+        ApprovalDecision::Deny => &[
+            PermissionOptionKind::RejectOnce,
+            PermissionOptionKind::RejectAlways,
+        ],
+    };
+    preferred.iter().find_map(|kind| {
+        options
+            .iter()
+            .find(|(option_kind, _)| option_kind == kind)
+            .map(|(_, option_id)| option_id.clone())
+    })
+}
+
+fn build_elicitation_request(
+    id: String,
+    request: &CreateElicitationRequest,
+) -> crate::ElicitationRequest {
+    let (mode, requested_schema) = match &request.mode {
+        ElicitationMode::Form(form) => ("form", to_value(&form.requested_schema)),
+        ElicitationMode::Url(_) => ("url", Value::Null),
+        ElicitationMode::Other(other) => (other.mode.as_str(), Value::Null),
+        _ => ("unknown", Value::Null),
+    };
+    let tool_call_id = match request.mode.scope() {
+        ElicitationScope::Session(scope) => scope.tool_call_id.as_ref().map(|id| id.0.to_string()),
+        _ => None,
+    };
+    let blocking = request
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("blocking"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    crate::ElicitationRequest {
+        id,
+        message: request.message.clone(),
+        requested_schema,
+        mode: mode.to_owned(),
+        blocking,
+        tool_call_id,
+        raw: to_value(request),
+    }
+}
+
+fn steering_meta() -> Map<String, Value> {
+    let mut steering = Map::new();
+    steering.insert(
+        "idleBehavior".to_owned(),
+        Value::String("promptRequired".to_owned()),
+    );
+    let mut meta = Map::new();
+    meta.insert("steering".to_owned(), Value::Object(steering));
+    meta
+}
+
+fn read_window(content: &str, line: Option<u32>, limit: Option<u32>) -> String {
+    if line.is_none() && limit.is_none() {
+        return content.to_owned();
+    }
+    let skip = line.unwrap_or(1).saturating_sub(1) as usize;
+    let take = limit.map_or(usize::MAX, |limit| limit as usize);
+    content
+        .lines()
+        .skip(skip)
+        .take(take)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn stop_reason_name(reason: &StopReason) -> String {
+    serde_json::to_value(reason)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn to_value<T: Serialize>(value: &T) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, agent_client_protocol::JsonRpcRequest)]
+#[request(method = "_session/steering", response = SteeringResponse)]
+struct SteeringRequest {
+    #[serde(rename = "sessionId")]
+    session_id: AcpSessionId,
+    prompt: Vec<ContentBlock>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    meta: Option<Map<String, Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, agent_client_protocol::JsonRpcResponse)]
+struct SteeringResponse {
+    outcome: String,
+    #[serde(default)]
+    reason: Option<String>,
+}

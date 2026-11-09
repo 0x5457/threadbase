@@ -9,6 +9,7 @@ license.workspace = true
 threadbase-shared.workspace = true
 agent-client-protocol.workspace = true
 async-trait.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -17,6 +18,14 @@ tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+# Scripted ACP agent used by tests/acp_contract.rs; not part of the product.
+[[bin]]
+name = "threadbase_acp_fixture"
+path = "tests/fixtures/acp_fixture.rs"
+test = false
+bench = false
+doc = false
 
 [lints]
 workspace = true

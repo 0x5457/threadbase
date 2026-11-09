@@ -3,6 +3,7 @@
 //! The server never talks to an SDK type directly: ACP updates are normalized
 //! into [`RawAgentEvent`] and persisted by the thread event log.
 
+pub mod acp;
 pub mod profile;
 
 use async_trait::async_trait;
@@ -15,6 +16,7 @@ use threadbase_shared::{
 };
 use tokio::sync::broadcast;
 
+pub use acp::AcpHarness;
 pub use profile::{all_profiles, find_profile, AgentProfile};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +29,8 @@ pub struct LaunchCtx {
     pub agent: String,
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// Advertise ACP subagent sessions when the caller has opted in.
+    pub subagents: bool,
     pub env: Vec<(String, String)>,
 }
 
@@ -177,6 +181,18 @@ pub enum HarnessError {
     Io(#[from] std::io::Error),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SteeringOutcome {
+    /// The input joined the running turn.
+    Injected,
+    /// The agent started a new turn even though the client asked it not to.
+    StartedNewTurn,
+    /// No running turn could accept the input; the client keeps it.
+    PromptRequired,
+    /// The agent could not apply the input.
+    Failed { reason: Option<String> },
+}
+
 pub type HarnessResult<T> = Result<T, HarnessError>;
 
 #[async_trait]
@@ -197,6 +213,16 @@ pub trait Harness: Send + Sync {
     async fn cancel_subagent(&mut self, subagent_id: &str) -> HarnessResult<()>;
     async fn shutdown(&mut self) -> HarnessResult<()>;
     fn events(&self) -> broadcast::Receiver<RawAgentEvent>;
+
+    /// Deliver input into the running turn without starting a new one.
+    ///
+    /// Harnesses that do not implement the steering extension return
+    /// [`HarnessError::Unavailable`].
+    async fn steer(&mut self, _parts: Vec<String>) -> HarnessResult<SteeringOutcome> {
+        Err(HarnessError::Unavailable(
+            "this harness does not support steering".to_owned(),
+        ))
+    }
 }
 
 #[cfg(test)]

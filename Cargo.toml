@@ -24,13 +24,13 @@ threadbase-draft = { path = "crates/draft" }
 threadbase-agent = { path = "crates/agent" }
 threadbase-workspace = { path = "crates/workspace" }
 
-agent-client-protocol = { version = "5.1", features = ["process", "unstable_subagents"] }
+agent-client-protocol = { version = "5.1", features = ["process", "unstable_subagents", "unstable_end_turn_token_usage"] }
 anyhow = "1.0"
 argon2 = "0.6"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "ws"] }
 bytes = "1.10"
-futures-util = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
 hex = "0.4"
 mime_guess = "2.0"
 notify = "8.2"
