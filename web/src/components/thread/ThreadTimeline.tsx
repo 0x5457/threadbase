@@ -7,17 +7,20 @@ import {
   CircleDot,
   FileSearch,
   FolderInput,
+  GitBranch,
   Globe,
   ListChecks,
   MessageSquare,
+  MessageSquareText,
   PencilLine,
   Search,
   ShieldAlert,
   Terminal,
   Trash2,
   Wrench,
+  XCircle,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
 import type { CommentAnchor } from "@/api/types/CommentAnchor";
@@ -35,6 +38,7 @@ import {
   EmptyState,
   ErrorState,
   Skeleton,
+  Textarea,
 } from "@/components/ui";
 import { ElicitationCard } from "@/components/thread/ElicitationCard";
 import { usePresenceStore } from "@/lib/presence";
@@ -86,6 +90,12 @@ interface ApprovalItem {
   decision: string | null;
 }
 
+interface SubagentItem {
+  kind: "subagent";
+  key: string;
+  subagent: import("@/api/types/SubagentDto").SubagentDto;
+}
+
 interface NoticeItem {
   kind: "notice";
   key: string;
@@ -101,6 +111,7 @@ type TimelineItem =
   | PlanItem
   | ElicitationItem
   | ApprovalItem
+  | SubagentItem
   | NoticeItem;
 
 const TOOL_ICONS: Record<ToolKind, typeof Wrench> = {
@@ -217,14 +228,6 @@ function noticeForEvent(event: EventEnvelope): NoticeItem | null {
         label: "Agent requested input",
         text: payload.elicitation.message,
       };
-    case "subagent_updated":
-      return {
-        kind: "notice",
-        key,
-        tone: "info",
-        label: `Subagent ${payload.subagent.status.replace("_", " ")}`,
-        text: payload.subagent.title,
-      };
     case "permission_resolved":
       return {
         kind: "notice",
@@ -243,6 +246,8 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
     (left, right) => Number(left.seq) - Number(right.seq),
   );
   const latestCalls = new Map<string, ToolCallData>();
+  const latestSubagents = new Map<string, import("@/api/types/SubagentDto").SubagentDto>();
+  const subagentOrder: string[] = [];
   const resolvedApprovals = new Map<string, string>();
   const resolvedElicitations = new Map<string, ElicitationAction>();
   const startedMessages = new Set<string>();
@@ -253,6 +258,13 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
       event.payload.type === "tool_call_update"
     ) {
       latestCalls.set(event.payload.call.id, event.payload.call);
+    }
+    if (event.payload.type === "subagent_updated") {
+      const subagent = event.payload.subagent;
+      latestSubagents.set(subagent.id, subagent);
+      if (!subagentOrder.includes(subagent.id)) {
+        subagentOrder.push(subagent.id);
+      }
     }
     if (event.payload.type === "permission_resolved") {
       resolvedApprovals.set(event.payload.approvalId, event.payload.decision);
@@ -270,6 +282,7 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
 
   const items: TimelineItem[] = [];
   const seenTools = new Set<string>();
+  const seenSubagents = new Set<string>();
   let latestPlan: PlanEntry[] | null = null;
 
   for (const event of sorted) {
@@ -332,6 +345,18 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
       latestPlan = payload.entries;
       continue;
     }
+    if (payload.type === "subagent_updated") {
+      const subagent = latestSubagents.get(payload.subagent.id) ?? payload.subagent;
+      if (!seenSubagents.has(subagent.id)) {
+        seenSubagents.add(subagent.id);
+        items.push({
+          kind: "subagent",
+          key: `subagent-${subagent.id}`,
+          subagent,
+        });
+      }
+      continue;
+    }
     if (payload.type === "permission_requested") {
       const decision = resolvedApprovals.get(payload.approval.id) ?? null;
       items.push({
@@ -365,6 +390,18 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
     } else {
       grouped.push(item);
     }
+  }
+  const activeSubagents = [...latestSubagents.values()].filter(
+    (subagent) => subagent.status === "running" || subagent.status === "requires_action",
+  );
+  if (activeSubagents.length > 0) {
+    grouped.push({
+      kind: "notice",
+      key: "subagents-running",
+      tone: "info",
+      label: `${activeSubagents.length} subagent${activeSubagents.length === 1 ? "" : "s"} still running`,
+      text: activeSubagents.map((subagent) => subagent.title).join(", "),
+    });
   }
   if (latestPlan && latestPlan.length > 0) {
     grouped.push({ kind: "plan", key: "plan-latest", entries: latestPlan });
@@ -414,13 +451,18 @@ export interface ThreadTimelineProps {
   loading?: boolean;
   error?: unknown;
   onRetry?: () => void;
-  onDecide?: (approvalId: string, decision: ApprovalDecision) => void;
+  onDecide?: (
+    approvalId: string,
+    decision: ApprovalDecision,
+    note?: string,
+  ) => void;
   onRespondElicitation?: (
     elicitationId: string,
     action: ElicitationAction,
     values: Record<string, unknown>,
   ) => void;
   onComment?: (anchor: CommentAnchor) => void;
+  onOpenSubagent?: (subagentId: string) => void;
 }
 
 export function ThreadTimeline({
@@ -432,9 +474,12 @@ export function ThreadTimeline({
   onDecide,
   onRespondElicitation,
   onComment,
+  onOpenSubagent,
 }: ThreadTimelineProps) {
   const items = useMemo(() => buildTimeline(events), [events]);
   const setLocal = usePresenceStore((state) => state.setLocal);
+  const [denyFor, setDenyFor] = useState<string | null>(null);
+  const [denyNote, setDenyNote] = useState("");
   const approvalById = useMemo(
     () => new Map(approvals.map((approval) => [approval.id, approval])),
     [approvals],
@@ -567,9 +612,12 @@ export function ThreadTimeline({
                   displayName: "Agent",
                 };
             return (
+              <div key={`event-wrap-${item.key}`}>
+                {item.seq ? (
+                  <span id={`event-${item.seq}`} className="sr-only" aria-hidden />
+                ) : null}
               <div
-                key={item.key}
-                id={item.seq ? `event-${item.seq}` : undefined}
+                id={`message-${item.messageId}`}
                 data-message-id={item.messageId}
                 className="flex gap-3"
                 onClick={() =>
@@ -595,10 +643,22 @@ export function ThreadTimeline({
                         {formatTimestamp(item.createdAt)}
                       </span>
                     ) : null}
+                    <button
+                      type="button"
+                      className="ml-auto rounded p-0.5 text-faint hover:text-fg"
+                      aria-label="View comments"
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent("threadbase:open-comments"),
+                        )
+                      }
+                    >
+                      <MessageSquareText className="size-3" aria-hidden />
+                    </button>
                     {onComment ? (
                       <button
                         type="button"
-                        className="ml-auto rounded p-0.5 text-faint hover:text-fg"
+                        className="rounded p-0.5 text-faint hover:text-fg"
                         aria-label="Comment on message"
                         onClick={() =>
                           onComment({
@@ -623,6 +683,7 @@ export function ThreadTimeline({
                   </div>
                 </div>
               </div>
+              </div>
             );
           }
 
@@ -637,7 +698,7 @@ export function ThreadTimeline({
             return (
               <div key={item.key} className="flex gap-3">
                 <div className="w-7 shrink-0" />
-                <details className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
+                <details className="group min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
                   <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[11.5px] text-muted hover:text-fg">
                     <ChevronRight className="size-3.5 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
                     <span className="truncate">{summarizeTools(item.calls)}</span>
@@ -700,6 +761,75 @@ export function ThreadTimeline({
             );
           }
 
+          if (item.kind === "subagent") {
+            const subagent = item.subagent;
+            const active =
+              subagent.status === "running" ||
+              subagent.status === "requires_action";
+            return (
+              <div key={item.key} className="flex gap-3">
+                <div className="w-7 shrink-0" />
+                <details className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
+                    <GitBranch className="size-3.5 shrink-0 text-faint" aria-hidden />
+                    <span className="truncate text-[11.5px] font-medium text-fg">
+                      {subagent.title}
+                    </span>
+                    <Badge
+                      size="sm"
+                      variant={
+                        subagent.status === "error"
+                          ? "danger"
+                          : subagent.status === "requires_action"
+                            ? "warning"
+                            : active
+                              ? "info"
+                              : "neutral"
+                      }
+                      className="ml-auto shrink-0"
+                    >
+                      {subagent.status.replace("_", " ")}
+                    </Badge>
+                    <ChevronRight className="size-3 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
+                  </summary>
+                  <div className="space-y-1 border-t border-border/70 px-3 py-2 text-[10.5px] text-muted">
+                    {subagent.description ? (
+                      <p className="whitespace-pre-wrap text-fg">{subagent.description}</p>
+                    ) : null}
+                    {subagent.status === "error" ? (
+                      <p className="flex items-center gap-1 text-danger">
+                        <XCircle className="size-3" aria-hidden />
+                        Stopped with an error
+                      </p>
+                    ) : null}
+                    {subagent.cwd ? (
+                      <p className="break-all font-mono text-[9.5px] text-faint">
+                        {subagent.cwd}
+                      </p>
+                    ) : (
+                      <p className="text-faint">No independent session</p>
+                    )}
+                    {subagent.usage ? (
+                      <p className="text-faint">
+                        {subagent.usage.totalTokens.toLocaleString()} tokens
+                      </p>
+                    ) : null}
+                    {onOpenSubagent ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="px-0"
+                        onClick={() => onOpenSubagent(subagent.id)}
+                      >
+                        Open subagent
+                      </Button>
+                    ) : null}
+                  </div>
+                </details>
+              </div>
+            );
+          }
+
           if (item.kind === "approval") {
             const approval = approvalById.get(item.approval.id) ?? item.approval;
             return (
@@ -746,29 +876,80 @@ export function ThreadTimeline({
                       </p>
                     ) : null}
                     {!item.resolved && approval.status === "pending" && onDecide ? (
-                      <div className="flex flex-wrap gap-1.5 border-t border-warning/20 pt-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => onDecide(approval.id, "allow_once")}
-                        >
-                          Allow once
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => onDecide(approval.id, "allow_thread")}
-                        >
-                          Allow for thread
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          onClick={() => onDecide(approval.id, "deny")}
-                        >
-                          Deny
-                        </Button>
-                      </div>
+                      denyFor === approval.id ? (
+                        <div className="space-y-1.5 border-t border-warning/20 pt-2">
+                          <Textarea
+                            autoFocus
+                            value={denyNote}
+                            onChange={(event) => setDenyNote(event.target.value)}
+                            placeholder="Why deny?"
+                            rows={2}
+                            className="text-[10.5px]"
+                          />
+                          <div className="flex gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setDenyFor(null);
+                                setDenyNote("");
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              disabled={!denyNote.trim()}
+                              onClick={() => {
+                                onDecide(approval.id, "deny", denyNote.trim());
+                                setDenyFor(null);
+                                setDenyNote("");
+                              }}
+                            >
+                              Deny with reason
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5 border-t border-warning/20 pt-2">
+                          {(approval.options.length > 0
+                            ? approval.options
+                            : [
+                                { id: "once", kind: "allow_once" as const, label: "Allow once" },
+                                {
+                                  id: "thread",
+                                  kind: "allow_thread" as const,
+                                  label: "Allow for thread",
+                                },
+                                { id: "deny", kind: "deny" as const, label: "Deny" },
+                              ]
+                          ).map((option) =>
+                            option.kind === "deny" ? (
+                              <Button
+                                key={option.id}
+                                size="sm"
+                                variant="danger"
+                                onClick={() => {
+                                  setDenyFor(approval.id);
+                                  setDenyNote("");
+                                }}
+                              >
+                                {option.label}
+                              </Button>
+                            ) : (
+                              <Button
+                                key={option.id}
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => onDecide(approval.id, option.kind)}
+                              >
+                                {option.label}
+                              </Button>
+                            ),
+                          )}
+                        </div>
+                      )
                     ) : null}
                   </div>
                 </div>

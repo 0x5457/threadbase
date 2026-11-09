@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -26,8 +26,12 @@ import { Button, Dialog, DialogContent, Input } from "@/components/ui";
 import { NewProjectDialog } from "@/components/workspace/NewProjectDialog";
 import { ShareDialog } from "@/components/workspace/ShareDialog";
 import { useOnlineStatus } from "@/lib/hooks";
+import { browserNotify } from "@/lib/live";
 import { usePresence, usePresenceStore } from "@/lib/presence";
-import type { WorkspaceOutletContext } from "./workspace-context";
+import type {
+  NewThreadOptions,
+  WorkspaceOutletContext,
+} from "./workspace-context";
 
 function pageTitle(
   pathname: string,
@@ -177,7 +181,7 @@ export function WorkspaceLayout() {
           queryKey: queryKeys.threadBundle(params.threadId),
         });
       }
-      void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
       toast.success("Approval updated");
     },
     onError: (error) => {
@@ -198,19 +202,27 @@ export function WorkspaceLayout() {
   };
 
   const createThreadMutation = useMutation({
-    mutationFn: (projectId: string) => {
+    mutationFn: ({
+      projectId,
+      options,
+    }: {
+      projectId: string;
+      options?: NewThreadOptions;
+    }) => {
       const project = projectList.find((entry) => entry.id === projectId);
       return createThread(projectId, {
         title: null,
-        agent: workspaceState.data?.settings.defaultAgent ?? "codex",
-        model: workspaceState.data?.settings.defaultModel ?? null,
+        agent:
+          options?.agent ?? workspaceState.data?.settings.defaultAgent ?? "codex",
+        model: options?.model ?? workspaceState.data?.settings.defaultModel ?? null,
         effort: null,
-        baseBranch: project?.defaultBranch ?? null,
+        baseBranch:
+          options?.baseBranch ?? project?.defaultBranch ?? null,
         initialPrompt: null,
       });
     },
     onSuccess: (response) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.projectThreads(response.thread.projectId, false),
       });
@@ -223,9 +235,9 @@ export function WorkspaceLayout() {
     onError: (error) => toast.error(String(error)),
   });
 
-  const openNewThread = (projectId: string) => {
+  const openNewThread = (projectId: string, options?: NewThreadOptions) => {
     if (!createThreadMutation.isPending) {
-      createThreadMutation.mutate(projectId);
+      createThreadMutation.mutate({ projectId, options });
     }
   };
 
@@ -285,6 +297,33 @@ export function WorkspaceLayout() {
       void Notification.requestPermission();
     }
   }, [workspaceState.data?.settings.browserNotifications]);
+
+  const seenInbox = useRef(new Set<string>());
+  const inboxInitialized = useRef(false);
+  useEffect(() => {
+    const items = inbox.data?.items ?? [];
+    if (!inboxInitialized.current) {
+      for (const item of items) {
+        seenInbox.current.add(item.id);
+      }
+      inboxInitialized.current = true;
+      return;
+    }
+    const fresh = items.filter(
+      (item) => !item.read && !seenInbox.current.has(item.id),
+    );
+    for (const item of items) {
+      seenInbox.current.add(item.id);
+    }
+    if (fresh.length === 0) {
+      return;
+    }
+    browserNotify(
+      "Threadbase",
+      fresh[0].summary,
+      workspaceState.data?.settings.browserNotifications ?? false,
+    );
+  }, [inbox.data, workspaceState.data?.settings.browserNotifications]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

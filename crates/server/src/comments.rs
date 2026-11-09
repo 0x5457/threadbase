@@ -6,8 +6,8 @@ use crate::events::EventStore;
 use sqlx::{FromRow, SqlitePool};
 use threadbase_shared::api::{CreateCommentRequest, UpdateCommentRequest};
 use threadbase_shared::{
-    now_ms, user_color, Actor, ApiError, CommentAnchor, CommentDto, CommentStatus, ThreadEvent,
-    ThreadId, UserBrief,
+    now_ms, user_color, Actor, ApiError, BaselineDto, BaselineKind, CommentAnchor, CommentDto,
+    CommentStatus, ThreadEvent, ThreadId, UserBrief,
 };
 use ulid::Ulid;
 
@@ -33,7 +33,7 @@ pub async fn list_for_thread(
     pool: &SqlitePool,
     thread_id: &str,
 ) -> Result<Vec<CommentDto>, ServerError> {
-    let rows = sqlx::query_as::<_, CommentRow>(
+    let mut rows = sqlx::query_as::<_, CommentRow>(
         "SELECT c.id, c.thread_id, c.parent_id, c.author_id, c.body, c.anchor_json,
                 c.anchor_changed, c.status, c.delivered_seq, c.created_at, c.updated_at,
                 u.username, u.display_name, u.avatar_url
@@ -44,7 +44,77 @@ pub async fn list_for_thread(
     .bind(thread_id)
     .fetch_all(pool)
     .await?;
+    reconcile_anchors(pool, thread_id, &mut rows).await;
     Ok(rows.into_iter().map(dto).collect())
+}
+
+/// A diff comment stores both the hunk id and a hash of the hunk text. Hunk
+/// ids are positional and shift when an earlier hunk changes. On every read we
+/// re-resolve the hash: if the same hunk content exists under a new id we move
+/// the anchor; otherwise we degrade it to a file-level anchor and persist that
+/// fact so the UI can explain the loss of precision.
+async fn reconcile_anchors(pool: &SqlitePool, thread_id: &str, rows: &mut [CommentRow]) {
+    if !rows
+        .iter()
+        .any(|row| row.anchor_json.contains("\"kind\":\"diff\""))
+    {
+        return;
+    }
+    let Ok(thread) = crate::threads::load_row(pool, thread_id).await else {
+        return;
+    };
+    let baseline = BaselineDto {
+        kind: BaselineKind::BaseBranch,
+        commit: None,
+    };
+    for row in rows.iter_mut() {
+        let Ok(CommentAnchor::Diff {
+            path,
+            line,
+            context_hash,
+            ..
+        }) = serde_json::from_str::<CommentAnchor>(&row.anchor_json)
+        else {
+            continue;
+        };
+        let Ok(diff) = crate::diff::file_diff(&thread, &baseline, &path).await else {
+            continue;
+        };
+        let found = context_hash
+            .as_deref()
+            .and_then(|hash| diff.hunks.iter().find(|hunk| hunk.context_hash == hash));
+        let next = match found {
+            Some(hunk) => CommentAnchor::Diff {
+                path,
+                hunk_id: hunk.id.clone(),
+                line,
+                context_hash,
+            },
+            None => CommentAnchor::File {
+                path,
+                line,
+                context_hash,
+            },
+        };
+        let changed = !matches!(next, CommentAnchor::Diff { .. });
+        let serialized = serde_json::to_string(&next).unwrap_or_else(|_| row.anchor_json.clone());
+        let changed = i64::from(changed);
+        if (serialized != row.anchor_json || changed != row.anchor_changed)
+            && sqlx::query(
+                "UPDATE comments SET anchor_json = ?, anchor_changed = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(&serialized)
+            .bind(changed)
+            .bind(now_ms())
+            .bind(&row.id)
+            .execute(pool)
+            .await
+            .is_ok()
+        {
+            row.anchor_json = serialized;
+            row.anchor_changed = changed;
+        }
+    }
 }
 
 fn dto(row: CommentRow) -> CommentDto {
@@ -313,7 +383,7 @@ pub async fn pending_for_thread(
     pool: &SqlitePool,
     thread_id: &str,
 ) -> Result<Vec<CommentDto>, ServerError> {
-    let rows = sqlx::query_as::<_, CommentRow>(
+    let mut rows = sqlx::query_as::<_, CommentRow>(
         "SELECT c.id, c.thread_id, c.parent_id, c.author_id, c.body, c.anchor_json,
                 c.anchor_changed, c.status, c.delivered_seq, c.created_at, c.updated_at,
                 u.username, u.display_name, u.avatar_url
@@ -324,6 +394,7 @@ pub async fn pending_for_thread(
     .bind(thread_id)
     .fetch_all(pool)
     .await?;
+    reconcile_anchors(pool, thread_id, &mut rows).await;
     Ok(rows.into_iter().map(dto).collect())
 }
 

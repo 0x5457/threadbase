@@ -211,6 +211,7 @@ export function useInbox(filter: InboxFilter) {
   return useQuery({
     queryKey: queryKeys.inbox(filter),
     queryFn: () => fetchInbox(filter),
+    refetchInterval: 5_000,
   });
 }
 

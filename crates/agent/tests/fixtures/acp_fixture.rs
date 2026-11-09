@@ -223,6 +223,10 @@ impl Fixture {
                     .and_then(Value::as_str)
                     .unwrap_or(&self.root_session)
                     .to_owned();
+                if session == "expired" {
+                    self.respond_error(out, &id, -32001, "session expired")?;
+                    return Ok(());
+                }
                 self.respond(out, &id, json!({}))?;
                 self.chunk(out, &session, "replayed")
             }

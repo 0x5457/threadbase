@@ -107,7 +107,9 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   const adminErrors: string[] = [];
   admin.on("console", (message) => {
     if (message.type() === "error") {
-      adminErrors.push(message.text());
+      adminErrors.push(
+        `${message.text()} (${message.location().url || "unknown"})`,
+      );
     }
   });
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
@@ -229,6 +231,10 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(drawerAgain.getByText("three", { exact: false }).first()).toBeVisible({
     timeout: 10_000,
   });
+  await admin.screenshot({
+    path: "test-results/screenshots/changes-1440-dark.png",
+    fullPage: true,
+  });
   await drawerAgain.getByText("three", { exact: false }).first().click();
   await expect(drawerAgain.getByText("Comment on README.md:2")).toBeVisible();
   await drawerAgain
@@ -276,6 +282,110 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/composer-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.getByPlaceholder("Message").fill("");
+
+  // Subagent dispatch card, live running summary and the full picker.
+  await admin.goto(`/p/${project.id}/t/${thread.id}`);
+  await admin.getByPlaceholder("Message").fill("subagents");
+  await admin.getByRole("button", { name: "Send", exact: true }).click();
+  const subagentCard = admin
+    .locator("main")
+    .getByText("Test investigator", { exact: true })
+    .first();
+  await expect(subagentCard).toBeVisible({ timeout: 15_000 });
+  await subagentCard.scrollIntoViewIfNeeded();
+  await subagentCard.click();
+  await expect(admin.getByText("Nested helper", { exact: true }).first()).toBeVisible();
+  await admin.screenshot({
+    path: "test-results/screenshots/subagents-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.keyboard.press("Control+j");
+  await expect(admin.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
+  await admin.screenshot({
+    path: "test-results/screenshots/subagent-picker-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.keyboard.press("Escape");
+
+  // Deny with an explicit reason: the decision request carries the note.
+  await admin.getByPlaceholder("Message").fill("permission");
+  await admin.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(admin.getByRole("button", { name: "Allow once", exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  await admin.getByRole("button", { name: /^(Deny|Reject)$/ }).click();
+  await admin.getByPlaceholder("Why deny?").fill("This command modifies the wrong worktree");
+  await admin.getByRole("button", { name: "Deny with reason" }).click();
+  await expect(admin.getByText("This command modifies the wrong worktree")).toBeHidden({
+    timeout: 10_000,
+  });
+
+  // Share dialog.
+  await admin.keyboard.press("Control+Shift+S");
+  await expect(admin.getByText("Share thread", { exact: true })).toBeVisible({
+    timeout: 5_000,
+  });
+  await admin.screenshot({
+    path: "test-results/screenshots/share-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.keyboard.press("Escape");
+
+  // Thread lifecycle: rename, fork, delete from the thread action menu.
+  await admin.getByRole("button", { name: "Thread actions" }).click();
+  await admin.getByRole("menuitem", { name: "Rename" }).click();
+  await admin.getByRole("dialog").locator("input").fill("Renamed thread");
+  await admin.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(admin.getByText("Renamed thread", { exact: true }).first()).toBeVisible({
+    timeout: 10_000,
+  });
+  await admin.getByRole("button", { name: "Thread actions" }).click();
+  await admin.getByRole("menuitem", { name: "Fork thread" }).click();
+  await expect(admin).toHaveURL(/\/t\/[^/]+$/, { timeout: 15_000 });
+  await expect(admin.getByText("Renamed thread (fork)", { exact: true }).first()).toBeVisible({
+    timeout: 10_000,
+  });
+  const forkedUrl = admin.url();
+  await admin.getByRole("button", { name: "Thread actions" }).click();
+  await admin.getByRole("menuitem", { name: "Delete thread…" }).click();
+  await expect(admin.getByText("Delete thread?", { exact: true })).toBeVisible();
+  await admin.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(admin).toHaveURL(new RegExp(`/p/${project.id}$`), { timeout: 15_000 });
+  expect(forkedUrl).not.toBe(admin.url());
+
+  // Project and new-thread options, then inbox evidence.
+  await admin.screenshot({
+    path: "test-results/screenshots/project-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.getByRole("button", { name: "New thread options" }).click();
+  await expect(admin.getByText("Base branch", { exact: true })).toBeVisible();
+  await admin.screenshot({
+    path: "test-results/screenshots/new-thread-menu-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.getByLabel("Agent").selectOption("claude");
+  await admin.getByLabel("Model").fill("sonnet");
+  await admin.getByLabel("Base branch").fill("main");
+  await admin.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(admin).toHaveURL(/\/t\/[^/]+$/, { timeout: 15_000 });
+  await expect(admin.getByPlaceholder("Message")).toBeVisible({ timeout: 10_000 });
+
+  await api.post(`${BASE}/api/threads/${thread.id}/comments`, {
+    headers: csrf(),
+    data: {
+      body: "@bob please review the redirect fix",
+      anchor: { kind: "thread" },
+      parentId: null,
+      send: false,
+    },
+  });
+  await admin.goto("/inbox");
+  await admin.screenshot({
+    path: "test-results/screenshots/inbox-1440-dark.png",
     fullPage: true,
   });
 

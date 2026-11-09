@@ -251,6 +251,44 @@ pub async fn file_diff(
     })
 }
 
+/// Reset the thread worktree to its base commit. This is the explicit
+/// "revert conversation to cursor" action: it discards every agent edit in
+/// the worktree (tracked and untracked) without touching the project.
+pub async fn revert_to_base(row: &ThreadRow) -> Result<(), ServerError> {
+    let worktree = worktree(row)?;
+    let reference = row
+        .base_sha
+        .clone()
+        .unwrap_or_else(|| row.base_branch.clone());
+    let reset = Command::new("git")
+        .arg("-C")
+        .arg(&worktree)
+        .args(["reset", "--hard", &reference])
+        .output()
+        .await
+        .map_err(|error| ServerError::internal(format!("could not run git reset: {error}")))?;
+    if !reset.status.success() {
+        return Err(ServerError(ApiError::conflict(format!(
+            "could not revert worktree: {}",
+            String::from_utf8_lossy(&reset.stderr).trim()
+        ))));
+    }
+    let clean = Command::new("git")
+        .arg("-C")
+        .arg(&worktree)
+        .args(["clean", "-fd"])
+        .output()
+        .await
+        .map_err(|error| ServerError::internal(format!("could not run git clean: {error}")))?;
+    if !clean.status.success() {
+        return Err(ServerError(ApiError::conflict(format!(
+            "could not clean worktree: {}",
+            String::from_utf8_lossy(&clean.stderr).trim()
+        ))));
+    }
+    Ok(())
+}
+
 pub async fn mark_seen(
     pool: &SqlitePool,
     row: &ThreadRow,

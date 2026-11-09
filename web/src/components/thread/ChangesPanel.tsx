@@ -1,8 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, GitCompareArrows, RotateCcw } from "lucide-react";
+import { Check, GitCompareArrows, RotateCcw, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { createComment, mergeBackChanges, setSeen } from "@/api/endpoints";
+import {
+  createComment,
+  mergeBackChanges,
+  revertThread,
+  setSeen,
+} from "@/api/endpoints";
 import { queryKeys, useChanges, useComments, useFileDiff } from "@/api/queries";
 import type { BaselineKind } from "@/api/types/BaselineKind";
 import type { CommentDto } from "@/api/types/CommentDto";
@@ -84,6 +89,7 @@ export function ChangesPanel({
     contextHash: string;
   } | null>(null);
   const [commentBody, setCommentBody] = useState("");
+  const [showComments, setShowComments] = useState(true);
   const changes = useChanges(threadId, baseline, commit);
   const diff = useFileDiff(threadId, selected, baseline, commit);
   const comments = useComments(threadId);
@@ -142,6 +148,17 @@ export function ChangesPanel({
   const markAllSeen = useMutation({
     mutationFn: () => setSeen(threadId, (changes.data?.files ?? []).map((file) => file.path), true),
     onSuccess: invalidate,
+    onError: (error) => toast.error(String(error)),
+  });
+  const revert = useMutation({
+    mutationFn: () => revertThread(threadId),
+    onSuccess: () => {
+      toast.success("Reverted worktree to the base commit");
+      invalidate();
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadEvents(threadId),
+      });
+    },
     onError: (error) => toast.error(String(error)),
   });
   const merge = useMutation({
@@ -248,24 +265,44 @@ export function ChangesPanel({
           </span>
         </div>
         {canWrite ? (
-          <Button
-            size="sm"
-            variant="secondary"
-            className="w-full"
-            loading={merge.isPending}
-            onClick={() => {
-              if (
-                window.confirm(
-                  "Apply these changes to the project working tree? Nothing is committed.",
-                )
-              ) {
-                merge.mutate();
-              }
-            }}
-          >
-            <RotateCcw aria-hidden />
-            Apply to project
-          </Button>
+          <div className="flex gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="flex-1"
+              loading={revert.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Revert the worktree to the base commit? Every agent change, including untracked files, will be discarded.",
+                  )
+                ) {
+                  revert.mutate();
+                }
+              }}
+            >
+              <Undo2 aria-hidden />
+              Revert
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="flex-1"
+              loading={merge.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Apply these changes to the project working tree? Nothing is committed.",
+                  )
+                ) {
+                  merge.mutate();
+                }
+              }}
+            >
+              <RotateCcw aria-hidden />
+              Apply
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -335,8 +372,22 @@ export function ChangesPanel({
             <div className="font-mono text-[10px]">
               {diff.data?.hunks.map((hunk) => (
                 <div key={hunk.id}>
-                  <div className="sticky top-0 border-y border-border bg-raised px-2 py-1 text-[9.5px] text-faint">
-                    {hunk.header}
+                  <div className="sticky top-0 flex items-center gap-2 border-y border-border bg-raised px-2 py-1 text-[9.5px] text-faint">
+                    <span className="truncate">{hunk.header}</span>
+                    {fileComments.some(
+                      (comment) => comment.anchor.hunkId === hunk.id,
+                    ) ? (
+                      <button
+                        type="button"
+                        className="ml-auto shrink-0 rounded px-1 text-info hover:bg-hover"
+                        onClick={() => setShowComments((value) => !value)}
+                      >
+                        {fileComments.filter(
+                          (comment) => comment.anchor.hunkId === hunk.id,
+                        ).length}{" "}
+                        {showComments ? "hide" : "comments"}
+                      </button>
+                    ) : null}
                   </div>
                   {hunk.lines.map((line, index) => {
                     const lineNumber = line.newLine ?? line.oldLine ?? 0;
@@ -361,7 +412,7 @@ export function ChangesPanel({
                           });
                         }}
                         className={cn(
-                          "grid w-full grid-cols-[2.5rem_2.5rem_1fr] gap-2 px-2 py-px text-left hover:bg-hover",
+                          "grid w-full grid-cols-[2.5rem_2.5rem_1fr_1rem] gap-2 px-2 py-px text-left hover:bg-hover",
                           lineClass(line),
                         )}
                       >
@@ -374,25 +425,37 @@ export function ChangesPanel({
                         <span className="whitespace-pre-wrap break-all">
                           {line.content || " "}
                         </span>
+                        <span className="text-center text-info" aria-hidden>
+                          {fileComments.some(
+                            (comment) =>
+                              comment.anchor.hunkId === hunk.id &&
+                              comment.anchor.line === lineNumber,
+                          )
+                            ? "●"
+                            : ""}
+                        </span>
                       </button>
                     );
                   })}
-                  {fileComments
-                    .filter((comment) => comment.anchor.hunkId === hunk.id)
-                    .map((comment) => (
-                      <div
-                        key={comment.id}
-                        className="border-y border-info/20 bg-info/5 px-2 py-1.5"
-                      >
-                        <p className="text-[9.5px] text-info">
-                          line {comment.anchor.line} · {comment.author.displayName}
-                          {comment.status === "pending" ? " · pending" : ""}
-                        </p>
-                        <p className="whitespace-pre-wrap text-[10.5px] text-fg">
-                          {comment.body}
-                        </p>
-                      </div>
-                    ))}
+                  {showComments
+                    ? fileComments
+                        .filter((comment) => comment.anchor.hunkId === hunk.id)
+                        .map((comment) => (
+                          <div
+                            key={comment.id}
+                            className="border-y border-info/20 bg-info/5 px-2 py-1.5"
+                          >
+                            <p className="text-[9.5px] text-info">
+                              line {comment.anchor.line} ·{" "}
+                              {comment.author.displayName}
+                              {comment.status === "pending" ? " · pending" : ""}
+                            </p>
+                            <p className="whitespace-pre-wrap text-[10.5px] text-fg">
+                              {comment.body}
+                            </p>
+                          </div>
+                        ))
+                    : null}
                 </div>
               ))}
               {commentTarget ? (

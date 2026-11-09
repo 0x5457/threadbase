@@ -19,6 +19,7 @@ use threadbase_shared::{
     ElicitationAction, ElicitationDto, ElicitationMode, MessageDto, MessageId, MessageRole,
     SubagentDto, SubagentStatus, ThreadEvent, ThreadId, ThreadStatus, TurnId, UserBrief,
 };
+use threadbase_workspace::git;
 use tokio::sync::{mpsc, Mutex};
 use ulid::Ulid;
 
@@ -49,6 +50,43 @@ struct RunState {
     agent_message_id: Option<MessageId>,
     agent_text: String,
     author: Option<UserBrief>,
+}
+
+async fn cancel_pending_elicitations(inner: &Inner, thread_id: &str) {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM elicitations WHERE thread_id = ? AND status = 'pending'",
+    )
+    .bind(thread_id)
+    .fetch_all(&inner.pool)
+    .await
+    .unwrap_or_default();
+    for id in ids {
+        if sqlx::query(
+            "UPDATE elicitations SET status = 'cancelled', responded_at = ? WHERE id = ? AND status = 'pending'",
+        )
+        .bind(now_ms())
+        .bind(&id)
+        .execute(&inner.pool)
+        .await
+        .is_err()
+        {
+            continue;
+        }
+        let _ = inner
+            .events
+            .append(
+                &ThreadId::from(thread_id.to_owned()),
+                Actor::system(),
+                ThreadEvent::ElicitationResolved {
+                    elicitation_id: id.into(),
+                    action: ElicitationAction::Cancel,
+                    response: None,
+                    responded_by: None,
+                },
+                Default::default(),
+            )
+            .await;
+    }
 }
 
 impl AgentManager {
@@ -139,11 +177,30 @@ impl AgentManager {
                 )));
             }
         };
+        let mut reset_context = false;
         let session_id = match saved_session {
-            Some(id) if harness.load_session(&SessionId(id.clone())).await.is_ok() => {
-                Some(SessionId(id))
-            }
-            _ => match harness
+            Some(id) => match harness.load_session(&SessionId(id.clone())).await {
+                Ok(()) => Some(SessionId(id)),
+                Err(_) => {
+                    reset_context = true;
+                    match harness
+                        .new_session(NewSession {
+                            cwd: PathBuf::from(&cwd),
+                            mcp_servers: Vec::new(),
+                        })
+                        .await
+                    {
+                        Ok(id) => Some(id),
+                        Err(error) => {
+                            mark_agent_error(&self.inner, thread_id, &error.to_string()).await;
+                            return Err(ServerError::internal(format!(
+                                "agent session failed: {error}"
+                            )));
+                        }
+                    }
+                }
+            },
+            None => match harness
                 .new_session(NewSession {
                     cwd: PathBuf::from(&cwd),
                     mcp_servers: Vec::new(),
@@ -166,6 +223,23 @@ impl AgentManager {
                 .bind(thread_id)
                 .execute(&self.inner.pool)
                 .await?;
+        }
+        if reset_context {
+            let _ = self
+                .inner
+                .events
+                .append(
+                    &ThreadId::from(thread_id.to_owned()),
+                    Actor::system(),
+                    ThreadEvent::SystemNotice {
+                        level: "warning".to_owned(),
+                        message:
+                            "The previous agent session could not be restored; context was reset."
+                                .to_owned(),
+                    },
+                    Default::default(),
+                )
+                .await;
         }
         let run = Arc::new(Mutex::new(RunState::default()));
         let pump_agent = agent.clone();
@@ -305,6 +379,25 @@ impl AgentManager {
         delivery: Delivery,
     ) -> Result<SendMessageResponse, ServerError> {
         auto_title(&self.inner, thread_id, text).await;
+        if let Some(worktree) = threads::load_row(&self.inner.pool, thread_id)
+            .await
+            .ok()
+            .and_then(|row| row.worktree_path)
+        {
+            if let Ok(snapshot) =
+                git::snapshot_worktree(std::path::Path::new(&worktree), "Threadbase turn snapshot")
+                    .await
+            {
+                let _ = sqlx::query(
+                    "UPDATE threads SET last_turn_sha = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(snapshot)
+                .bind(now_ms())
+                .bind(thread_id)
+                .execute(&self.inner.pool)
+                .await;
+            }
+        }
         let turn_id = TurnId::new();
         let message_id = MessageId::new();
         let author = user_brief(user);
@@ -386,6 +479,7 @@ impl AgentManager {
         )
         .await
         .map_err(|error| ServerError::internal(error.to_string()))?;
+        cancel_pending_elicitations(&self.inner, thread_id).await;
         let _ = crate::queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
         Ok(())
     }

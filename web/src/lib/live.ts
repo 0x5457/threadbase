@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { create } from "zustand";
-import { queryKeys, useMe } from "@/api/queries";
+import { queryKeys, useMe, useWorkspaceState } from "@/api/queries";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
 import type { EventsPageDto } from "@/api/types/EventsPageDto";
 import type { ServerWsMessage } from "@/api/types/ServerWsMessage";
@@ -18,8 +18,9 @@ function websocketUrl(path: string): string {
   return `${protocol}://${window.location.host}${path}`;
 }
 
-function browserNotify(title: string, body: string) {
+export function browserNotify(title: string, body: string, enabled = true) {
   if (
+    enabled &&
     document.hidden &&
     typeof Notification !== "undefined" &&
     Notification.permission === "granted"
@@ -70,6 +71,12 @@ function applyEvent(
 export function useThreadLiveEvents(threadId: string | undefined) {
   const queryClient = useQueryClient();
   const me = useMe();
+  const state = useWorkspaceState();
+  const notifications = state.data?.settings.browserNotifications ?? false;
+  const notificationsRef = useRef(notifications);
+  useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
   const meRef = useRef(me.data);
   useEffect(() => {
     meRef.current = me.data;
@@ -114,7 +121,7 @@ export function useThreadLiveEvents(threadId: string | undefined) {
           case "event": {
             applyEvent(queryClient, threadId, parsed.event);
             if (parsed.event.payload.type === "thread_updated") {
-              void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+              void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
               void queryClient.invalidateQueries({
                 queryKey: queryKeys.threadBundle(threadId),
               });
@@ -129,7 +136,11 @@ export function useThreadLiveEvents(threadId: string | undefined) {
                 meRef.current &&
                 comment.body.includes(`@${meRef.current.user.username}`)
               ) {
-                browserNotify("Mentioned in a thread", comment.body);
+                browserNotify(
+                  "Mentioned in a thread",
+                  comment.body,
+                  notificationsRef.current,
+                );
               }
               void queryClient.invalidateQueries({
                 queryKey: queryKeys.comments(threadId),
@@ -150,6 +161,7 @@ export function useThreadLiveEvents(threadId: string | undefined) {
                 payload.type === "permission_requested"
                   ? payload.approval.title
                   : payload.elicitation.message,
+                notificationsRef.current,
               );
               void queryClient.invalidateQueries({
                 queryKey: queryKeys.inbox("unread"),

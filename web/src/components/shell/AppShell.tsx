@@ -106,6 +106,16 @@ export function AppShell({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isMobileSidebar, navigate]);
 
+  useEffect(() => {
+    const onOpenComments = () => {
+      setDrawerTab("comments");
+      setDrawerOpen(true);
+    };
+    window.addEventListener("threadbase:open-comments", onOpenComments);
+    return () =>
+      window.removeEventListener("threadbase:open-comments", onOpenComments);
+  }, []);
+
   const openDrawer = (tab: DrawerTab = "changes") => {
     setDrawerTab(tab);
     setDrawerOpen(true);

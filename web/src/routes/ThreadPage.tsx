@@ -3,6 +3,7 @@ import {
   Archive,
   ArrowLeft,
   Bot,
+  MoreHorizontal,
   ChevronRight,
   Layers,
   ShieldCheck,
@@ -14,6 +15,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   cancelSubagent,
   decideApproval,
+  deleteThread,
+  forkThread,
   markThreadRead,
   restartAgent,
   respondElicitation,
@@ -42,7 +45,15 @@ import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
 import {
   Badge,
   Button,
+  Dialog,
+  DialogContent,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   EmptyState,
+  Input,
   ErrorState,
   Skeleton,
   buttonVariants,
@@ -196,7 +207,7 @@ export function ThreadPage() {
     }
     void markThreadRead(threadId)
       .then(() => {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
         void queryClient.invalidateQueries({
           queryKey: queryKeys.threadBundle(threadId),
         });
@@ -221,7 +232,7 @@ export function ThreadPage() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.threadBundle(threadId),
       });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.projectThreads(response.thread.projectId, false),
       });
@@ -230,6 +241,75 @@ export function ThreadPage() {
       });
       if (response.thread.status === "archived") {
         navigate(`/p/${response.thread.projectId}`);
+      }
+    },
+  });
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const rename = useMutation({
+    mutationFn: () =>
+      updateThread(threadId ?? "", {
+        title: renameValue.trim(),
+        pinned: null,
+        archived: null,
+        shareLevel: null,
+        model: null,
+        effort: null,
+      }),
+    onSuccess: () => {
+      setRenameOpen(false);
+      if (threadId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadBundle(threadId),
+        });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
+        if (projectId) {
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.projectThreads(projectId, false),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.projectThreads(projectId, true),
+          });
+        }
+      }
+    },
+  });
+  const fork = useMutation({
+    mutationFn: () => forkThread(threadId ?? "", null),
+    onSuccess: (response) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectThreads(response.thread.projectId, false),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectThreads(response.thread.projectId, true),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectOverview(response.thread.projectId),
+      });
+      navigate(
+        `/p/${encodeURIComponent(response.thread.projectId)}/t/${encodeURIComponent(
+          response.thread.id,
+        )}`,
+      );
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteThread(threadId ?? "", true),
+    onSuccess: () => {
+      if (projectId) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.projectThreads(projectId, false),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.projectThreads(projectId, true),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.projectOverview(projectId),
+        });
+        navigate(`/p/${encodeURIComponent(projectId)}`);
       }
     },
   });
@@ -261,7 +341,7 @@ export function ThreadPage() {
         void queryClient.invalidateQueries({
           queryKey: queryKeys.threadBundle(threadId),
         });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
       }
     },
   });
@@ -269,10 +349,12 @@ export function ThreadPage() {
     mutationFn: ({
       approvalId,
       value,
+      note,
     }: {
       approvalId: string;
       value: ApprovalDecision;
-    }) => decideApproval(threadId ?? "", approvalId, value),
+      note?: string;
+    }) => decideApproval(threadId ?? "", approvalId, value, note ?? null),
     onSuccess: () => {
       if (!threadId) {
         return;
@@ -346,8 +428,11 @@ export function ThreadPage() {
   )?.role;
   const canWrite =
     Boolean(me.data?.user.isAdmin) || myRole === "owner" || myRole === "editor";
-  const onDecide = (approvalId: string, value: ApprovalDecision) =>
-    decision.mutate({ approvalId, value });
+  const onDecide = (
+    approvalId: string,
+    value: ApprovalDecision,
+    note?: string,
+  ) => decision.mutate({ approvalId, value, note });
   const selectedSubagent = subagentId
     ? subagents.find((subagent) => subagent.id === subagentId)
     : undefined;
@@ -425,6 +510,34 @@ export function ThreadPage() {
           >
             <Archive className="size-3.5" aria-hidden />
           </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Thread actions"
+                className="rounded p-1 text-faint hover:bg-hover hover:text-fg"
+              >
+                <MoreHorizontal className="size-3.5" aria-hidden />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-40">
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setRenameValue(thread.title);
+                    setRenameOpen(true);
+                  }}
+                >
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => fork.mutate()}>
+                  Fork thread
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setDeleteOpen(true)}>
+                  Delete thread…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+          </DropdownMenu>
           {thread.pendingApprovals > 0 ? (
             <Badge variant="warning" size="sm">
               <ShieldCheck className="size-2.5" aria-hidden />
@@ -468,9 +581,70 @@ export function ThreadPage() {
               setCommentAnchor(anchor);
               setCommentOpen(true);
             }}
+            onOpenSubagent={(subagentId) => {
+              if (!projectId || !threadId) {
+                return;
+              }
+              navigate(
+                `/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
+                  threadId,
+                )}/s/${encodeURIComponent(subagentId)}`,
+              );
+            }}
           />
         )}
       </div>
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent
+          title="Rename thread"
+          footer={
+            <>
+              <Button size="sm" variant="ghost" onClick={() => setRenameOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                loading={rename.isPending}
+                disabled={!renameValue.trim()}
+                onClick={() => rename.mutate()}
+              >
+                Save
+              </Button>
+            </>
+          }
+        >
+          <Input
+            autoFocus
+            aria-label="Thread title"
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+          />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent
+          title="Delete thread?"
+          description="The worktree and all uncommitted changes will be removed. This cannot be undone."
+          footer={
+            <>
+              <Button size="sm" variant="ghost" onClick={() => setDeleteOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                loading={remove.isPending}
+                onClick={() => remove.mutate()}
+              >
+                Delete
+              </Button>
+            </>
+          }
+        >
+          <p className="sr-only">Delete this thread and its worktree.</p>
+        </DialogContent>
+      </Dialog>
       {threadId && selectionTarget ? (
         <SelectionComment
           threadId={threadId}

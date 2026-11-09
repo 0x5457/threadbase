@@ -5,11 +5,15 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 use threadbase_server::auth::CurrentUser;
-use threadbase_server::{auth, db, diff, projects, threads};
+use threadbase_server::events::EventStore;
+use threadbase_server::{auth, comments, db, diff, projects, threads};
 use threadbase_shared::api::{
-    CreateProjectRequest, CreateThreadRequest, ForkThreadRequest, SetupRequest, UpdateThreadRequest,
+    CreateCommentRequest, CreateProjectRequest, CreateThreadRequest, ForkThreadRequest,
+    SetupRequest, UpdateThreadRequest,
 };
-use threadbase_shared::{now_ms, BaselineDto, BaselineKind, ErrorCode, Role, ThreadStatus};
+use threadbase_shared::{
+    now_ms, BaselineDto, BaselineKind, CommentAnchor, ErrorCode, Role, ThreadStatus,
+};
 use tokio::process::Command as TokioCommand;
 
 struct Fixture {
@@ -402,4 +406,68 @@ async fn git_stdout(path: &Path, args: &[&str]) -> String {
         .unwrap();
     assert!(output.status.success());
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[tokio::test]
+async fn diff_comment_drift_and_revert_to_base() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    let worktree = Path::new(thread.worktree_path.as_deref().unwrap());
+    tokio::fs::write(worktree.join("README.md"), "one\nTWO\n")
+        .await
+        .unwrap();
+    let row = threads::load_row(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let base = BaselineDto {
+        kind: BaselineKind::BaseBranch,
+        commit: None,
+    };
+    let file = diff::file_diff(&row, &base, "README.md").await.unwrap();
+    let hunk = file.hunks.first().expect("a changed hunk");
+    let events = EventStore::new(fixture.pool.clone());
+    let comment = comments::create(
+        &fixture.pool,
+        &events,
+        thread.id.as_str(),
+        &fixture.current,
+        &CreateCommentRequest {
+            body: "This line needs work".into(),
+            anchor: CommentAnchor::Diff {
+                path: "README.md".into(),
+                hunk_id: hunk.id.clone(),
+                line: 2,
+                context_hash: Some(hunk.context_hash.clone()),
+            },
+            parent_id: None,
+            send: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!comment.anchor_changed);
+
+    // A new line before the hunk changes the header and therefore the hash.
+    tokio::fs::write(worktree.join("README.md"), "zero\none\nTWO\n")
+        .await
+        .unwrap();
+    let listed = comments::list_for_thread(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let drifted = listed.iter().find(|entry| entry.id == comment.id).unwrap();
+    assert!(drifted.anchor_changed);
+    assert!(matches!(drifted.anchor, CommentAnchor::File { .. }));
+
+    tokio::fs::write(worktree.join("untracked.txt"), "clean me\n")
+        .await
+        .unwrap();
+    diff::revert_to_base(&row).await.unwrap();
+    assert_eq!(
+        tokio::fs::read_to_string(worktree.join("README.md"))
+            .await
+            .unwrap(),
+        "one\ntwo\n"
+    );
+    assert!(!worktree.join("untracked.txt").exists());
 }

@@ -47,6 +47,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/threads/{thread_id}/seen", post(mark_seen))
         .route("/api/threads/{thread_id}/merge-back", post(merge_back))
+        .route("/api/threads/{thread_id}/revert", post(revert_thread))
 }
 
 async fn list_projects(
@@ -255,6 +256,32 @@ struct FileDiffQuery {
     kind: Option<String>,
     commit: Option<String>,
     path: String,
+}
+
+async fn revert_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    diff::revert_to_base(&row).await?;
+    sqlx::query("UPDATE threads SET last_turn_sha = base_sha, updated_at = ? WHERE id = ?")
+        .bind(threadbase_shared::now_ms())
+        .bind(&thread_id)
+        .execute(&state.pool)
+        .await?;
+    crate::auth::audit(
+        &state.pool,
+        Some(user.user.id.as_str()),
+        "thread.reverted",
+        Some("thread"),
+        Some(&thread_id),
+        None,
+        None,
+    )
+    .await;
+    Ok(Json(OkResponse { ok: true }))
 }
 
 async fn thread_changes(

@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   ChevronLeft,
   FolderGit2,
   GitBranch,
@@ -17,12 +18,19 @@ import {
   AvatarStack,
   Badge,
   Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
   EmptyState,
   ErrorState,
+  Input,
   Skeleton,
 } from "@/components/ui";
 import { formatRelativeTime } from "@/lib/format";
-import type { WorkspaceOutletContext } from "./workspace-context";
+import type {
+  NewThreadOptions,
+  WorkspaceOutletContext,
+} from "./workspace-context";
 
 function threadPath(thread: ThreadDto): string {
   return `/p/${encodeURIComponent(thread.projectId)}/t/${encodeURIComponent(
@@ -92,6 +100,10 @@ export function ProjectPage() {
   const { openNewThread } = useOutletContext<WorkspaceOutletContext>();
   const navigate = useNavigate();
   const [showArchived, setShowArchived] = useState(false);
+  const [newAgent, setNewAgent] = useState("");
+  const [newModel, setNewModel] = useState("");
+  const [newBranch, setNewBranch] = useState("");
+  const [newThreadOpen, setNewThreadOpen] = useState(false);
   const project = useProject(projectId);
   const threads = useProjectThreads(projectId, showArchived);
   const overview = useProjectOverview(projectId);
@@ -230,14 +242,81 @@ export function ProjectPage() {
               <Archive aria-hidden />
               {showArchived ? "Hide archived" : "Archived"}
             </Button>
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => openNewThread(data.id)}
-            >
-              <Plus aria-hidden />
-              New thread
-            </Button>
+            <div className="flex items-center">
+              <Button
+                variant="primary"
+                size="md"
+                className="rounded-r-none"
+                onClick={() => openNewThread(data.id)}
+              >
+                <Plus aria-hidden />
+                New thread
+              </Button>
+              <DropdownMenu open={newThreadOpen} onOpenChange={setNewThreadOpen}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    className="rounded-l-none border-l border-white/20 px-2"
+                    aria-label="New thread options"
+                  >
+                    <ChevronDown className="size-3.5" aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64 p-2">
+                  <div className="space-y-2">
+                    <label className="block text-[10.5px] text-muted">
+                      Agent
+                      <select
+                        value={newAgent}
+                        onChange={(event) => setNewAgent(event.target.value)}
+                        className="mt-1 h-7 w-full rounded-md border border-border bg-surface px-2 text-[11px] text-fg"
+                      >
+                        <option value="">Default</option>
+                        <option value="codex">Codex</option>
+                        <option value="claude">Claude Code</option>
+                        <option value="opencode">opencode</option>
+                        <option value="pi">pi</option>
+                      </select>
+                    </label>
+                    <label className="block text-[10.5px] text-muted">
+                      Model
+                      <Input
+                        value={newModel}
+                        onChange={(event) => setNewModel(event.target.value)}
+                        placeholder="Agent default"
+                        className="mt-1 h-7 text-[11px]"
+                      />
+                    </label>
+                    <label className="block text-[10.5px] text-muted">
+                      Base branch
+                      <Input
+                        value={newBranch}
+                        onChange={(event) => setNewBranch(event.target.value)}
+                        placeholder={data.defaultBranch}
+                        className="mt-1 h-7 font-mono text-[11px]"
+                      />
+                    </label>
+                    <Button
+                      className="w-full"
+                      size="sm"
+                      variant="primary"
+                      onClick={() => {
+                        const options: NewThreadOptions = {
+                          agent: newAgent || null,
+                          model: newModel || null,
+                          baseBranch: newBranch || null,
+                        };
+                        openNewThread(data.id, options);
+                        setNewThreadOpen(false);
+                      }}
+                    >
+                      Create
+                    </Button>
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         </div>
 

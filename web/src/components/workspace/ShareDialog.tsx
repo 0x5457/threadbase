@@ -41,7 +41,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
     void queryClient.invalidateQueries({
       queryKey: queryKeys.threadBundle(thread.id),
     });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
   };
   const level = useMutation({
     mutationFn: (value: "invite_only" | "workspace") =>

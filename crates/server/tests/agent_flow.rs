@@ -484,3 +484,125 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
     .unwrap();
     assert_eq!(completed, 0, "viewer must not unblock the agent tool");
 }
+
+#[tokio::test]
+async fn cancelling_a_turn_cancels_pending_elicitations() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO elicitations(id, thread_id, agent, message, mode, schema_json, blocking, status, created_at)
+         VALUES('elic-cancel', ?, 'codex', 'Continue?', 'form', '{}', 1, 'pending', ?)",
+    )
+    .bind(fixture.thread.id.as_str())
+    .bind(threadbase_shared::now_ms())
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+    fixture
+        .state
+        .agents
+        .cancel(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM elicitations WHERE id = 'elic-cancel'")
+            .fetch_one(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "cancelled");
+    let resolved: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM events WHERE thread_id = ? AND kind = 'elicitation_resolved'",
+    )
+    .bind(fixture.thread.id.as_str())
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(resolved, 1);
+}
+
+#[tokio::test]
+async fn failed_session_restore_emits_a_context_reset_notice() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    sqlx::query("UPDATE agent_bindings SET session_id = 'expired' WHERE thread_id = ?")
+        .bind(fixture.thread.id.as_str())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    let manager =
+        agents::AgentManager::new(fixture.state.pool.clone(), fixture.state.events.clone());
+    manager
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let notice: Option<String> = sqlx::query_scalar(
+        "SELECT payload_json FROM events WHERE thread_id = ? AND kind = 'system_notice'
+         AND payload_json LIKE '%context was reset%' LIMIT 1",
+    )
+    .bind(fixture.thread.id.as_str())
+    .fetch_optional(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert!(notice.is_some());
+}
+
+#[tokio::test]
+async fn turn_start_snapshots_the_worktree_for_last_turn_baseline() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let worktree = PathBuf::from(
+        threads::load_row(&fixture.state.pool, fixture.thread.id.as_str())
+            .await
+            .unwrap()
+            .worktree_path
+            .unwrap(),
+    );
+    std::fs::write(worktree.join("README.md"), "changed before turn\n").unwrap();
+    let base = threads::load_row(&fixture.state.pool, fixture.thread.id.as_str())
+        .await
+        .unwrap()
+        .base_sha
+        .unwrap();
+    fixture
+        .state
+        .agents
+        .send(
+            fixture.thread.id.as_str(),
+            &fixture.user,
+            "stream",
+            Some(threadbase_shared::api::DeliveryMode::Auto),
+        )
+        .await
+        .unwrap();
+    wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+    let row = threads::load_row(&fixture.state.pool, fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&worktree)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+    assert_eq!(row.last_turn_sha.as_deref(), Some(head.as_str()));
+    assert_ne!(row.last_turn_sha.as_deref(), Some(base.as_str()));
+}

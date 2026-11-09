@@ -239,6 +239,24 @@ pub async fn worktree_patch(worktree: &Path, base_sha: Option<&str>) -> Result<S
     }
 }
 
+/// Snapshot the current worktree as a commit and return its SHA. If there is
+/// nothing to commit, return the current HEAD. This is used at turn start so
+/// "Last turn" compares against the state before the agent started editing.
+pub async fn snapshot_worktree(root: &Path, message: &str) -> Result<String, GitError> {
+    add_all(root).await?;
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["diff", "--cached", "--quiet"])
+        .status()
+        .await?;
+    if status.success() {
+        return head_sha(root).await;
+    }
+    git(root, &["commit", "-m", message]).await?;
+    head_sha(root).await
+}
+
 pub async fn commit_all(root: &Path, message: &str) -> Result<String, GitError> {
     add_all(root).await?;
     git(root, &["commit", "-m", message]).await?;

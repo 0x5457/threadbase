@@ -76,6 +76,8 @@ export const endpoints = {
   restartAgent: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/restart`,
   cancelTurn: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/cancel`,
+  forkThread: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/fork`,
   agentConfig: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/agent-config`,
   directories: (path: string) =>
@@ -223,6 +225,26 @@ export function fetchDirectories(path: string): Promise<DirectoryListingDto> {
   return api<DirectoryListingDto>(endpoints.directories(path));
 }
 
+export function forkThread(
+  threadId: ThreadId,
+  title: string | null = null,
+): Promise<ThreadResponse> {
+  return api<ThreadResponse>(endpoints.forkThread(threadId), {
+    method: "POST",
+    body: { title },
+  });
+}
+
+export function deleteThread(
+  threadId: ThreadId,
+  confirm: boolean,
+): Promise<OkResponse> {
+  return api<OkResponse>(
+    `/api/threads/${segment(threadId)}?confirm=${confirm ? "true" : "false"}`,
+    { method: "DELETE" },
+  );
+}
+
 export function cancelTurn(threadId: ThreadId): Promise<OkResponse> {
   return api<OkResponse>(endpoints.cancelTurn(threadId), { method: "POST" });
 }
@@ -308,6 +330,12 @@ export function setSeen(
   return api<OkResponse>(endpoints.markSeen(threadId), {
     method: "POST",
     body,
+  });
+}
+
+export function revertThread(threadId: ThreadId): Promise<OkResponse> {
+  return api<OkResponse>(`/api/threads/${segment(threadId)}/revert`, {
+    method: "POST",
   });
 }
 
