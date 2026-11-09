@@ -84,6 +84,19 @@ pub struct ResolvedProfile {
 /// Prefer a locally installed adapter; fall back to a pinned npx package.
 #[must_use]
 pub fn resolve(profile: &AgentProfile) -> ResolvedProfile {
+    if let Ok(command) = std::env::var("THREADBASE_ACP_COMMAND") {
+        if !command.trim().is_empty() {
+            let args = std::env::var("THREADBASE_ACP_ARGS")
+                .map(|value| value.split_whitespace().map(ToOwned::to_owned).collect())
+                .unwrap_or_default();
+            return ResolvedProfile {
+                profile: *profile,
+                program: command,
+                args,
+                via_npx: false,
+            };
+        }
+    }
     if let Some(path) = find_in_path(profile.command) {
         return ResolvedProfile {
             profile: *profile,

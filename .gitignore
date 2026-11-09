@@ -20,3 +20,7 @@ skills-lock.json
 
 # Agent goal/session state
 .pi/
+
+# Playwright artifacts
+web/playwright-report/
+web/test-results/

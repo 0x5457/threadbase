@@ -1,0 +1,298 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, Send, Users } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { WebsocketProvider } from "y-websocket";
+import * as Y from "yjs";
+import { sendMessage } from "@/api/endpoints";
+import { queryKeys, useMe } from "@/api/queries";
+import type { DeliveryMode } from "@/api/types/DeliveryMode";
+import { Button } from "@/components/ui";
+import { cn } from "@/lib/utils";
+
+interface ComposerProps {
+  threadId: string;
+  canWrite: boolean;
+  threadStatus: string;
+}
+
+function websocketUrl(): string {
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${protocol}://${window.location.host}/ws/drafts`;
+}
+
+function randomId(): string {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  );
+}
+
+export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
+  const me = useMe();
+  const queryClient = useQueryClient();
+  const { doc, provider } = useMemo(() => {
+    const document = new Y.Doc();
+    const connection = new WebsocketProvider(websocketUrl(), threadId, document, {
+      connect: true,
+    });
+    return { doc: document, provider: connection };
+  }, [threadId]);
+  const [synced, setSynced] = useState(false);
+  const [status, setStatus] = useState<string>("connecting");
+  const [version, setVersion] = useState(0);
+  const blocks = doc.getArray<Y.Map<unknown>>("blocks");
+
+  useEffect(() => {
+    const onSync = (isSynced: boolean) => setSynced(isSynced);
+    const onStatus = ({ status: next }: { status: string }) => setStatus(next);
+    provider.on("sync", onSync);
+    provider.on("status", onStatus);
+    return () => {
+      provider.off("sync", onSync);
+      provider.off("status", onStatus);
+      provider.destroy();
+      doc.destroy();
+    };
+  }, [doc, provider]);
+
+  useEffect(() => {
+    const refresh = () => setVersion((current) => current + 1);
+    blocks.observeDeep(refresh);
+    return () => blocks.unobserveDeep(refresh);
+  }, [blocks]);
+
+  const userId = me.data?.user.id ?? "";
+  useEffect(() => {
+    if (!userId || !synced) {
+      return;
+    }
+    const existing = blocks
+      .toArray()
+      .find((block) => block.get("author") === userId);
+    if (existing) {
+      return;
+    }
+    doc.transact(() => {
+      const block = new Y.Map<unknown>();
+      block.set("id", randomId());
+      block.set("author", userId);
+      block.set("createdAt", Date.now());
+      block.set("text", new Y.Text(""));
+      blocks.push([block]);
+    });
+  }, [blocks, doc, synced, userId, version]);
+
+  const list = blocks.toArray();
+  const hasText = list.some((block) => {
+    const text = block.get("text");
+    return text instanceof Y.Text && text.toString().trim().length > 0;
+  });
+
+  const send = useMutation({
+    mutationFn: (delivery: DeliveryMode | null) =>
+      sendMessage(threadId, {
+        text: "",
+        delivery,
+        fromDraft: true,
+      }),
+    onSuccess: (response) => {
+      if (response.delivery === "queued") {
+        toast.success(
+          response.queuePosition
+            ? `Queued at position ${response.queuePosition}`
+            : "Queued",
+        );
+      } else {
+        toast.success(
+          response.delivery === "stopped_and_sent"
+            ? "Stopped the previous turn and sent"
+            : "Sent",
+        );
+      }
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadEvents(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadBundle(threadId),
+      });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+  });
+
+  if (!canWrite) {
+    return (
+      <div className="border-t border-border bg-panel px-4 py-3 text-center text-[11px] text-muted">
+        <Users className="mr-1.5 inline size-3.5" aria-hidden />
+        You are viewing this thread read-only. Ask an owner for edit access.
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-border bg-panel/80 px-3 py-2.5">
+      <div className="mx-auto w-full max-w-3xl">
+        <div className="rounded-lg border border-border bg-surface">
+          <div className="max-h-64 overflow-y-auto px-3 pt-2">
+            {list.length === 0 ? (
+              <p className="py-2 text-[12px] text-faint">
+                Start typing to add a shared draft block…
+              </p>
+            ) : (
+              list.map((block) => (
+                <DraftBlockEditor
+                  key={String(block.get("id"))}
+                  block={block}
+                  isMine={block.get("author") === userId}
+                />
+              ))
+            )}
+          </div>
+          <div className="flex items-center gap-2 border-t border-border/70 px-2 py-1.5">
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                status === "connected" && synced
+                  ? "bg-success"
+                  : status === "connected"
+                    ? "bg-warning"
+                    : "bg-danger",
+              )}
+              title={
+                status === "connected" && synced
+                  ? "Drafts synced"
+                  : "Draft connection unavailable"
+              }
+            />
+            <span className="text-[10px] text-faint">
+              {threadStatus === "running"
+                ? "Agent is running · input will steer or queue"
+                : "Shared draft · agent sees it only after send"}
+            </span>
+            <div className="ml-auto flex items-center">
+              {threadStatus === "running" && synced ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  loading={send.isPending}
+                  disabled={!hasText}
+                  onClick={() => send.mutate("stop_and_send")}
+                >
+                  Stop & send
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="ml-1"
+                loading={send.isPending}
+                disabled={!synced || !hasText}
+                onClick={() => send.mutate("auto")}
+              >
+                <Send aria-hidden />
+                Send
+              </Button>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="More send options"
+                    disabled={!synced || !hasText || send.isPending}
+                  >
+                    <ChevronDown aria-hidden />
+                  </Button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    className="z-50 min-w-44 rounded-lg border border-border bg-panel p-1 shadow-xl"
+                    sideOffset={6}
+                    align="end"
+                  >
+                    <DropdownMenu.Item
+                      className="cursor-pointer rounded px-2 py-1.5 text-[12px] outline-none data-[highlighted]:bg-hover"
+                      onSelect={() => send.mutate("queue")}
+                    >
+                      Queue after the current turn
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      className="cursor-pointer rounded px-2 py-1.5 text-[12px] outline-none data-[highlighted]:bg-hover"
+                      onSelect={() => send.mutate("inject")}
+                    >
+                      Inject into current turn
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DraftBlockEditor({
+  block,
+  isMine,
+}: {
+  block: Y.Map<unknown>;
+  isMine: boolean;
+}) {
+  const text = block.get("text");
+  const textRef = text instanceof Y.Text ? text : null;
+  const [value, setValue] = useState(textRef?.toString() ?? "");
+  const area = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!textRef) {
+      return;
+    }
+    const refresh = () => setValue(textRef.toString());
+    textRef.observe(refresh);
+    refresh();
+    return () => textRef.unobserve(refresh);
+  }, [textRef]);
+
+  if (!textRef) {
+    return null;
+  }
+
+  const update = (next: string) => {
+    setValue(next);
+    const cursor = area.current?.selectionStart ?? next.length;
+    textRef.doc?.transact(() => {
+      textRef.delete(0, textRef.length);
+      textRef.insert(0, next);
+    });
+    requestAnimationFrame(() => {
+      area.current?.setSelectionRange(cursor, cursor);
+    });
+  };
+
+  return (
+    <div className="group py-1">
+      <div className="flex items-center gap-1.5 text-[9.5px] uppercase tracking-wide text-faint">
+        <span className={cn("size-1.5 rounded-full", isMine ? "bg-accent" : "bg-muted")} />
+        {isMine ? "You" : String(block.get("author") ?? "member")}
+      </div>
+      <textarea
+        ref={area}
+        value={value}
+        rows={Math.max(1, Math.min(6, value.split("\n").length))}
+        onChange={(event) => update(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+          }
+        }}
+        placeholder={isMine ? "Write a message…" : "Edit this shared draft…"}
+        className="mt-0.5 w-full resize-none bg-transparent text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint"
+      />
+    </div>
+  );
+}

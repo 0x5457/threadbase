@@ -15,7 +15,7 @@ use axum::Json;
 use axum::Router;
 use serde::Serialize;
 use std::net::SocketAddr;
-use threadbase_shared::api::{LoginRequest, SetupRequest, UpdateUserRequest};
+use threadbase_shared::api::{CreateUserRequest, LoginRequest, SetupRequest, UpdateUserRequest};
 use threadbase_shared::{ApiError, AuthMeDto, AuthStatusResponse, LoginResponse, UserListResponse};
 
 pub fn router() -> Router<AppState> {
@@ -26,7 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/logout-all", post(logout_all))
         .route("/api/auth/me", get(me))
-        .route("/api/auth/users", get(list_users))
+        .route("/api/auth/users", get(list_users).post(create_user))
         .route("/api/auth/users/{user_id}", patch(update_user))
 }
 
@@ -181,6 +181,28 @@ async fn list_users(
     user: CurrentUser,
 ) -> Result<Json<UserListResponse>, ServerError> {
     user.require_admin()?;
+    Ok(Json(UserListResponse {
+        users: auth::list_users(&state.pool).await?,
+    }))
+}
+
+async fn create_user(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<CreateUserRequest>,
+) -> Result<Json<UserListResponse>, ServerError> {
+    user.require_admin()?;
+    let created = auth::create_local_user(&state.pool, &request).await?;
+    auth::audit(
+        &state.pool,
+        Some(user.user.id.as_str()),
+        "user.created",
+        Some("user"),
+        Some(created.id.as_str()),
+        None,
+        None,
+    )
+    .await;
     Ok(Json(UserListResponse {
         users: auth::list_users(&state.pool).await?,
     }))

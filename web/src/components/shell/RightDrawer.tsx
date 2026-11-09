@@ -1,17 +1,18 @@
 import {
   AlertCircle,
-  Check,
   FileCode2,
   GitCompareArrows,
+  MessageSquare,
   RefreshCw,
   ShieldCheck,
   X,
 } from "lucide-react";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
-import type { FileChangeDto } from "@/api/types/FileChangeDto";
-import type { FileStatus } from "@/api/types/FileStatus";
 import type { ThreadBundleDto } from "@/api/types/ThreadBundleDto";
+import { ChangesPanel } from "@/components/thread/ChangesPanel";
+import { CommentsPanel } from "@/components/thread/CommentsPanel";
+import { FilesPanel } from "@/components/thread/FilesPanel";
 import {
   Badge,
   Button,
@@ -28,7 +29,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
-export type DrawerTab = "changes" | "approvals" | "files";
+export type DrawerTab = "changes" | "approvals" | "comments" | "files";
 
 export interface RightDrawerProps {
   open: boolean;
@@ -42,72 +43,8 @@ export interface RightDrawerProps {
   decidingApprovalId?: string | null;
   overlay?: boolean;
   onDecideApproval?: (approval: ApprovalDto, decision: ApprovalDecision) => void;
-}
-
-function fileStatusLabel(status: FileStatus): string {
-  switch (status) {
-    case "added":
-      return "A";
-    case "modified":
-      return "M";
-    case "deleted":
-      return "D";
-    case "renamed":
-      return "R";
-    case "untracked":
-      return "U";
-  }
-}
-
-function fileStatusClass(status: FileStatus): string {
-  switch (status) {
-    case "added":
-    case "untracked":
-      return "border-success/30 bg-success/10 text-success";
-    case "deleted":
-      return "border-danger/30 bg-danger/10 text-danger";
-    case "renamed":
-      return "border-info/30 bg-info/10 text-info";
-    default:
-      return "border-border bg-raised text-muted";
-  }
-}
-
-function FileRow({ file }: { file: FileChangeDto }) {
-  return (
-    <li className="flex items-center gap-2 border-b border-border/60 px-3 py-2 last:border-b-0">
-      <span
-        className={cn(
-          "flex size-5 shrink-0 items-center justify-center rounded border font-mono text-[10px] font-semibold",
-          fileStatusClass(file.status),
-        )}
-        title={file.status}
-      >
-        {fileStatusLabel(file.status)}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-[11px] text-fg">{file.path}</p>
-        {file.oldPath ? (
-          <p className="truncate font-mono text-[10px] text-faint">
-            from {file.oldPath}
-          </p>
-        ) : null}
-      </div>
-      {file.binary ? (
-        <Badge size="sm" variant="outline">
-          binary
-        </Badge>
-      ) : (
-        <span className="shrink-0 font-mono text-[10px] tabular-nums">
-          <span className="text-success">+{file.additions}</span>{" "}
-          <span className="text-danger">−{file.deletions}</span>
-        </span>
-      )}
-      {file.seen ? (
-        <Check className="size-3 shrink-0 text-success" aria-label="Seen" />
-      ) : null}
-    </li>
-  );
+  threadId?: string;
+  canWrite?: boolean;
 }
 
 function DrawerSkeleton() {
@@ -133,6 +70,8 @@ export function RightDrawer({
   decidingApprovalId,
   overlay = true,
   onDecideApproval,
+  threadId,
+  canWrite = false,
 }: RightDrawerProps) {
   if (!open) {
     return null;
@@ -198,6 +137,10 @@ export function RightDrawer({
                 </Badge>
               ) : null}
             </TabsTrigger>
+            <TabsTrigger value="comments" className="flex-1 justify-center">
+              <MessageSquare className="size-3" aria-hidden />
+              Comments
+            </TabsTrigger>
             <TabsTrigger value="files" className="flex-1 justify-center">
               <FileCode2 className="size-3" aria-hidden />
               Files
@@ -212,78 +155,15 @@ export function RightDrawer({
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <TabsContent value="changes">
-            {loading ? (
-              <DrawerSkeleton />
-            ) : error ? (
-              <ErrorState
-                error={error}
-                title="Cannot load changes"
-                onRetry={onRetry}
-                compact
-              />
-            ) : !bundle ? (
+            {threadId ? (
+              <ChangesPanel threadId={threadId} canWrite={canWrite} />
+            ) : (
               <EmptyState
                 icon={GitCompareArrows}
                 title="No thread open"
                 description="Open a thread to review its changes."
                 compact
               />
-            ) : files.length === 0 ? (
-              <EmptyState
-                icon={GitCompareArrows}
-                title="No file changes yet."
-                description="Changes appear here after the agent edits files."
-                compact
-              />
-            ) : (
-              <div>
-                <div className="space-y-2 border-b border-border px-3 py-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] uppercase tracking-wider text-faint">
-                      Baseline
-                    </span>
-                    <span className="truncate font-mono text-[10.5px] text-fg">
-                      {changes?.baseLabel}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 text-[11px]">
-                    <span className="text-muted">
-                      {changes?.stats.files ?? files.length} files
-                    </span>
-                    <span className="font-mono">
-                      <span className="text-success">+{totalAdditions}</span>{" "}
-                      <span className="text-danger">−{totalDeletions}</span>
-                    </span>
-                  </div>
-                  {changes && changes.stats.total > 0 ? (
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-[10px] text-faint">
-                        <span>Seen</span>
-                        <span>
-                          {changes.stats.seen}/{changes.stats.total}
-                        </span>
-                      </div>
-                      <div className="h-1 overflow-hidden rounded-full bg-raised">
-                        <div
-                          className="h-full rounded-full bg-accent"
-                          style={{
-                            width: `${Math.round(
-                              (changes.stats.seen /
-                                Math.max(1, changes.stats.total)) *
-                                100,
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-                <ul>
-                  {files.map((file) => (
-                    <FileRow key={file.path} file={file} />
-                  ))}
-                </ul>
-              </div>
             )}
           </TabsContent>
 
@@ -381,29 +261,29 @@ export function RightDrawer({
             )}
           </TabsContent>
 
-          <TabsContent value="files">
-            {loading ? (
-              <DrawerSkeleton />
-            ) : error ? (
-              <ErrorState
-                error={error}
-                title="Cannot load files"
-                onRetry={onRetry}
+          <TabsContent value="comments">
+            {threadId ? (
+              <CommentsPanel threadId={threadId} canWrite={canWrite} />
+            ) : (
+              <EmptyState
+                icon={MessageSquare}
+                title="No thread open"
+                description="Open a thread to read or leave comments."
                 compact
               />
-            ) : files.length === 0 ? (
+            )}
+          </TabsContent>
+
+          <TabsContent value="files">
+            {threadId ? (
+              <FilesPanel threadId={threadId} />
+            ) : (
               <EmptyState
                 icon={FileCode2}
-                title="No changed files"
-                description="Files touched by this thread will be listed here."
+                title="No thread open"
+                description="Open a thread to browse its worktree."
                 compact
               />
-            ) : (
-              <ul>
-                {files.map((file) => (
-                  <FileRow key={file.path} file={file} />
-                ))}
-              </ul>
             )}
           </TabsContent>
         </div>

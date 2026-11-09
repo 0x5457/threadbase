@@ -37,7 +37,22 @@ async fn send_message(
     Json(request): Json<SendMessageRequest>,
 ) -> Result<Json<SendMessageResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
-    let text = request.text.trim();
+    let text = if request.from_draft.unwrap_or(false) {
+        let blocks = state
+            .drafts
+            .take_blocks(&thread_id)
+            .await
+            .map_err(|error| ServerError::internal(error.to_string()))?;
+        blocks
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_owned()
+    } else {
+        request.text.trim().to_owned()
+    };
     if text.is_empty() {
         return Err(ServerError(ApiError::validation("message cannot be empty")));
     }
@@ -47,7 +62,7 @@ async fn send_message(
     Ok(Json(
         state
             .agents
-            .send(&thread_id, &user, request.text.as_str(), request.delivery)
+            .send(&thread_id, &user, text.as_str(), request.delivery)
             .await?,
     ))
 }

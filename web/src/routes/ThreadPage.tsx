@@ -8,11 +8,21 @@ import {
   ShieldCheck,
   WifiOff,
 } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { useThreadBundle, useThreadEvents } from "@/api/queries";
+import { decideApproval, respondElicitation } from "@/api/endpoints";
+import {
+  queryKeys,
+  useMe,
+  useThreadBundle,
+  useThreadEvents,
+} from "@/api/queries";
+import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
+import type { ElicitationAction } from "@/api/types/ElicitationAction";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
 import type { SubagentDto } from "@/api/types/SubagentDto";
+import { Composer } from "@/components/thread/Composer";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
 import {
@@ -23,6 +33,7 @@ import {
   buttonVariants,
 } from "@/components/ui";
 import { useOnlineStatus } from "@/lib/hooks";
+import { useThreadLiveEvents } from "@/lib/live";
 import { formatTokenCount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -44,8 +55,59 @@ function subagentStatus(status: SubagentDto["status"]) {
 export function ThreadPage() {
   const { projectId, threadId, subagentId } = useParams();
   const online = useOnlineStatus();
+  const me = useMe();
+  const queryClient = useQueryClient();
   const bundle = useThreadBundle(threadId);
   const events = useThreadEvents(threadId);
+  useThreadLiveEvents(threadId);
+  const elicitation = useMutation({
+    mutationFn: ({
+      elicitationId,
+      action,
+      values,
+    }: {
+      elicitationId: string;
+      action: ElicitationAction;
+      values: Record<string, unknown>;
+    }) => respondElicitation(elicitationId, action, values),
+    onSuccess: () => {
+      if (!threadId) {
+        return;
+      }
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadEvents(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadBundle(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.inbox("unread"),
+      });
+    },
+  });
+  const decision = useMutation({
+    mutationFn: ({
+      approvalId,
+      value,
+    }: {
+      approvalId: string;
+      value: ApprovalDecision;
+    }) => decideApproval(threadId ?? "", approvalId, value),
+    onSuccess: () => {
+      if (!threadId) {
+        return;
+      }
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadBundle(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadEvents(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.inbox("unread"),
+      });
+    },
+  });
 
   if (!projectId || !threadId) {
     return (
@@ -98,7 +160,14 @@ export function ThreadPage() {
     );
   }
 
-  const { thread, project, approvals, subagents } = bundle.data.bundle;
+  const { thread, project, approvals, subagents, members } = bundle.data.bundle;
+  const myRole = members.find(
+    (member) => member.user.id === me.data?.user.id,
+  )?.role;
+  const canWrite =
+    Boolean(me.data?.user.isAdmin) || myRole === "owner" || myRole === "editor";
+  const onDecide = (approvalId: string, value: ApprovalDecision) =>
+    decision.mutate({ approvalId, value });
   const selectedSubagent = subagentId
     ? subagents.find((subagent) => subagent.id === subagentId)
     : undefined;
@@ -198,9 +267,20 @@ export function ThreadPage() {
             loading={events.isLoading}
             error={events.error}
             onRetry={() => void events.refetch()}
+            onDecide={onDecide}
+            onRespondElicitation={(elicitationId, action, values) =>
+              elicitation.mutate({ elicitationId, action, values })
+            }
           />
         )}
       </div>
+      {selectedSubagent ? null : (
+        <Composer
+          threadId={thread.id}
+          canWrite={canWrite}
+          threadStatus={thread.status}
+        />
+      )}
     </div>
   );
 }

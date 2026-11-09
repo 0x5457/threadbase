@@ -231,6 +231,40 @@ pub async fn setup_admin(
         .ok_or_else(|| ServerError::internal("created admin could not be loaded"))
 }
 
+pub async fn create_local_user(
+    pool: &SqlitePool,
+    request: &threadbase_shared::api::CreateUserRequest,
+) -> Result<UserDto, ServerError> {
+    validate_username(&request.username)?;
+    validate_password(&request.password)?;
+    let display_name = request.display_name.trim();
+    if display_name.is_empty() || display_name.len() > 80 {
+        return Err(ServerError(ApiError::validation(
+            "display name must be between 1 and 80 characters",
+        )));
+    }
+    let id = Ulid::new().to_string();
+    let hash = hash_password(&request.password)?;
+    let result = sqlx::query(
+        "INSERT OR IGNORE INTO users(id, username, display_name, password_hash, is_admin, created_at)
+         VALUES(?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(request.username.trim())
+    .bind(display_name)
+    .bind(hash)
+    .bind(i64::from(request.is_admin))
+    .bind(now_ms())
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(ServerError(ApiError::conflict("username already exists")));
+    }
+    load_user_by_id(pool, &id)
+        .await?
+        .ok_or_else(|| ServerError::internal("created user could not be loaded"))
+}
+
 pub async fn login(pool: &SqlitePool, request: &LoginRequest) -> Result<UserDto, ServerError> {
     let row: Option<(String, Option<String>)> =
         sqlx::query_as("SELECT id, password_hash FROM users WHERE username = ? COLLATE NOCASE")
@@ -385,6 +419,19 @@ pub async fn load_user_by_id(pool: &SqlitePool, id: &str) -> Result<Option<UserD
             .await?
             .map(UserRow::into_dto),
     )
+}
+
+pub async fn load_user_by_username(
+    pool: &SqlitePool,
+    username: &str,
+) -> Result<Option<UserDto>, sqlx::Error> {
+    Ok(sqlx::query_as::<_, UserRow>(&format!(
+        "SELECT {USER_COLUMNS} FROM users u WHERE u.username = ? COLLATE NOCASE"
+    ))
+    .bind(username)
+    .fetch_optional(pool)
+    .await?
+    .map(UserRow::into_dto))
 }
 
 pub async fn list_users(pool: &SqlitePool) -> Result<Vec<UserDto>, sqlx::Error> {

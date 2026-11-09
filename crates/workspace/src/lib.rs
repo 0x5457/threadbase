@@ -1,5 +1,6 @@
 //! Workspace primitives: path containment, git worktrees and file watching.
 
+pub mod files;
 pub mod git;
 pub mod path;
 

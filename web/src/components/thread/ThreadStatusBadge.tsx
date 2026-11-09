@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import type { ThreadStatus } from "@/api/types/ThreadStatus";
 import { Badge, type BadgeProps } from "@/components/ui";
 

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -12,6 +12,7 @@ import {
   useMe,
   useProjects,
   useThreadBundle,
+  useWorkspaceState,
   useWorkspaceThreads,
 } from "@/api/queries";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
@@ -21,8 +22,10 @@ import type { ThreadDto } from "@/api/types/ThreadDto";
 import { AppShell } from "@/components/shell/AppShell";
 import { SidebarTree } from "@/components/shell/SidebarTree";
 import { NewProjectDialog } from "@/components/workspace/NewProjectDialog";
+import { ShareDialog } from "@/components/workspace/ShareDialog";
 import { NewThreadDialog } from "@/components/workspace/NewThreadDialog";
 import { useOnlineStatus } from "@/lib/hooks";
+import { usePresence, usePresenceStore } from "@/lib/presence";
 import type { WorkspaceOutletContext } from "./workspace-context";
 
 function pageTitle(
@@ -66,11 +69,19 @@ export function WorkspaceLayout() {
   const projects = useProjects();
   const threads = useWorkspaceThreads();
   const inbox = useInbox("unread");
+  const workspaceState = useWorkspaceState();
   const bundle = useThreadBundle(params.threadId);
+  const presence = usePresenceStore();
+  const hiddenPresence = me.data?.user.hiddenPresence === true;
+  const presenceProjectId =
+    params.projectId ?? bundle.data?.bundle.thread.projectId;
+  usePresence(presenceProjectId, params.threadId, hiddenPresence);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newThreadProjectId, setNewThreadProjectId] = useState<string | null>(
     null,
   );
+  const [shareOpen, setShareOpen] = useState(false);
+  const [followUserId, setFollowUserId] = useState<string | null>(null);
 
   const projectList = projects.data?.projects ?? [];
   const threadList = threads.data?.threads ?? [];
@@ -78,6 +89,18 @@ export function WorkspaceLayout() {
     bundle.data?.bundle.thread ??
     threadList.find((thread) => thread.id === params.threadId) ??
     null;
+  const onlineIds = new Set<string>(presence.online);
+  const participants = (activeThread?.participants ?? []).map((participant) => ({
+    ...participant,
+    online: onlineIds.has(participant.user.id),
+  }));
+  const followedFocus = followUserId
+    ? presence.focuses.find((focus) => focus.userId === followUserId)
+    : undefined;
+  const followedName = followUserId
+    ? (participants.find((participant) => participant.user.id === followUserId)
+        ?.user.displayName ?? "member")
+    : null;
   const activeProject =
     bundle.data?.bundle.project ??
     projectList.find((project) => project.id === params.projectId) ??
@@ -160,21 +183,70 @@ export function WorkspaceLayout() {
     ? projectList.find((project) => project.id === newThreadProjectId)
     : undefined;
 
-  const share = async () => {
-    if (!activeThread) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      toast.success("Thread link copied");
-    } catch {
-      toast.error("Could not copy the link to the clipboard.");
+  const share = () => {
+    if (activeThread) {
+      setShareOpen(true);
     }
   };
 
   const openNewThread = (projectId: string) => {
     setNewThreadProjectId(projectId);
   };
+
+  useEffect(() => {
+    if (!followedFocus?.threadId || !followedFocus.projectId) {
+      return;
+    }
+    if (followedFocus.threadId !== params.threadId) {
+      navigate(
+        `/p/${encodeURIComponent(followedFocus.projectId)}/t/${encodeURIComponent(
+          followedFocus.threadId,
+        )}`,
+      );
+    }
+  }, [followedFocus?.threadId, followedFocus?.projectId, navigate, params.threadId]);
+
+  useEffect(() => {
+    if (
+      followUserId &&
+      presence.online.length > 0 &&
+      !presence.online.includes(followUserId)
+    ) {
+      const timer = window.setTimeout(() => {
+        setFollowUserId(null);
+        toast.message("The followed member went offline");
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [followUserId, presence.online]);
+
+  useEffect(() => {
+    if (!followUserId) {
+      return;
+    }
+    const stop = () => setFollowUserId(null);
+    const timer = window.setTimeout(() => {
+      window.addEventListener("pointerdown", stop, { once: true });
+    }, 0);
+    window.addEventListener("wheel", stop, { passive: true, once: true });
+    window.addEventListener("keydown", stop, { once: true });
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointerdown", stop);
+      window.removeEventListener("wheel", stop);
+      window.removeEventListener("keydown", stop);
+    };
+  }, [followUserId]);
+
+  useEffect(() => {
+    if (
+      workspaceState.data?.settings.browserNotifications &&
+      typeof Notification !== "undefined" &&
+      Notification.permission === "default"
+    ) {
+      void Notification.requestPermission();
+    }
+  }, [workspaceState.data?.settings.browserNotifications]);
 
   const outletContext: WorkspaceOutletContext = {
     openNewProject: () => setNewProjectOpen(true),
@@ -189,10 +261,14 @@ export function WorkspaceLayout() {
         titleBar={{
           title: title.title,
           subtitle: title.subtitle,
-          participants: activeThread?.participants ?? [],
+          participants,
+          followingName: followedName,
+          onFollow: (userId) =>
+            setFollowUserId((current) => (current === userId ? null : userId)),
+          onStopFollowing: () => setFollowUserId(null),
           approvalsCount: activeThreadPending,
           shareDisabled: !activeThread,
-          onShare: activeThread ? () => void share() : undefined,
+          onShare: activeThread ? share : undefined,
         }}
         sidebar={(closeSidebar) => (
           <SidebarTree
@@ -258,6 +334,14 @@ export function WorkspaceLayout() {
             ? (decisionMutation.variables?.approvalId ?? null)
             : null,
           onDecideApproval: decide,
+          threadId: activeThread?.id,
+          canWrite:
+            me.data?.user.isAdmin === true ||
+            bundle.data?.bundle.members.some(
+              (member) =>
+                member.user.id === me.data?.user.id &&
+                (member.role === "owner" || member.role === "editor"),
+            ) === true,
         }}
       >
         <Outlet context={outletContext} />
@@ -274,6 +358,14 @@ export function WorkspaceLayout() {
             });
             navigate(`/p/${project.id}`);
           }}
+        />
+      ) : null}
+
+      {bundle.data ? (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          bundle={bundle.data.bundle}
         />
       ) : null}
 

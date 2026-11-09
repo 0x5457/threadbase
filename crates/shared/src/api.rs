@@ -40,6 +40,16 @@ pub struct UpdateUserRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub password: String,
+    pub display_name: String,
+    pub is_admin: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct InboxReadRequest {
     pub thread_id: Option<ThreadId>,
     pub all: Option<bool>,
@@ -121,6 +131,8 @@ pub enum DeliveryMode {
 pub struct SendMessageRequest {
     pub text: String,
     pub delivery: Option<DeliveryMode>,
+    /// Consume all trailing CRDT draft blocks instead of using `text`.
+    pub from_draft: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -173,6 +185,13 @@ pub struct UpdateCommentRequest {
 pub struct AddMemberRequest {
     pub username: String,
     pub role: Role,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpdateShareRequest {
+    pub share_level: ShareLevel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

@@ -4,4 +4,8 @@ import type { DeliveryMode } from "./DeliveryMode";
 export type SendMessageRequest = {
   text: string;
   delivery: DeliveryMode | null;
+  /**
+   * Consume all trailing CRDT draft blocks instead of using `text`.
+   */
+  fromDraft: boolean | null;
 };

@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use threadbase_draft::DraftDoc;
+use threadbase_draft::{DraftBlock, DraftDoc};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use y_sync::sync::{DefaultProtocol, Message as SyncMessageEnvelope, Protocol, SyncMessage};
 use yrs::encoding::read::Cursor;
@@ -122,6 +122,26 @@ impl DraftHub {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn take_blocks(&self, thread_id: &str) -> Result<Vec<DraftBlock>, anyhow::Error> {
+        let room = self.room(thread_id).await?;
+        let blocks = {
+            let mut room = room.lock().await;
+            room.draft.take_trailing()
+        };
+        if blocks.is_empty() {
+            return Ok(blocks);
+        }
+        let max_seq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(seq), 0) FROM draft_updates WHERE thread_id = ?",
+        )
+        .bind(thread_id)
+        .fetch_one(&self.pool)
+        .await?;
+        self.snapshot(thread_id, u64::try_from(max_seq).unwrap_or(0))
+            .await?;
+        Ok(blocks)
     }
 
     pub async fn clear(&self, thread_id: &str) -> Result<(), anyhow::Error> {

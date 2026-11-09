@@ -3,10 +3,12 @@ import {
   ArrowLeftRight,
   Brain,
   CheckCircle2,
+  ChevronRight,
   CircleDot,
   FileSearch,
   FolderInput,
   Globe,
+  ListChecks,
   MessageSquare,
   PencilLine,
   Search,
@@ -16,18 +18,24 @@ import {
   Wrench,
 } from "lucide-react";
 import { useMemo } from "react";
+import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
+import type { ElicitationAction } from "@/api/types/ElicitationAction";
+import type { ElicitationDto } from "@/api/types/ElicitationDto";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
 import type { MessageDto } from "@/api/types/MessageDto";
+import type { PlanEntry } from "@/api/types/PlanEntry";
 import type { ToolCallData } from "@/api/types/ToolCallData";
 import type { ToolKind } from "@/api/types/ToolKind";
 import {
   Avatar,
   Badge,
+  Button,
   EmptyState,
   ErrorState,
   Skeleton,
 } from "@/components/ui";
+import { ElicitationCard } from "@/components/thread/ElicitationCard";
 import { formatTimestamp } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +55,25 @@ interface ToolItem {
   call: ToolCallData;
 }
 
+interface ToolGroupItem {
+  kind: "tool_group";
+  key: string;
+  calls: ToolCallData[];
+}
+
+interface PlanItem {
+  kind: "plan";
+  key: string;
+  entries: PlanEntry[];
+}
+
+interface ElicitationItem {
+  kind: "elicitation";
+  key: string;
+  elicitation: ElicitationDto;
+  resolvedAction: ElicitationAction | null;
+}
+
 interface ApprovalItem {
   kind: "approval";
   key: string;
@@ -63,7 +90,14 @@ interface NoticeItem {
   text: string;
 }
 
-type TimelineItem = MessageItem | ToolItem | ApprovalItem | NoticeItem;
+type TimelineItem =
+  | MessageItem
+  | ToolItem
+  | ToolGroupItem
+  | PlanItem
+  | ElicitationItem
+  | ApprovalItem
+  | NoticeItem;
 
 const TOOL_ICONS: Record<ToolKind, typeof Wrench> = {
   read: FileSearch,
@@ -167,6 +201,14 @@ function noticeForEvent(event: EventEnvelope): NoticeItem | null {
         label: "Agent requested input",
         text: payload.elicitation.message,
       };
+    case "subagent_updated":
+      return {
+        kind: "notice",
+        key,
+        tone: "info",
+        label: `Subagent ${payload.subagent.status.replace("_", " ")}`,
+        text: payload.subagent.title,
+      };
     case "permission_resolved":
       return {
         kind: "notice",
@@ -186,6 +228,7 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
   );
   const latestCalls = new Map<string, ToolCallData>();
   const resolvedApprovals = new Map<string, string>();
+  const resolvedElicitations = new Map<string, ElicitationAction>();
   const startedMessages = new Set<string>();
 
   for (const event of sorted) {
@@ -198,6 +241,12 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
     if (event.payload.type === "permission_resolved") {
       resolvedApprovals.set(event.payload.approvalId, event.payload.decision);
     }
+    if (event.payload.type === "elicitation_resolved") {
+      resolvedElicitations.set(
+        event.payload.elicitationId,
+        event.payload.action,
+      );
+    }
     if (event.payload.type === "turn_started") {
       startedMessages.add(event.payload.messageId);
     }
@@ -205,6 +254,7 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
 
   const items: TimelineItem[] = [];
   const seenTools = new Set<string>();
+  let latestPlan: PlanEntry[] | null = null;
 
   for (const event of sorted) {
     const payload = event.payload;
@@ -235,6 +285,16 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
       });
       continue;
     }
+    if (payload.type === "elicitation_requested") {
+      items.push({
+        kind: "elicitation",
+        key: `elicitation-${payload.elicitation.id}`,
+        elicitation: payload.elicitation,
+        resolvedAction:
+          resolvedElicitations.get(payload.elicitation.id) ?? null,
+      });
+      continue;
+    }
     if (payload.type === "tool_call" || payload.type === "tool_call_update") {
       const call = latestCalls.get(payload.call.id);
       if (!call || seenTools.has(call.id)) {
@@ -246,6 +306,10 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
         key: `tool-${call.id}`,
         call,
       });
+      continue;
+    }
+    if (payload.type === "plan_updated") {
+      latestPlan = payload.entries;
       continue;
     }
     if (payload.type === "permission_requested") {
@@ -265,7 +329,63 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
     }
   }
 
-  return items;
+  const grouped: TimelineItem[] = [];
+  for (const item of items) {
+    if (item.kind === "tool") {
+      const last = grouped.at(-1);
+      if (last?.kind === "tool_group") {
+        last.calls.push(item.call);
+      } else {
+        grouped.push({
+          kind: "tool_group",
+          key: `tools-${item.key}`,
+          calls: [item.call],
+        });
+      }
+    } else {
+      grouped.push(item);
+    }
+  }
+  if (latestPlan && latestPlan.length > 0) {
+    grouped.push({ kind: "plan", key: "plan-latest", entries: latestPlan });
+  }
+  return grouped;
+}
+
+function summarizeTools(calls: ToolCallData[]): string {
+  const counts = new Map<string, number>();
+  for (const call of calls) {
+    counts.set(call.kind, (counts.get(call.kind) ?? 0) + 1);
+  }
+  const parts: string[] = [];
+  const commands = counts.get("execute") ?? 0;
+  if (commands > 0) {
+    parts.push(`Ran ${commands} command${commands === 1 ? "" : "s"}`);
+  }
+  const reads = (counts.get("read") ?? 0) + (counts.get("search") ?? 0);
+  if (reads > 0) {
+    parts.push(`read ${reads} file${reads === 1 ? "" : "s"}`);
+  }
+  const writes =
+    (counts.get("edit") ?? 0) +
+    (counts.get("move") ?? 0) +
+    (counts.get("delete") ?? 0);
+  if (writes > 0) {
+    parts.push(`edited ${writes} file${writes === 1 ? "" : "s"}`);
+  }
+  const thoughts = counts.get("think") ?? 0;
+  if (thoughts > 0) {
+    parts.push("thought");
+  }
+  const fetches = counts.get("fetch") ?? 0;
+  if (fetches > 0) {
+    parts.push(`fetched ${fetches} URL${fetches === 1 ? "" : "s"}`);
+  }
+  const other = counts.get("other") ?? 0;
+  if (other > 0) {
+    parts.push(`called ${other} tool${other === 1 ? "" : "s"}`);
+  }
+  return parts.length > 0 ? parts.join(", ") : "Ran tools";
 }
 
 export interface ThreadTimelineProps {
@@ -274,6 +394,12 @@ export interface ThreadTimelineProps {
   loading?: boolean;
   error?: unknown;
   onRetry?: () => void;
+  onDecide?: (approvalId: string, decision: ApprovalDecision) => void;
+  onRespondElicitation?: (
+    elicitationId: string,
+    action: ElicitationAction,
+    values: Record<string, unknown>,
+  ) => void;
 }
 
 export function ThreadTimeline({
@@ -282,12 +408,73 @@ export function ThreadTimeline({
   loading = false,
   error,
   onRetry,
+  onDecide,
+  onRespondElicitation,
 }: ThreadTimelineProps) {
   const items = useMemo(() => buildTimeline(events), [events]);
   const approvalById = useMemo(
     () => new Map(approvals.map((approval) => [approval.id, approval])),
     [approvals],
   );
+
+  const renderTool = (call: ToolCallData, key: string) => {
+    const Icon = TOOL_ICONS[call.kind];
+    return (
+      <div key={key} className="flex gap-3">
+        <div className="w-7 shrink-0" />
+        <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
+          <div className="flex items-center gap-2 px-3 py-2">
+            <Icon className="size-3.5 shrink-0 text-faint" aria-hidden />
+            <span className="truncate text-[11.5px] font-medium text-fg">
+              {call.title}
+            </span>
+            <Badge
+              variant={toolStatusVariant(call.status)}
+              size="sm"
+              className="ml-auto shrink-0"
+            >
+              {call.status.replace("_", " ")}
+            </Badge>
+          </div>
+          {call.locations.length > 0 ? (
+            <ul className="border-t border-border/70 px-3 py-1.5">
+              {call.locations.map((location) => (
+                <li
+                  key={`${location.path}:${location.line ?? 0}`}
+                  className="truncate font-mono text-[10px] text-faint"
+                >
+                  {location.path}
+                  {location.line ? `:${location.line}` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {call.diff?.patch ? (
+            <pre className="mt-0 max-h-64 overflow-auto whitespace-pre-wrap break-all border-t border-border/70 bg-canvas p-2 font-mono text-[10px] text-fg">
+              {call.diff.patch}
+            </pre>
+          ) : null}
+          {call.input || call.output ? (
+            <details className="border-t border-border/70 px-3 py-1.5 text-[10.5px] text-muted">
+              <summary className="cursor-pointer select-none text-faint hover:text-fg">
+                Details
+              </summary>
+              {call.input ? (
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
+                  {call.input}
+                </pre>
+              ) : null}
+              {call.output ? (
+                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
+                  {call.output}
+                </pre>
+              ) : null}
+            </details>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -376,54 +563,73 @@ export function ThreadTimeline({
           }
 
           if (item.kind === "tool") {
-            const Icon = TOOL_ICONS[item.call.kind];
+            return renderTool(item.call, item.key);
+          }
+
+          if (item.kind === "tool_group") {
+            if (item.calls.length === 1) {
+              return renderTool(item.calls[0], item.key);
+            }
             return (
               <div key={item.key} className="flex gap-3">
                 <div className="w-7 shrink-0" />
-                <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
-                  <div className="flex items-center gap-2 px-3 py-2">
-                    <Icon className="size-3.5 shrink-0 text-faint" aria-hidden />
-                    <span className="truncate text-[11.5px] font-medium text-fg">
-                      {item.call.title}
-                    </span>
-                    <Badge
-                      variant={toolStatusVariant(item.call.status)}
-                      size="sm"
-                      className="ml-auto shrink-0"
-                    >
-                      {item.call.status.replace("_", " ")}
+                <details className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
+                  <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[11.5px] text-muted hover:text-fg">
+                    <ChevronRight className="size-3.5 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
+                    <span className="truncate">{summarizeTools(item.calls)}</span>
+                    <Badge variant="neutral" size="sm" className="ml-auto shrink-0">
+                      {item.calls.length} calls
                     </Badge>
+                  </summary>
+                  <div className="space-y-2 border-t border-border/70 p-2">
+                    {item.calls.map((call, index) =>
+                      renderTool(call, `${item.key}-${index}`),
+                    )}
                   </div>
-                  {item.call.locations.length > 0 ? (
-                    <ul className="border-t border-border/70 px-3 py-1.5">
-                      {item.call.locations.map((location) => (
-                        <li
-                          key={`${location.path}:${location.line ?? 0}`}
-                          className="truncate font-mono text-[10px] text-faint"
-                        >
-                          {location.path}
-                          {location.line ? `:${location.line}` : ""}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {item.call.input || item.call.output ? (
-                    <details className="border-t border-border/70 px-3 py-1.5 text-[10.5px] text-muted">
-                      <summary className="cursor-pointer select-none text-faint hover:text-fg">
-                        Details
-                      </summary>
-                      {item.call.input ? (
-                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
-                          {item.call.input}
-                        </pre>
-                      ) : null}
-                      {item.call.output ? (
-                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
-                          {item.call.output}
-                        </pre>
-                      ) : null}
-                    </details>
-                  ) : null}
+                </details>
+              </div>
+            );
+          }
+
+          if (item.kind === "elicitation") {
+            return (
+              <ElicitationCard
+                key={item.key}
+                elicitation={item.elicitation}
+                resolvedAction={item.resolvedAction}
+                onRespond={onRespondElicitation}
+              />
+            );
+          }
+
+          if (item.kind === "plan") {
+            return (
+              <div key={item.key} className="flex gap-3">
+                <div className="w-7 shrink-0" />
+                <div className="min-w-0 flex-1 rounded-lg border border-border bg-panel px-3 py-2">
+                  <div className="flex items-center gap-2 text-[11.5px] font-medium text-fg">
+                    <ListChecks className="size-3.5 text-faint" aria-hidden />
+                    Plan
+                  </div>
+                  <ul className="mt-1.5 space-y-1">
+                    {item.entries.map((entry) => (
+                      <li key={entry.content} className="flex items-start gap-1.5 text-[11px] text-muted">
+                        <span
+                          className={cn(
+                            "mt-1 size-1.5 shrink-0 rounded-full",
+                            entry.status === "completed"
+                              ? "bg-success"
+                              : entry.status === "in_progress"
+                                ? "bg-warning"
+                                : "bg-border-strong",
+                          )}
+                        />
+                        <span className={entry.status === "completed" ? "text-faint line-through" : ""}>
+                          {entry.content}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </div>
             );
@@ -473,6 +679,31 @@ export function ThreadTimeline({
                       <p className="break-all font-mono text-[10px] text-faint">
                         {approval.paths.join(", ")}
                       </p>
+                    ) : null}
+                    {!item.resolved && approval.status === "pending" && onDecide ? (
+                      <div className="flex flex-wrap gap-1.5 border-t border-warning/20 pt-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onDecide(approval.id, "allow_once")}
+                        >
+                          Allow once
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onDecide(approval.id, "allow_thread")}
+                        >
+                          Allow for thread
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => onDecide(approval.id, "deny")}
+                        >
+                          Deny
+                        </Button>
+                      </div>
                     ) : null}
                   </div>
                 </div>

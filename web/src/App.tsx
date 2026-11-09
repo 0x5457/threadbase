@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui";
 import { useTheme } from "@/lib/theme";
 import { InboxPage } from "./routes/InboxPage";
+import { InvitePage } from "./routes/InvitePage";
 import { LoginPage } from "./routes/LoginPage";
 import { NotFoundPage } from "./routes/NotFoundPage";
 import { ProjectPage } from "./routes/ProjectPage";
@@ -32,6 +33,7 @@ export default function App() {
               element={<ThreadPage />}
             />
             <Route path="inbox" element={<InboxPage />} />
+            <Route path="invite/:token" element={<InvitePage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>

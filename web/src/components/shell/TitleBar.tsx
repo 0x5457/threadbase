@@ -23,6 +23,9 @@ export interface TitleBarProps {
   onOpenSearch: () => void;
   onOpenApprovals: () => void;
   onToggleDrawer: () => void;
+  onFollow?: (userId: string) => void;
+  followingName?: string | null;
+  onStopFollowing?: () => void;
 }
 
 export function TitleBar({
@@ -38,12 +41,16 @@ export function TitleBar({
   onOpenSearch,
   onOpenApprovals,
   onToggleDrawer,
+  onFollow,
+  followingName,
+  onStopFollowing,
 }: TitleBarProps) {
   const people = participants.map((participant) => ({
     id: participant.user.id,
     displayName: participant.user.displayName,
     avatarUrl: participant.user.avatarUrl,
     color: participant.user.color,
+    online: participant.online,
   }));
 
   return (
@@ -84,7 +91,30 @@ export function TitleBar({
           ) : null}
         </div>
         {people.length > 0 ? (
-          <AvatarStack people={people} max={4} size="sm" className="hidden sm:flex" />
+          <AvatarStack
+            people={people}
+            max={4}
+            size="sm"
+            className="hidden sm:flex"
+            onSelect={
+              onFollow
+                ? (person) => {
+                    if (person.id !== "system") {
+                      onFollow(person.id);
+                    }
+                  }
+                : undefined
+            }
+          />
+        ) : null}
+        {followingName ? (
+          <button
+            type="button"
+            onClick={onStopFollowing}
+            className="no-drag hidden items-center gap-1 rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[9.5px] text-info sm:flex"
+          >
+            Following {followingName} · stop
+          </button>
         ) : null}
       </div>
 

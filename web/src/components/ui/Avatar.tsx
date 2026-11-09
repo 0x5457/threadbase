@@ -25,6 +25,7 @@ export interface AvatarPerson {
   displayName: string;
   avatarUrl?: string | null;
   color?: string | null;
+  online?: boolean;
 }
 
 export interface AvatarProps {
@@ -79,6 +80,7 @@ export interface AvatarStackProps {
   max?: number;
   size?: AvatarProps["size"];
   className?: string;
+  onSelect?: (person: AvatarPerson) => void;
 }
 
 export function AvatarStack({
@@ -86,6 +88,7 @@ export function AvatarStack({
   max = 3,
   size = "sm",
   className,
+  onSelect,
 }: AvatarStackProps) {
   const visible = people.slice(0, max);
   const hidden = people.slice(max);
@@ -96,12 +99,23 @@ export function AvatarStack({
     <span className={cn("inline-flex items-center", className)}>
       <span className="flex -space-x-1.5">
         {visible.map((person) => (
-          <Avatar
+          <button
             key={person.id}
-            person={person}
-            size={size}
-            className="rounded-full ring-2 ring-panel"
-          />
+            type="button"
+            className="rounded-full focus-visible:outline-offset-2"
+            title={
+              onSelect ? `Follow ${person.displayName}` : person.displayName
+            }
+            onClick={() => onSelect?.(person)}
+            disabled={!onSelect}
+          >
+            <Avatar
+              person={person}
+              size={size}
+              online={person.online}
+              className="rounded-full ring-2 ring-panel"
+            />
+          </button>
         ))}
       </span>
       {hidden.length > 0 ? (

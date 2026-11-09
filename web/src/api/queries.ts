@@ -1,6 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   fetchAuthStatus,
+  fetchChanges,
+  fetchComments,
+  fetchFile,
+  fetchFiles,
+  fetchFileDiff,
   fetchInbox,
   fetchMe,
   fetchProject,
@@ -24,6 +29,15 @@ export const queryKeys = {
   threads: ["threads"] as const,
   threadBundle: (threadId: string) => ["threads", threadId, "bundle"] as const,
   threadEvents: (threadId: string) => ["threads", threadId, "events"] as const,
+  changes: (threadId: string, kind: string) =>
+    ["threads", threadId, "changes", kind] as const,
+  fileDiff: (threadId: string, path: string, kind: string) =>
+    ["threads", threadId, "fileDiff", path, kind] as const,
+  comments: (threadId: string) => ["threads", threadId, "comments"] as const,
+  files: (threadId: string, path: string) =>
+    ["threads", threadId, "files", path] as const,
+  file: (threadId: string, path: string) =>
+    ["threads", threadId, "file", path] as const,
   inbox: (filter: InboxFilter) => ["inbox", filter] as const,
   search: (query: string) => ["search", query] as const,
   state: ["state"] as const,
@@ -89,6 +103,50 @@ export function useThreadEvents(threadId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.threadEvents(threadId ?? ""),
     queryFn: () => fetchThreadEvents(threadId ?? ""),
+    enabled: Boolean(threadId),
+  });
+}
+
+export function useChanges(threadId: string | undefined, kind: string) {
+  return useQuery({
+    queryKey: queryKeys.changes(threadId ?? "", kind),
+    queryFn: () => fetchChanges(threadId ?? "", kind),
+    enabled: Boolean(threadId),
+  });
+}
+
+export function useFileDiff(
+  threadId: string | undefined,
+  path: string | null,
+  kind: string,
+) {
+  return useQuery({
+    queryKey: queryKeys.fileDiff(threadId ?? "", path ?? "", kind),
+    queryFn: () => fetchFileDiff(threadId ?? "", path ?? "", kind),
+    enabled: Boolean(threadId && path),
+  });
+}
+
+export function useFiles(threadId: string | undefined, path: string) {
+  return useQuery({
+    queryKey: queryKeys.files(threadId ?? "", path),
+    queryFn: () => fetchFiles(threadId ?? "", path),
+    enabled: Boolean(threadId),
+  });
+}
+
+export function useFile(threadId: string | undefined, path: string | null) {
+  return useQuery({
+    queryKey: queryKeys.file(threadId ?? "", path ?? ""),
+    queryFn: () => fetchFile(threadId ?? "", path ?? ""),
+    enabled: Boolean(threadId && path),
+  });
+}
+
+export function useComments(threadId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.comments(threadId ?? ""),
+    queryFn: () => fetchComments(threadId ?? ""),
     enabled: Boolean(threadId),
   });
 }

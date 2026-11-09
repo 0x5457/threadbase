@@ -2,22 +2,28 @@ use anyhow::Context;
 use std::process::ExitCode;
 use threadbase_server::config::Config;
 use threadbase_server::state::AppState;
-use threadbase_server::{db, routes};
+use threadbase_server::{db, doctor, routes, service, upgrade};
 use tracing_subscriber::EnvFilter;
 
 const HELP: &str = "\
 Threadbase - shared coding agent threads for small teams
 
 Usage:
-  threadbase [serve]      Start the local server (default)
-  threadbase --version    Print the version
-  threadbase --help       Print this help
+  threadbase [serve]           Start the local server (default)
+  threadbase doctor [--json]   Check the environment and agent adapters
+  threadbase upgrade [--check] Download and verify the latest release
+  threadbase service install [--print]
+                               Write a launchd/systemd user unit
+  threadbase --version         Print the version
+  threadbase --help            Print this help
 
 Environment:
-  THREADBASE_DATA_DIR      Data directory (default: platform data dir)
-  THREADBASE_BIND          Loopback address (default: 127.0.0.1:7777)
-  THREADBASE_PUBLIC_ORIGIN Public HTTPS origin used in share links
-  THREADBASE_LOG_JSON      Set to 1 for JSON logs
+  THREADBASE_DATA_DIR          Data directory (default: platform data dir)
+  THREADBASE_BIND              Loopback address (default: 127.0.0.1:7777)
+  THREADBASE_PUBLIC_ORIGIN     Public HTTPS origin used in share links
+  THREADBASE_LOG_JSON          Set to 1 for JSON logs
+  THREADBASE_ACP_COMMAND       Override the ACP adapter command (development)
+  THREADBASE_RELEASE_BASE      Override the release download base URL
 ";
 
 #[tokio::main]
@@ -41,6 +47,27 @@ async fn run() -> anyhow::Result<()> {
         }
         Some("--help" | "-h" | "help") => {
             print!("{HELP}");
+            return Ok(());
+        }
+        Some("doctor") => {
+            let config = Config::load().context("invalid configuration")?;
+            let report = doctor::report(&config).await;
+            if args.any(|arg| arg == "--json") {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                doctor::print(&report);
+            }
+            return Ok(());
+        }
+        Some("upgrade") => {
+            upgrade::run(args.any(|arg| arg == "--check")).await?;
+            return Ok(());
+        }
+        Some("service") => {
+            if args.next().as_deref() != Some("install") {
+                anyhow::bail!("usage: threadbase service install [--print]");
+            }
+            service::install(args.any(|arg| arg == "--print"))?;
             return Ok(());
         }
         Some("serve") | None => {}
@@ -74,6 +101,7 @@ async fn run() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
     println!("Data directory: {}", config.data_dir.display());
+    println!("First run: open {local} to create the local admin account.");
 
     axum::serve(
         listener,

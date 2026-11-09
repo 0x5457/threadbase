@@ -2,7 +2,25 @@ import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalResolvedResponse } from "@/api/types/ApprovalResolvedResponse";
 import type { AuthMeDto } from "@/api/types/AuthMeDto";
 import type { AuthStatusResponse } from "@/api/types/AuthStatusResponse";
+import type { AddMemberRequest } from "@/api/types/AddMemberRequest";
+import type { ChangesDto } from "@/api/types/ChangesDto";
+import type { CommentResponse } from "@/api/types/CommentResponse";
+import type { CommentsResponse } from "@/api/types/CommentsResponse";
+import type { CreateCommentRequest } from "@/api/types/CreateCommentRequest";
+import type { CreateInviteRequest } from "@/api/types/CreateInviteRequest";
 import type { CreateProjectRequest } from "@/api/types/CreateProjectRequest";
+import type { ElicitationAction } from "@/api/types/ElicitationAction";
+import type { ElicitationResponseRequest } from "@/api/types/ElicitationResponseRequest";
+import type { ElicitationResolvedResponse } from "@/api/types/ElicitationResolvedResponse";
+import type { FileContentResponseDto } from "@/api/types/FileContentResponseDto";
+import type { FilesResponseDto } from "@/api/types/FilesResponseDto";
+import type { FileDiffDto } from "@/api/types/FileDiffDto";
+import type { InviteResponse } from "@/api/types/InviteResponse";
+import type { MergeBackRequest } from "@/api/types/MergeBackRequest";
+import type { MergeBackResponse } from "@/api/types/MergeBackResponse";
+import type { Role } from "@/api/types/Role";
+import type { SeenRequest } from "@/api/types/SeenRequest";
+import type { UpdateCommentRequest } from "@/api/types/UpdateCommentRequest";
 import type { CreateThreadRequest } from "@/api/types/CreateThreadRequest";
 import type { DecisionRequest } from "@/api/types/DecisionRequest";
 import type { EventsPageDto } from "@/api/types/EventsPageDto";
@@ -15,6 +33,8 @@ import type { ProjectResponse } from "@/api/types/ProjectResponse";
 import type { ProjectsResponse } from "@/api/types/ProjectsResponse";
 import type { SearchResponseDto } from "@/api/types/SearchResponseDto";
 import type { SettingsPatch } from "@/api/types/SettingsPatch";
+import type { SendMessageRequest } from "@/api/types/SendMessageRequest";
+import type { SendMessageResponse } from "@/api/types/SendMessageResponse";
 import type { SetupRequest } from "@/api/types/SetupRequest";
 import type { StateResponse } from "@/api/types/StateResponse";
 import type { ThreadBundleResponse } from "@/api/types/ThreadBundleResponse";
@@ -42,10 +62,36 @@ export const endpoints = {
   threads: "/api/threads",
   threadBundle: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/bundle`,
+  sendMessage: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/messages`,
+  threadChanges: (threadId: ThreadId, kind = "base_branch", commit = "") =>
+    `/api/threads/${segment(threadId)}/changes?kind=${encodeURIComponent(kind)}${commit ? `&commit=${encodeURIComponent(commit)}` : ""}`,
+  threadFileDiff: (threadId: ThreadId, path: string, kind = "base_branch") =>
+    `/api/threads/${segment(threadId)}/changes/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}`,
+  markSeen: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/seen`,
+  mergeBack: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/merge-back`,
+  comments: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/comments`,
+  files: (threadId: ThreadId, path: string) =>
+    `/api/threads/${segment(threadId)}/files?path=${encodeURIComponent(path)}`,
+  file: (threadId: ThreadId, path: string) =>
+    `/api/threads/${segment(threadId)}/file?path=${encodeURIComponent(path)}`,
+  comment: (commentId: string) => `/api/comments/${segment(commentId)}`,
+  commentSend: (commentId: string) =>
+    `/api/comments/${segment(commentId)}/send`,
+  members: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/members`,
+  member: (threadId: ThreadId, userId: string) =>
+    `/api/threads/${segment(threadId)}/members/${segment(userId)}`,
+  invites: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/invites`,
+  share: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/share`,
   threadEvents: (threadId: ThreadId, afterSeq = 0, limit = 200) =>
     `/api/threads/${segment(threadId)}/events?after_seq=${afterSeq}&limit=${limit}`,
   approvalDecision: (threadId: ThreadId, approvalId: string) =>
     `/api/threads/${segment(threadId)}/approvals/${segment(approvalId)}/decision`,
+  elicitation: (elicitationId: string) =>
+    `/api/elicitations/${segment(elicitationId)}/respond`,
   inbox: (filter: InboxFilter) => `/api/inbox?filter=${filter}`,
   search: (query: string) => `/api/search?q=${segment(query)}`,
   state: "/api/state",
@@ -115,10 +161,167 @@ export function fetchWorkspaceThreads(): Promise<ThreadsResponse> {
   return api<ThreadsResponse>(endpoints.threads);
 }
 
+export function sendMessage(
+  threadId: ThreadId,
+  request: SendMessageRequest,
+): Promise<SendMessageResponse> {
+  return api<SendMessageResponse>(endpoints.sendMessage(threadId), {
+    method: "POST",
+    body: request,
+  });
+}
+
 export function fetchThreadBundle(
   threadId: ThreadId,
 ): Promise<ThreadBundleResponse> {
   return api<ThreadBundleResponse>(endpoints.threadBundle(threadId));
+}
+
+export function respondElicitation(
+  elicitationId: string,
+  action: ElicitationAction,
+  values: unknown,
+): Promise<ElicitationResolvedResponse> {
+  const body: ElicitationResponseRequest = { action, values };
+  return api<ElicitationResolvedResponse>(endpoints.elicitation(elicitationId), {
+    method: "POST",
+    body,
+  });
+}
+
+export function fetchChanges(
+  threadId: ThreadId,
+  kind = "base_branch",
+  commit = "",
+): Promise<ChangesDto> {
+  return api<ChangesDto>(endpoints.threadChanges(threadId, kind, commit));
+}
+
+export function fetchFileDiff(
+  threadId: ThreadId,
+  path: string,
+  kind = "base_branch",
+): Promise<FileDiffDto> {
+  return api<FileDiffDto>(endpoints.threadFileDiff(threadId, path, kind));
+}
+
+export function setSeen(
+  threadId: ThreadId,
+  paths: string[],
+  seen: boolean,
+): Promise<OkResponse> {
+  const body: SeenRequest = { paths, seen };
+  return api<OkResponse>(endpoints.markSeen(threadId), {
+    method: "POST",
+    body,
+  });
+}
+
+export function mergeBackChanges(
+  threadId: ThreadId,
+  commit: boolean,
+  commitMessage: string | null,
+): Promise<MergeBackResponse> {
+  const body: MergeBackRequest = { commit, commitMessage };
+  return api<MergeBackResponse>(endpoints.mergeBack(threadId), {
+    method: "POST",
+    body,
+  });
+}
+
+export function fetchFiles(
+  threadId: ThreadId,
+  path = "",
+): Promise<FilesResponseDto> {
+  return api<FilesResponseDto>(endpoints.files(threadId, path));
+}
+
+export function fetchFile(
+  threadId: ThreadId,
+  path: string,
+): Promise<FileContentResponseDto> {
+  return api<FileContentResponseDto>(endpoints.file(threadId, path));
+}
+
+export function fetchComments(threadId: ThreadId): Promise<CommentsResponse> {
+  return api<CommentsResponse>(endpoints.comments(threadId));
+}
+
+export function createComment(
+  threadId: ThreadId,
+  request: CreateCommentRequest,
+): Promise<CommentResponse> {
+  return api<CommentResponse>(endpoints.comments(threadId), {
+    method: "POST",
+    body: request,
+  });
+}
+
+export function updateComment(
+  commentId: string,
+  request: UpdateCommentRequest,
+): Promise<CommentResponse> {
+  return api<CommentResponse>(endpoints.comment(commentId), {
+    method: "PATCH",
+    body: request,
+  });
+}
+
+export function deleteComment(commentId: string): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.comment(commentId), { method: "DELETE" });
+}
+
+export function sendComment(commentId: string): Promise<CommentResponse> {
+  return api<CommentResponse>(endpoints.commentSend(commentId), {
+    method: "POST",
+  });
+}
+
+export function addMember(
+  threadId: ThreadId,
+  request: AddMemberRequest,
+): Promise<unknown> {
+  return api(endpoints.members(threadId), { method: "POST", body: request });
+}
+
+export function removeMember(
+  threadId: ThreadId,
+  userId: string,
+): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.member(threadId, userId), {
+    method: "DELETE",
+  });
+}
+
+export function updateMemberRole(
+  threadId: ThreadId,
+  userId: string,
+  role: Role,
+): Promise<unknown> {
+  return api(endpoints.member(threadId, userId), {
+    method: "PATCH",
+    body: { role },
+  });
+}
+
+export function createInvite(
+  threadId: ThreadId,
+  request: CreateInviteRequest,
+): Promise<InviteResponse> {
+  return api<InviteResponse>(endpoints.invites(threadId), {
+    method: "POST",
+    body: request,
+  });
+}
+
+export function setShareLevel(
+  threadId: ThreadId,
+  shareLevel: "invite_only" | "workspace",
+): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.share(threadId), {
+    method: "PATCH",
+    body: { shareLevel },
+  });
 }
 
 export function fetchThreadEvents(

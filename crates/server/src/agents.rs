@@ -185,8 +185,12 @@ impl AgentManager {
     ) -> Result<SendMessageResponse, ServerError> {
         self.ensure_started(thread_id).await?;
         let session = self.session(thread_id).await?;
+        let row = threads::load_row(&self.inner.pool, thread_id).await?;
         let mut session = session.lock().await;
-        let running = session.turn.is_some();
+        let running = session.turn.is_some() && row.status == "running";
+        if !running {
+            session.turn = None;
+        }
         let action = resolve_delivery(
             delivery.unwrap_or(DeliveryMode::Auto),
             DeliveryContext {
@@ -721,8 +725,15 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
         .cloned()
         .ok_or_else(|| ServerError::internal("agent is not running"))?;
     let mut session = session.lock().await;
-    if session.turn.is_some() {
+    let thread_status: String = sqlx::query_scalar("SELECT status FROM threads WHERE id = ?")
+        .bind(thread_id)
+        .fetch_one(&inner.pool)
+        .await?;
+    if session.turn.is_some() && thread_status == "running" {
         return Ok(());
+    }
+    if thread_status != "running" {
+        session.turn = None;
     }
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT id, author_id, text FROM queued_inputs WHERE thread_id = ? AND status = 'queued'
