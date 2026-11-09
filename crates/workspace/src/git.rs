@@ -44,6 +44,23 @@ async fn git(cwd: &Path, args: &[&str]) -> Result<String, GitError> {
     }
 }
 
+async fn git_raw(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .await?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(GitError::Command {
+            command: format!("git {} {}", cwd.display(), args.join(" ")),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        })
+    }
+}
+
 async fn git_allow_failure(cwd: &Path, args: &[&str]) -> Result<Option<String>, GitError> {
     let output = Command::new("git")
         .arg("-C")
@@ -193,14 +210,14 @@ pub async fn reset_index(root: &Path) -> Result<(), GitError> {
 /// including untracked files. The worktree index is left as it was.
 pub async fn patch_from_base(worktree: &Path, base_sha: &str) -> Result<String, GitError> {
     add_all(worktree).await?;
-    let patch = git(
+    let patch = git_raw(
         worktree,
         &["diff", "--cached", "--binary", "--no-color", base_sha],
     )
     .await;
     let reset = reset_index(worktree).await;
     match (patch, reset) {
-        (Ok(patch), Ok(())) => Ok(patch),
+        (Ok(patch), Ok(())) => Ok(String::from_utf8_lossy(&patch).to_string()),
         (Err(error), _) | (_, Err(error)) => Err(error),
     }
 }
@@ -214,10 +231,10 @@ pub async fn worktree_patch(worktree: &Path, base_sha: Option<&str>) -> Result<S
     } else {
         args.push("HEAD");
     }
-    let patch = git(worktree, &args).await;
+    let patch = git_raw(worktree, &args).await;
     let reset = reset_index(worktree).await;
     match (patch, reset) {
-        (Ok(patch), Ok(())) => Ok(patch),
+        (Ok(patch), Ok(())) => Ok(String::from_utf8_lossy(&patch).to_string()),
         (Err(error), _) | (_, Err(error)) => Err(error),
     }
 }

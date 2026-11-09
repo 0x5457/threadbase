@@ -41,7 +41,8 @@ pub async fn list(pool: &SqlitePool) -> Result<Vec<ProjectDto>, ServerError> {
             .await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        out.push(to_dto(row, path_available(Path::new(&row.path)).await));
+        let available = path_available(Path::new(&row.path)).await;
+        out.push(to_dto(row, available));
     }
     Ok(out)
 }
@@ -136,6 +137,22 @@ pub async fn create(
     get(pool, &id).await
 }
 
+pub async fn can_edit(
+    pool: &SqlitePool,
+    project_id: &str,
+    user: &CurrentUser,
+) -> Result<bool, ServerError> {
+    if user.is_admin() {
+        return Ok(true);
+    }
+    let created_by: Option<String> =
+        sqlx::query_scalar("SELECT created_by FROM projects WHERE id = ?")
+            .bind(project_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(created_by.as_deref() == Some(user.user.id.as_str()))
+}
+
 pub async fn update(
     pool: &SqlitePool,
     project_id: &str,
@@ -175,7 +192,6 @@ pub async fn overview(
 ) -> Result<ProjectOverviewDto, ServerError> {
     let project = get(pool, project_id).await?;
     let threads = crate::threads::list(pool, project_id, user, false).await?;
-    let thread_ids: Vec<String> = threads.iter().map(|thread| thread.id.0.clone()).collect();
     let mut waiting = Vec::new();
     let mut changes = ChangeStats {
         files: 0,
@@ -185,7 +201,7 @@ pub async fn overview(
         total: 0,
     };
     for thread in &threads {
-        waiting.extend(crate::approvals::list_pending_for_thread(pool, &thread.id).await?);
+        waiting.extend(crate::approvals::list_pending_for_thread(pool, thread.id.as_str()).await?);
         changes.files += thread.changes.files;
         changes.additions += thread.changes.additions;
         changes.deletions += thread.changes.deletions;
@@ -242,7 +258,7 @@ async fn recent_activity(
                     username: row.actor_name.clone().unwrap_or_default(),
                     display_name: row.actor_name.unwrap_or_else(|| "Threadbase".to_owned()),
                     avatar_url: None,
-                    color: threadbase_shared::user_color(&user),
+                    color: threadbase_shared::user_color(&user).to_owned(),
                 },
                 summary: summary_for(&row.kind),
                 ts: row.ts,

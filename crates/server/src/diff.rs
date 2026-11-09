@@ -162,9 +162,7 @@ pub async fn list(
 }
 
 pub async fn file_diff(
-    pool: &SqlitePool,
     row: &ThreadRow,
-    user: &CurrentUser,
     baseline: &BaselineDto,
     path: &str,
 ) -> Result<FileDiffDto, ServerError> {

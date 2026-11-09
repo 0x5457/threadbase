@@ -14,5 +14,6 @@ pub mod projects;
 pub mod rate_limit;
 pub mod routes;
 pub mod routes_auth;
+pub mod routes_workspace;
 pub mod state;
 pub mod threads;

@@ -1,0 +1,303 @@
+//! Project, thread and change-review routes.
+
+use crate::auth::CurrentUser;
+use crate::authz;
+use crate::diff;
+use crate::error::ServerError;
+use crate::projects;
+use crate::state::AppState;
+use crate::threads;
+use axum::extract::{Path, Query, State};
+use axum::routing::{get, post};
+use axum::Json;
+use axum::Router;
+use serde::Deserialize;
+use threadbase_shared::api::{
+    CreateProjectRequest, CreateThreadRequest, ForkThreadRequest, MergeBackRequest, SeenRequest,
+    UpdateProjectRequest, UpdateThreadRequest,
+};
+use threadbase_shared::{
+    ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse, OkResponse,
+    ProjectOverviewResponse, ProjectResponse, ProjectsResponse, ThreadResponse, ThreadsResponse,
+};
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/api/projects", get(list_projects).post(create_project))
+        .route(
+            "/api/projects/{project_id}",
+            get(get_project).patch(update_project),
+        )
+        .route(
+            "/api/projects/{project_id}/threads",
+            get(list_threads).post(create_thread),
+        )
+        .route("/api/projects/{project_id}/overview", get(project_overview))
+        .route(
+            "/api/threads/{thread_id}",
+            get(get_thread).patch(update_thread).delete(delete_thread),
+        )
+        .route("/api/threads/{thread_id}/fork", post(fork_thread))
+        .route("/api/threads/{thread_id}/changes", get(thread_changes))
+        .route(
+            "/api/threads/{thread_id}/changes/file",
+            get(thread_file_diff),
+        )
+        .route("/api/threads/{thread_id}/seen", post(mark_seen))
+        .route("/api/threads/{thread_id}/merge-back", post(merge_back))
+}
+
+async fn list_projects(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+) -> Result<Json<ProjectsResponse>, ServerError> {
+    Ok(Json(ProjectsResponse {
+        projects: projects::list(&state.pool).await?,
+    }))
+}
+
+async fn create_project(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<CreateProjectRequest>,
+) -> Result<Json<ProjectResponse>, ServerError> {
+    Ok(Json(ProjectResponse {
+        project: projects::create(&state.pool, &user, &request).await?,
+    }))
+}
+
+async fn get_project(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<ProjectResponse>, ServerError> {
+    Ok(Json(ProjectResponse {
+        project: projects::get(&state.pool, &project_id).await?,
+    }))
+}
+
+async fn update_project(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(project_id): Path<String>,
+    Json(request): Json<UpdateProjectRequest>,
+) -> Result<Json<ProjectResponse>, ServerError> {
+    if !projects::can_edit(&state.pool, &project_id, &user).await? {
+        return Err(ServerError(ApiError::forbidden(
+            "only the project creator or an admin can edit this project",
+        )));
+    }
+    Ok(Json(ProjectResponse {
+        project: projects::update(
+            &state.pool,
+            &project_id,
+            request.name.as_deref(),
+            request.remote_url.as_deref(),
+        )
+        .await?,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadListQuery {
+    include_archived: Option<bool>,
+}
+
+async fn list_threads(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(project_id): Path<String>,
+    Query(query): Query<ThreadListQuery>,
+) -> Result<Json<ThreadsResponse>, ServerError> {
+    Ok(Json(ThreadsResponse {
+        threads: threads::list(
+            &state.pool,
+            &project_id,
+            &user,
+            query.include_archived.unwrap_or(false),
+        )
+        .await?,
+    }))
+}
+
+async fn create_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(project_id): Path<String>,
+    Json(request): Json<CreateThreadRequest>,
+) -> Result<Json<ThreadResponse>, ServerError> {
+    Ok(Json(ThreadResponse {
+        thread: threads::create(
+            &state.pool,
+            &state.config.data_dir,
+            &user,
+            &project_id,
+            &request,
+        )
+        .await?,
+    }))
+}
+
+async fn get_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<ThreadResponse>, ServerError> {
+    Ok(Json(ThreadResponse {
+        thread: threads::get(&state.pool, &thread_id, &user).await?,
+    }))
+}
+
+async fn update_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<UpdateThreadRequest>,
+) -> Result<Json<ThreadResponse>, ServerError> {
+    Ok(Json(ThreadResponse {
+        thread: threads::update(&state.pool, &thread_id, &user, &request).await?,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteQuery {
+    confirm: Option<bool>,
+}
+
+async fn delete_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Query(query): Query<DeleteQuery>,
+) -> Result<Json<OkResponse>, ServerError> {
+    if query.confirm != Some(true) {
+        return Err(ServerError(ApiError::validation(
+            "deleting a thread requires confirm=true; its worktree and uncommitted changes will be removed",
+        )));
+    }
+    threads::delete(&state.pool, &thread_id, &user).await?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn fork_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<ForkThreadRequest>,
+) -> Result<Json<ThreadResponse>, ServerError> {
+    Ok(Json(ThreadResponse {
+        thread: threads::fork(
+            &state.pool,
+            &state.config.data_dir,
+            &thread_id,
+            &user,
+            &request,
+        )
+        .await?,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct BaselineQuery {
+    kind: Option<String>,
+    commit: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileDiffQuery {
+    kind: Option<String>,
+    commit: Option<String>,
+    path: String,
+}
+
+async fn thread_changes(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Query(query): Query<BaselineQuery>,
+) -> Result<Json<ChangesDto>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    Ok(Json(
+        diff::list(&state.pool, &row, &user, &baseline(query)).await?,
+    ))
+}
+
+async fn thread_file_diff(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Query(query): Query<FileDiffQuery>,
+) -> Result<Json<FileDiffDto>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    Ok(Json(
+        diff::file_diff(
+            &row,
+            &BaselineDto {
+                kind: parse_kind(query.kind.as_deref()),
+                commit: query.commit,
+            },
+            &query.path,
+        )
+        .await?,
+    ))
+}
+
+async fn mark_seen(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<SeenRequest>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    diff::mark_seen(&state.pool, &row, &user, &request.paths, request.seen).await?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn merge_back(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<MergeBackRequest>,
+) -> Result<Json<MergeBackResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    Ok(Json(
+        diff::merge_back(
+            &state.pool,
+            &row,
+            &user,
+            request.commit,
+            request.commit_message.as_deref(),
+        )
+        .await?,
+    ))
+}
+
+async fn project_overview(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<ProjectOverviewResponse>, ServerError> {
+    Ok(Json(ProjectOverviewResponse {
+        overview: projects::overview(&state.pool, &project_id, &user).await?,
+    }))
+}
+
+fn baseline(query: BaselineQuery) -> BaselineDto {
+    BaselineDto {
+        kind: parse_kind(query.kind.as_deref()),
+        commit: query.commit,
+    }
+}
+
+fn parse_kind(value: Option<&str>) -> BaselineKind {
+    match value {
+        Some("last_commit") => BaselineKind::LastCommit,
+        Some("last_turn") => BaselineKind::LastTurn,
+        Some("commit") => BaselineKind::Commit,
+        _ => BaselineKind::BaseBranch,
+    }
+}

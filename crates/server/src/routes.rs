@@ -24,6 +24,7 @@ pub fn router(state: AppState) -> Router {
     let csrf_state = state.clone();
     Router::new()
         .merge(crate::routes_auth::router())
+        .merge(crate::routes_workspace::router())
         .route("/api/health", get(health))
         .route("/api/threads/{thread_id}/events", get(thread_events))
         .fallback(static_asset)

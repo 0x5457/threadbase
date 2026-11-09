@@ -56,16 +56,16 @@
 
 | 需求 | 状态 | 代码路径 | 验证 |
 | --- | --- | --- | --- |
-| F1 添加并打开 project | 进行中 | 认证与会话已完成；project API 待接入 | 22 个服务端认证测试通过 |
-| F2 新建 thread / worktree / agent | 未开始 | — | — |
+| F1 添加并打开 project | 已验证 | `crates/server/src/projects.rs`、`routes_workspace.rs` | 非 git/相对路径/重复添加校验测试；项目概览计数测试 |
+| F2 新建 thread / worktree / agent | 进行中 | `crates/server/src/threads.rs`、`crates/workspace/src/git.rs` | worktree 创建/清理、fork、归档/删除测试通过；agent 启动待 ACP harness 接入 |
 | F3 对话与工具调用 | 未开始 | — | — |
 | F4 审批 | 未开始 | — | — |
 | F5 分享与加入 | 未开始 | — | — |
 | F6 多人实时 | 未开始 | — | — |
-| F7 变更审阅 | 未开始 | — | — |
+| F7 变更审阅 | 进行中 | `crates/server/src/diff.rs`、`routes_workspace.rs` | 四档基线、逐文件 diff、Seen 重置、合回不自动提交测试通过；前端面板待接入 |
 | F8 断线与恢复 | 未开始 | — | — |
-| F9 thread 生命周期 | 未开始 | — | — |
-| F10 project 概览 | 未开始 | — | — |
+| F9 thread 生命周期 | 已验证 | `crates/server/src/threads.rs` | 重命名/归档/取消归档/fork/删除与 worktree 清理测试通过 |
+| F10 project 概览 | 进行中 | `crates/server/src/projects.rs` | 数据聚合与待审批计数测试通过；前端页面待接入 |
 | F11 焦点共享与跟随 | 未开始 | — | — |
 | F12 子 agent 展示 | 未开始 | — | — |
 | F13 提问与回答 | 未开始 | — | — |
