@@ -69,7 +69,7 @@
 | F2 新建 thread / worktree / agent | 已验证 | `threads.rs`、`workspace/src/git.rs`、`agents.rs`、`WorkspaceLayout.tsx` | 无弹窗、无标题必填；点击即建 thread 并跳转；worktree/启动/初始化 prompt/自动标题测试；fake + 真实 Codex 完成 turn |
 | F3 对话与工具调用 | 已验证 | `agents.rs`、`ThreadEvent` 归约、`ThreadTimeline.tsx`、`Composer.tsx` | fake agent 流式文本/思考/工具更新/计划/用量；e2e 显示 “Hello”“Run tests”、计划；真实 Codex 返回 `pong` |
 | F4 审批 | 已验证 | `approvals.rs`、`routes_actions.rs`、`ThreadTimeline.tsx`、`RightDrawer.tsx` | 默认 pending 不自动放行；允许/拒绝/线程规则/撤销；viewer 拒绝；内联 + 抽屉 e2e；审计行测试 |
-| F5 分享与加入 | 已验证 | `sharing.rs`、`routes_comments.rs`、`ShareDialog.tsx`、`InvitePage.tsx` | 仅邀请/整个工作区；成员增删改；14 天 token invite 接受；邀请/撤销测试；viewer 只读 e2e |
+| F5 分享与加入 | 已验证 | `sharing.rs`、`ShareDialog.tsx`、`InvitePage.tsx` | 仅邀请/整个工作区；成员增删改；14 天 token invite 接受/撤销；viewer 只读 e2e |
 | F6 多人实时 | 已验证 | `/ws` 事件、`EventStore` 广播、`useThreadLiveEvents` | 双浏览器草稿收敛、审批广播、afterSeq 重放、断线重连测试 |
 | F7 变更审阅 | 已验证 | `diff.rs`、`ChangesPanel.tsx`、`routes_workspace.rs` | 四档基线（含任意 commit 输入）、逐文件 hunk、Seen 进度/重置、合回不自动提交；e2e 行评论与 Seen |
 | F8 断线与恢复 | 已验证 | WS 重连、`after_seq` 重放、事件快照、thread 状态 | afterSeq/replay/resync 测试；浏览器 reload 后消息完整；断线条与重连 UI |
