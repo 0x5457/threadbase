@@ -8,6 +8,7 @@ import * as Y from "yjs";
 import { sendMessage } from "@/api/endpoints";
 import { queryKeys, useMe } from "@/api/queries";
 import type { DeliveryMode } from "@/api/types/DeliveryMode";
+import type { Participant } from "@/api/types/Participant";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,7 @@ interface ComposerProps {
   threadId: string;
   canWrite: boolean;
   threadStatus: string;
+  participants?: Participant[];
 }
 
 function websocketUrl(): string {
@@ -29,7 +31,12 @@ function randomId(): string {
   );
 }
 
-export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
+export function Composer({
+  threadId,
+  canWrite,
+  threadStatus,
+  participants = [],
+}: ComposerProps) {
   const me = useMe();
   const queryClient = useQueryClient();
   const { doc, provider } = useMemo(() => {
@@ -42,6 +49,7 @@ export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
   const [synced, setSynced] = useState(false);
   const [status, setStatus] = useState<string>("connecting");
   const [version, setVersion] = useState(0);
+  const [mentionOpen, setMentionOpen] = useState(false);
   const blocks = doc.getArray<Y.Map<unknown>>("blocks");
 
   useEffect(() => {
@@ -63,6 +71,16 @@ export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
     return () => blocks.unobserveDeep(refresh);
   }, [blocks]);
 
+  useEffect(() => {
+    if (me.data) {
+      provider.awareness.setLocalStateField("user", {
+        id: me.data.user.id,
+        displayName: me.data.user.displayName,
+        color: "#8aa4ff",
+      });
+    }
+  }, [me.data, provider]);
+
   const userId = me.data?.user.id ?? "";
   useEffect(() => {
     if (!userId || !synced) {
@@ -70,7 +88,9 @@ export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
     }
     const existing = blocks
       .toArray()
-      .find((block) => block.get("author") === userId);
+      .find(
+        (block) => block.get("author") === userId && !block.get("sentAt"),
+      );
     if (existing) {
       return;
     }
@@ -84,7 +104,9 @@ export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
     });
   }, [blocks, doc, synced, userId, version]);
 
-  const list = blocks.toArray();
+  const list = blocks
+    .toArray()
+    .filter((block) => !block.get("sentAt"));
   const hasText = list.some((block) => {
     const text = block.get("text");
     return text instanceof Y.Text && text.toString().trim().length > 0;
@@ -117,6 +139,9 @@ export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.threadBundle(threadId),
       });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.comments(threadId),
+      });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
   });
@@ -145,6 +170,7 @@ export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
                   key={String(block.get("id"))}
                   block={block}
                   isMine={block.get("author") === userId}
+                  awareness={provider.awareness}
                 />
               ))
             )}
@@ -170,6 +196,57 @@ export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
                 ? "Agent is running · input will steer or queue"
                 : "Shared draft · agent sees it only after send"}
             </span>
+            <div className="relative">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setMentionOpen((open) => !open)}
+                aria-label="Mention a teammate"
+              >
+                @
+              </Button>
+              {mentionOpen ? (
+                <div className="absolute bottom-8 left-0 z-20 w-52 overflow-hidden rounded-md border border-border bg-panel py-1 shadow-xl">
+                  {participants.length === 0 ? (
+                    <p className="px-2 py-1.5 text-[10.5px] text-faint">
+                      No teammates to mention
+                    </p>
+                  ) : (
+                    participants.map((participant) => (
+                      <button
+                        key={participant.user.id}
+                        type="button"
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px] text-fg hover:bg-hover"
+                        onClick={() => {
+                          const own = blocks
+                            .toArray()
+                            .find(
+                              (block) =>
+                                block.get("author") === userId &&
+                                block.get("text") instanceof Y.Text,
+                            );
+                          const text = own?.get("text");
+                          if (text instanceof Y.Text) {
+                            text.insert(text.length, `@${participant.user.username} `);
+                          }
+                          setMentionOpen(false);
+                        }}
+                      >
+                        <span
+                          className="size-2 rounded-full"
+                          style={{ background: participant.user.color }}
+                        />
+                        {participant.user.displayName}
+                        <span className="ml-auto text-[9.5px] text-faint">
+                          @{participant.user.username}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
             <div className="ml-auto flex items-center">
               {threadStatus === "running" && synced ? (
                 <Button
@@ -239,9 +316,11 @@ export function Composer({ threadId, canWrite, threadStatus }: ComposerProps) {
 function DraftBlockEditor({
   block,
   isMine,
+  awareness,
 }: {
   block: Y.Map<unknown>;
   isMine: boolean;
+  awareness: WebsocketProvider["awareness"];
 }) {
   const text = block.get("text");
   const textRef = text instanceof Y.Text ? text : null;
@@ -258,6 +337,30 @@ function DraftBlockEditor({
     return () => textRef.unobserve(refresh);
   }, [textRef]);
 
+  const [remoteEditors, setRemoteEditors] = useState<string[]>([]);
+
+  useEffect(() => {
+    const refresh = () => {
+      const names: string[] = [];
+      for (const [clientId, state] of awareness.getStates()) {
+        if (clientId === awareness.clientID) {
+          continue;
+        }
+        const editing = state.blockId;
+        const user = state.user as
+          | { displayName?: string; id?: string }
+          | undefined;
+        if (editing === block.get("id") && user?.displayName) {
+          names.push(user.displayName);
+        }
+      }
+      setRemoteEditors(names);
+    };
+    awareness.on("change", refresh);
+    refresh();
+    return () => awareness.off("change", refresh);
+  }, [awareness, block]);
+
   if (!textRef) {
     return null;
   }
@@ -265,9 +368,33 @@ function DraftBlockEditor({
   const update = (next: string) => {
     setValue(next);
     const cursor = area.current?.selectionStart ?? next.length;
+    const current = textRef.toString();
+    let start = 0;
+    while (
+      start < current.length &&
+      start < next.length &&
+      current[start] === next[start]
+    ) {
+      start += 1;
+    }
+    let currentEnd = current.length;
+    let nextEnd = next.length;
+    while (
+      currentEnd > start &&
+      nextEnd > start &&
+      current[currentEnd - 1] === next[nextEnd - 1]
+    ) {
+      currentEnd -= 1;
+      nextEnd -= 1;
+    }
+    // Mutate only the changed range so concurrent edits merge at character level.
     textRef.doc?.transact(() => {
-      textRef.delete(0, textRef.length);
-      textRef.insert(0, next);
+      if (currentEnd > start) {
+        textRef.delete(start, currentEnd - start);
+      }
+      if (nextEnd > start) {
+        textRef.insert(start, next.slice(start, nextEnd));
+      }
     });
     requestAnimationFrame(() => {
       area.current?.setSelectionRange(cursor, cursor);
@@ -279,12 +406,21 @@ function DraftBlockEditor({
       <div className="flex items-center gap-1.5 text-[9.5px] uppercase tracking-wide text-faint">
         <span className={cn("size-1.5 rounded-full", isMine ? "bg-accent" : "bg-muted")} />
         {isMine ? "You" : String(block.get("author") ?? "member")}
+        {remoteEditors.length > 0 ? (
+          <span className="normal-case text-info">
+            · {remoteEditors.join(", ")} editing
+          </span>
+        ) : null}
       </div>
       <textarea
         ref={area}
         value={value}
         rows={Math.max(1, Math.min(6, value.split("\n").length))}
         onChange={(event) => update(event.target.value)}
+        onFocus={() =>
+          awareness.setLocalStateField("blockId", block.get("id"))
+        }
+        onBlur={() => awareness.setLocalStateField("blockId", null)}
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
             event.preventDefault();

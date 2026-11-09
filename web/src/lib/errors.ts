@@ -30,7 +30,7 @@ export function describeError(
       return {
         title: "Not found",
         description:
-          error.message || "The requested resource is not available yet.",
+          error.message || "The requested resource was not found.",
         retryable: false,
       };
     }

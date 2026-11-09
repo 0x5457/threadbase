@@ -6,7 +6,9 @@
 
 ## 当前状态
 
-实现阶段。工作区骨架、共享类型、路径约束、git worktree、CRDT 草稿、ACP 抽象与前端外壳已落地；SQLite、认证、REST/WS、时间线、审批、评论与打包仍在推进。逐项状态见 [docs/06-implementation-status.md](docs/06-implementation-status.md)。
+v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、presence/跟随、分享与角色、CLI 与发布工作流。
+
+验证证据、版本审计、规格冲突裁决和逐项需求覆盖见 [docs/06-implementation-status.md](docs/06-implementation-status.md)。界面截图见 [docs/screenshots](docs/screenshots)。
 
 ## 快速开始
 
@@ -18,14 +20,18 @@ pnpm --dir web install --frozen-lockfile
 pnpm --dir web build
 
 # 启动本地服务，默认 http://127.0.0.1:7777
-cargo run -p threadbase-server
+MBX_BLAZE=false cargo run -p threadbase-server
 ```
+
+首次打开页面创建本地管理员。服务启动后运行 `threadbase doctor` 检查 Node、git、数据库和 Codex/Claude/opencode/pi adapter。
 
 开发前端时另开一个终端：
 
 ```bash
 pnpm --dir web dev   # http://127.0.0.1:5173，/api 与 /ws 代理到 7777
 ```
+
+真实 Codex 需要安装 `codex-acp` 并登录 Codex；服务会自动把本机 `codex` 路径写入 `CODEX_PATH`。没有 adapter 时 `doctor` 会明确报告，UI 会把 thread 标记为错误而不是卡在运行中。
 
 数据目录默认是平台数据目录下的 `threadbase/`（Linux 为 `~/.local/share/threadbase/`），可用 `THREADBASE_DATA_DIR` 覆盖。服务固定绑定回环地址，`THREADBASE_BIND` 只接受回环地址。
 
@@ -75,11 +81,30 @@ tailscale serve --bg 443 http://127.0.0.1:7777
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+MBX_BLAZE=false cargo nextest run --workspace
 pnpm --dir web typecheck
 pnpm --dir web lint
 pnpm --dir web build
+pnpm --dir web exec playwright test
 ```
+
+真实 Codex 契约 smoke（需要登录）：
+
+```bash
+MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored --nocapture
+```
+
+构建加速：本机使用 `mr-boxington` + blaze 时，`cargo check` 会走 blaze；测试、release 与 fixture 使用 `MBX_BLAZE=false`，原因和配置见 [docs/06](docs/06-implementation-status.md) §6。
+
+## 打包
+
+```bash
+MBX_BLAZE=false cargo build --release -p threadbase-server
+threadbase doctor
+threadbase service install --print
+```
+
+GitHub Releases 工作流见 `.github/workflows/release.yml`，安装脚本为 `scripts/install.sh`，升级命令为 `threadbase upgrade [--check]`。
 
 ## 许可
 

@@ -32,6 +32,10 @@ pub struct DraftBlock {
     pub author: String,
     pub text: String,
     pub created_at: i64,
+    /// Sent blocks stay in the CRDT as tombstones; deleting array parents while
+    /// a client is mid-edit can create dangling updates in Yjs.
+    #[serde(skip)]
+    pub sent: bool,
 }
 
 #[derive(Debug)]
@@ -118,6 +122,7 @@ impl DraftDoc {
             .snapshot()
             .into_iter()
             .map(|(block, _)| block)
+            .filter(|block| !block.sent)
             .collect();
         sort_blocks(&mut blocks);
         blocks
@@ -140,6 +145,7 @@ impl DraftDoc {
                     author: read_string(&txn, &map, "author"),
                     text: read_text(&txn, &map),
                     created_at: read_i64(&txn, &map, "createdAt"),
+                    sent: map.get(&txn, "sentAt").is_some(),
                 },
                 index,
             ));
@@ -217,10 +223,30 @@ impl DraftDoc {
             .filter(|block| !block.text.trim().is_empty())
             .collect();
         sort_blocks(&mut taken);
+        let ids: std::collections::HashSet<String> =
+            taken.iter().map(|block| block.id.clone()).collect();
         let mut txn = self.awareness.doc().transact_mut();
-        let len = blocks.len(&txn);
-        if len > 0 {
-            blocks.remove_range(&mut txn, 0, len);
+        for index in 0..blocks.len(&txn) {
+            let Some(value) = blocks.get(&txn, index) else {
+                continue;
+            };
+            let Ok(map) = value.cast::<MapRef>() else {
+                continue;
+            };
+            let id = read_string(&txn, &map, "id");
+            if !ids.contains(&id) {
+                continue;
+            }
+            if let Some(body) = map
+                .get(&txn, "text")
+                .and_then(|value| value.cast::<TextRef>().ok())
+            {
+                let len = body.len(&txn);
+                if len > 0 {
+                    body.remove_range(&mut txn, 0, len);
+                }
+            }
+            map.insert(&mut txn, "sentAt", true);
         }
         drop(txn);
         taken
@@ -321,5 +347,45 @@ mod tests {
         doc.append_block("b1", "alice", "hello", 1).unwrap();
         doc.set_block_text("b1", "goodbye").unwrap();
         assert_eq!(doc.blocks()[0].text, "goodbye");
+    }
+}
+
+#[cfg(test)]
+mod concurrent_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn two_senders_take_the_same_blocks_exactly_once() {
+        let mut doc = DraftDoc::new();
+        doc.append_block("b1", "alice", "hello", 1).unwrap();
+        let shared = std::sync::Arc::new(tokio::sync::Mutex::new(doc));
+        let left = shared.clone();
+        let right = shared.clone();
+        let a = tokio::spawn(async move { left.lock().await.take_trailing() });
+        let b = tokio::spawn(async move { right.lock().await.take_trailing() });
+        let a = a.await.unwrap();
+        let b = b.await.unwrap();
+        assert_eq!(
+            a.len() + b.len(),
+            1,
+            "only one sender may consume the drafts"
+        );
+    }
+
+    #[test]
+    fn text_edits_converge_after_both_updates() {
+        let mut a = DraftDoc::new();
+        a.append_block("b1", "alice", "hello", 1).unwrap();
+        let update = a.encode_full();
+        let mut b = DraftDoc::new();
+        b.apply_update(&update).unwrap();
+        // Both replicas edit the same Y.Text; applying each other's updates must converge.
+        a.set_block_text("b1", "hello from a").unwrap();
+        b.set_block_text("b1", "hello from b").unwrap();
+        let a_update = a.encode_full();
+        let b_update = b.encode_full();
+        a.apply_update(&b_update).unwrap();
+        b.apply_update(&a_update).unwrap();
+        assert_eq!(a.blocks(), b.blocks());
     }
 }

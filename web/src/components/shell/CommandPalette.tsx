@@ -101,14 +101,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         ) : search.isError ? (
           <ErrorState
             error={search.error}
-            title={
-              search.error instanceof ApiError && search.error.status === 404
-                ? "Search is not available yet"
-                : "Search failed"
-            }
+            title="Search failed"
             description={
-              search.error instanceof ApiError && search.error.status === 404
-                ? "The workspace search endpoint has not been implemented yet."
+              search.error instanceof ApiError
+                ? search.error.message
                 : undefined
             }
             compact

@@ -172,6 +172,11 @@ pub async fn create(
             meta,
         )
         .await?;
+    webhook(
+        "approval.pending",
+        &approval.thread_id,
+        &format!("Approval requested: {}", approval.title),
+    );
     notify_thread_members(
         pool,
         &approval.thread_id,
@@ -212,12 +217,24 @@ pub async fn decide(
         )));
     }
     crate::authz::require_write_role(pool, &row.thread_id, user).await?;
-    let (status, scope) = match decision {
+    let (status, mut scope) = match decision {
         threadbase_shared::ApprovalDecision::AllowOnce => ("allowed", Some("once")),
         threadbase_shared::ApprovalDecision::AllowSession => ("allowed", Some("session")),
         threadbase_shared::ApprovalDecision::AllowThread => ("allowed", Some("thread")),
         threadbase_shared::ApprovalDecision::Deny => ("denied", None),
     };
+    if scope == Some("thread") && row.subagent_id.is_some() {
+        let worktree: Option<String> =
+            sqlx::query_scalar("SELECT worktree_path FROM threads WHERE id = ?")
+                .bind(&row.thread_id)
+                .fetch_one(pool)
+                .await?;
+        if let (Some(cwd), Some(root)) = (row.cwd.as_deref(), worktree.as_deref()) {
+            if !threadbase_core::rule_inherits_to_child(root, cwd) {
+                scope = Some("once");
+            }
+        }
+    }
     let now = threadbase_shared::now_ms();
     let updated = sqlx::query(
         "UPDATE approvals SET status = ?, decision = ?, scope = ?, decided_by = ?, decided_at = ?,
@@ -237,11 +254,7 @@ pub async fn decide(
             "this request has already been handled",
         )));
     }
-    if matches!(
-        decision,
-        threadbase_shared::ApprovalDecision::AllowSession
-            | threadbase_shared::ApprovalDecision::AllowThread
-    ) {
+    if matches!(scope, Some("session" | "thread")) {
         let project_id: String = sqlx::query_scalar("SELECT project_id FROM threads WHERE id = ?")
             .bind(&row.thread_id)
             .fetch_one(pool)
@@ -336,6 +349,14 @@ pub async fn create_elicitation(
             meta,
         )
         .await?;
+    webhook(
+        "elicitation.pending",
+        elicitation.thread_id.as_str(),
+        &format!(
+            "Question from {}: {}",
+            elicitation.agent, elicitation.message
+        ),
+    );
     notify_thread_members(
         pool,
         elicitation.thread_id.as_str(),
@@ -775,4 +796,32 @@ fn parse_inbox_kind(value: &str) -> threadbase_shared::InboxKind {
         "invite" => threadbase_shared::InboxKind::Invite,
         _ => threadbase_shared::InboxKind::Error,
     }
+}
+
+/// Minimal webhook contract: POST JSON once, no retries, never blocks a thread.
+fn webhook(event: &str, thread_id: &str, summary: &str) {
+    let Ok(url) = std::env::var("THREADBASE_WEBHOOK_URL") else {
+        return;
+    };
+    if url.trim().is_empty() {
+        return;
+    }
+    let payload = serde_json::json!({
+        "event": event,
+        "threadId": thread_id,
+        "summary": summary,
+        "createdAt": threadbase_shared::now_ms(),
+    });
+    let event_name = event.to_owned();
+    tokio::spawn(async move {
+        let result = reqwest::Client::new()
+            .post(url)
+            .timeout(std::time::Duration::from_secs(5))
+            .json(&payload)
+            .send()
+            .await;
+        if let Err(error) = result {
+            tracing::warn!(%error, event = %event_name, "webhook delivery failed");
+        }
+    });
 }

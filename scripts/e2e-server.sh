@@ -27,4 +27,5 @@ export THREADBASE_BIND="127.0.0.1:7790"
 export THREADBASE_ACP_COMMAND="$ROOT/target/debug/threadbase_acp_fixture"
 export FAKE_AGENT_JOURNAL="$HOME_DIR/journal.log"
 export RUST_LOG="${RUST_LOG:-threadbase=warn}"
+export RUST_BACKTRACE=1
 exec "$ROOT/target/debug/threadbase"

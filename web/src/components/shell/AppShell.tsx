@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMediaQuery } from "@/lib/hooks";
+import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { CommandPalette } from "./CommandPalette";
 import { RightDrawer, type DrawerTab, type RightDrawerProps } from "./RightDrawer";
@@ -46,13 +47,48 @@ export function AppShell({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("changes");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const modifier = event.metaKey || event.ctrlKey;
-      if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+      const key = event.key.toLowerCase();
+      if (modifier && !event.altKey && !event.shiftKey && key === "k") {
         event.preventDefault();
         setPaletteOpen((open) => !open);
+        return;
+      }
+      if (modifier && event.shiftKey && !event.altKey && key === "p") {
+        event.preventDefault();
+        setPaletteOpen(true);
+        return;
+      }
+      if (modifier && !event.altKey && !event.shiftKey && key === "t") {
+        event.preventDefault();
+        setPaletteOpen(true);
+        return;
+      }
+      if (modifier && event.shiftKey && !event.altKey && key === "j") {
+        event.preventDefault();
+        navigate("/inbox");
+        return;
+      }
+      if (event.altKey && event.shiftKey && key === "d") {
+        event.preventDefault();
+        setDrawerTab("changes");
+        setDrawerOpen(true);
+        return;
+      }
+      if (modifier && !event.altKey && !event.shiftKey && key === "p") {
+        event.preventDefault();
+        setDrawerTab("files");
+        setDrawerOpen(true);
+        return;
+      }
+      if (modifier && event.altKey && key === "m") {
+        event.preventDefault();
+        setDrawerTab("comments");
+        setDrawerOpen(true);
         return;
       }
       if (event.shiftKey && event.key === "Escape") {
@@ -62,7 +98,7 @@ export function AppShell({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isMobileSidebar]);
+  }, [isMobileSidebar, navigate]);
 
   const openDrawer = (tab: DrawerTab = "changes") => {
     setDrawerTab(tab);

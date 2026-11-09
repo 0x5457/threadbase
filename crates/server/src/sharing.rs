@@ -449,3 +449,75 @@ async fn set_share_route(
     set_share_level(&state.pool, &thread_id, request.share_level).await?;
     Ok(Json(threadbase_shared::OkResponse { ok: true }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+    use crate::events::test_support::seed_thread;
+
+    #[tokio::test]
+    async fn invite_accept_share_and_remove() {
+        let pool = db::connect_memory().await.unwrap();
+        let (owner_id, _, thread_id) = seed_thread(&pool).await;
+        let owner = crate::auth::load_user_by_id(&pool, owner_id.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        let actor = CurrentUser {
+            user: owner,
+            method: "session",
+        };
+        let target = crate::auth::create_local_user(
+            &pool,
+            &threadbase_shared::api::CreateUserRequest {
+                username: "invitee".into(),
+                password: "correct horse battery".into(),
+                display_name: "Invitee".into(),
+                is_admin: false,
+            },
+        )
+        .await
+        .unwrap();
+        let invite = create_invite(
+            &pool,
+            thread_id.as_str(),
+            &actor,
+            &threadbase_shared::api::CreateInviteRequest {
+                email: None,
+                username: None,
+                role: Some(threadbase_shared::Role::Editor),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!invite.token.is_empty());
+        let invitee = CurrentUser {
+            user: target.clone(),
+            method: "session",
+        };
+        let member = accept_invite(&pool, &invite.token, &invitee).await.unwrap();
+        assert_eq!(member.user.id, target.id);
+        set_share_level(&pool, thread_id.as_str(), ShareLevel::Workspace)
+            .await
+            .unwrap();
+        let level: String = sqlx::query_scalar("SELECT share_level FROM threads WHERE id = ?")
+            .bind(thread_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(level, "workspace");
+        remove_member(&pool, thread_id.as_str(), &actor, target.id.as_str())
+            .await
+            .unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM thread_members WHERE thread_id = ? AND user_id = ?",
+        )
+        .bind(thread_id.as_str())
+        .bind(target.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0);
+    }
+}

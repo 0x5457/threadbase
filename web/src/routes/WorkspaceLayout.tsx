@@ -82,6 +82,7 @@ export function WorkspaceLayout() {
   );
   const [shareOpen, setShareOpen] = useState(false);
   const [followUserId, setFollowUserId] = useState<string | null>(null);
+  const [followUserName, setFollowUserName] = useState<string | null>(null);
 
   const projectList = projects.data?.projects ?? [];
   const threadList = threads.data?.threads ?? [];
@@ -98,8 +99,10 @@ export function WorkspaceLayout() {
     ? presence.focuses.find((focus) => focus.userId === followUserId)
     : undefined;
   const followedName = followUserId
-    ? (participants.find((participant) => participant.user.id === followUserId)
-        ?.user.displayName ?? "member")
+    ? (followUserName ??
+      participants.find((participant) => participant.user.id === followUserId)
+        ?.user.displayName ??
+      "member")
     : null;
   const activeProject =
     bundle.data?.bundle.project ??
@@ -214,6 +217,7 @@ export function WorkspaceLayout() {
     ) {
       const timer = window.setTimeout(() => {
         setFollowUserId(null);
+        setFollowUserName(null);
         toast.message("The followed member went offline");
       }, 0);
       return () => window.clearTimeout(timer);
@@ -224,7 +228,10 @@ export function WorkspaceLayout() {
     if (!followUserId) {
       return;
     }
-    const stop = () => setFollowUserId(null);
+    const stop = () => {
+      setFollowUserId(null);
+      setFollowUserName(null);
+    };
     const timer = window.setTimeout(() => {
       window.addEventListener("pointerdown", stop, { once: true });
     }, 0);
@@ -248,6 +255,46 @@ export function WorkspaceLayout() {
     }
   }, [workspaceState.data?.settings.browserNotifications]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+      if (modifier && event.shiftKey && !event.altKey && key === "s" && activeThread) {
+        event.preventDefault();
+        setShareOpen(true);
+      }
+      if (modifier && event.altKey && !event.shiftKey && key === "l") {
+        event.preventDefault();
+        const selection = window.getSelection()?.toString().trim();
+        const url = new URL(window.location.href);
+        if (selection) {
+          url.searchParams.set("selection", selection.slice(0, 500));
+        }
+        void navigator.clipboard.writeText(url.toString());
+        toast.success(selection ? "Link to selection copied" : "Link copied");
+      }
+      if (modifier && event.altKey && !event.shiftKey && key === "f") {
+        event.preventDefault();
+        const candidates = presence.focuses
+          .map((focus) => focus.userId)
+          .filter((id) => id !== me.data?.user.id);
+        if (candidates.length > 0) {
+          const currentIndex = followUserId
+            ? candidates.indexOf(followUserId)
+            : -1;
+          const next = candidates[(currentIndex + 1) % candidates.length];
+          const person = participants.find(
+            (participant) => participant.user.id === next,
+          );
+          setFollowUserId(next);
+          setFollowUserName(person?.user.displayName ?? "member");
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeThread, followUserId, me.data?.user.id, participants, presence.focuses]);
+
   const outletContext: WorkspaceOutletContext = {
     openNewProject: () => setNewProjectOpen(true),
     openNewThread,
@@ -263,9 +310,22 @@ export function WorkspaceLayout() {
           subtitle: title.subtitle,
           participants,
           followingName: followedName,
-          onFollow: (userId) =>
-            setFollowUserId((current) => (current === userId ? null : userId)),
-          onStopFollowing: () => setFollowUserId(null),
+          onFollow: (userId) => {
+            if (followUserId === userId) {
+              setFollowUserId(null);
+              setFollowUserName(null);
+              return;
+            }
+            const person = participants.find(
+              (participant) => participant.user.id === userId,
+            );
+            setFollowUserId(userId);
+            setFollowUserName(person?.user.displayName ?? "member");
+          },
+          onStopFollowing: () => {
+            setFollowUserId(null);
+            setFollowUserName(null);
+          },
           approvalsCount: activeThreadPending,
           shareDisabled: !activeThread,
           onShare: activeThread ? share : undefined,

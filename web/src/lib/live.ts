@@ -58,6 +58,14 @@ export function useThreadLiveEvents(threadId: string | undefined) {
           case "event": {
             applyEvent(queryClient, threadId, parsed.event);
             if (
+              parsed.event.payload.type === "comment_added" ||
+              parsed.event.payload.type === "comment_updated"
+            ) {
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.comments(threadId),
+              });
+            }
+            if (
               parsed.event.payload.type === "permission_requested" ||
               parsed.event.payload.type === "elicitation_requested"
             ) {

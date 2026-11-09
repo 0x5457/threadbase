@@ -190,6 +190,14 @@ async fn approvals_are_visible_and_viewers_cannot_decide() {
     assert_eq!(decided.decision, Some(ApprovalDecision::AllowThread));
     assert_eq!(decided.decided_by.as_ref().unwrap().username, "ada");
 
+    let audit: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log WHERE action = 'approval.decided' AND target_id = ?",
+    )
+    .bind(approval.id.as_str())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(audit, 1);
     let rules = approvals::list_rules(&fixture.pool).await.unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].scope, ApprovalScope::Thread);
@@ -314,6 +322,54 @@ async fn first_elicitation_response_wins_and_secrets_are_rejected() {
     .await
     .unwrap_err();
     assert_eq!(err.0.code, ErrorCode::Conflict);
+}
+
+#[tokio::test]
+async fn subagent_outside_worktree_does_not_get_a_reusable_rule() {
+    let fixture = fixture().await;
+    sqlx::query("UPDATE threads SET worktree_path = '/tmp/thread-worktree' WHERE id = ?")
+        .bind(fixture.thread.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let approval = approvals::create(
+        &fixture.pool,
+        &fixture.events,
+        approvals::NewApproval {
+            id: Ulid::new().to_string(),
+            thread_id: fixture.thread.0.clone(),
+            subagent_id: Some("sub-1".into()),
+            turn_id: None,
+            tool_call_id: None,
+            agent: "codex".into(),
+            title: "Run command".into(),
+            kind: "command".into(),
+            command: Some("make".into()),
+            cwd: Some("/tmp/outside".into()),
+            paths: vec![],
+            options: vec![],
+        },
+        Actor::agent("codex"),
+        EventMeta::default(),
+    )
+    .await
+    .unwrap();
+    let decided = approvals::decide(
+        &fixture.pool,
+        &fixture.events,
+        approval.id.as_str(),
+        &fixture.owner,
+        ApprovalDecision::AllowThread,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(decided.status, ApprovalStatus::Allowed);
+    assert_eq!(decided.scope, Some(ApprovalScope::Once));
+    assert!(approvals::list_rules(&fixture.pool)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]

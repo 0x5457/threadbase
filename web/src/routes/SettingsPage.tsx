@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { setTheme, useTheme, type Theme } from "@/lib/theme";
 import { describeError } from "@/lib/errors";
+import { ApprovalRulesSection } from "@/components/workspace/ApprovalRulesSection";
 import { cn } from "@/lib/utils";
 
 const baselines: Array<{ value: BaselineKind; label: string }> = [
@@ -406,6 +407,16 @@ export function SettingsPage() {
               initial={state.data.settings}
             />
           )}
+
+          {me.data?.user.isAdmin ? (
+            <Section
+              icon={Shield}
+              title="Standing approval rules"
+              description="Rules created by “Allow for thread”. Revoke them when an agent should ask again."
+            >
+              <ApprovalRulesSection />
+            </Section>
+          ) : null}
         </div>
       </div>
     </div>

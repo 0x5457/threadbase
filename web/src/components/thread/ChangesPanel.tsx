@@ -1,13 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, GitCompareArrows, RotateCcw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import {
-  mergeBackChanges,
-  setSeen,
-} from "@/api/endpoints";
-import { queryKeys, useChanges, useFileDiff } from "@/api/queries";
+import { createComment, mergeBackChanges, setSeen } from "@/api/endpoints";
+import { queryKeys, useChanges, useComments, useFileDiff } from "@/api/queries";
 import type { BaselineKind } from "@/api/types/BaselineKind";
+import type { CommentDto } from "@/api/types/CommentDto";
 import type { DiffLineDto } from "@/api/types/DiffLineDto";
 import type { FileChangeDto } from "@/api/types/FileChangeDto";
 import type { FileStatus } from "@/api/types/FileStatus";
@@ -18,6 +16,7 @@ import {
   EmptyState,
   ErrorState,
   Skeleton,
+  Textarea,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -76,8 +75,15 @@ export function ChangesPanel({
   const queryClient = useQueryClient();
   const [baseline, setBaseline] = useState<BaselineKind>("base_branch");
   const [selected, setSelected] = useState<string | null>(null);
+  const [commentTarget, setCommentTarget] = useState<{
+    hunkId: string;
+    line: number;
+    contextHash: string;
+  } | null>(null);
+  const [commentBody, setCommentBody] = useState("");
   const changes = useChanges(threadId, baseline);
   const diff = useFileDiff(threadId, selected, baseline);
+  const comments = useComments(threadId);
   const invalidate = () => {
     void queryClient.invalidateQueries({
       queryKey: queryKeys.threadBundle(threadId),
@@ -92,6 +98,41 @@ export function ChangesPanel({
     onSuccess: invalidate,
     onError: (error) => toast.error(String(error)),
   });
+  const addComment = useMutation({
+    mutationFn: () => {
+      if (!selected || !commentTarget) {
+        throw new Error("Select a diff line first");
+      }
+      return createComment(threadId, {
+        body: commentBody.trim(),
+        anchor: {
+          kind: "diff",
+          path: selected,
+          hunkId: commentTarget.hunkId,
+          line: commentTarget.line,
+          contextHash: commentTarget.contextHash,
+        },
+        parentId: null,
+        send: false,
+      });
+    },
+    onSuccess: () => {
+      setCommentBody("");
+      setCommentTarget(null);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.comments(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadEvents(threadId),
+      });
+    },
+    onError: (error) => toast.error(String(error)),
+  });
+  const markAllSeen = useMutation({
+    mutationFn: () => setSeen(threadId, (changes.data?.files ?? []).map((file) => file.path), true),
+    onSuccess: invalidate,
+    onError: (error) => toast.error(String(error)),
+  });
   const merge = useMutation({
     mutationFn: () => mergeBackChanges(threadId, false, null),
     onSuccess: (result) => {
@@ -101,6 +142,26 @@ export function ChangesPanel({
     },
     onError: (error) => toast.error(String(error)),
   });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+      if (modifier && event.shiftKey && key === "y") {
+        event.preventDefault();
+        markAllSeen.mutate();
+      }
+      if (modifier && event.altKey && key === "y" && selected) {
+        event.preventDefault();
+        const file = changes.data?.files.find((entry) => entry.path === selected);
+        if (file) {
+          seen.mutate({ file, value: !file.seen });
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [changes.data?.files, markAllSeen, seen, selected]);
 
   if (changes.isLoading) {
     return (
@@ -132,6 +193,13 @@ export function ChangesPanel({
       />
     );
   }
+
+  const fileComments = (comments.data?.comments ?? []).filter(
+    (comment): comment is CommentDto & {
+      anchor: { kind: "diff"; path: string; hunkId: string; line: number };
+    } =>
+      comment.anchor.kind === "diff" && comment.anchor.path === selected,
+  );
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -252,27 +320,86 @@ export function ChangesPanel({
                   <div className="sticky top-0 border-y border-border bg-raised px-2 py-1 text-[9.5px] text-faint">
                     {hunk.header}
                   </div>
-                  {hunk.lines.map((line, index) => (
-                    <div
-                      key={`${hunk.id}-${index}`}
-                      className={cn(
-                        "grid grid-cols-[2.5rem_2.5rem_1fr] gap-2 px-2 py-px",
-                        lineClass(line),
-                      )}
-                    >
-                      <span className="text-right text-faint/70">
-                        {line.oldLine ?? ""}
-                      </span>
-                      <span className="text-right text-faint/70">
-                        {line.newLine ?? ""}
-                      </span>
-                      <span className="whitespace-pre-wrap break-all">
-                        {line.content || " "}
-                      </span>
-                    </div>
-                  ))}
+                  {hunk.lines.map((line, index) => {
+                    const lineNumber = line.newLine ?? line.oldLine ?? 0;
+                    return (
+                      <button
+                        type="button"
+                        key={`${hunk.id}-${index}`}
+                        onClick={() =>
+                          setCommentTarget({
+                            hunkId: hunk.id,
+                            line: lineNumber,
+                            contextHash: hunk.contextHash,
+                          })
+                        }
+                        className={cn(
+                          "grid w-full grid-cols-[2.5rem_2.5rem_1fr] gap-2 px-2 py-px text-left hover:bg-hover",
+                          lineClass(line),
+                        )}
+                      >
+                        <span className="text-right text-faint/70">
+                          {line.oldLine ?? ""}
+                        </span>
+                        <span className="text-right text-faint/70">
+                          {line.newLine ?? ""}
+                        </span>
+                        <span className="whitespace-pre-wrap break-all">
+                          {line.content || " "}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {fileComments
+                    .filter((comment) => comment.anchor.hunkId === hunk.id)
+                    .map((comment) => (
+                      <div
+                        key={comment.id}
+                        className="border-y border-info/20 bg-info/5 px-2 py-1.5"
+                      >
+                        <p className="text-[9.5px] text-info">
+                          line {comment.anchor.line} · {comment.author.displayName}
+                          {comment.status === "pending" ? " · pending" : ""}
+                        </p>
+                        <p className="whitespace-pre-wrap text-[10.5px] text-fg">
+                          {comment.body}
+                        </p>
+                      </div>
+                    ))}
                 </div>
               ))}
+              {commentTarget ? (
+                <div className="space-y-1.5 border-t border-border bg-panel p-2.5">
+                  <p className="text-[10px] text-info">
+                    Comment on {selected}:{commentTarget.line}
+                  </p>
+                  <Textarea
+                    value={commentBody}
+                    onChange={(event) => setCommentBody(event.target.value)}
+                    placeholder="Leave a review comment…"
+                    rows={2}
+                    className="text-[11px]"
+                  />
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setCommentTarget(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      disabled={!commentBody.trim()}
+                      loading={addComment.isPending}
+                      onClick={() => addComment.mutate()}
+                    >
+                      Add pending comment
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </div>

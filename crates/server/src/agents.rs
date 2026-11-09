@@ -97,6 +97,12 @@ impl AgentManager {
         });
         let mut harness = Box::new(AcpHarness::new(profile));
         let mut events = harness.events();
+        let mut env = Vec::new();
+        if agent == "codex" {
+            if let Some(path) = threadbase_agent::profile::find_in_path("codex") {
+                env.push(("CODEX_PATH".to_owned(), path.to_string_lossy().to_string()));
+            }
+        }
         let ctx = LaunchCtx {
             thread_id: thread_id.to_owned(),
             cwd: PathBuf::from(&cwd),
@@ -104,7 +110,7 @@ impl AgentManager {
             model: row.model.clone(),
             effort: row.effort.clone(),
             subagents: true,
-            env: Vec::new(),
+            env,
         };
         let capabilities = match harness.start(ctx).await {
             Ok(capabilities) => capabilities,

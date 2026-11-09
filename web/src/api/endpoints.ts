@@ -1,5 +1,6 @@
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalResolvedResponse } from "@/api/types/ApprovalResolvedResponse";
+import type { ApprovalRulesResponse } from "@/api/types/ApprovalRulesResponse";
 import type { AuthMeDto } from "@/api/types/AuthMeDto";
 import type { AuthStatusResponse } from "@/api/types/AuthStatusResponse";
 import type { AddMemberRequest } from "@/api/types/AddMemberRequest";
@@ -21,6 +22,7 @@ import type { MergeBackResponse } from "@/api/types/MergeBackResponse";
 import type { Role } from "@/api/types/Role";
 import type { SeenRequest } from "@/api/types/SeenRequest";
 import type { UpdateCommentRequest } from "@/api/types/UpdateCommentRequest";
+import type { UpdateThreadRequest } from "@/api/types/UpdateThreadRequest";
 import type { CreateThreadRequest } from "@/api/types/CreateThreadRequest";
 import type { DecisionRequest } from "@/api/types/DecisionRequest";
 import type { EventsPageDto } from "@/api/types/EventsPageDto";
@@ -57,8 +59,8 @@ export const endpoints = {
   authMe: "/api/auth/me",
   projects: "/api/projects",
   project: (projectId: ProjectId) => `/api/projects/${segment(projectId)}`,
-  projectThreads: (projectId: ProjectId) =>
-    `/api/projects/${segment(projectId)}/threads`,
+  projectThreads: (projectId: ProjectId, includeArchived = false) =>
+    `/api/projects/${segment(projectId)}/threads${includeArchived ? "?include_archived=true" : ""}`,
   threads: "/api/threads",
   threadBundle: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/bundle`,
@@ -90,6 +92,9 @@ export const endpoints = {
     `/api/threads/${segment(threadId)}/events?after_seq=${afterSeq}&limit=${limit}`,
   approvalDecision: (threadId: ThreadId, approvalId: string) =>
     `/api/threads/${segment(threadId)}/approvals/${segment(approvalId)}/decision`,
+  approvalRules: "/api/approval-rules",
+  approvalRule: (ruleId: string) =>
+    `/api/approval-rules/${segment(ruleId)}`,
   elicitation: (elicitationId: string) =>
     `/api/elicitations/${segment(elicitationId)}/respond`,
   inbox: (filter: InboxFilter) => `/api/inbox?filter=${filter}`,
@@ -143,8 +148,21 @@ export function fetchProject(projectId: ProjectId): Promise<ProjectResponse> {
 
 export function fetchProjectThreads(
   projectId: ProjectId,
+  includeArchived = false,
 ): Promise<ThreadsResponse> {
-  return api<ThreadsResponse>(endpoints.projectThreads(projectId));
+  return api<ThreadsResponse>(
+    endpoints.projectThreads(projectId, includeArchived),
+  );
+}
+
+export function updateThread(
+  threadId: ThreadId,
+  request: UpdateThreadRequest,
+): Promise<ThreadResponse> {
+  return api<ThreadResponse>(`/api/threads/${segment(threadId)}`, {
+    method: "PATCH",
+    body: request,
+  });
 }
 
 export function createThread(
@@ -175,6 +193,14 @@ export function fetchThreadBundle(
   threadId: ThreadId,
 ): Promise<ThreadBundleResponse> {
   return api<ThreadBundleResponse>(endpoints.threadBundle(threadId));
+}
+
+export function fetchApprovalRules(): Promise<ApprovalRulesResponse> {
+  return api<ApprovalRulesResponse>(endpoints.approvalRules);
+}
+
+export function deleteApprovalRule(ruleId: string): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.approvalRule(ruleId), { method: "DELETE" });
 }
 
 export function respondElicitation(

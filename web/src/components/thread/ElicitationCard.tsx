@@ -34,6 +34,10 @@ export function ElicitationCard({
 }) {
   const schema = (elicitation.requestedSchema ?? {}) as FormSchema;
   const fields = Object.entries(schema.properties ?? {});
+  const authorizationUrl =
+    elicitation.mode === "url"
+      ? (elicitation.requestedSchema as { url?: string } | null)?.url
+      : undefined;
   const [values, setValues] = useState<Record<string, unknown>>(() => {
     const initial: Record<string, unknown> = {};
     for (const [key, property] of fields) {
@@ -67,6 +71,21 @@ export function ElicitationCard({
         </div>
         <div className="space-y-2 border-t border-info/20 px-3 py-2">
           <p className="text-[11.5px] text-fg">{elicitation.message}</p>
+          {authorizationUrl ? (
+            <div className="space-y-1 rounded border border-border bg-canvas px-2 py-1.5">
+              <p className="break-all font-mono text-[9.5px] text-muted">
+                {authorizationUrl}
+              </p>
+              <a
+                href={authorizationUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex text-[10.5px] text-accent hover:underline"
+              >
+                Open authorization page
+              </a>
+            </div>
+          ) : null}
           <p className="text-[10px] text-faint">
             {elicitation.agent}
             {elicitation.blocking ? "" : " · non-blocking"}

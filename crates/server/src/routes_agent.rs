@@ -59,12 +59,29 @@ async fn send_message(
     if text.len() > 64 * 1024 {
         return Err(ServerError(ApiError::validation("message is too long")));
     }
-    Ok(Json(
-        state
-            .agents
-            .send(&thread_id, &user, text.as_str(), request.delivery)
-            .await?,
-    ))
+    let pending = crate::comments::pending_for_thread(&state.pool, &thread_id).await?;
+    let text = if pending.is_empty() {
+        text
+    } else {
+        let comments = pending
+            .iter()
+            .map(|comment| {
+                let anchor = serde_json::to_string(&comment.anchor).unwrap_or_default();
+                format!("- {} (anchor: {})", comment.body, anchor)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{text}\n\nReview comments to address:\n{comments}")
+    };
+    let response = state
+        .agents
+        .send(&thread_id, &user, text.as_str(), request.delivery)
+        .await?;
+    if response.delivery != threadbase_shared::Delivery::Queued {
+        crate::comments::mark_pending_delivered(&state.pool, &state.events, &thread_id, &user)
+            .await?;
+    }
+    Ok(Json(response))
 }
 
 async fn cancel(

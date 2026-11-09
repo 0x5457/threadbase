@@ -7,8 +7,10 @@ import {
   Plus,
   ShieldCheck,
 } from "lucide-react";
+import { useState } from "react";
 import { Link, useOutletContext, useParams } from "react-router-dom";
 import { useProject, useProjectThreads } from "@/api/queries";
+import { Archive } from "lucide-react";
 import type { ThreadDto } from "@/api/types/ThreadDto";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import {
@@ -94,8 +96,9 @@ function ThreadRow({
 export function ProjectPage() {
   const { projectId } = useParams();
   const { openNewThread } = useOutletContext<WorkspaceOutletContext>();
+  const [showArchived, setShowArchived] = useState(false);
   const project = useProject(projectId);
-  const threads = useProjectThreads(projectId);
+  const threads = useProjectThreads(projectId, showArchived);
 
   if (!projectId) {
     return (
@@ -216,14 +219,24 @@ export function ProjectPage() {
               </div>
             </div>
           </div>
-          <Button
-            variant="primary"
-            size="md"
-            onClick={() => openNewThread(data.id)}
-          >
-            <Plus aria-hidden />
-            New thread
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setShowArchived((value) => !value)}
+            >
+              <Archive aria-hidden />
+              {showArchived ? "Hide archived" : "Archived"}
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => openNewThread(data.id)}
+            >
+              <Plus aria-hidden />
+              New thread
+            </Button>
+          </div>
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">

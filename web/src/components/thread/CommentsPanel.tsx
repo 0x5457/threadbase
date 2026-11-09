@@ -155,6 +155,12 @@ export function CommentsPanel({
               <p className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed text-fg">
                 {comment.body}
               </p>
+              {comment.anchorChanged ? (
+                <p className="mt-1 text-[10px] text-warning">
+                  The original diff position changed; this comment is anchored to
+                  the file instead.
+                </p>
+              ) : null}
               <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/70 pt-1.5">
                 {comment.status !== "delivered" &&
                 comment.status !== "resolved" &&

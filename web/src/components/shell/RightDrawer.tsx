@@ -4,6 +4,7 @@ import {
   GitCompareArrows,
   MessageSquare,
   RefreshCw,
+  Terminal,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -13,6 +14,7 @@ import type { ThreadBundleDto } from "@/api/types/ThreadBundleDto";
 import { ChangesPanel } from "@/components/thread/ChangesPanel";
 import { CommentsPanel } from "@/components/thread/CommentsPanel";
 import { FilesPanel } from "@/components/thread/FilesPanel";
+import { TerminalPanel } from "@/components/thread/TerminalPanel";
 import {
   Badge,
   Button,
@@ -29,7 +31,12 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
-export type DrawerTab = "changes" | "approvals" | "comments" | "files";
+export type DrawerTab =
+  | "changes"
+  | "approvals"
+  | "comments"
+  | "files"
+  | "terminal";
 
 export interface RightDrawerProps {
   open: boolean;
@@ -136,6 +143,10 @@ export function RightDrawer({
                   {pendingApprovals.length}
                 </Badge>
               ) : null}
+            </TabsTrigger>
+            <TabsTrigger value="terminal" className="flex-1 justify-center">
+              <Terminal className="size-3" aria-hidden />
+              Output
             </TabsTrigger>
             <TabsTrigger value="comments" className="flex-1 justify-center">
               <MessageSquare className="size-3" aria-hidden />
@@ -258,6 +269,19 @@ export function RightDrawer({
                   );
                 })}
               </ul>
+            )}
+          </TabsContent>
+
+          <TabsContent value="terminal">
+            {threadId ? (
+              <TerminalPanel threadId={threadId} />
+            ) : (
+              <EmptyState
+                icon={Terminal}
+                title="No thread open"
+                description="Open a thread to inspect agent command output."
+                compact
+              />
             )}
           </TabsContent>
 

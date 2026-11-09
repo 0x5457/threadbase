@@ -60,3 +60,37 @@ fn dto(row: QueueRow) -> QueueItemDto {
         superseded: row.superseded != 0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+    use crate::events::test_support::seed_thread;
+
+    #[tokio::test]
+    async fn queued_inputs_survive_and_keep_order() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        for (position, text) in [(1, "first"), (2, "second")] {
+            sqlx::query(
+                "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position, created_at, updated_at)
+                 VALUES(?, ?, ?, ?, 'queued', ?, ?, ?)",
+            )
+            .bind(ulid::Ulid::new().to_string())
+            .bind(thread.as_str())
+            .bind(user.as_str())
+            .bind(text)
+            .bind(position)
+            .bind(threadbase_shared::now_ms())
+            .bind(threadbase_shared::now_ms())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].text, "first");
+        assert_eq!(items[1].text, "second");
+        assert!(items.iter().all(|item| item.status == QueueStatus::Queued));
+    }
+}

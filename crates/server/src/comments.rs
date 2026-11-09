@@ -304,3 +304,35 @@ fn brief(user: &threadbase_shared::UserDto) -> threadbase_shared::UserBrief {
         color: user_color(user.id.as_str()).to_owned(),
     }
 }
+
+pub async fn pending_for_thread(
+    pool: &SqlitePool,
+    thread_id: &str,
+) -> Result<Vec<CommentDto>, ServerError> {
+    let rows = sqlx::query_as::<_, CommentRow>(
+        "SELECT c.id, c.thread_id, c.parent_id, c.author_id, c.body, c.anchor_json,
+                c.anchor_changed, c.status, c.delivered_seq, c.created_at, c.updated_at,
+                u.username, u.display_name, u.avatar_url
+         FROM comments c JOIN users u ON u.id = c.author_id
+         WHERE c.thread_id = ? AND c.status = 'pending'
+         ORDER BY c.created_at ASC",
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(dto).collect())
+}
+
+pub async fn mark_pending_delivered(
+    pool: &SqlitePool,
+    events: &EventStore,
+    thread_id: &str,
+    user: &CurrentUser,
+) -> Result<(), ServerError> {
+    let pending = pending_for_thread(pool, thread_id).await?;
+    for comment in pending {
+        let comment = mark_delivered(pool, events, comment.id.as_str(), user).await?;
+        let _ = comment;
+    }
+    Ok(())
+}

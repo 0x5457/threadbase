@@ -1234,7 +1234,7 @@ fn build_elicitation_request(
 ) -> crate::ElicitationRequest {
     let (mode, requested_schema) = match &request.mode {
         ElicitationMode::Form(form) => ("form", to_value(&form.requested_schema)),
-        ElicitationMode::Url(_) => ("url", Value::Null),
+        ElicitationMode::Url(url) => ("url", to_value(url)),
         ElicitationMode::Other(other) => (other.mode.as_str(), Value::Null),
         _ => ("unknown", Value::Null),
     };

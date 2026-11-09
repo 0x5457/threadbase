@@ -24,8 +24,8 @@ export const queryKeys = {
   me: ["auth", "me"] as const,
   projects: ["projects"] as const,
   project: (projectId: string) => ["projects", projectId] as const,
-  projectThreads: (projectId: string) =>
-    ["projects", projectId, "threads"] as const,
+  projectThreads: (projectId: string, includeArchived = false) =>
+    ["projects", projectId, "threads", includeArchived] as const,
   threads: ["threads"] as const,
   threadBundle: (threadId: string) => ["threads", threadId, "bundle"] as const,
   threadEvents: (threadId: string) => ["threads", threadId, "events"] as const,
@@ -76,10 +76,13 @@ export function useProject(projectId: string | undefined) {
   });
 }
 
-export function useProjectThreads(projectId: string | undefined) {
+export function useProjectThreads(
+  projectId: string | undefined,
+  includeArchived = false,
+) {
   return useQuery({
-    queryKey: queryKeys.projectThreads(projectId ?? ""),
-    queryFn: () => fetchProjectThreads(projectId ?? ""),
+    queryKey: queryKeys.projectThreads(projectId ?? "", includeArchived),
+    queryFn: () => fetchProjectThreads(projectId ?? "", includeArchived),
     enabled: Boolean(projectId),
   });
 }

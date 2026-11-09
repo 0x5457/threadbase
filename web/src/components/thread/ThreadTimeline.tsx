@@ -20,6 +20,7 @@ import {
 import { useMemo } from "react";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
+import type { CommentAnchor } from "@/api/types/CommentAnchor";
 import type { ElicitationAction } from "@/api/types/ElicitationAction";
 import type { ElicitationDto } from "@/api/types/ElicitationDto";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
@@ -42,6 +43,7 @@ import { cn } from "@/lib/utils";
 interface MessageItem {
   kind: "message";
   key: string;
+  messageId: string;
   role: "user" | "agent";
   text: string;
   author: MessageDto["author"];
@@ -262,6 +264,7 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
       items.push({
         kind: "message",
         key: `turn-${payload.turnId}`,
+        messageId: payload.messageId,
         role: "user",
         text: payload.prompt,
         author: payload.author,
@@ -277,6 +280,7 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
       items.push({
         kind: "message",
         key: `message-${payload.message.id}`,
+        messageId: payload.message.id,
         role: payload.message.role,
         text: payload.message.text,
         author: payload.message.author,
@@ -400,6 +404,7 @@ export interface ThreadTimelineProps {
     action: ElicitationAction,
     values: Record<string, unknown>,
   ) => void;
+  onComment?: (anchor: CommentAnchor) => void;
 }
 
 export function ThreadTimeline({
@@ -410,6 +415,7 @@ export function ThreadTimeline({
   onRetry,
   onDecide,
   onRespondElicitation,
+  onComment,
 }: ThreadTimelineProps) {
   const items = useMemo(() => buildTimeline(events), [events]);
   const approvalById = useMemo(
@@ -428,10 +434,20 @@ export function ThreadTimeline({
             <span className="truncate text-[11.5px] font-medium text-fg">
               {call.title}
             </span>
+            {onComment ? (
+              <button
+                type="button"
+                className="ml-auto rounded p-0.5 text-faint hover:text-fg"
+                aria-label="Comment on tool call"
+                onClick={() => onComment({ kind: "tool_call", toolCallId: call.id })}
+              >
+                <MessageSquare className="size-3" aria-hidden />
+              </button>
+            ) : null}
             <Badge
               variant={toolStatusVariant(call.status)}
               size="sm"
-              className="ml-auto shrink-0"
+              className={onComment ? "shrink-0" : "ml-auto shrink-0"}
             >
               {call.status.replace("_", " ")}
             </Badge>
@@ -545,6 +561,21 @@ export function ThreadTimeline({
                       <span title={formatTimestamp(item.createdAt)}>
                         {formatTimestamp(item.createdAt)}
                       </span>
+                    ) : null}
+                    {onComment ? (
+                      <button
+                        type="button"
+                        className="ml-auto rounded p-0.5 text-faint hover:text-fg"
+                        aria-label="Comment on message"
+                        onClick={() =>
+                          onComment({
+                            kind: "message",
+                            messageId: item.messageId,
+                          })
+                        }
+                      >
+                        <MessageSquare className="size-3" aria-hidden />
+                      </button>
                     ) : null}
                   </div>
                   <div

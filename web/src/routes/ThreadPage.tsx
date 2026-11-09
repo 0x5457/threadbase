@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  Archive,
   ArrowLeft,
   Bot,
   ChevronRight,
@@ -9,8 +10,9 @@ import {
   WifiOff,
 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
-import { decideApproval, respondElicitation } from "@/api/endpoints";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { decideApproval, respondElicitation, updateThread } from "@/api/endpoints";
 import {
   queryKeys,
   useMe,
@@ -18,10 +20,12 @@ import {
   useThreadEvents,
 } from "@/api/queries";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
+import type { CommentAnchor } from "@/api/types/CommentAnchor";
 import type { ElicitationAction } from "@/api/types/ElicitationAction";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
 import type { SubagentDto } from "@/api/types/SubagentDto";
+import { CommentDialog } from "@/components/thread/CommentDialog";
 import { Composer } from "@/components/thread/Composer";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
@@ -56,6 +60,7 @@ export function ThreadPage() {
   const { projectId, threadId, subagentId } = useParams();
   const online = useOnlineStatus();
   const me = useMe();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const bundle = useThreadBundle(threadId);
   const events = useThreadEvents(threadId);
@@ -83,6 +88,54 @@ export function ThreadPage() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.inbox("unread"),
       });
+    },
+  });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      if (
+        modifier &&
+        event.altKey &&
+        event.key.toLowerCase() === "u" &&
+        subagentId &&
+        projectId &&
+        threadId
+      ) {
+        event.preventDefault();
+        navigate(`/p/${projectId}/t/${threadId}`);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigate, projectId, subagentId, threadId]);
+
+  const [commentAnchor, setCommentAnchor] = useState<CommentAnchor | null>(null);
+  const [commentOpen, setCommentOpen] = useState(false);
+  const archive = useMutation({
+    mutationFn: (archived: boolean) =>
+      updateThread(threadId ?? "", {
+        title: null,
+        pinned: null,
+        archived,
+        shareLevel: null,
+      }),
+    onSuccess: (response) => {
+      if (!threadId) {
+        return;
+      }
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadBundle(threadId),
+      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectThreads(response.thread.projectId, false),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectThreads(response.thread.projectId, true),
+      });
+      if (response.thread.status === "archived") {
+        navigate(`/p/${response.thread.projectId}`);
+      }
     },
   });
   const decision = useMutation({
@@ -225,6 +278,15 @@ export function ThreadPage() {
         )}
         <ThreadStatusBadge status={thread.status} />
         <div className="ml-auto flex items-center gap-2.5 text-faint">
+          <button
+            type="button"
+            className="rounded p-1 text-faint hover:bg-hover hover:text-fg disabled:opacity-40"
+            title={thread.status === "archived" ? "Unarchive thread" : "Archive thread"}
+            disabled={!canWrite || archive.isPending}
+            onClick={() => archive.mutate(thread.status !== "archived")}
+          >
+            <Archive className="size-3.5" aria-hidden />
+          </button>
           <span className="flex items-center gap-1">
             <GitBranch className="size-3" aria-hidden />
             {thread.branch}
@@ -271,14 +333,27 @@ export function ThreadPage() {
             onRespondElicitation={(elicitationId, action, values) =>
               elicitation.mutate({ elicitationId, action, values })
             }
+            onComment={(anchor) => {
+              setCommentAnchor(anchor);
+              setCommentOpen(true);
+            }}
           />
         )}
       </div>
+      {threadId ? (
+        <CommentDialog
+          open={commentOpen}
+          onOpenChange={setCommentOpen}
+          threadId={threadId}
+          anchor={commentAnchor}
+        />
+      ) : null}
       {selectedSubagent ? null : (
         <Composer
           threadId={thread.id}
           canWrite={canWrite}
           threadStatus={thread.status}
+          participants={thread.participants}
         />
       )}
     </div>
