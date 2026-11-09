@@ -1,0 +1,117 @@
+import { cn } from "@/lib/utils";
+import { initials } from "@/lib/format";
+
+const AVATAR_COLORS = [
+  "#e08b53",
+  "#d46a8e",
+  "#8fbd5d",
+  "#9a83e8",
+  "#d7b34b",
+  "#df7566",
+  "#6fa8dd",
+  "#8a949d",
+];
+
+function colorFor(seed: string): string {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) | 0;
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+export interface AvatarPerson {
+  id: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  color?: string | null;
+}
+
+export interface AvatarProps {
+  person: AvatarPerson;
+  size?: "xs" | "sm" | "md" | "lg";
+  className?: string;
+  online?: boolean;
+}
+
+const sizeClasses = {
+  xs: "size-4 text-[8px]",
+  sm: "size-5 text-[9px]",
+  md: "size-6 text-[10px]",
+  lg: "size-8 text-[11px]",
+} as const;
+
+export function Avatar({ person, size = "md", className, online }: AvatarProps) {
+  const fallbackColor = person.color || colorFor(person.id || person.displayName);
+  return (
+    <span className={cn("relative inline-flex shrink-0", className)}>
+      <span
+        className={cn(
+          "inline-flex items-center justify-center overflow-hidden rounded-full border border-black/20 font-semibold text-white ring-1 ring-black/10",
+          sizeClasses[size],
+        )}
+        style={{ backgroundColor: fallbackColor }}
+        title={person.displayName}
+      >
+        {person.avatarUrl ? (
+          <img
+            src={person.avatarUrl}
+            alt=""
+            className="size-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          initials(person.displayName)
+        )}
+      </span>
+      {online ? (
+        <span
+          aria-label="Online"
+          className="absolute -bottom-px -right-px size-1.5 rounded-full border border-panel bg-success"
+        />
+      ) : null}
+    </span>
+  );
+}
+
+export interface AvatarStackProps {
+  people: AvatarPerson[];
+  max?: number;
+  size?: AvatarProps["size"];
+  className?: string;
+}
+
+export function AvatarStack({
+  people,
+  max = 3,
+  size = "sm",
+  className,
+}: AvatarStackProps) {
+  const visible = people.slice(0, max);
+  const hidden = people.slice(max);
+  if (people.length === 0) {
+    return null;
+  }
+  return (
+    <span className={cn("inline-flex items-center", className)}>
+      <span className="flex -space-x-1.5">
+        {visible.map((person) => (
+          <Avatar
+            key={person.id}
+            person={person}
+            size={size}
+            className="rounded-full ring-2 ring-panel"
+          />
+        ))}
+      </span>
+      {hidden.length > 0 ? (
+        <span
+          className="ml-1 text-[10px] text-faint"
+          title={hidden.map((person) => person.displayName).join(", ")}
+        >
+          +{hidden.length}
+        </span>
+      ) : null}
+    </span>
+  );
+}
