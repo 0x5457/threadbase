@@ -1,0 +1,19 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+data/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# Research sources: screenshots stay local (32 MB, re-fetchable)
+docs/research/_raw/images/
+
+# Agent tooling artifacts (not part of the product)
+.agents/
+skills-lock.json
