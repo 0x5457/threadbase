@@ -26,6 +26,8 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::routes_auth::router())
         .merge(crate::routes_workspace::router())
         .merge(crate::routes_actions::router())
+        .merge(crate::routes_agent::router())
+        .merge(crate::routes_meta::router())
         .route("/api/health", get(health))
         .route("/ws", get(crate::ws::handler))
         .route("/ws/drafts/{thread_id}", get(crate::drafts::handler))

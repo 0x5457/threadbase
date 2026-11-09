@@ -8,8 +8,8 @@ use sqlx::{FromRow, SqlitePool};
 use std::path::{Path, PathBuf};
 use threadbase_shared::api::{CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest};
 use threadbase_shared::{
-    now_ms, user_color, ApiError, ChangeStats, Participant, Role, ShareLevel, ThreadDto,
-    ThreadStatus, UserBrief,
+    now_ms, user_color, ApiError, ChangeStats, Participant, Role, ShareLevel, SubagentStatus,
+    ThreadDto, ThreadStatus, UserBrief,
 };
 use threadbase_workspace::git;
 use ulid::Ulid;
@@ -607,5 +607,228 @@ fn parse_role(value: &str) -> Role {
         "owner" => Role::Owner,
         "editor" => Role::Editor,
         _ => Role::Viewer,
+    }
+}
+
+pub async fn list_all(
+    pool: &SqlitePool,
+    user: &CurrentUser,
+    include_archived: bool,
+) -> Result<Vec<ThreadDto>, ServerError> {
+    let rows = sqlx::query_as::<_, ThreadRow>(&format!(
+        "SELECT {THREAD_COLUMNS} FROM threads t
+         WHERE (? = 1 OR t.archived_at IS NULL)
+           AND (? = 1 OR t.created_by = ? OR t.share_level = 'workspace'
+                OR EXISTS(SELECT 1 FROM thread_members m WHERE m.thread_id = t.id AND m.user_id = ?))
+         ORDER BY t.pinned DESC, COALESCE(t.last_activity_at, t.updated_at) DESC"
+    ))
+    .bind(i64::from(include_archived))
+    .bind(i64::from(user.is_admin()))
+    .bind(user.user.id.as_str())
+    .bind(user.user.id.as_str())
+    .fetch_all(pool)
+    .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(dto(pool, &row, user).await?);
+    }
+    Ok(out)
+}
+
+pub async fn bundle(
+    pool: &SqlitePool,
+    thread_id: &str,
+    user: &CurrentUser,
+) -> Result<threadbase_shared::ThreadBundleDto, ServerError> {
+    authz::require_read(pool, thread_id, user).await?;
+    let row = load_row(pool, thread_id).await?;
+    let thread = dto(pool, &row, user).await?;
+    let project = projects::get(pool, &row.project_id).await?;
+    let subagents = list_subagents(pool, thread_id).await?;
+    let approvals = crate::approvals::list_pending_for_thread(pool, thread_id).await?;
+    let elicitations = crate::approvals::list_elicitations(pool, thread_id).await?;
+    let queue = crate::queue::list_for_thread(pool, thread_id).await?;
+    let comments = crate::comments::list_for_thread(pool, thread_id).await?;
+    let changes = crate::diff::list(
+        pool,
+        &row,
+        user,
+        &threadbase_shared::BaselineDto {
+            kind: threadbase_shared::BaselineKind::BaseBranch,
+            commit: None,
+        },
+    )
+    .await
+    .unwrap_or_else(|_| empty_changes(&row));
+    let members = members(pool, &row).await?;
+    let invites = invites(pool, thread_id).await?;
+    let share = threadbase_shared::ShareStateDto {
+        thread_id: thread_id.to_owned().into(),
+        share_level: thread.share_level,
+        members: members.clone(),
+        pending_invites: invites,
+        share_token: None,
+    };
+    Ok(threadbase_shared::ThreadBundleDto {
+        thread,
+        project,
+        subagents,
+        approvals,
+        elicitations,
+        queue,
+        comments,
+        changes,
+        members,
+        share,
+    })
+}
+
+fn empty_changes(row: &ThreadRow) -> threadbase_shared::ChangesDto {
+    threadbase_shared::ChangesDto {
+        baseline: threadbase_shared::BaselineDto {
+            kind: threadbase_shared::BaselineKind::BaseBranch,
+            commit: None,
+        },
+        base_label: row.base_branch.clone(),
+        files: Vec::new(),
+        stats: ChangeStats {
+            files: 0,
+            additions: 0,
+            deletions: 0,
+            seen: 0,
+            total: 0,
+        },
+        commit: row.base_sha.clone(),
+    }
+}
+
+async fn list_subagents(
+    pool: &SqlitePool,
+    thread_id: &str,
+) -> Result<Vec<threadbase_shared::SubagentDto>, ServerError> {
+    #[derive(FromRow)]
+    struct Row {
+        id: String,
+        thread_id: String,
+        parent_id: Option<String>,
+        title: String,
+        description: Option<String>,
+        status: String,
+        cwd: Option<String>,
+        can_cancel: i64,
+        usage_json: Option<String>,
+        last_seq: i64,
+        created_at: i64,
+        updated_at: i64,
+    }
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT id, thread_id, parent_id, title, description, status, cwd, can_cancel,
+                usage_json, last_seq, created_at, updated_at
+         FROM subagents WHERE thread_id = ? ORDER BY created_at ASC",
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| threadbase_shared::SubagentDto {
+            id: row.id.into(),
+            thread_id: row.thread_id.into(),
+            parent_id: row.parent_id.map(Into::into),
+            title: row.title,
+            description: row.description,
+            status: parse_subagent_status(&row.status),
+            cwd: row.cwd,
+            can_cancel: row.can_cancel != 0,
+            usage: row
+                .usage_json
+                .as_deref()
+                .and_then(|value| serde_json::from_str(value).ok()),
+            last_seq: u64::try_from(row.last_seq).unwrap_or(0),
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+        .collect())
+}
+
+async fn members(
+    pool: &SqlitePool,
+    row: &ThreadRow,
+) -> Result<Vec<threadbase_shared::ThreadMemberDto>, ServerError> {
+    #[derive(FromRow)]
+    struct Row {
+        id: String,
+        username: String,
+        display_name: String,
+        avatar_url: Option<String>,
+        role: String,
+        joined_at: i64,
+    }
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT u.id, u.username, u.display_name, u.avatar_url, m.role, m.joined_at
+         FROM thread_members m JOIN users u ON u.id = m.user_id
+         WHERE m.thread_id = ? ORDER BY m.joined_at ASC",
+    )
+    .bind(&row.id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|member| threadbase_shared::ThreadMemberDto {
+            user: UserBrief {
+                id: member.id.clone().into(),
+                username: member.username,
+                display_name: member.display_name,
+                avatar_url: member.avatar_url,
+                color: user_color(&member.id).to_owned(),
+            },
+            role: parse_role(&member.role),
+            joined_at: member.joined_at,
+        })
+        .collect())
+}
+
+async fn invites(
+    pool: &SqlitePool,
+    thread_id: &str,
+) -> Result<Vec<threadbase_shared::InviteDto>, ServerError> {
+    #[derive(FromRow)]
+    struct Row {
+        id: String,
+        thread_id: String,
+        role: String,
+        email: Option<String>,
+        created_at: i64,
+        expires_at: i64,
+        accepted_at: Option<i64>,
+    }
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT id, thread_id, role, email, created_at, expires_at, accepted_at
+         FROM invites WHERE thread_id = ? AND accepted_at IS NULL ORDER BY created_at DESC",
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| threadbase_shared::InviteDto {
+            id: row.id.into(),
+            thread_id: row.thread_id.into(),
+            role: parse_role(&row.role),
+            email: row.email,
+            created_at: row.created_at,
+            expires_at: row.expires_at,
+            accepted_at: row.accepted_at,
+        })
+        .collect())
+}
+
+fn parse_subagent_status(value: &str) -> SubagentStatus {
+    match value {
+        "running" => SubagentStatus::Running,
+        "requires_action" => SubagentStatus::RequiresAction,
+        "cancelled" => SubagentStatus::Cancelled,
+        "error" => SubagentStatus::Error,
+        _ => SubagentStatus::Idle,
     }
 }

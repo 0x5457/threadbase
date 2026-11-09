@@ -183,10 +183,7 @@ impl DraftRoom {
         let mut persisted = Vec::new();
         let mut decoder = DecoderV1::new(Cursor::new(bytes));
         let protocol = DefaultProtocol;
-        loop {
-            let Ok(message) = SyncMessageEnvelope::decode(&mut decoder) else {
-                break;
-            };
+        while let Ok(message) = SyncMessageEnvelope::decode(&mut decoder) {
             match message {
                 SyncMessageEnvelope::Sync(SyncMessage::SyncStep1(state_vector)) => {
                     if let Ok(Some(reply)) =

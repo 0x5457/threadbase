@@ -23,6 +23,8 @@ use threadbase_shared::{
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/threads", get(list_all_threads))
+        .route("/api/threads/{thread_id}/bundle", get(thread_bundle))
         .route("/api/projects", get(list_projects).post(create_project))
         .route(
             "/api/projects/{project_id}",
@@ -135,6 +137,27 @@ async fn create_thread(
             &request,
         )
         .await?,
+    }))
+}
+
+async fn list_all_threads(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<ThreadListQuery>,
+) -> Result<Json<ThreadsResponse>, ServerError> {
+    Ok(Json(ThreadsResponse {
+        threads: threads::list_all(&state.pool, &user, query.include_archived.unwrap_or(false))
+            .await?,
+    }))
+}
+
+async fn thread_bundle(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<threadbase_shared::ThreadBundleResponse>, ServerError> {
+    Ok(Json(threadbase_shared::ThreadBundleResponse {
+        bundle: threads::bundle(&state.pool, &thread_id, &user).await?,
     }))
 }
 

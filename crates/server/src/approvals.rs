@@ -668,6 +668,7 @@ fn user_brief(user: &threadbase_shared::UserDto) -> threadbase_shared::UserBrief
 pub async fn list_inbox(
     pool: &SqlitePool,
     user: &crate::auth::CurrentUser,
+    unread_only: bool,
 ) -> Result<threadbase_shared::InboxPageDto, ServerError> {
     #[derive(Debug, sqlx::FromRow)]
     struct Row {
@@ -697,10 +698,11 @@ pub async fn list_inbox(
          JOIN threads t ON t.id = i.thread_id
          LEFT JOIN users u ON u.id = i.actor_id
          LEFT JOIN users u2 ON u2.id = t.created_by
-         WHERE i.user_id = ?
+         WHERE i.user_id = ? AND (? = 0 OR i.read_at IS NULL)
          ORDER BY i.created_at DESC LIMIT 200",
     )
     .bind(user.user.id.as_str())
+    .bind(i64::from(unread_only))
     .fetch_all(pool)
     .await?;
     let mut unread = 0;

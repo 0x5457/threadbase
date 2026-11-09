@@ -1,5 +1,6 @@
 //! Shared server state.
 
+use crate::agents::AgentManager;
 use crate::config::Config;
 use crate::drafts::DraftHub;
 use crate::events::EventStore;
@@ -17,15 +18,18 @@ pub struct AppState {
     pub login_limiter: RateLimiter,
     pub presence: PresenceHub,
     pub drafts: DraftHub,
+    pub agents: AgentManager,
 }
 
 impl AppState {
     #[must_use]
     pub fn new(config: Config, pool: SqlitePool) -> Self {
+        let events = EventStore::new(pool.clone());
         Self {
             config: Arc::new(config),
-            events: EventStore::new(pool.clone()),
             drafts: DraftHub::new(pool.clone()),
+            agents: AgentManager::new(pool.clone(), events.clone()),
+            events,
             pool,
             started_at: threadbase_shared::now_ms(),
             login_limiter: RateLimiter::new(),

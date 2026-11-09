@@ -259,6 +259,18 @@ fn read_text<T: ReadTxn>(txn: &T, map: &MapRef) -> String {
         .unwrap_or_default()
 }
 
+impl DraftDoc {
+    /// Remove every block, used after a send transaction has consumed them.
+    pub fn reset(&mut self) {
+        let blocks = self.awareness.doc().get_or_insert_array("blocks");
+        let mut txn = self.awareness.doc().transact_mut();
+        let len = blocks.len(&txn);
+        if len > 0 {
+            blocks.remove_range(&mut txn, 0, len);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,17 +321,5 @@ mod tests {
         doc.append_block("b1", "alice", "hello", 1).unwrap();
         doc.set_block_text("b1", "goodbye").unwrap();
         assert_eq!(doc.blocks()[0].text, "goodbye");
-    }
-}
-
-impl DraftDoc {
-    /// Remove every block, used after a send transaction has consumed them.
-    pub fn reset(&mut self) {
-        let blocks = self.awareness.doc().get_or_insert_array("blocks");
-        let mut txn = self.awareness.doc().transact_mut();
-        let len = blocks.len(&txn);
-        if len > 0 {
-            blocks.remove_range(&mut txn, 0, len);
-        }
     }
 }

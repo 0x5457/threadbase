@@ -1,9 +1,11 @@
 //! Threadbase server library. The binary in `main.rs` is a thin CLI around it.
 
+pub mod agents;
 pub mod approvals;
 pub mod assets;
 pub mod auth;
 pub mod authz;
+pub mod comments;
 pub mod config;
 pub mod db;
 pub mod diff;
@@ -13,11 +15,16 @@ pub mod events;
 pub mod middleware;
 pub mod presence;
 pub mod projects;
+pub mod queue;
 pub mod rate_limit;
 pub mod routes;
 pub mod routes_actions;
+pub mod routes_agent;
 pub mod routes_auth;
+pub mod routes_meta;
 pub mod routes_workspace;
+pub mod search;
+pub mod settings;
 pub mod state;
 pub mod threads;
 pub mod ws;

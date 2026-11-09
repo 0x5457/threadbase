@@ -784,6 +784,23 @@ pub struct SettingsDto {
     pub browser_notifications: bool,
 }
 
+impl Default for SettingsDto {
+    fn default() -> Self {
+        Self {
+            theme: "dark".to_owned(),
+            text_width: "default".to_owned(),
+            subthreads_per_thread: 10,
+            send_with_modifier: true,
+            default_agent: "codex".to_owned(),
+            default_model: None,
+            default_baseline: BaselineKind::BaseBranch,
+            hidden_presence: false,
+            webhook_url: None,
+            browser_notifications: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

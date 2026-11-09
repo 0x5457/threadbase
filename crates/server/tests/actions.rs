@@ -210,7 +210,7 @@ async fn approvals_are_visible_and_viewers_cannot_decide() {
 async fn inbox_tracks_pending_items_and_read_state() {
     let fixture = fixture().await;
     let _ = new_approval(&fixture).await;
-    let inbox = approvals::list_inbox(&fixture.pool, &fixture.owner)
+    let inbox = approvals::list_inbox(&fixture.pool, &fixture.owner, false)
         .await
         .unwrap();
     assert_eq!(inbox.items.len(), 1);
@@ -224,7 +224,7 @@ async fn inbox_tracks_pending_items_and_read_state() {
     .await
     .unwrap();
     assert_eq!(read, 1);
-    let inbox = approvals::list_inbox(&fixture.pool, &fixture.owner)
+    let inbox = approvals::list_inbox(&fixture.pool, &fixture.owner, false)
         .await
         .unwrap();
     assert_eq!(inbox.unread, 0);

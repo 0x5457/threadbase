@@ -18,6 +18,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/threads/{thread_id}/approvals", get(list_approvals))
         .route("/api/approvals/{approval_id}/decide", post(decide_approval))
+        .route(
+            "/api/threads/{thread_id}/approvals/{approval_id}/decision",
+            post(decide_approval_for_thread),
+        )
         .route("/api/approval-rules", get(list_rules))
         .route("/api/approval-rules/{rule_id}", delete(delete_rule))
         .route(
@@ -46,12 +50,44 @@ async fn decide_approval(
     Path(approval_id): Path<String>,
     Json(request): Json<DecisionRequest>,
 ) -> Result<Json<ApprovalResolvedResponse>, ServerError> {
+    decide_impl(&state, &user, &approval_id, request).await
+}
+
+async fn decide_approval_for_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, approval_id)): Path<(String, String)>,
+    Json(request): Json<DecisionRequest>,
+) -> Result<Json<ApprovalResolvedResponse>, ServerError> {
+    let row = crate::approvals::load(&state.pool, &approval_id).await?;
+    if row.thread_id != thread_id {
+        return Err(ServerError(threadbase_shared::ApiError::not_found(
+            "approval not found in this thread",
+        )));
+    }
+    decide_impl(&state, &user, &approval_id, request).await
+}
+
+async fn decide_impl(
+    state: &AppState,
+    user: &CurrentUser,
+    approval_id: &str,
+    request: DecisionRequest,
+) -> Result<Json<ApprovalResolvedResponse>, ServerError> {
+    let row = crate::approvals::load(&state.pool, approval_id).await?;
+    if let Err(error) = state
+        .agents
+        .decide(&row.thread_id, approval_id, request.decision)
+        .await
+    {
+        tracing::warn!(%error, approval_id, "could not deliver decision to agent");
+    }
     Ok(Json(ApprovalResolvedResponse {
         approval: crate::approvals::decide(
             &state.pool,
             &state.events,
-            &approval_id,
-            &user,
+            approval_id,
+            user,
             request.decision,
             request.note.as_deref(),
         )
@@ -95,25 +131,43 @@ async fn respond_elicitation(
     Path(elicitation_id): Path<String>,
     Json(request): Json<ElicitationResponseRequest>,
 ) -> Result<Json<ElicitationResolvedResponse>, ServerError> {
-    Ok(Json(ElicitationResolvedResponse {
-        elicitation: crate::approvals::respond_elicitation(
-            &state.pool,
-            &state.events,
+    let elicitation = crate::approvals::respond_elicitation(
+        &state.pool,
+        &state.events,
+        &elicitation_id,
+        &user,
+        request.action,
+        request.values.clone(),
+    )
+    .await?;
+    if let Err(error) = state
+        .agents
+        .respond_elicitation(
+            elicitation.thread_id.as_str(),
             &elicitation_id,
-            &user,
             request.action,
             request.values,
         )
-        .await?,
-    }))
+        .await
+    {
+        tracing::warn!(%error, elicitation_id, "could not deliver answer to agent");
+    }
+    Ok(Json(ElicitationResolvedResponse { elicitation }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct InboxQuery {
+    filter: Option<String>,
 }
 
 async fn list_inbox(
     State(state): State<AppState>,
     user: CurrentUser,
+    axum::extract::Query(query): axum::extract::Query<InboxQuery>,
 ) -> Result<Json<InboxPageDto>, ServerError> {
+    let unread_only = query.filter.as_deref() == Some("unread");
     Ok(Json(
-        crate::approvals::list_inbox(&state.pool, &user).await?,
+        crate::approvals::list_inbox(&state.pool, &user, unread_only).await?,
     ))
 }
 
