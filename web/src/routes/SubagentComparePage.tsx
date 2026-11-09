@@ -80,18 +80,37 @@ export function SubagentComparePage() {
           />
         ) : (
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <div className="min-w-0 rounded-xl border border-border bg-panel">
-              <p className="border-b border-border px-3 py-2 text-[11px] font-medium text-fg">
-                {subagents.find((item) => item.id === left)?.title}
-              </p>
-              <ThreadTimeline events={leftEvents} approvals={[]} />
-            </div>
-            <div className="min-w-0 rounded-xl border border-border bg-panel">
-              <p className="border-b border-border px-3 py-2 text-[11px] font-medium text-fg">
-                {subagents.find((item) => item.id === right)?.title}
-              </p>
-              <ThreadTimeline events={rightEvents} approvals={[]} />
-            </div>
+            {[left, right].map((id, index) => {
+              const subagent = subagents.find((item) => item.id === id);
+              const timeline = index === 0 ? leftEvents : rightEvents;
+              return (
+                <div
+                  key={id}
+                  className="min-w-0 rounded-xl border border-border bg-panel"
+                >
+                  <div className="border-b border-border px-3 py-2">
+                    <p className="text-[11px] font-medium text-fg">
+                      {subagent?.title ?? "Subagent"}
+                    </p>
+                    <p className="mt-0.5 text-[9.5px] text-faint">
+                      {subagent?.status ?? "unknown"}
+                      {subagent?.cwd ? ` · ${subagent.cwd}` : ""}
+                      {subagent?.usage
+                        ? ` · ${subagent.usage.totalTokens} tokens`
+                        : ""}
+                    </p>
+                  </div>
+                  {timeline.length === 0 ? (
+                    <div className="p-3 text-[10.5px] text-faint">
+                      No child-session transcript was emitted by this adapter.
+                      The parent timeline still contains the dispatch card.
+                    </div>
+                  ) : (
+                    <ThreadTimeline events={timeline} approvals={[]} />
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

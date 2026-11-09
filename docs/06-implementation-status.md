@@ -167,7 +167,7 @@ MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored -
 - 双浏览器共享草稿：Bob 看到 Ada 的块、编辑同一 Y.Text、Ada 看到修改、发送后两侧清空并落库。
 - 跨 thread 跟随：Ada 点击 Bob 头像，Bob 切换 thread，Ada 自动跳转并退出跟随。
 - Changes：修改 worktree、打开 diff、行内评论、Seen 1/1、文件再变后 Seen 0/1、评论随下一条消息 delivered。
-- 1440/768、深色/浅色截图，浏览器 console error 断言为空。
+- 1440/768、深色/浅色截图，浏览器 console error 断言为空；1440 截图包含消息、工具卡、Usage、审批与计划，不再是空 thread。
 
 截图见 `docs/screenshots/`。
 
@@ -252,6 +252,7 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - 审批规则在 ACP 权限回调到达时匹配 `approval_rules`，命中后自动 `permission_resolved` 并只向 agent 发送 AllowOnce；HTTP 层先做角色/状态校验。
 - 新建 thread 的 `initialPrompt` 在 agent 启动后由 `kick_queue` 立即触发，不再等待用户下一条消息。
 - 模型/effort 从 New Thread 传入 `LaunchCtx`，`AcpHarness` 读取 `NewSessionResponse.config_options` 的 Model/ThoughtLevel 并调用 `session/set_config_option`；adapter 未声明时只发 Notice，不伪造能力。
+- 子 agent 的 transcript 是否可用取决于 adapter 是否上报子会话事件；未上报时 Compare 页只展示 status/cwd/usage 并明确提示，不伪造 transcript。
 - `agent-client-protocol` 5.1 的 unstable 能力可能随 minor 变化；升级前跑 `cargo test -p threadbase-agent` 契约套件和真实 Codex smoke。
 - 发送草稿时不删除 Y.Array 中的块，而是清空文本并写 `sentAt` 墓碑。直接删除父级 map 时，客户端并发编辑可能产生悬空 Yjs 更新，yrs 0.17 会在编码时 panic；墓碑模型避免了该问题，Composer 过滤已发送块。
 - Codex adapter 需要 `codex` 在 PATH；其他 adapter 通过 `doctor` 检查。真实登录/额度属于环境，不属于仓库。
