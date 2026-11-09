@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::routes_meta::router())
         .merge(crate::routes_comments::router())
         .merge(crate::routes_files::router())
+        .merge(crate::routes_fs::router())
         .merge(crate::sharing::router())
         .route("/api/health", get(health))
         .route("/ws", get(crate::ws::handler))

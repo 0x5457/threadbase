@@ -72,6 +72,20 @@ impl AgentManager {
         Self { inner }
     }
 
+    pub async fn restart(&self, thread_id: &str) -> Result<(), ServerError> {
+        let session = self.inner.sessions.lock().await.remove(thread_id);
+        if let Some(session) = session {
+            let mut session = session.lock().await;
+            let _ = session.harness.shutdown().await;
+        }
+        sqlx::query("UPDATE threads SET status = 'preparing', updated_at = ? WHERE id = ?")
+            .bind(now_ms())
+            .bind(thread_id)
+            .execute(&self.inner.pool)
+            .await?;
+        self.ensure_started(thread_id).await
+    }
+
     pub fn kick_queue(&self, thread_id: &str) {
         let _ = self.inner.queue_tx.send(thread_id.to_owned());
     }
@@ -210,6 +224,8 @@ impl AgentManager {
         match action {
             SendAction::Queue => {
                 let position = enqueue(&self.inner.pool, thread_id, user, text).await?;
+                let _ =
+                    crate::queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
                 Ok(SendMessageResponse {
                     delivery: Delivery::Queued,
                     queue_position: Some(position),
@@ -288,6 +304,7 @@ impl AgentManager {
         text: &str,
         delivery: Delivery,
     ) -> Result<SendMessageResponse, ServerError> {
+        auto_title(&self.inner, thread_id, text).await;
         let turn_id = TurnId::new();
         let message_id = MessageId::new();
         let author = user_brief(user);
@@ -332,12 +349,44 @@ impl AgentManager {
         })
     }
 
+    pub async fn config_options(
+        &self,
+        thread_id: &str,
+    ) -> Result<Vec<threadbase_shared::AgentConfigOptionDto>, ServerError> {
+        let session = self.session(thread_id).await?;
+        let session = session.lock().await;
+        Ok(session.harness.config_options())
+    }
+
+    pub async fn set_config(
+        &self,
+        thread_id: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<(), ServerError> {
+        let session = self.session(thread_id).await?;
+        let mut session = session.lock().await;
+        session
+            .harness
+            .set_config(model, effort)
+            .await
+            .map_err(agent_error)
+    }
+
     pub async fn cancel(&self, thread_id: &str) -> Result<(), ServerError> {
         let session = self.session(thread_id).await?;
         let mut session = session.lock().await;
         if let Some(turn) = session.turn.take() {
             session.harness.cancel(&turn).await.map_err(agent_error)?;
         }
+        crate::queue::mark_superseded(
+            &self.inner.pool,
+            thread_id,
+            session.turn.as_ref().map(|turn| turn.turn_id.as_str()),
+        )
+        .await
+        .map_err(|error| ServerError::internal(error.to_string()))?;
+        let _ = crate::queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
         Ok(())
     }
 
@@ -799,7 +848,7 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
     }
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT id, author_id, text FROM queued_inputs WHERE thread_id = ? AND status = 'queued'
-         ORDER BY position ASC LIMIT 1",
+         AND superseded = 0 ORDER BY position ASC LIMIT 1",
     )
     .bind(thread_id)
     .fetch_optional(&inner.pool)
@@ -822,6 +871,7 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
             avatar_url: None,
             color: user_color(&author_id).to_owned(),
         });
+    auto_title(inner, thread_id, &text).await;
     let turn_id = TurnId::new();
     let message_id = MessageId::new();
     inner
@@ -867,6 +917,7 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
                 .bind(&id)
                 .execute(&inner.pool)
                 .await?;
+            let _ = crate::queue::publish(&inner.pool, &inner.events, thread_id).await;
             return Err(agent_error(error));
         }
     }
@@ -921,6 +972,46 @@ async fn mark_agent_error(inner: &Arc<Inner>, thread_id: &str, message: &str) {
             ThreadEvent::TurnError {
                 turn_id: None,
                 message: message.to_owned(),
+            },
+            EventMeta::default(),
+        )
+        .await;
+}
+
+async fn auto_title(inner: &Arc<Inner>, thread_id: &str, text: &str) {
+    let title: Option<String> = sqlx::query_scalar("SELECT title FROM threads WHERE id = ?")
+        .bind(thread_id)
+        .fetch_optional(&inner.pool)
+        .await
+        .ok()
+        .flatten();
+    if title.as_deref() != Some("New thread") {
+        return;
+    }
+    let first_line = text.lines().next().unwrap_or("").trim();
+    if first_line.is_empty() {
+        return;
+    }
+    let mut next: String = first_line.chars().take(60).collect();
+    if next.len() < first_line.len() {
+        next.push('…');
+    }
+    let _ = sqlx::query("UPDATE threads SET title = ?, updated_at = ? WHERE id = ?")
+        .bind(&next)
+        .bind(now_ms())
+        .bind(thread_id)
+        .execute(&inner.pool)
+        .await;
+    let _ = inner
+        .events
+        .append(
+            &ThreadId::from(thread_id.to_owned()),
+            Actor::system(),
+            ThreadEvent::ThreadUpdated {
+                title: Some(next),
+                status: None,
+                pinned: None,
+                share_level: None,
             },
             EventMeta::default(),
         )

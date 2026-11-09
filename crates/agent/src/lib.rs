@@ -211,6 +211,19 @@ pub trait Harness: Send + Sync {
         values: Option<Value>,
     ) -> HarnessResult<()>;
     async fn cancel_subagent(&mut self, subagent_id: &str) -> HarnessResult<()>;
+    fn config_options(&self) -> Vec<threadbase_shared::AgentConfigOptionDto> {
+        Vec::new()
+    }
+
+    async fn set_config(
+        &mut self,
+        _model: Option<&str>,
+        _effort: Option<&str>,
+    ) -> HarnessResult<()> {
+        Err(HarnessError::Unavailable(
+            "this harness does not expose model/effort configuration".to_owned(),
+        ))
+    }
     async fn shutdown(&mut self) -> HarnessResult<()>;
     fn events(&self) -> broadcast::Receiver<RawAgentEvent>;
 

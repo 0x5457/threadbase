@@ -44,7 +44,6 @@ export function TerminalPanel({ threadId }: { threadId: string }) {
       <EmptyState
         icon={Terminal}
         title="No commands run yet"
-        description="Read-only command output from the agent appears here. This is not an interactive shell."
         compact
       />
     );

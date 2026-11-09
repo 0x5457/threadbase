@@ -1,13 +1,19 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Send, Users } from "lucide-react";
+import { ChevronDown, Send, Square, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
-import { sendMessage } from "@/api/endpoints";
-import { queryKeys, useMe } from "@/api/queries";
+import {
+  cancelTurn,
+  dropQueueItem,
+  retryQueueItem,
+  sendMessage,
+} from "@/api/endpoints";
+import { queryKeys, useAgentConfig, useMe, useQueue } from "@/api/queries";
 import type { DeliveryMode } from "@/api/types/DeliveryMode";
+import type { QueueItemDto } from "@/api/types/QueueItemDto";
 import type { Participant } from "@/api/types/Participant";
 import { Button } from "@/components/ui";
 import { usePresenceStore } from "@/lib/presence";
@@ -18,6 +24,9 @@ interface ComposerProps {
   canWrite: boolean;
   threadStatus: string;
   participants?: Participant[];
+  model?: string | null;
+  effort?: string | null;
+  onApplyConfig?: (model: string, effort: string) => void;
 }
 
 function websocketUrl(): string {
@@ -37,8 +46,25 @@ export function Composer({
   canWrite,
   threadStatus,
   participants = [],
+  model,
+  effort,
+  onApplyConfig,
 }: ComposerProps) {
   const me = useMe();
+  const queue = useQueue(threadId);
+  const config = useAgentConfig(threadId);
+  const modelOption = config.data?.options.find(
+    (option) => option.category === "model",
+  );
+  const effortOption = config.data?.options.find(
+    (option) => option.category === "thought_level",
+  );
+  const [modelOverride, setModelOverride] = useState<string | null>(null);
+  const [effortOverride, setEffortOverride] = useState<string | null>(null);
+  const modelValue =
+    modelOverride ?? modelOption?.currentValue ?? model ?? "";
+  const effortValue =
+    effortOverride ?? effortOption?.currentValue ?? effort ?? "";
   const queryClient = useQueryClient();
   const { doc, provider } = useMemo(() => {
     const document = new Y.Doc();
@@ -51,6 +77,30 @@ export function Composer({
   const [status, setStatus] = useState<string>("connecting");
   const [version, setVersion] = useState(0);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const retry = useMutation({
+    mutationFn: (item: QueueItemDto) => retryQueueItem(threadId, item.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.queue(threadId),
+      });
+    },
+    onError: (error) => toast.error(String(error)),
+  });
+  const stopTurn = useMutation({
+    mutationFn: () => cancelTurn(threadId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.queue(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadBundle(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadEvents(threadId),
+      });
+    },
+    onError: (error) => toast.error(String(error)),
+  });
   const blocks = doc.getArray<Y.Map<unknown>>("blocks");
 
   useEffect(() => {
@@ -143,8 +193,24 @@ export function Composer({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.comments(threadId),
       });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.queue(threadId),
+      });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+  });
+
+  const withdraw = useMutation({
+    mutationFn: (item: QueueItemDto) => dropQueueItem(threadId, item.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.queue(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadBundle(threadId),
+      });
+    },
+    onError: (error) => toast.error(String(error)),
   });
 
   if (!canWrite) {
@@ -157,6 +223,52 @@ export function Composer({
   }
 
   return (
+    <>
+    <div className="bg-panel/80 px-3 pt-2">
+      <div className="mx-auto w-full max-w-3xl">
+        {(queue.data?.items.length ?? 0) > 0 ? (
+          <div className="mb-2 space-y-1 rounded-lg border border-border bg-surface p-2">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-faint">
+              Queue
+              <span className="font-mono">{queue.data?.items.length}</span>
+            </div>
+            {queue.data?.items.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-start gap-2 rounded bg-canvas px-2 py-1.5"
+              >
+                <span className="font-mono text-[10px] text-faint">
+                  {item.position}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[10.5px] text-fg">{item.text}</p>
+                  <p className="text-[9px] text-faint">
+                    {item.author.displayName}
+                    {item.superseded ? " · previous turn cancelled" : ""}
+                  </p>
+                </div>
+                {item.superseded ? (
+                  <button
+                    type="button"
+                    className="text-[9.5px] text-accent hover:underline"
+                    onClick={() => retry.mutate(item)}
+                  >
+                    continue
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="text-[9.5px] text-faint hover:text-danger"
+                  onClick={() => withdraw.mutate(item)}
+                >
+                  withdraw
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
     <div
       className="border-t border-border bg-panel/80 px-3 py-2.5"
       onKeyDown={(event) => {
@@ -169,24 +281,26 @@ export function Composer({
       }}
     >
       <div className="mx-auto w-full max-w-3xl">
-        <div className="rounded-lg border border-border bg-surface">
-          <div className="max-h-64 overflow-y-auto px-3 pt-2">
-            {list.length === 0 ? (
-              <p className="py-2 text-[12px] text-faint">
-                Start typing to add a shared draft block…
-              </p>
-            ) : (
-              list.map((block) => (
+        <div className="rounded-xl border border-border bg-surface shadow-sm focus-within:border-border-strong">
+          <div className="max-h-[46vh] min-h-[152px] space-y-1 overflow-y-auto px-3 py-3">
+            {list.map((block) => {
+              const author = participants.find(
+                (participant) =>
+                  participant.user.id === block.get("author"),
+              );
+              return (
                 <DraftBlockEditor
                   key={String(block.get("id"))}
                   block={block}
                   isMine={block.get("author") === userId}
+                  authorName={author?.user.displayName}
+                  authorColor={author?.user.color}
                   awareness={provider.awareness}
                 />
-              ))
-            )}
+              );
+            })}
           </div>
-          <div className="flex items-center gap-2 border-t border-border/70 px-2 py-1.5">
+          <div className="flex min-h-10 items-center gap-2 border-t border-border/70 px-2.5 py-1.5">
             <span
               className={cn(
                 "size-1.5 rounded-full",
@@ -202,11 +316,45 @@ export function Composer({
                   : "Draft connection unavailable"
               }
             />
-            <span className="text-[10px] text-faint">
-              {threadStatus === "running"
-                ? "Agent is running · input will steer or queue"
-                : "Shared draft · agent sees it only after send"}
-            </span>
+            {modelOption ? (
+              <select
+                aria-label="Model"
+                value={modelValue}
+                onChange={(event) => {
+                  setModelOverride(event.target.value);
+                  onApplyConfig?.(event.target.value, effortValue);
+                }}
+                className="h-7 max-w-[180px] rounded-md border border-border bg-surface px-1.5 text-[10.5px] text-muted"
+              >
+                {!modelOption.options.some(
+                  (value) => value.value === modelValue,
+                ) && modelValue ? (
+                  <option value={modelValue}>{modelValue}</option>
+                ) : null}
+                {modelOption.options.map((value) => (
+                  <option key={value.value} value={value.value}>
+                    {value.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {effortOption ? (
+              <select
+                aria-label="Effort"
+                value={effortValue}
+                onChange={(event) => {
+                  setEffortOverride(event.target.value);
+                  onApplyConfig?.(modelValue, event.target.value);
+                }}
+                className="h-7 rounded-md border border-border bg-surface px-1.5 text-[10.5px] text-muted"
+              >
+                {effortOption.options.map((value) => (
+                  <option key={value.value} value={value.value}>
+                    {value.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <div className="relative">
               <Button
                 type="button"
@@ -259,6 +407,18 @@ export function Composer({
               ) : null}
             </div>
             <div className="ml-auto flex items-center">
+              {threadStatus === "running" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  loading={stopTurn.isPending}
+                  onClick={() => stopTurn.mutate()}
+                >
+                  <Square aria-hidden />
+                  Stop
+                </Button>
+              ) : null}
               {threadStatus === "running" && synced ? (
                 <Button
                   type="button"
@@ -321,16 +481,21 @@ export function Composer({
         </div>
       </div>
     </div>
+    </>
   );
 }
 
 function DraftBlockEditor({
   block,
   isMine,
+  authorName,
+  authorColor,
   awareness,
 }: {
   block: Y.Map<unknown>;
   isMine: boolean;
+  authorName?: string;
+  authorColor?: string | null;
   awareness: WebsocketProvider["awareness"];
 }) {
   const text = block.get("text");
@@ -414,20 +579,26 @@ function DraftBlockEditor({
   };
 
   return (
-    <div className="group py-1">
-      <div className="flex items-center gap-1.5 text-[9.5px] uppercase tracking-wide text-faint">
-        <span className={cn("size-1.5 rounded-full", isMine ? "bg-accent" : "bg-muted")} />
-        {isMine ? "You" : String(block.get("author") ?? "member")}
+    <div
+      className="group border-l-2 py-1 pl-2"
+      style={{ borderLeftColor: authorColor ?? "var(--border-strong)" }}
+    >
+      <div className="flex items-center gap-1.5 text-[10px] text-faint">
+        <span
+          className="size-1.5 rounded-full"
+          style={{ background: authorColor ?? "var(--border-strong)" }}
+        />
+        <span className={isMine ? "text-muted" : ""}>
+          {isMine ? "You" : (authorName ?? "Member")}
+        </span>
         {remoteEditors.length > 0 ? (
-          <span className="normal-case text-info">
-            · {remoteEditors.join(", ")} editing
-          </span>
+          <span className="text-info">· {remoteEditors.join(", ")} editing</span>
         ) : null}
       </div>
       <textarea
         ref={area}
         value={value}
-        rows={Math.max(1, Math.min(6, value.split("\n").length))}
+        rows={Math.max(4, Math.min(12, value.split("\n").length))}
         onChange={(event) => update(event.target.value)}
         onFocus={() => {
           awareness.setLocalStateField("blockId", block.get("id"));
@@ -437,8 +608,8 @@ function DraftBlockEditor({
           awareness.setLocalStateField("blockId", null);
           setLocal({ typing: false });
         }}
-        placeholder={isMine ? "Write a message…" : "Edit this shared draft…"}
-        className="mt-0.5 w-full resize-none bg-transparent text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint"
+        placeholder={isMine ? "Message" : "Edit draft…"}
+        className="mt-0.5 min-h-20 w-full resize-none bg-transparent py-1 text-[13.5px] leading-[1.65] text-fg outline-none placeholder:text-faint"
       />
     </div>
   );

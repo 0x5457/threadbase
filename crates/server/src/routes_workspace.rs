@@ -189,9 +189,21 @@ async fn update_thread(
     Path(thread_id): Path<String>,
     Json(request): Json<UpdateThreadRequest>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
-    Ok(Json(ThreadResponse {
-        thread: threads::update(&state.pool, &thread_id, &user, &request).await?,
-    }))
+    let thread = threads::update(&state.pool, &thread_id, &user, &request).await?;
+    if request.model.is_some() || request.effort.is_some() {
+        if let Err(error) = state
+            .agents
+            .set_config(
+                &thread_id,
+                request.model.as_deref(),
+                request.effort.as_deref(),
+            )
+            .await
+        {
+            tracing::warn!(thread_id, %error, "could not apply model/effort to agent");
+        }
+    }
+    Ok(Json(ThreadResponse { thread }))
 }
 
 #[derive(Debug, Deserialize)]

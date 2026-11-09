@@ -1,16 +1,66 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { queryKeys } from "@/api/queries";
+import { create } from "zustand";
+import { queryKeys, useMe } from "@/api/queries";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
 import type { EventsPageDto } from "@/api/types/EventsPageDto";
 import type { ServerWsMessage } from "@/api/types/ServerWsMessage";
 import type { ThreadBundleResponse } from "@/api/types/ThreadBundleResponse";
 import type { ThreadStatus } from "@/api/types/ThreadStatus";
 
+export const useLiveStore = create<{ connected: boolean }>(() => ({
+  connected: false,
+}));
+
 function websocketUrl(path: string): string {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   return `${protocol}://${window.location.host}${path}`;
+}
+
+function browserNotify(title: string, body: string) {
+  if (
+    document.hidden &&
+    typeof Notification !== "undefined" &&
+    Notification.permission === "granted"
+  ) {
+    const notification = new Notification(title, {
+      body,
+      tag: "threadbase-approval",
+    });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+  }
+}
+
+function applyEvent(
+  queryClient: ReturnType<typeof useQueryClient>,
+  threadId: string,
+  event: EventEnvelope,
+) {
+  const key = queryKeys.threadEvents(threadId);
+  queryClient.setQueryData<EventsPageDto>(key, (current) => {
+    if (!current) {
+      return {
+        threadId,
+        events: [event],
+        lastSeq: event.seq,
+        oldestSeq: event.seq,
+        resync: false,
+      };
+    }
+    const seq = Number(event.seq);
+    if (seq <= Number(current.lastSeq)) {
+      return current;
+    }
+    return {
+      ...current,
+      events: [...current.events, event],
+      lastSeq: event.seq,
+    };
+  });
 }
 
 /**
@@ -19,6 +69,11 @@ function websocketUrl(path: string): string {
  */
 export function useThreadLiveEvents(threadId: string | undefined) {
   const queryClient = useQueryClient();
+  const me = useMe();
+  const meRef = useRef(me.data);
+  useEffect(() => {
+    meRef.current = me.data;
+  }, [me.data]);
 
   useEffect(() => {
     if (!threadId) {
@@ -36,6 +91,7 @@ export function useThreadLiveEvents(threadId: string | undefined) {
       socket = new WebSocket(websocketUrl("/ws"));
       socket.onopen = () => {
         attempts = 0;
+        useLiveStore.setState({ connected: true });
         const page = queryClient.getQueryData<EventsPageDto>(
           queryKeys.threadEvents(threadId),
         );
@@ -57,12 +113,29 @@ export function useThreadLiveEvents(threadId: string | undefined) {
         switch (parsed.type) {
           case "event": {
             applyEvent(queryClient, threadId, parsed.event);
+            if (parsed.event.payload.type === "thread_updated") {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.threadBundle(threadId),
+              });
+            }
             if (
               parsed.event.payload.type === "comment_added" ||
               parsed.event.payload.type === "comment_updated"
             ) {
+              const comment = parsed.event.payload.comment;
+              if (
+                parsed.event.payload.type === "comment_added" &&
+                meRef.current &&
+                comment.body.includes(`@${meRef.current.user.username}`)
+              ) {
+                browserNotify("Mentioned in a thread", comment.body);
+              }
               void queryClient.invalidateQueries({
                 queryKey: queryKeys.comments(threadId),
+              });
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.inbox("unread"),
               });
             }
             if (
@@ -140,6 +213,7 @@ export function useThreadLiveEvents(threadId: string | undefined) {
         }
       };
       socket.onclose = () => {
+        useLiveStore.setState({ connected: false });
         if (closed) {
           return;
         }
@@ -159,51 +233,7 @@ export function useThreadLiveEvents(threadId: string | undefined) {
         window.clearTimeout(retryTimer);
       }
       socket?.close();
+      useLiveStore.setState({ connected: false });
     };
   }, [threadId, queryClient]);
-}
-
-function browserNotify(title: string, body: string) {
-  if (
-    document.hidden &&
-    typeof Notification !== "undefined" &&
-    Notification.permission === "granted"
-  ) {
-    const notification = new Notification(title, {
-      body,
-      tag: "threadbase-approval",
-    });
-    notification.onclick = () => {
-      window.focus();
-      notification.close();
-    };
-  }
-}
-
-function applyEvent(
-  queryClient: ReturnType<typeof useQueryClient>,
-  threadId: string,
-  event: EventEnvelope,
-) {
-  const key = queryKeys.threadEvents(threadId);
-  queryClient.setQueryData<EventsPageDto>(key, (current) => {
-    if (!current) {
-      return {
-        threadId,
-        events: [event],
-        lastSeq: event.seq,
-        oldestSeq: event.seq,
-        resync: false,
-      };
-    }
-    const seq = Number(event.seq);
-    if (seq <= Number(current.lastSeq)) {
-      return current;
-    }
-    return {
-      ...current,
-      events: [...current.events, event],
-      lastSeq: event.seq,
-    };
-  });
 }

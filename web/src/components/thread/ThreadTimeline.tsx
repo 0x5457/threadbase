@@ -45,6 +45,7 @@ interface MessageItem {
   kind: "message";
   key: string;
   messageId: string;
+  seq?: number;
   role: "user" | "agent";
   text: string;
   author: MessageDto["author"];
@@ -278,6 +279,7 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
         kind: "message",
         key: `turn-${payload.turnId}`,
         messageId: payload.messageId,
+        seq: Number(event.seq),
         role: "user",
         text: payload.prompt,
         author: payload.author,
@@ -294,6 +296,7 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
         kind: "message",
         key: `message-${payload.message.id}`,
         messageId: payload.message.id,
+        seq: Number(event.seq),
         role: payload.message.role,
         text: payload.message.text,
         author: payload.message.author,
@@ -541,11 +544,7 @@ export function ThreadTimeline({
   if (items.length === 0) {
     return (
       <div className="mx-auto w-full max-w-3xl px-5 py-10">
-        <EmptyState
-          icon={MessageSquare}
-          title="No thread activity yet"
-          description="Prompts, agent responses and tool calls appear here as the thread runs."
-        />
+        <EmptyState icon={MessageSquare} title="No activity yet" compact />
       </div>
     );
   }
@@ -570,6 +569,8 @@ export function ThreadTimeline({
             return (
               <div
                 key={item.key}
+                id={item.seq ? `event-${item.seq}` : undefined}
+                data-message-id={item.messageId}
                 className="flex gap-3"
                 onClick={() =>
                   setLocal({
@@ -661,6 +662,7 @@ export function ThreadTimeline({
                 elicitation={item.elicitation}
                 resolvedAction={item.resolvedAction}
                 onRespond={onRespondElicitation}
+                onComment={onComment}
               />
             );
           }

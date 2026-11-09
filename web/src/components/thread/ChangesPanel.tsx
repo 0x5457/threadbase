@@ -25,6 +25,7 @@ const BASELINES: { value: BaselineKind; label: string }[] = [
   { value: "base_branch", label: "Base branch" },
   { value: "last_commit", label: "Last commit" },
   { value: "last_turn", label: "Last turn" },
+  { value: "commit", label: "Specific commit" },
 ];
 
 function statusLabel(status: FileStatus) {
@@ -75,6 +76,7 @@ export function ChangesPanel({
 }) {
   const queryClient = useQueryClient();
   const [baseline, setBaseline] = useState<BaselineKind>("base_branch");
+  const [commit, setCommit] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [commentTarget, setCommentTarget] = useState<{
     hunkId: string;
@@ -82,8 +84,8 @@ export function ChangesPanel({
     contextHash: string;
   } | null>(null);
   const [commentBody, setCommentBody] = useState("");
-  const changes = useChanges(threadId, baseline);
-  const diff = useFileDiff(threadId, selected, baseline);
+  const changes = useChanges(threadId, baseline, commit);
+  const diff = useFileDiff(threadId, selected, baseline, commit);
   const comments = useComments(threadId);
   const setLocal = usePresenceStore((state) => state.setLocal);
   useEffect(() => {
@@ -197,7 +199,6 @@ export function ChangesPanel({
       <EmptyState
         icon={GitCompareArrows}
         title="No file changes yet."
-        description="Changes appear here after the agent edits files."
         compact
       />
     );
@@ -231,6 +232,14 @@ export function ChangesPanel({
             {data.stats.seen}/{data.stats.total}
           </span>
         </div>
+        {baseline === "commit" ? (
+          <input
+            value={commit}
+            onChange={(event) => setCommit(event.target.value.trim())}
+            placeholder="commit SHA"
+            className="h-7 w-full rounded-md border border-border bg-surface px-2 font-mono text-[10px] text-fg outline-none placeholder:text-faint"
+          />
+        ) : null}
         <div className="flex items-center justify-between text-[10.5px]">
           <span className="text-muted">{data.baseLabel}</span>
           <span className="font-mono">

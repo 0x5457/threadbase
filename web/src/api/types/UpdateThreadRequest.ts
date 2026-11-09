@@ -6,4 +6,6 @@ export type UpdateThreadRequest = {
   pinned: boolean | null;
   archived: boolean | null;
   shareLevel: ShareLevel | null;
+  model: string | null;
+  effort: string | null;
 };

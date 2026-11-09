@@ -103,7 +103,13 @@ async fn send_comment(
             ))
         })?;
     Ok(Json(CommentResponse {
-        comment: crate::comments::mark_delivered(&state.pool, &state.events, &comment_id, &user)
-            .await?,
+        comment: crate::comments::mark_delivered(
+            &state.pool,
+            &state.events,
+            &comment_id,
+            &user,
+            state.events.last_seq(&comment.thread_id).await.ok(),
+        )
+        .await?,
     }))
 }

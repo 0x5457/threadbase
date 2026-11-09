@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  fetchAgentConfig,
   fetchAuthStatus,
   fetchChanges,
   fetchComments,
+  fetchDirectories,
   fetchFile,
   fetchFiles,
   fetchFileDiff,
@@ -10,6 +12,7 @@ import {
   fetchMe,
   fetchProject,
   fetchProjectOverview,
+  fetchQueue,
   fetchProjectThreads,
   fetchProjects,
   fetchState,
@@ -34,9 +37,10 @@ export const queryKeys = {
   threadEvents: (threadId: string) => ["threads", threadId, "events"] as const,
   changes: (threadId: string, kind: string) =>
     ["threads", threadId, "changes", kind] as const,
-  fileDiff: (threadId: string, path: string, kind: string) =>
-    ["threads", threadId, "fileDiff", path, kind] as const,
+  fileDiff: (threadId: string, path: string, kind: string, commit = "") =>
+    ["threads", threadId, "fileDiff", path, kind, commit] as const,
   comments: (threadId: string) => ["threads", threadId, "comments"] as const,
+  queue: (threadId: string) => ["threads", threadId, "queue"] as const,
   files: (threadId: string, path: string) =>
     ["threads", threadId, "files", path] as const,
   file: (threadId: string, path: string) =>
@@ -44,6 +48,8 @@ export const queryKeys = {
   inbox: (filter: InboxFilter) => ["inbox", filter] as const,
   search: (query: string) => ["search", query] as const,
   state: ["state"] as const,
+  agentConfig: (threadId: string) => ["threads", threadId, "agentConfig"] as const,
+  directories: (path: string) => ["fs", "directories", path] as const,
 };
 
 export function useAuthStatus() {
@@ -122,10 +128,14 @@ export function useThreadEvents(threadId: string | undefined) {
   });
 }
 
-export function useChanges(threadId: string | undefined, kind: string) {
+export function useChanges(
+  threadId: string | undefined,
+  kind: string,
+  commit = "",
+) {
   return useQuery({
-    queryKey: queryKeys.changes(threadId ?? "", kind),
-    queryFn: () => fetchChanges(threadId ?? "", kind),
+    queryKey: queryKeys.changes(threadId ?? "", `${kind}:${commit}`),
+    queryFn: () => fetchChanges(threadId ?? "", kind, commit),
     enabled: Boolean(threadId),
     refetchInterval: 3_000,
   });
@@ -135,11 +145,41 @@ export function useFileDiff(
   threadId: string | undefined,
   path: string | null,
   kind: string,
+  commit = "",
 ) {
   return useQuery({
-    queryKey: queryKeys.fileDiff(threadId ?? "", path ?? "", kind),
-    queryFn: () => fetchFileDiff(threadId ?? "", path ?? "", kind),
+    queryKey: queryKeys.fileDiff(threadId ?? "", path ?? "", kind, commit),
+    queryFn: () => fetchFileDiff(threadId ?? "", path ?? "", kind, commit),
     enabled: Boolean(threadId && path),
+  });
+}
+
+export function useQueue(threadId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.queue(threadId ?? ""),
+    queryFn: () => fetchQueue(threadId ?? ""),
+    enabled: Boolean(threadId),
+    refetchInterval: 2_000,
+  });
+}
+
+export function useAgentConfig(threadId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.agentConfig(threadId ?? ""),
+    queryFn: () => fetchAgentConfig(threadId ?? ""),
+    enabled: Boolean(threadId),
+    staleTime: 60_000,
+    refetchInterval: (query) =>
+      (query.state.data?.options.length ?? 0) > 0 ? false : 2_000,
+  });
+}
+
+export function useDirectoryListing(path: string) {
+  return useQuery({
+    queryKey: queryKeys.directories(path),
+    queryFn: () => fetchDirectories(path),
+    retry: false,
+    staleTime: 5_000,
   });
 }
 

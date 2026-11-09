@@ -29,6 +29,8 @@ export function CommentsPanel({
   const queryClient = useQueryClient();
   const comments = useComments(threadId);
   const [body, setBody] = useState("");
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
   const refresh = () => {
     void queryClient.invalidateQueries({
       queryKey: queryKeys.comments(threadId),
@@ -50,6 +52,21 @@ export function CommentsPanel({
       }),
     onSuccess: () => {
       setBody("");
+      refresh();
+    },
+    onError: (error) => toast.error(String(error)),
+  });
+  const reply = useMutation({
+    mutationFn: (parent: CommentDto) =>
+      createComment(threadId, {
+        body: replyBody.trim(),
+        anchor: parent.anchor,
+        parentId: parent.id,
+        send: false,
+      }),
+    onSuccess: () => {
+      setReplyBody("");
+      setReplyTo(null);
       refresh();
     },
     onError: (error) => toast.error(String(error)),
@@ -90,6 +107,9 @@ export function CommentsPanel({
     );
   }
   const list = comments.data?.comments ?? [];
+  const topLevel = list.filter((comment) => !comment.parentId);
+  const repliesFor = (id: string) =>
+    list.filter((comment) => comment.parentId === id);
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -131,16 +151,15 @@ export function CommentsPanel({
           </p>
         )}
       </div>
-      {list.length === 0 ? (
+      {topLevel.length === 0 ? (
         <EmptyState
           icon={MessageSquare}
           title="No comments yet"
-          description="Thread comments are collected here. Pending comments are delivered with the next message."
           compact
         />
       ) : (
         <ul className="space-y-2 p-2.5">
-          {list.map((comment) => (
+          {topLevel.map((comment) => (
             <li
               key={comment.id}
               className="rounded-lg border border-border bg-surface p-2.5"
@@ -155,6 +174,24 @@ export function CommentsPanel({
               <p className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed text-fg">
                 {comment.body}
               </p>
+              <div className="mt-1 flex flex-wrap gap-2 text-[9.5px]">
+                {comment.anchor.kind === "message" ? (
+                  <a
+                    href={`#message-${comment.anchor.messageId}`}
+                    className="text-accent hover:underline"
+                  >
+                    jump to message
+                  </a>
+                ) : null}
+                {comment.deliveredSeq ? (
+                  <a
+                    href={`#event-${comment.deliveredSeq}`}
+                    className="text-accent hover:underline"
+                  >
+                    delivered at #{String(comment.deliveredSeq)}
+                  </a>
+                ) : null}
+              </div>
               {comment.anchorChanged ? (
                 <p className="mt-1 text-[10px] text-warning">
                   The original diff position changed; this comment is anchored to
@@ -183,6 +220,13 @@ export function CommentsPanel({
                     Resolve
                   </Button>
                 ) : null}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setReplyTo(comment.id)}
+                >
+                  Reply
+                </Button>
                 <button
                   type="button"
                   className="ml-auto text-faint hover:text-danger"
@@ -192,6 +236,42 @@ export function CommentsPanel({
                   <Trash2 className="size-3" aria-hidden />
                 </button>
               </div>
+              {repliesFor(comment.id).map((replyComment) => (
+                <div
+                  key={replyComment.id}
+                  className="mt-1.5 border-l-2 border-border pl-2 text-[10.5px]"
+                >
+                  <p className="text-faint">
+                    {replyComment.author.displayName} · {replyComment.status}
+                  </p>
+                  <p className="whitespace-pre-wrap text-fg">{replyComment.body}</p>
+                </div>
+              ))}
+              {replyTo === comment.id ? (
+                <div className="mt-1.5 space-y-1">
+                  <Textarea
+                    value={replyBody}
+                    onChange={(event) => setReplyBody(event.target.value)}
+                    placeholder="Reply to this comment…"
+                    rows={2}
+                    className="text-[10.5px]"
+                  />
+                  <div className="flex justify-end gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => setReplyTo(null)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      disabled={!replyBody.trim()}
+                      loading={reply.isPending}
+                      onClick={() => reply.mutate(comment)}
+                    >
+                      Reply
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>

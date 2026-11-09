@@ -12,7 +12,7 @@ use sqlx::FromRow;
 use threadbase_shared::api::SendMessageRequest;
 use threadbase_shared::{
     now_ms, user_color, ApiError, OkResponse, QueueItemDto, QueueResponse, QueueStatus,
-    SendMessageResponse, UserBrief,
+    SendMessageResponse, ThreadId, UserBrief,
 };
 
 pub fn router() -> Router<AppState> {
@@ -20,6 +20,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/threads/{thread_id}/messages", post(send_message))
         .route("/api/threads/{thread_id}/cancel", post(cancel))
         .route("/api/threads/{thread_id}/read", post(mark_read))
+        .route("/api/threads/{thread_id}/agent-config", get(agent_config))
+        .route("/api/threads/{thread_id}/restart", post(restart_agent))
         .route(
             "/api/threads/{thread_id}/subagents/{subagent_id}/cancel",
             post(cancel_subagent),
@@ -28,6 +30,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/threads/{thread_id}/queue/{item_id}",
             delete(drop_queue_item),
+        )
+        .route(
+            "/api/threads/{thread_id}/queue/{item_id}/retry",
+            post(retry_queue_item),
         )
 }
 
@@ -79,10 +85,45 @@ async fn send_message(
         .send(&thread_id, &user, text.as_str(), request.delivery)
         .await?;
     if response.delivery != threadbase_shared::Delivery::Queued {
-        crate::comments::mark_pending_delivered(&state.pool, &state.events, &thread_id, &user)
-            .await?;
+        let last_seq = state
+            .events
+            .last_seq(&ThreadId::from(thread_id.clone()))
+            .await
+            .ok();
+        crate::comments::mark_pending_delivered(
+            &state.pool,
+            &state.events,
+            &thread_id,
+            &user,
+            last_seq,
+        )
+        .await?;
     }
     Ok(Json(response))
+}
+
+async fn agent_config(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<threadbase_shared::AgentConfigResponse>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let options = state
+        .agents
+        .config_options(&thread_id)
+        .await
+        .unwrap_or_default();
+    Ok(Json(threadbase_shared::AgentConfigResponse { options }))
+}
+
+async fn restart_agent(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    state.agents.restart(&thread_id).await?;
+    Ok(Json(OkResponse { ok: true }))
 }
 
 async fn cancel(
@@ -144,6 +185,30 @@ async fn list_queue(
     }))
 }
 
+async fn retry_queue_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, item_id)): Path<(String, String)>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let result = sqlx::query(
+        "UPDATE queued_inputs SET superseded = 0, updated_at = ?
+         WHERE id = ? AND thread_id = ? AND status = 'queued'",
+    )
+    .bind(now_ms())
+    .bind(&item_id)
+    .bind(&thread_id)
+    .execute(&state.pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(ServerError(ApiError::not_found(
+            "queued message not found or already sent",
+        )));
+    }
+    let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
+    Ok(Json(OkResponse { ok: true }))
+}
+
 async fn drop_queue_item(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -164,6 +229,7 @@ async fn drop_queue_item(
             "queued message not found or already sent",
         )));
     }
+    let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
     Ok(Json(OkResponse { ok: true }))
 }
 

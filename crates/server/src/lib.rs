@@ -24,6 +24,7 @@ pub mod routes_agent;
 pub mod routes_auth;
 pub mod routes_comments;
 pub mod routes_files;
+pub mod routes_fs;
 pub mod routes_meta;
 pub mod routes_workspace;
 pub mod search;

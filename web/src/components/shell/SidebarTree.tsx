@@ -891,9 +891,7 @@ export function SidebarTree({
   return (
     <div className="flex h-full min-h-0 flex-col bg-panel">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-2.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">
-          Workspace
-        </span>
+        <span className="text-[12px] font-medium text-fg">Threadbase</span>
         <Tooltip content={`New project (${modKeyLabel()}⇧A)`}>
           <IconButton
             label="New project"

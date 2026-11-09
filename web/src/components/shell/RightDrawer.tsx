@@ -85,7 +85,6 @@ export function RightDrawer({
   }
 
   const changes = bundle?.changes;
-  const files = changes?.files ?? [];
   const approvals = bundle?.approvals ?? [];
   const pendingApprovals = approvals.filter(
     (approval) => approval.status === "pending",
@@ -125,41 +124,54 @@ export function RightDrawer({
         className="flex min-h-0 flex-1 flex-col"
       >
         <div className="shrink-0 border-b border-border px-2 py-1.5">
-          <TabsList className="w-full justify-between">
-            <TabsTrigger value="changes" className="flex-1 justify-center">
-              <GitCompareArrows className="size-3" aria-hidden />
-              Changes
+          <TabsList className="flex w-full gap-0.5">
+            <TabsTrigger
+              value="changes"
+              aria-label="Changes"
+              title="Changes"
+              className="flex-1 justify-center px-1"
+            >
+              <GitCompareArrows className="size-3.5" aria-hidden />
               {changes ? (
-                <span className="font-mono text-[9.5px] text-faint">
-                  +{totalAdditions} −{totalDeletions}
+                <span className="font-mono text-[9px] text-faint">
+                  {totalAdditions + totalDeletions}
                 </span>
               ) : null}
             </TabsTrigger>
-            <TabsTrigger value="approvals" className="flex-1 justify-center">
-              <ShieldCheck className="size-3" aria-hidden />
-              Approvals
+            <TabsTrigger
+              value="approvals"
+              aria-label="Approvals"
+              title="Approvals"
+              className="relative flex-1 justify-center px-1"
+            >
+              <ShieldCheck className="size-3.5" aria-hidden />
               {pendingApprovals.length > 0 ? (
-                <Badge size="sm" variant="warning">
-                  {pendingApprovals.length}
-                </Badge>
+                <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning" />
               ) : null}
             </TabsTrigger>
-            <TabsTrigger value="terminal" className="flex-1 justify-center">
-              <Terminal className="size-3" aria-hidden />
-              Output
+            <TabsTrigger
+              value="terminal"
+              aria-label="Output"
+              title="Agent output"
+              className="flex-1 justify-center px-1"
+            >
+              <Terminal className="size-3.5" aria-hidden />
             </TabsTrigger>
-            <TabsTrigger value="comments" className="flex-1 justify-center">
-              <MessageSquare className="size-3" aria-hidden />
-              Comments
+            <TabsTrigger
+              value="comments"
+              aria-label="Comments"
+              title="Comments"
+              className="flex-1 justify-center px-1"
+            >
+              <MessageSquare className="size-3.5" aria-hidden />
             </TabsTrigger>
-            <TabsTrigger value="files" className="flex-1 justify-center">
-              <FileCode2 className="size-3" aria-hidden />
-              Files
-              {files.length > 0 ? (
-                <span className="font-mono text-[9.5px] text-faint">
-                  {files.length}
-                </span>
-              ) : null}
+            <TabsTrigger
+              value="files"
+              aria-label="Files"
+              title="Files"
+              className="flex-1 justify-center px-1"
+            >
+              <FileCode2 className="size-3.5" aria-hidden />
             </TabsTrigger>
           </TabsList>
         </div>
@@ -172,7 +184,6 @@ export function RightDrawer({
               <EmptyState
                 icon={GitCompareArrows}
                 title="No thread open"
-                description="Open a thread to review its changes."
                 compact
               />
             )}
@@ -192,7 +203,6 @@ export function RightDrawer({
               <EmptyState
                 icon={ShieldCheck}
                 title="No approvals waiting"
-                description="Agent permission requests will appear here."
                 compact
               />
             ) : (
@@ -279,7 +289,6 @@ export function RightDrawer({
               <EmptyState
                 icon={Terminal}
                 title="No thread open"
-                description="Open a thread to inspect agent command output."
                 compact
               />
             )}
@@ -292,7 +301,6 @@ export function RightDrawer({
               <EmptyState
                 icon={MessageSquare}
                 title="No thread open"
-                description="Open a thread to read or leave comments."
                 compact
               />
             )}
@@ -305,7 +313,6 @@ export function RightDrawer({
               <EmptyState
                 icon={FileCode2}
                 title="No thread open"
-                description="Open a thread to browse its worktree."
                 compact
               />
             )}

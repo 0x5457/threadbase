@@ -2,6 +2,7 @@ import { HelpCircle, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import type { ElicitationAction } from "@/api/types/ElicitationAction";
 import type { ElicitationDto } from "@/api/types/ElicitationDto";
+import type { CommentAnchor } from "@/api/types/CommentAnchor";
 import { Badge, Button, Input } from "@/components/ui";
 
 interface SchemaProperty {
@@ -23,6 +24,7 @@ export function ElicitationCard({
   elicitation,
   resolvedAction,
   onRespond,
+  onComment,
 }: {
   elicitation: ElicitationDto;
   resolvedAction: ElicitationAction | null;
@@ -31,6 +33,7 @@ export function ElicitationCard({
     action: ElicitationAction,
     values: Record<string, unknown>,
   ) => void;
+  onComment?: (anchor: CommentAnchor) => void;
 }) {
   const schema = (elicitation.requestedSchema ?? {}) as FormSchema;
   const fields = Object.entries(schema.properties ?? {});
@@ -61,6 +64,21 @@ export function ElicitationCard({
           <span className="text-[11.5px] font-medium text-fg">
             Agent needs input
           </span>
+          {onComment ? (
+            <button
+              type="button"
+              className="rounded p-0.5 text-faint hover:text-fg"
+              aria-label="Comment on question"
+              onClick={() =>
+                onComment({
+                  kind: "elicitation",
+                  elicitationId: elicitation.id,
+                })
+              }
+            >
+              <HelpCircle className="size-3" aria-hidden />
+            </button>
+          ) : null}
           <Badge
             variant={pending ? "info" : "neutral"}
             size="sm"

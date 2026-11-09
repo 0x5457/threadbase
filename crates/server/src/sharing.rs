@@ -366,6 +366,10 @@ pub fn router() -> Router<crate::state::AppState> {
             post(create_invite_route),
         )
         .route("/api/invites/{token}/accept", post(accept_invite_route))
+        .route(
+            "/api/threads/{thread_id}/invites/{invite_id}",
+            axum::routing::delete(revoke_invite_route),
+        )
         .route("/api/threads/{thread_id}/share", patch(set_share_route))
 }
 
@@ -431,6 +435,16 @@ async fn create_invite_route(
     ))
 }
 
+async fn revoke_invite_route(
+    State(state): State<crate::state::AppState>,
+    user: CurrentUser,
+    Path((thread_id, invite_id)): Path<(String, String)>,
+) -> Result<Json<threadbase_shared::OkResponse>, ServerError> {
+    crate::authz::require_manage_role(&state.pool, &thread_id, &user).await?;
+    revoke_invite(&state.pool, &thread_id, &invite_id, &user).await?;
+    Ok(Json(threadbase_shared::OkResponse { ok: true }))
+}
+
 async fn accept_invite_route(
     State(state): State<crate::state::AppState>,
     user: CurrentUser,
@@ -448,6 +462,33 @@ async fn set_share_route(
     crate::authz::require_manage_role(&state.pool, &thread_id, &user).await?;
     set_share_level(&state.pool, &thread_id, request.share_level).await?;
     Ok(Json(threadbase_shared::OkResponse { ok: true }))
+}
+
+pub async fn revoke_invite(
+    pool: &SqlitePool,
+    thread_id: &str,
+    invite_id: &str,
+    actor: &CurrentUser,
+) -> Result<(), ServerError> {
+    let result = sqlx::query("DELETE FROM invites WHERE id = ? AND thread_id = ?")
+        .bind(invite_id)
+        .bind(thread_id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(ServerError(ApiError::not_found("invite not found")));
+    }
+    audit(
+        pool,
+        Some(actor.user.id.as_str()),
+        "thread.invite_revoked",
+        Some("invite"),
+        Some(invite_id),
+        None,
+        None,
+    )
+    .await;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -507,6 +548,32 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(level, "workspace");
+        let pending = create_invite(
+            &pool,
+            thread_id.as_str(),
+            &actor,
+            &threadbase_shared::api::CreateInviteRequest {
+                email: Some("x@example.com".into()),
+                username: None,
+                role: Some(threadbase_shared::Role::Viewer),
+            },
+        )
+        .await
+        .unwrap();
+        revoke_invite(
+            &pool,
+            thread_id.as_str(),
+            pending.invite.id.as_str(),
+            &actor,
+        )
+        .await
+        .unwrap();
+        let invites: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invites WHERE thread_id = ?")
+            .bind(thread_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(invites, 1);
         remove_member(&pool, thread_id.as_str(), &actor, target.id.as_str())
             .await
             .unwrap();

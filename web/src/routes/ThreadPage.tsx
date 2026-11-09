@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   Bot,
   ChevronRight,
-  GitBranch,
   Layers,
   ShieldCheck,
   WifiOff,
@@ -16,6 +15,7 @@ import {
   cancelSubagent,
   decideApproval,
   markThreadRead,
+  restartAgent,
   respondElicitation,
   updateThread,
 } from "@/api/endpoints";
@@ -32,6 +32,10 @@ import type { ApprovalDto } from "@/api/types/ApprovalDto";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
 import type { SubagentDto } from "@/api/types/SubagentDto";
 import { CommentDialog } from "@/components/thread/CommentDialog";
+import {
+  SelectionComment,
+  type SelectionTarget,
+} from "@/components/thread/SelectionComment";
 import { Composer } from "@/components/thread/Composer";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
@@ -44,7 +48,7 @@ import {
   buttonVariants,
 } from "@/components/ui";
 import { useOnlineStatus } from "@/lib/hooks";
-import { useThreadLiveEvents } from "@/lib/live";
+import { useLiveStore, useThreadLiveEvents } from "@/lib/live";
 import { formatTokenCount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -72,6 +76,7 @@ export function ThreadPage() {
   const bundle = useThreadBundle(threadId);
   const events = useThreadEvents(threadId);
   useThreadLiveEvents(threadId);
+  const liveConnected = useLiveStore((state) => state.connected);
   const elicitation = useMutation({
     mutationFn: ({
       elicitationId,
@@ -132,6 +137,59 @@ export function ThreadPage() {
     },
   });
   const [commentOpen, setCommentOpen] = useState(false);
+  const [selectionTarget, setSelectionTarget] = useState<SelectionTarget | null>(
+    null,
+  );
+  useEffect(() => {
+    const onMouseUp = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) {
+        return;
+      }
+      const text = selection.toString().trim();
+      if (!text) {
+        return;
+      }
+      const node = selection.anchorNode;
+      const element =
+        node instanceof Element ? node : node?.parentElement ?? null;
+      const message = element?.closest("[data-message-id]");
+      const messageId = message?.getAttribute("data-message-id");
+      if (!messageId) {
+        return;
+      }
+      const rect = selection.getRangeAt(0).getBoundingClientRect();
+      setSelectionTarget({ messageId, x: rect.left, y: rect.bottom });
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      if (modifier && event.altKey && event.key.toLowerCase() === "m") {
+        event.preventDefault();
+        const node = window.getSelection()?.anchorNode;
+        const element =
+          node instanceof Element ? node : node?.parentElement ?? null;
+        const message = element?.closest("[data-message-id]");
+        const messageId = message?.getAttribute("data-message-id");
+        if (messageId) {
+          setSelectionTarget({
+            messageId,
+            x: window.innerWidth / 2,
+            y: window.innerHeight / 2,
+          });
+        } else {
+          setCommentAnchor({ kind: "thread" });
+          setCommentOpen(true);
+        }
+      }
+    };
+    document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
   useEffect(() => {
     if (!threadId) {
       return;
@@ -153,6 +211,8 @@ export function ThreadPage() {
         pinned: null,
         archived,
         shareLevel: null,
+        model: null,
+        effort: null,
       }),
     onSuccess: (response) => {
       if (!threadId) {
@@ -170,6 +230,38 @@ export function ThreadPage() {
       });
       if (response.thread.status === "archived") {
         navigate(`/p/${response.thread.projectId}`);
+      }
+    },
+  });
+  const restart = useMutation({
+    mutationFn: () => restartAgent(threadId ?? ""),
+    onSuccess: () => {
+      if (threadId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadBundle(threadId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadEvents(threadId),
+        });
+      }
+    },
+  });
+  const configure = useMutation({
+    mutationFn: ({ model, effort }: { model: string; effort: string }) =>
+      updateThread(threadId ?? "", {
+        title: null,
+        pinned: null,
+        archived: null,
+        shareLevel: null,
+        model: model.trim() || null,
+        effort: effort.trim() || null,
+      }),
+    onSuccess: () => {
+      if (threadId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadBundle(threadId),
+        });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
       }
     },
   });
@@ -271,7 +363,7 @@ export function ThreadPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {!online ? (
+      {!online || !liveConnected ? (
         <div className="flex h-8 shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 text-[11px] text-warning">
           <WifiOff className="size-3.5" aria-hidden />
           Reconnecting… Input is preserved while the connection is offline.
@@ -313,6 +405,17 @@ export function ThreadPage() {
         )}
         <ThreadStatusBadge status={thread.status} />
         <div className="ml-auto flex items-center gap-2.5 text-faint">
+          {thread.status === "error" || thread.status === "interrupted" ? (
+            <Button
+              size="sm"
+              variant="danger"
+              loading={restart.isPending}
+              disabled={!canWrite}
+              onClick={() => restart.mutate()}
+            >
+              Restart agent
+            </Button>
+          ) : null}
           <button
             type="button"
             className="rounded p-1 text-faint hover:bg-hover hover:text-fg disabled:opacity-40"
@@ -322,14 +425,6 @@ export function ThreadPage() {
           >
             <Archive className="size-3.5" aria-hidden />
           </button>
-          <span className="flex items-center gap-1">
-            <GitBranch className="size-3" aria-hidden />
-            {thread.branch}
-          </span>
-          <span className="hidden sm:inline">{thread.agent}</span>
-          {thread.model ? (
-            <span className="hidden text-muted sm:inline">{thread.model}</span>
-          ) : null}
           {thread.pendingApprovals > 0 ? (
             <Badge variant="warning" size="sm">
               <ShieldCheck className="size-2.5" aria-hidden />
@@ -376,6 +471,13 @@ export function ThreadPage() {
           />
         )}
       </div>
+      {threadId && selectionTarget ? (
+        <SelectionComment
+          threadId={threadId}
+          target={selectionTarget}
+          onClose={() => setSelectionTarget(null)}
+        />
+      ) : null}
       {threadId ? (
         <CommentDialog
           open={commentOpen}
@@ -390,6 +492,11 @@ export function ThreadPage() {
           canWrite={canWrite}
           threadStatus={thread.status}
           participants={thread.participants}
+          model={thread.model}
+          effort={thread.effort}
+          onApplyConfig={(model, effort) =>
+            configure.mutate({ model, effort })
+          }
         />
       )}
     </div>

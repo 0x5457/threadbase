@@ -51,7 +51,7 @@
 | P2 列“终端面板、文件浏览”，非目标列“不做 IDE” | 文件浏览只读；终端面板只读展示 agent 执行的命令与输出；不提供 shell | 同上 |
 | 01 §9 有 Reviews / Merge 相关 thread，02 已定 14 明确不做 | 保留单 thread 内的 Changes 审阅与“合回主工作区”，不做 Reviews/Merge 两类 thread，不做 PR merge 流程 | 02 已定 14 |
 | 分享档位在 01 为三档，02 已定 15 改为两档 | 只做“仅邀请 / 整个工作区” | 02 已定 15、17 |
-| 通知为 P2（浏览器 + Webhook） | 浏览器通知 + 应用内收件箱；Webhook 优先读取设置页的 `webhook_url`，环境变量作为覆盖，契约见 §7 | P2 完整覆盖，不扩成通知平台 |
+| 通知为 P2（浏览器 + Webhook） | 审批、提问与 @提及都发浏览器通知；Webhook 优先读取设置页 `webhook_url`，环境变量覆盖，契约见 §7 | P2 完整覆盖，不扩成通知平台 |
 | ACP v1 RFD 禁止向子会话发 prompt | 子会话无 composer；只提供取消（`can_cancel`）和“让父 agent 转达” | 04 §3.3 |
 | 05 的“每个 turn 一个导航刻度”没有可验证样式 | 不做导航轨，保留折叠摘要、时间戳与详情；不写未验证样式 | 05 §4.5 标为 P2/未验证 |
 
@@ -65,21 +65,21 @@
 
 | 需求 | 状态 | 代码路径 | 验证 |
 | --- | --- | --- | --- |
-| F1 添加并打开 project | 已验证 | `crates/server/src/projects.rs`、`routes_workspace.rs`、`web/src/components/workspace/NewProjectDialog.tsx` | 非 git/相对路径/重复添加校验测试；项目概览计数测试；e2e 添加真实临时仓库 |
-| F2 新建 thread / worktree / agent | 已验证 | `crates/server/src/threads.rs`、`workspace/src/git.rs`、`agents.rs`、`web/.../NewThreadDialog.tsx` | worktree 创建/清理、fork、归档/删除测试；创建后后台启动 agent；fake + 真实 Codex 均完成 turn |
+| F1 添加并打开 project | 已验证 | `projects.rs`、`routes_fs.rs`、`NewProjectDialog.tsx` | 目录下拉/路径补全；非 git、相对路径、重复路径校验；e2e 打开路径选择器并选择 git 仓库 |
+| F2 新建 thread / worktree / agent | 已验证 | `threads.rs`、`workspace/src/git.rs`、`agents.rs`、`WorkspaceLayout.tsx` | 无弹窗、无标题必填；点击即建 thread 并跳转；worktree/启动/初始化 prompt/自动标题测试；fake + 真实 Codex 完成 turn |
 | F3 对话与工具调用 | 已验证 | `agents.rs`、`ThreadEvent` 归约、`ThreadTimeline.tsx`、`Composer.tsx` | fake agent 流式文本/思考/工具更新/计划/用量；e2e 显示 “Hello”“Run tests”、计划；真实 Codex 返回 `pong` |
 | F4 审批 | 已验证 | `approvals.rs`、`routes_actions.rs`、`ThreadTimeline.tsx`、`RightDrawer.tsx` | 默认 pending 不自动放行；允许/拒绝/线程规则/撤销；viewer 拒绝；内联 + 抽屉 e2e；审计行测试 |
 | F5 分享与加入 | 已验证 | `sharing.rs`、`routes_comments.rs`、`ShareDialog.tsx`、`InvitePage.tsx` | 仅邀请/整个工作区；成员增删改；14 天 token invite 接受；邀请/撤销测试；viewer 只读 e2e |
 | F6 多人实时 | 已验证 | `/ws` 事件、`EventStore` 广播、`useThreadLiveEvents` | 双浏览器草稿收敛、审批广播、afterSeq 重放、断线重连测试 |
-| F7 变更审阅 | 已验证 | `diff.rs`、`ChangesPanel.tsx`、`routes_workspace.rs` | 四档基线、逐文件 hunk、Seen 进度/重置、合回不自动提交；e2e 打开 diff、勾选 Seen、重置、添加行评论 |
+| F7 变更审阅 | 已验证 | `diff.rs`、`ChangesPanel.tsx`、`routes_workspace.rs` | 四档基线（含任意 commit 输入）、逐文件 hunk、Seen 进度/重置、合回不自动提交；e2e 行评论与 Seen |
 | F8 断线与恢复 | 已验证 | WS 重连、`after_seq` 重放、事件快照、thread 状态 | afterSeq/replay/resync 测试；浏览器 reload 后消息完整；断线条与重连 UI |
 | F9 thread 生命周期 | 已验证 | `threads.rs`、`ThreadPage.tsx`、`ProjectPage.tsx` | 重命名/归档/取消归档/fork/删除与 worktree 清理；归档列表与恢复入口 |
 | F10 project 概览 | 已验证 | `projects.rs`、`ProjectPage.tsx`、`WorkspacePage.tsx` | 线程数、运行中、等待审批、增删行数、最近活动；概览计数测试 |
 | F11 焦点共享与跟随 | 已验证 | `presence.rs`、`presence.ts`、`TitleBar.tsx`、`Avatar.tsx` | 50ms 合并广播、隐身过滤、在线点、跨 thread 跟随；e2e 跟随 Bob 跳转到第二个 thread 并退出 |
-| F12 子 agent 展示 | 已验证 | `SidebarTree.tsx`、`ThreadPage.tsx`、`agents.rs` | 子 thread 树、嵌套缩进、状态、面包屑、子视图无 composer；fake `subagents` 场景写入 `SubagentUpdated`；退化路径见 ACP 测试 |
+| F12 子 agent 展示 | 已验证 | `SidebarTree.tsx`、`ThreadPage.tsx`、`agents.rs`、`WorkspaceLayout.tsx` | 左栏树、嵌套、Show N more、`⌘/Ctrl+J` 全量选择器、面包屑、子视图无 composer、崩溃/取消；fake `subagents` 写入 `SubagentUpdated` |
 | F13 提问与回答 | 已验证 | `approvals.rs`、`ElicitationCard.tsx`、`routes_actions.rs` | 表单/URL 两种模式；三种动作；首个响应获胜；secret 字段拒绝；审计测试；e2e 渲染问题卡 |
-| F14 队列与中途插话 | 已验证 | `core/delivery.rs`、`agents.rs`、`routes_agent.rs`、`Composer.tsx` | steering 四种结果、停止并发送、排队；队列持久化顺序测试；Composer 的队列/插话菜单与 delivery toast |
-| F15 评论与标注 | 已验证 | `comments.rs`、`ChangesPanel.tsx`、`CommentsPanel.tsx`、`CommentDialog.tsx` | thread/diff/message/tool 锚点；pending→下一条消息投递；hunk 评论 e2e；锚点漂移降级为文件级；viewer 只读 |
+| F14 队列与中途插话 | 已验证 | `core/delivery.rs`、`agents.rs`、`routes_agent.rs`、`Composer.tsx` | steering 四种结果、停止并发送、Stop 取消、队列 tray 显示位置/作者/撤回；取消后 superseded 标记；队列顺序/持久化测试 |
+| F15 评论与标注 | 已验证 | `comments.rs`、`ChangesPanel.tsx`、`CommentsPanel.tsx`、`CommentDialog.tsx`、`SelectionComment.tsx` | thread/message/tool/file/diff/elicitation 锚点；选中文本直接评论；文件行评论；回复链；pending→下一条消息投递及 delivered_seq 跳转；锚点漂移写回 DB 并降级 |
 
 ### 3.2 功能清单 P0 / P1 / P2
 
@@ -94,19 +94,19 @@
 | P1 | presence 与跟随 | 已验证 | 语义锚点、50ms 合并、隐身、跟随退出 |
 | P1 | archive / fork / delete | 已验证 | 归档列表、worktree 清理、未提交变更提示 |
 | P1 | 多 agent | 已验证（结构）/ 环境 smoke | 四条 profile；Codex 真实 smoke；其余 adapter 由 fake 契约与 doctor 覆盖 |
-| P1 | 模型与 effort 切换 | 已验证（能力探测） | New Thread 选择 agent/model/effort；`AcpHarness` 从 `NewSessionResponse.configOptions` 读取 Model/ThoughtLevel 并用 `session/set_config_option` 应用；adapter 未声明时发出 Notice |
+| P1 | 模型与 effort 切换 | 已验证（能力探测） | New Thread 与 Composer 都通过 `agent-config` 的 Model/ThoughtLevel 下拉切换；`AcpHarness` 用 `session/set_config_option` 应用；adapter 未声明时不显示控件 |
 | P1 | 多人草稿块 | 已验证 | per-author blocks、块内 Y.Text、他人可编辑、awareness 编辑标记、服务端串行发送 |
 | P1 | 焦点共享 | 已验证 | 见 F11 |
 | P1 | 子 agent 树 | 已验证 | 左栏嵌套 + tab + 面包屑 + 状态点 |
-| P1 | 队列与 steering | 已验证 | FIFO 持久化、四种 steering、停止并发送 |
-| P1 | 评论与标注 | 已验证 | thread/diff/message/tool 锚点、pending 批处理、漂移降级 |
+| P1 | 队列与 steering | 已验证 | FIFO 持久化、四种 steering、停止并发送、Stop 取消、队列条目撤回与 superseded |
+| P1 | 评论与标注 | 已验证 | thread/message/tool/file/diff/elicitation 锚点、选区即评论、回复链、pending 批处理、投递跳转、漂移降级 |
 | P1 | 提问表单 | 已验证 | accept/decline/cancel、secret 拒绝、第一个回答生效 |
 | P2 | project 概览 / 收件箱 | 已验证 | 概览、全局 inbox、未读计数、@提及 |
 | P2 | 多 agent 并行对比 | 已验证 | `/p/:projectId/compare` 选择任意两条 thread，并排显示状态、消息数、增删行、审批和最近消息 |
 | P2 | 只读文件浏览 / agent 输出 | 已验证 | Files 面板只读树 + 文件内容；Output 面板只读命令输出，无 shell |
 | P2 | 子 agent 聚焦 / 对比 | 已验证 | 子 thread 页面 + 面包屑 + 树中节点；`/p/:projectId/t/:threadId/subagents/compare` 并排对照两个子会话；子会话无 composer |
 | P2 | URL 模式提问 | 已验证 | 显示完整 URL 与主机名，显式点击后新标签页打开，无 iframe/预取 |
-| P2 | 通知 | 已验证 | 浏览器 Notification、收件箱、最小 Webhook POST |
+| P2 | 通知 | 已验证 | 审批/提问/@提及浏览器通知、收件箱、最小 Webhook POST（设置项优先） |
 | P2 | 终端面板 | 已验证（只读） | 见冲突裁决；不是 PTY |
 
 ---
@@ -139,7 +139,7 @@ scripts/      install.sh、e2e-server.sh
 ```
 cargo fmt --all --check                                  pass
 cargo clippy --workspace --all-targets -- -D warnings    pass
-cargo nextest run --workspace                            241 passed, 1 skipped
+cargo nextest run --workspace                            247 passed, 1 skipped
 cargo test --workspace                                   pass（含 ignored 的真实 Codex smoke 之外的全部测试）
 pnpm --dir web typecheck                                 pass
 pnpm --dir web lint                                      pass
@@ -159,7 +159,7 @@ MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored -
 
 `web/tests/e2e/core.spec.ts` 使用真实 Chrome、真实临时 git 仓库和脚本化 ACP agent，覆盖：
 
-- 首次 setup、admin 登录、创建 project/thread。
+- 首次 setup、admin 登录；project 路径选择器的目录下拉与 “Use repo”；点击 New Thread 直接建线程并跳转，无标题弹窗。
 - 流式 “Hello”、工具卡 “Run tests”、Plan、Turn ended。
 - 内联审批 + 右侧抽屉审批，等待态与处理态。
 - reload 后按 seq 重放。
@@ -167,7 +167,8 @@ MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored -
 - 双浏览器共享草稿：Bob 看到 Ada 的块、编辑同一 Y.Text、Ada 看到修改、发送后两侧清空并落库。
 - 跨 thread 跟随：Ada 点击 Bob 头像，Bob 切换 thread，Ada 自动跳转并退出跟随。
 - Changes：修改 worktree、打开 diff、行内评论、Seen 1/1、文件再变后 Seen 0/1、评论随下一条消息 delivered。
-- 1440/768、深色/浅色截图，浏览器 console error 断言为空；1440 截图包含消息、工具卡、Usage、审批与计划，不再是空 thread。
+- 1440/768、深色/浅色截图，浏览器 console error 断言为空；1440 截图从顶部包含消息、工具卡、Usage、审批，Composer 为 152px 输入区。
+- 真实 Codex 的 UI 截图 `composer-real-codex.png` 显示 Model/Reasoning effort 下拉（`gpt-6.1-sol` / `max`）。
 
 截图见 `docs/screenshots/`。
 
@@ -240,6 +241,20 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - 不自建 agent runtime、不做模型路由；agent 凭据属于机器。
 
 ---
+
+## 9. 交互与视觉（2026-11-10 收敛）
+
+以 Linear 官网与 Apple Notes 为目标：一个页面只保留一个主动作，列表用行而不是卡片，说明文字不承担布局职责。
+
+- 添加 project：单个路径输入 + 目录下拉；git 仓库就地带出 “Use <name>”，无名称字段、无说明段落。
+- 新建 thread：点击即创建并跳转，不再弹标题表单；标题由首条消息自动生成（“New thread” 时替换为前 60 字），创建后仍可自动启动首次 prompt。
+- Composer：per-author block 使用作者色细边、3–10 行自适应高度、最小 152px 输入区；块内可编辑他人草稿；模型/推理强度以下拉呈现，adapter 未提供 configOptions 时完全隐藏。
+- Thread 头部只保留 project/thread、状态、审批/队列与归档；branch、模型、agent 等移入状态栏或 Composer。标题栏去掉副标题与 “Search” 文字。
+- 左栏是唯一导航；分组和行高收敛，移除口号、营销文案和重复说明。
+- 右栏标签改为图标按钮（Changes / Approvals / Output / Comments / Files），避免 380px 抽屉里五项文字挤压。
+- 空状态只留一句动作说明；错误状态说明可操作原因。
+
+设计约束：所有交互必须同时改善 UX（更少步骤）、DX（组件和 API 一致、可测试）与 AX（agent 可通过语义锚点理解和操纵）。不得用装饰性渐变、无意义动画或说明文字弥补布局问题。
 
 ## 9. 已知工程注意点
 

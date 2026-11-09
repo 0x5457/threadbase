@@ -61,11 +61,73 @@ fn dto(row: QueueRow) -> QueueItemDto {
     }
 }
 
+use crate::error::ServerError as QueueError;
+use crate::events::EventStore;
+use threadbase_shared::{Actor, ThreadEvent, ThreadId};
+
+pub async fn mark_superseded(
+    pool: &SqlitePool,
+    thread_id: &str,
+    turn_id: Option<&str>,
+) -> Result<(), QueueError> {
+    sqlx::query(
+        "UPDATE queued_inputs SET superseded = 1, turn_id = ?, updated_at = ?
+         WHERE thread_id = ? AND status = 'queued'",
+    )
+    .bind(turn_id)
+    .bind(threadbase_shared::now_ms())
+    .bind(thread_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn publish(
+    pool: &SqlitePool,
+    events: &EventStore,
+    thread_id: &str,
+) -> Result<(), QueueError> {
+    let items = list_for_thread(pool, thread_id).await?;
+    events
+        .append(
+            &ThreadId::from(thread_id.to_owned()),
+            Actor::system(),
+            ThreadEvent::QueueUpdated { items },
+            Default::default(),
+        )
+        .await
+        .map_err(|error| QueueError::internal(error.to_string()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db;
     use crate::events::test_support::seed_thread;
+
+    #[tokio::test]
+    async fn cancelling_marks_queued_inputs_superseded() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        sqlx::query(
+            "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position, created_at, updated_at)
+             VALUES('q1', ?, ?, 'queued', 'queued', 1, ?, ?)",
+        )
+        .bind(thread.as_str())
+        .bind(user.as_str())
+        .bind(threadbase_shared::now_ms())
+        .bind(threadbase_shared::now_ms())
+        .execute(&pool)
+        .await
+        .unwrap();
+        mark_superseded(&pool, thread.as_str(), Some("turn-1"))
+            .await
+            .unwrap();
+        let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].superseded);
+    }
 
     #[tokio::test]
     async fn queued_inputs_survive_and_keep_order() {

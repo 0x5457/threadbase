@@ -6,6 +6,7 @@ import {
   addMember,
   createInvite,
   removeMember,
+  revokeInvite,
   setShareLevel,
 } from "@/api/endpoints";
 import { queryKeys, useMe } from "@/api/queries";
@@ -78,6 +79,11 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
     },
     onError: (error) => toast.error(String(error)),
   });
+  const revoke = useMutation({
+    mutationFn: (inviteId: string) => revokeInvite(thread.id, inviteId),
+    onSuccess: refresh,
+    onError: (error) => toast.error(String(error)),
+  });
   const remove = useMutation({
     mutationFn: (userId: string) => removeMember(thread.id, userId),
     onSuccess: refresh,
@@ -93,7 +99,6 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         title="Share thread"
-        description="Thread access is the permission boundary. The workspace tier makes this thread read-only for everyone else."
         footer={
           <>
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
@@ -177,6 +182,33 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
               ))}
             </ul>
           </div>
+
+          {bundle.share.pendingInvites.length > 0 ? (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-medium text-muted">Pending links</p>
+              <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+                {bundle.share.pendingInvites.map((invite) => (
+                  <li
+                    key={invite.id}
+                    className="flex items-center gap-2 bg-surface px-2.5 py-1.5 text-[10.5px]"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-muted">
+                      {invite.email ?? "invite link"} · {invite.role}
+                    </span>
+                    {owner ? (
+                      <button
+                        type="button"
+                        className="text-faint hover:text-danger"
+                        onClick={() => revoke.mutate(invite.id)}
+                      >
+                        revoke
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {owner ? (
             <div className="space-y-1.5">

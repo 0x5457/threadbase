@@ -164,6 +164,8 @@ async fn project_validation_and_thread_lifecycle() {
             pinned: None,
             archived: Some(true),
             share_level: None,
+            model: None,
+            effort: None,
         },
     )
     .await
@@ -187,6 +189,8 @@ async fn project_validation_and_thread_lifecycle() {
             pinned: None,
             archived: Some(false),
             share_level: None,
+            model: None,
+            effort: None,
         },
     )
     .await

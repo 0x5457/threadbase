@@ -274,6 +274,30 @@ pub async fn update(
             .execute(pool)
             .await?;
     }
+    if let Some(model) = request.model.as_deref() {
+        sqlx::query("UPDATE threads SET model = ?, updated_at = ? WHERE id = ?")
+            .bind(if model.trim().is_empty() {
+                None
+            } else {
+                Some(model.trim())
+            })
+            .bind(now_ms())
+            .bind(thread_id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(effort) = request.effort.as_deref() {
+        sqlx::query("UPDATE threads SET effort = ?, updated_at = ? WHERE id = ?")
+            .bind(if effort.trim().is_empty() {
+                None
+            } else {
+                Some(effort.trim())
+            })
+            .bind(now_ms())
+            .bind(thread_id)
+            .execute(pool)
+            .await?;
+    }
     if let Some(share) = request.share_level {
         let value = match share {
             ShareLevel::InviteOnly => "invite_only",

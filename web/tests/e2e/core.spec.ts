@@ -112,10 +112,10 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   });
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
   await expect(admin.getByText("Fix the login redirect").first()).toBeVisible();
-  await expect(admin.getByText("Agent is running", { exact: false }).or(admin.getByText("Shared draft", { exact: false }))).toBeVisible();
+  await expect(admin.getByPlaceholder("Message")).toBeVisible();
 
 
-  const composer = admin.getByPlaceholder("Write a message…");
+  const composer = admin.getByPlaceholder("Message");
   await composer.fill("stream");
   await admin.getByRole("button", { name: "Send", exact: true }).click();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible({ timeout: 15_000 });
@@ -127,17 +127,6 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.getByRole("button", { name: "Allow once" }).click();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible();
   await expect(admin.getByText("Allow once", { exact: true })).toBeHidden({ timeout: 10_000 });
-  await admin.screenshot({
-    path: "test-results/screenshots/thread-1440-dark.png",
-    fullPage: true,
-  });
-  await admin.getByRole("button", { name: "Switch to light theme" }).click();
-  await admin.screenshot({
-    path: "test-results/screenshots/thread-1440-light.png",
-    fullPage: true,
-  });
-  await admin.getByRole("button", { name: "Switch to dark theme" }).click();
-
   await composer.fill("permission");
   await admin.getByRole("button", { name: "Send", exact: true }).click();
   await expect(admin.getByText("Allow once", { exact: true }).first()).toBeVisible({
@@ -154,6 +143,16 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
 
   await admin.reload();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible({ timeout: 10_000 });
+  await admin.screenshot({
+    path: "test-results/screenshots/thread-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.getByRole("button", { name: "Switch to light theme" }).click();
+  await admin.screenshot({
+    path: "test-results/screenshots/thread-1440-light.png",
+    fullPage: true,
+  });
+  await admin.getByRole("button", { name: "Switch to dark theme" }).click();
 
   const bobContext = await browser.newContext({
     viewport: { width: 768, height: 900 },
@@ -168,7 +167,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await bob.goto(`/p/${project.id}/t/${thread.id}`);
   await expect(bob.getByText("Hello", { exact: false })).toBeVisible({ timeout: 10_000 });
   await expect(bob.getByText("read-only", { exact: false })).toBeVisible();
-  await expect(bob.getByPlaceholder("Write a message…")).toHaveCount(0);
+  await expect(bob.getByPlaceholder("Message")).toHaveCount(0);
   await bob.screenshot({ path: "test-results/screenshots/thread-768-readonly.png", fullPage: true });
   await bob.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
   await bob.reload();
@@ -183,16 +182,16 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   });
   expect(addEditor.status()).toBe(200);
   await bob.reload();
-  const bobComposer = bob.getByPlaceholder("Write a message…");
+  const bobComposer = bob.getByPlaceholder("Message");
   await expect(bobComposer).toBeVisible({ timeout: 10_000 });
 
   await composer.fill("shared draft from ada");
-  await expect(bob.getByPlaceholder("Edit this shared draft…").first()).toHaveValue(
+  await expect(bob.getByPlaceholder("Edit draft…").first()).toHaveValue(
     "shared draft from ada",
     { timeout: 10_000 },
   );
   await bob
-    .getByPlaceholder("Edit this shared draft…")
+    .getByPlaceholder("Edit draft…")
     .first()
     .fill("shared draft from ada + bob");
   await expect(composer).toHaveValue("shared draft from ada + bob", {
@@ -254,6 +253,30 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(admin.getByText("Please explain this line").first()).toBeVisible();
   await expect(admin.getByText("delivered").first()).toBeVisible({
     timeout: 15_000,
+  });
+
+  // Project picker: one field, live directory suggestions, no free-form name.
+  await admin.getByLabel("New project").click();
+  const pathInput = admin.getByPlaceholder("/home/you/code");
+  await expect(pathInput).toHaveValue(/.+/, { timeout: 10_000 });
+  await pathInput.fill(REPO);
+  await expect(admin.getByRole("button", { name: "Use repo" })).toBeVisible({
+    timeout: 10_000,
+  });
+  await admin.getByRole("button", { name: "Cancel" }).click();
+
+  // New thread is direct: no title dialog, no extra step.
+  await admin.getByRole("button", { name: "New Thread" }).click();
+  await expect(admin).toHaveURL(/\/t\/[^/]+$/, { timeout: 15_000 });
+  await expect(admin.getByPlaceholder("Message")).toBeVisible({
+    timeout: 10_000,
+  });
+  await admin.keyboard.press("Shift+Escape");
+  await admin.getByPlaceholder("Message").fill("Draft in progress");
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/composer-1440-dark.png",
+    fullPage: true,
   });
 
   expect(adminErrors, adminErrors.join("\n")).toEqual([]);

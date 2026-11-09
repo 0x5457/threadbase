@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { login, setupAdmin } from "@/api/endpoints";
@@ -135,9 +135,7 @@ export function LoginPage() {
           ) : null}
         </div>
         <p className="text-[12px] leading-relaxed text-muted">
-          {needsSetup
-            ? "Create the admin account for this local workspace. Only the machine running the service can complete setup."
-            : "Use your Threadbase account to open shared threads and continue work."}
+          {needsSetup ? "Create the local admin account." : ""}
         </p>
       </div>
 
@@ -243,12 +241,6 @@ export function LoginPage() {
         </Button>
       </form>
 
-      <div className="mt-4 flex items-center gap-2 border-t border-border pt-3 text-[10.5px] text-faint">
-        <LockKeyhole className="size-3" aria-hidden />
-        <span>
-          Sessions are stored locally. Tailscale is the only network boundary.
-        </span>
-      </div>
     </LoginFrame>
   );
 }
@@ -272,17 +264,11 @@ function LoginFrame({ children }: { children: ReactNode }) {
             <p className="text-[13px] font-semibold tracking-tight text-fg">
               Threadbase
             </p>
-            <p className="text-[10.5px] text-faint">
-              Shared coding agent threads
-            </p>
           </div>
         </div>
         <div className="rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-black/10">
           {children}
         </div>
-        <p className="mt-3 text-center text-[10px] text-faint">
-          One local workspace. Every teammate on the same thread.
-        </p>
       </div>
     </div>
   );

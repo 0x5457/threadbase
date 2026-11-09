@@ -202,12 +202,16 @@ pub async fn mark_delivered(
     events: &EventStore,
     comment_id: &str,
     user: &CurrentUser,
+    delivered_seq: Option<u64>,
 ) -> Result<CommentDto, ServerError> {
-    sqlx::query("UPDATE comments SET status = 'delivered', updated_at = ? WHERE id = ?")
-        .bind(now_ms())
-        .bind(comment_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE comments SET status = 'delivered', delivered_seq = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(delivered_seq.and_then(|value| i64::try_from(value).ok()))
+    .bind(now_ms())
+    .bind(comment_id)
+    .execute(pool)
+    .await?;
     let comment = load(pool, comment_id).await?;
     events
         .append(
@@ -328,10 +332,12 @@ pub async fn mark_pending_delivered(
     events: &EventStore,
     thread_id: &str,
     user: &CurrentUser,
+    delivered_seq: Option<u64>,
 ) -> Result<(), ServerError> {
     let pending = pending_for_thread(pool, thread_id).await?;
     for comment in pending {
-        let comment = mark_delivered(pool, events, comment.id.as_str(), user).await?;
+        let comment =
+            mark_delivered(pool, events, comment.id.as_str(), user, delivered_seq).await?;
         let _ = comment;
     }
     Ok(())

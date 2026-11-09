@@ -812,3 +812,48 @@ pub struct WorkspaceBootstrapDto {
     pub settings: SettingsDto,
     pub agents: Vec<AgentInfoDto>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentConfigValueDto {
+    pub value: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentConfigOptionDto {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub current_value: String,
+    pub options: Vec<AgentConfigValueDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentConfigResponse {
+    pub options: Vec<AgentConfigOptionDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DirectoryEntryDto {
+    pub name: String,
+    pub path: String,
+    pub is_git: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DirectoryListingDto {
+    pub path: String,
+    pub parent: Option<String>,
+    pub is_git: bool,
+    pub entries: Vec<DirectoryEntryDto>,
+}

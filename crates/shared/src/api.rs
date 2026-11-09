@@ -106,6 +106,8 @@ pub struct UpdateThreadRequest {
     pub pinned: Option<bool>,
     pub archived: Option<bool>,
     pub share_level: Option<ShareLevel>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

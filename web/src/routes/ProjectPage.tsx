@@ -62,16 +62,10 @@ function ThreadRow({
           ) : null}
           <ThreadStatusBadge status={thread.status} />
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10.5px] text-faint">
-          <span className="flex items-center gap-1">
-            <GitBranch className="size-2.5" aria-hidden />
-            {thread.branch}
-          </span>
+        <div className="mt-0.5 flex items-center gap-2 text-[10.5px] text-faint">
           <span>{thread.agent}</span>
           {subthreadCount > 0 ? (
-            <span>
-              {subthreadCount} subthread{subthreadCount === 1 ? "" : "s"}
-            </span>
+            <span>{subthreadCount} subthreads</span>
           ) : null}
           <span>{formatRelativeTime(thread.updatedAt)}</span>
         </div>
@@ -211,14 +205,10 @@ export function ProjectPage() {
               <p className="truncate font-mono text-[11px] text-faint">
                 {data.path}
               </p>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-muted">
-                <span className="flex items-center gap-1">
-                  <GitBranch className="size-2.5" aria-hidden />
-                  {data.defaultBranch}
-                </span>
-                <span>{data.remoteUrl ?? "No remote configured"}</span>
-                <span>Last activity {formatRelativeTime(data.lastActivityAt)}</span>
-              </div>
+              <p className="mt-1 flex items-center gap-1 text-[10.5px] text-muted">
+                <GitBranch className="size-2.5" aria-hidden />
+                {data.defaultBranch}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -251,100 +241,30 @@ export function ProjectPage() {
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Stat label="Threads" value={threadList.length} />
-          <Stat label="Running" value={active} />
-          <Stat label="Waiting" value={waiting} />
-          <div className="rounded-lg border border-border bg-panel px-3 py-2">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-faint">
-              Changes
-            </p>
-            <p className="mt-0.5 font-mono text-[15px] font-semibold tabular-nums">
-              <span className="text-success">+{additions}</span>{" "}
-              <span className="text-danger">−{deletions}</span>
-            </p>
-          </div>
+        <div className="mt-5 flex flex-wrap items-center gap-x-3 text-[10.5px] text-faint">
+          <span>{threadList.length} threads</span>
+          {active > 0 ? <span>{active} running</span> : null}
+          {waiting > 0 ? <span className="text-warning">{waiting} waiting</span> : null}
+          <span className="font-mono">
+            <span className="text-success">+{additions}</span>{" "}
+            <span className="text-danger">−{deletions}</span>
+          </span>
         </div>
 
-        {overview.data ? (
-          <div className="mt-5 grid gap-2 md:grid-cols-2">
-            <section className="rounded-xl border border-border bg-panel">
-              <div className="border-b border-border px-3 py-2">
-                <h2 className="text-[11px] font-semibold text-fg">
-                  Waiting approvals
-                </h2>
-              </div>
-              {overview.data.overview.waitingApprovals.length === 0 ? (
-                <p className="px-3 py-3 text-[10.5px] text-faint">
-                  No approvals waiting.
-                </p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {overview.data.overview.waitingApprovals.map((approval) => (
-                    <li key={approval.id} className="px-3 py-2">
-                      <Link
-                        to={`/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
-                          approval.threadId,
-                        )}`}
-                        className="text-[11px] text-fg hover:underline"
-                      >
-                        {approval.title}
-                      </Link>
-                      <p className="text-[9.5px] text-faint">
-                        {approval.agent} · {approval.kind}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-            <section className="rounded-xl border border-border bg-panel">
-              <div className="border-b border-border px-3 py-2">
-                <h2 className="text-[11px] font-semibold text-fg">
-                  Recent activity
-                </h2>
-              </div>
-              {overview.data.overview.recentActivity.length === 0 ? (
-                <p className="px-3 py-3 text-[10.5px] text-faint">
-                  No activity yet.
-                </p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {overview.data.overview.recentActivity.map((activity, index) => (
-                    <li
-                      key={`${activity.threadId}-${activity.ts}-${index}`}
-                      className="px-3 py-2"
-                    >
-                      <Link
-                        to={`/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
-                          activity.threadId,
-                        )}`}
-                        className="text-[10.5px] text-fg hover:underline"
-                      >
-                        {activity.actor.displayName} {activity.summary}
-                      </Link>
-                      <p className="truncate text-[9.5px] text-faint">
-                        {activity.threadTitle} · {formatRelativeTime(activity.ts)}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          </div>
+        {overview.data?.overview.recentActivity[0] ? (
+          <p className="mt-2 truncate text-[10.5px] text-faint">
+            Last: {overview.data.overview.recentActivity[0].actor.displayName}{" "}
+            {overview.data.overview.recentActivity[0].summary}
+            <span className="mx-1.5">·</span>
+            {formatRelativeTime(
+              overview.data.overview.recentActivity[0].ts,
+            )}
+          </p>
         ) : null}
 
-        <div className="mt-6 overflow-hidden rounded-xl border border-border bg-panel">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-faint">
-              Threads
-            </h2>
-            {threads.isFetching && !threads.isLoading ? (
-              <span className="text-[10px] text-faint">Refreshing…</span>
-            ) : null}
-          </div>
+        <div className="mt-3 border-y border-border/60">
           {threads.isLoading ? (
-            <div className="space-y-2 p-3">
+            <div className="space-y-1 py-1">
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-3/4" />
@@ -359,8 +279,7 @@ export function ProjectPage() {
           ) : rootThreads.length === 0 ? (
             <EmptyState
               icon={MessageSquare}
-              title="No threads yet"
-              description="Start a thread to give the agent a task in this project."
+              title="No threads"
               compact
               action={
                 <Button
@@ -384,19 +303,6 @@ export function ProjectPage() {
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-lg border border-border bg-panel px-3 py-2">
-      <p className="text-[10px] font-medium uppercase tracking-wider text-faint">
-        {label}
-      </p>
-      <p className="mt-0.5 text-[15px] font-semibold tabular-nums text-fg">
-        {value}
-      </p>
     </div>
   );
 }

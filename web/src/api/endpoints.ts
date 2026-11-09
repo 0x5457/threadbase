@@ -1,3 +1,4 @@
+import type { AgentConfigResponse } from "@/api/types/AgentConfigResponse";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalResolvedResponse } from "@/api/types/ApprovalResolvedResponse";
 import type { ApprovalRulesResponse } from "@/api/types/ApprovalRulesResponse";
@@ -5,6 +6,7 @@ import type { AuthMeDto } from "@/api/types/AuthMeDto";
 import type { AuthStatusResponse } from "@/api/types/AuthStatusResponse";
 import type { AddMemberRequest } from "@/api/types/AddMemberRequest";
 import type { ChangesDto } from "@/api/types/ChangesDto";
+import type { DirectoryListingDto } from "@/api/types/DirectoryListingDto";
 import type { CommentResponse } from "@/api/types/CommentResponse";
 import type { CommentsResponse } from "@/api/types/CommentsResponse";
 import type { CreateCommentRequest } from "@/api/types/CreateCommentRequest";
@@ -19,6 +21,7 @@ import type { FileDiffDto } from "@/api/types/FileDiffDto";
 import type { InviteResponse } from "@/api/types/InviteResponse";
 import type { MergeBackRequest } from "@/api/types/MergeBackRequest";
 import type { MergeBackResponse } from "@/api/types/MergeBackResponse";
+import type { QueueResponse } from "@/api/types/QueueResponse";
 import type { Role } from "@/api/types/Role";
 import type { SeenRequest } from "@/api/types/SeenRequest";
 import type { UpdateCommentRequest } from "@/api/types/UpdateCommentRequest";
@@ -70,12 +73,24 @@ export const endpoints = {
   sendMessage: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/messages`,
   markRead: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/read`,
+  restartAgent: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/restart`,
+  cancelTurn: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/cancel`,
+  agentConfig: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/agent-config`,
+  directories: (path: string) =>
+    `/api/fs/directories?path=${encodeURIComponent(path)}`,
   cancelSubagent: (threadId: ThreadId, subagentId: string) =>
     `/api/threads/${segment(threadId)}/subagents/${segment(subagentId)}/cancel`,
   threadChanges: (threadId: ThreadId, kind = "base_branch", commit = "") =>
     `/api/threads/${segment(threadId)}/changes?kind=${encodeURIComponent(kind)}${commit ? `&commit=${encodeURIComponent(commit)}` : ""}`,
-  threadFileDiff: (threadId: ThreadId, path: string, kind = "base_branch") =>
-    `/api/threads/${segment(threadId)}/changes/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}`,
+  threadFileDiff: (
+    threadId: ThreadId,
+    path: string,
+    kind = "base_branch",
+    commit = "",
+  ) =>
+    `/api/threads/${segment(threadId)}/changes/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}${commit ? `&commit=${encodeURIComponent(commit)}` : ""}`,
   markSeen: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/seen`,
   mergeBack: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/merge-back`,
@@ -87,12 +102,19 @@ export const endpoints = {
   comment: (commentId: string) => `/api/comments/${segment(commentId)}`,
   commentSend: (commentId: string) =>
     `/api/comments/${segment(commentId)}/send`,
+  queue: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/queue`,
+  queueItem: (threadId: ThreadId, itemId: string) =>
+    `/api/threads/${segment(threadId)}/queue/${segment(itemId)}`,
+  queueRetry: (threadId: ThreadId, itemId: string) =>
+    `/api/threads/${segment(threadId)}/queue/${segment(itemId)}/retry`,
   members: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/members`,
   member: (threadId: ThreadId, userId: string) =>
     `/api/threads/${segment(threadId)}/members/${segment(userId)}`,
   invites: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/invites`,
+  invite: (threadId: ThreadId, inviteId: string) =>
+    `/api/threads/${segment(threadId)}/invites/${segment(inviteId)}`,
   share: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/share`,
   threadEvents: (threadId: ThreadId, afterSeq = 0, limit = 200) =>
     `/api/threads/${segment(threadId)}/events?after_seq=${afterSeq}&limit=${limit}`,
@@ -191,6 +213,24 @@ export function fetchWorkspaceThreads(): Promise<ThreadsResponse> {
   return api<ThreadsResponse>(endpoints.threads);
 }
 
+export function fetchAgentConfig(
+  threadId: ThreadId,
+): Promise<AgentConfigResponse> {
+  return api<AgentConfigResponse>(endpoints.agentConfig(threadId));
+}
+
+export function fetchDirectories(path: string): Promise<DirectoryListingDto> {
+  return api<DirectoryListingDto>(endpoints.directories(path));
+}
+
+export function cancelTurn(threadId: ThreadId): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.cancelTurn(threadId), { method: "POST" });
+}
+
+export function restartAgent(threadId: ThreadId): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.restartAgent(threadId), { method: "POST" });
+}
+
 export function markThreadRead(threadId: ThreadId): Promise<OkResponse> {
   return api<OkResponse>(endpoints.markRead(threadId), { method: "POST" });
 }
@@ -252,8 +292,11 @@ export function fetchFileDiff(
   threadId: ThreadId,
   path: string,
   kind = "base_branch",
+  commit = "",
 ): Promise<FileDiffDto> {
-  return api<FileDiffDto>(endpoints.threadFileDiff(threadId, path, kind));
+  return api<FileDiffDto>(
+    endpoints.threadFileDiff(threadId, path, kind, commit),
+  );
 }
 
 export function setSeen(
@@ -328,6 +371,28 @@ export function sendComment(commentId: string): Promise<CommentResponse> {
   });
 }
 
+export function fetchQueue(threadId: ThreadId): Promise<QueueResponse> {
+  return api<QueueResponse>(endpoints.queue(threadId));
+}
+
+export function retryQueueItem(
+  threadId: ThreadId,
+  itemId: string,
+): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.queueRetry(threadId, itemId), {
+    method: "POST",
+  });
+}
+
+export function dropQueueItem(
+  threadId: ThreadId,
+  itemId: string,
+): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.queueItem(threadId, itemId), {
+    method: "DELETE",
+  });
+}
+
 export function addMember(
   threadId: ThreadId,
   request: AddMemberRequest,
@@ -362,6 +427,15 @@ export function createInvite(
   return api<InviteResponse>(endpoints.invites(threadId), {
     method: "POST",
     body: request,
+  });
+}
+
+export function revokeInvite(
+  threadId: ThreadId,
+  inviteId: string,
+): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.invite(threadId, inviteId), {
+    method: "DELETE",
   });
 }
 

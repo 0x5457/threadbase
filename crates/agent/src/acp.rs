@@ -22,10 +22,11 @@ use agent_client_protocol::v1::schema::{
     Plan as AcpPlan, PlanEntry as AcpPlanEntry, PlanEntryPriority as AcpPlanPriority,
     PlanEntryStatus as AcpPlanStatus, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionConfigOptionCategory, SessionId as AcpSessionId,
-    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, StateUpdate, StopReason,
-    SubagentCapabilities, SubagentUpdate, TextContent, ToolCall, ToolCallContent, ToolCallStatus,
-    ToolCallUpdate, ToolKind as AcpToolKind, Usage as AcpUsage, UsageUpdate, WriteTextFileRequest,
+    SelectedPermissionOutcome, SessionConfigKind, SessionConfigOptionCategory,
+    SessionConfigSelectOptions, SessionId as AcpSessionId, SessionNotification, SessionUpdate,
+    SetSessionConfigOptionRequest, StateUpdate, StopReason, SubagentCapabilities, SubagentUpdate,
+    TextContent, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate,
+    ToolKind as AcpToolKind, Usage as AcpUsage, UsageUpdate, WriteTextFileRequest,
     WriteTextFileResponse,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
@@ -70,6 +71,7 @@ pub struct AcpHarness {
     cwd: Option<PathBuf>,
     model: Option<String>,
     effort: Option<String>,
+    config_options: Vec<agent_client_protocol::v1::schema::SessionConfigOption>,
     capabilities: Capabilities,
     agent_info: Option<AgentIdentity>,
     shutdown: Option<watch::Sender<bool>>,
@@ -89,6 +91,7 @@ impl AcpHarness {
             cwd: None,
             model: None,
             effort: None,
+            config_options: Vec::new(),
             capabilities: Capabilities::default(),
             agent_info: None,
             shutdown: None,
@@ -379,6 +382,7 @@ impl Harness for AcpHarness {
             .await
             .map_err(|error| HarnessError::Protocol(error.to_string()))?;
         let session = SessionId(response.session_id.0.to_string());
+        self.config_options = response.config_options.clone().unwrap_or_default();
         reset_session(&mut lock_state(&self.state), &session.0);
         self.session = Some(session.clone());
         if let (Some(model), Some(option)) = (
@@ -450,6 +454,107 @@ impl Harness for AcpHarness {
             .map_err(|error| HarnessError::Protocol(error.to_string()))?;
         reset_session(&mut lock_state(&self.state), &id.0);
         self.session = Some(id.clone());
+        Ok(())
+    }
+
+    fn config_options(&self) -> Vec<threadbase_shared::AgentConfigOptionDto> {
+        self.config_options
+            .iter()
+            .map(|option| {
+                use threadbase_shared::{AgentConfigOptionDto, AgentConfigValueDto};
+                let (current_value, values) = match &option.kind {
+                    SessionConfigKind::Select(select) => {
+                        let values = match &select.options {
+                            SessionConfigSelectOptions::Ungrouped(options) => options
+                                .iter()
+                                .map(|value| AgentConfigValueDto {
+                                    value: value.value.0.to_string(),
+                                    name: value.name.clone(),
+                                })
+                                .collect(),
+                            SessionConfigSelectOptions::Grouped(groups) => groups
+                                .iter()
+                                .flat_map(|group| {
+                                    group.options.iter().map(|value| AgentConfigValueDto {
+                                        value: value.value.0.to_string(),
+                                        name: value.name.clone(),
+                                    })
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                        (select.current_value.0.to_string(), values)
+                    }
+                    SessionConfigKind::Boolean(value) => (
+                        value.current_value.to_string(),
+                        vec![
+                            AgentConfigValueDto {
+                                value: "true".into(),
+                                name: "On".into(),
+                            },
+                            AgentConfigValueDto {
+                                value: "false".into(),
+                                name: "Off".into(),
+                            },
+                        ],
+                    ),
+                    _ => (String::new(), Vec::new()),
+                };
+                let category = match option.category {
+                    Some(SessionConfigOptionCategory::Model) => "model",
+                    Some(SessionConfigOptionCategory::ThoughtLevel) => "thought_level",
+                    _ => "other",
+                };
+                AgentConfigOptionDto {
+                    id: option.id.0.to_string(),
+                    name: option.name.clone(),
+                    category: category.to_owned(),
+                    current_value,
+                    options: values,
+                }
+            })
+            .collect()
+    }
+
+    async fn set_config(&mut self, model: Option<&str>, effort: Option<&str>) -> HarnessResult<()> {
+        let connection = self.connection()?.clone();
+        let session = self.active_session()?.clone();
+        let set_one = |category: SessionConfigOptionCategory, value: &str| {
+            self.config_options
+                .iter()
+                .find(|option| matches!(option.category, Some(ref c) if *c == category))
+                .map(|option| (option.id.clone(), value.to_owned()))
+        };
+        let mut requests = Vec::new();
+        if let Some(model) = model {
+            if let Some((id, value)) = set_one(SessionConfigOptionCategory::Model, model) {
+                requests.push((id, value));
+            } else {
+                self.bus.send(RawAgentEvent::Notice {
+                    message: "agent did not advertise a model configuration option".into(),
+                });
+            }
+        }
+        if let Some(effort) = effort {
+            if let Some((id, value)) = set_one(SessionConfigOptionCategory::ThoughtLevel, effort) {
+                requests.push((id, value));
+            } else {
+                self.bus.send(RawAgentEvent::Notice {
+                    message: "agent did not advertise an effort configuration option".into(),
+                });
+            }
+        }
+        for (id, value) in requests {
+            connection
+                .send_request(SetSessionConfigOptionRequest::new(
+                    AcpSessionId::new(session.0.as_str()),
+                    id,
+                    value.as_str(),
+                ))
+                .block_task()
+                .await
+                .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        }
         Ok(())
     }
 

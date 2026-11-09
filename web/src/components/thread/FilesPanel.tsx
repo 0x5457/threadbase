@@ -1,10 +1,14 @@
 import { ChevronLeft, FileCode2, Folder, FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useFile, useFiles } from "@/api/queries";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { createComment } from "@/api/endpoints";
+import { queryKeys, useFile, useFiles } from "@/api/queries";
 import {
+  Button,
   EmptyState,
   ErrorState,
   Skeleton,
+  Textarea,
 } from "@/components/ui";
 import { usePresenceStore } from "@/lib/presence";
 import { cn } from "@/lib/utils";
@@ -12,8 +16,35 @@ import { cn } from "@/lib/utils";
 export function FilesPanel({ threadId }: { threadId: string }) {
   const [path, setPath] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [line, setLine] = useState<number | null>(null);
+  const [comment, setComment] = useState("");
+  const queryClient = useQueryClient();
   const files = useFiles(threadId, path);
   const setLocal = usePresenceStore((state) => state.setLocal);
+  const addComment = useMutation({
+    mutationFn: () =>
+      createComment(threadId, {
+        body: comment.trim(),
+        anchor: {
+          kind: "file",
+          path: selected ?? "",
+          line: line ?? 1,
+          contextHash: null,
+        },
+        parentId: null,
+        send: false,
+      }),
+    onSuccess: () => {
+      setComment("");
+      setLine(null);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.comments(threadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.threadEvents(threadId),
+      });
+    },
+  });
   useEffect(() => {
     setLocal({
       panel: "files",
@@ -52,10 +83,55 @@ export function FilesPanel({ threadId }: { threadId: string }) {
             compact
           />
         ) : (
-          <div className="min-h-0 flex-1 overflow-auto p-2">
-            <pre className="font-mono text-[10px] leading-relaxed text-fg">
-              {file.data?.file.content}
-            </pre>
+          <div className="min-h-0 flex-1 overflow-auto">
+            <div className="font-mono text-[10px] leading-relaxed">
+              {(file.data?.file.content ?? "").split("\n").map((text, index) => {
+                const number = index + 1;
+                return (
+                  <button
+                    type="button"
+                    key={number}
+                    onClick={() => setLine(number)}
+                    className={`grid w-full grid-cols-[2.5rem_1fr] gap-2 px-2 py-px text-left hover:bg-hover ${
+                      line === number ? "bg-hover" : ""
+                    }`}
+                  >
+                    <span className="text-right text-faint/70">{number}</span>
+                    <span className="whitespace-pre-wrap break-all text-fg">
+                      {text || " "}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {line ? (
+              <div className="sticky bottom-0 space-y-1 border-t border-border bg-panel p-2">
+                <p className="text-[9.5px] text-info">
+                  Comment on {selected}:{line}
+                </p>
+                <Textarea
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  placeholder="Leave a file comment…"
+                  rows={2}
+                  className="text-[10.5px]"
+                />
+                <div className="flex justify-end gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => setLine(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={!comment.trim()}
+                    loading={addComment.isPending}
+                    onClick={() => addComment.mutate()}
+                  >
+                    Add pending comment
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
@@ -105,7 +181,6 @@ export function FilesPanel({ threadId }: { threadId: string }) {
         <EmptyState
           icon={FolderOpen}
           title="Empty directory"
-          description="This directory has no visible files."
           compact
         />
       ) : (

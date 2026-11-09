@@ -30,7 +30,6 @@ export interface TitleBarProps {
 
 export function TitleBar({
   title,
-  subtitle,
   participants = [],
   approvalsCount = 0,
   drawerOpen,
@@ -72,9 +71,6 @@ export function TitleBar({
           aria-label="Search workspace"
         >
           <Search className="size-3.5" aria-hidden />
-          <span className="hidden w-20 text-left text-[11.5px] md:inline">
-            Search
-          </span>
           <Kbd className="hidden md:inline-flex">{modKeyLabel()}K</Kbd>
         </button>
       </div>
@@ -84,11 +80,6 @@ export function TitleBar({
           <p className="truncate text-[12.5px] font-medium leading-tight text-fg">
             {title}
           </p>
-          {subtitle ? (
-            <p className="hidden truncate text-[10.5px] leading-tight text-faint sm:block">
-              {subtitle}
-            </p>
-          ) : null}
         </div>
         {people.length > 0 ? (
           <AvatarStack

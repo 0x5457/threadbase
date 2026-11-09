@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
+  createThread,
   decideApproval,
   logout as logoutRequest,
 } from "@/api/endpoints";
@@ -21,9 +22,9 @@ import type { SubagentDto } from "@/api/types/SubagentDto";
 import type { ThreadDto } from "@/api/types/ThreadDto";
 import { AppShell } from "@/components/shell/AppShell";
 import { SidebarTree } from "@/components/shell/SidebarTree";
+import { Button, Dialog, DialogContent, Input } from "@/components/ui";
 import { NewProjectDialog } from "@/components/workspace/NewProjectDialog";
 import { ShareDialog } from "@/components/workspace/ShareDialog";
-import { NewThreadDialog } from "@/components/workspace/NewThreadDialog";
 import { useOnlineStatus } from "@/lib/hooks";
 import { usePresence, usePresenceStore } from "@/lib/presence";
 import type { WorkspaceOutletContext } from "./workspace-context";
@@ -83,10 +84,9 @@ export function WorkspaceLayout() {
     localFocus,
   );
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [newThreadProjectId, setNewThreadProjectId] = useState<string | null>(
-    null,
-  );
   const [shareOpen, setShareOpen] = useState(false);
+  const [subthreadPickerOpen, setSubthreadPickerOpen] = useState(false);
+  const [subthreadFilter, setSubthreadFilter] = useState("");
   const [followUserId, setFollowUserId] = useState<string | null>(null);
   const [followUserName, setFollowUserName] = useState<string | null>(null);
 
@@ -191,18 +191,42 @@ export function WorkspaceLayout() {
     decisionMutation.mutate({ approvalId: approval.id, decision });
   };
 
-  const newThreadProject = newThreadProjectId
-    ? projectList.find((project) => project.id === newThreadProjectId)
-    : undefined;
-
   const share = () => {
     if (activeThread) {
       setShareOpen(true);
     }
   };
 
+  const createThreadMutation = useMutation({
+    mutationFn: (projectId: string) => {
+      const project = projectList.find((entry) => entry.id === projectId);
+      return createThread(projectId, {
+        title: null,
+        agent: workspaceState.data?.settings.defaultAgent ?? "codex",
+        model: workspaceState.data?.settings.defaultModel ?? null,
+        effort: null,
+        baseBranch: project?.defaultBranch ?? null,
+        initialPrompt: null,
+      });
+    },
+    onSuccess: (response) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectThreads(response.thread.projectId, false),
+      });
+      navigate(
+        `/p/${encodeURIComponent(response.thread.projectId)}/t/${encodeURIComponent(
+          response.thread.id,
+        )}`,
+      );
+    },
+    onError: (error) => toast.error(String(error)),
+  });
+
   const openNewThread = (projectId: string) => {
-    setNewThreadProjectId(projectId);
+    if (!createThreadMutation.isPending) {
+      createThreadMutation.mutate(projectId);
+    }
   };
 
   useEffect(() => {
@@ -279,6 +303,11 @@ export function WorkspaceLayout() {
         }
         void navigator.clipboard.writeText(url.toString());
         toast.success(selection ? "Link to selection copied" : "Link copied");
+      }
+      if (modifier && !event.altKey && !event.shiftKey && key === "j") {
+        event.preventDefault();
+        setSubthreadPickerOpen(true);
+        return;
       }
       if (event.ctrlKey && key === "tab" && !event.metaKey && !event.altKey) {
         event.preventDefault();
@@ -463,6 +492,71 @@ export function WorkspaceLayout() {
         />
       ) : null}
 
+      <Dialog
+        open={subthreadPickerOpen}
+        onOpenChange={setSubthreadPickerOpen}
+      >
+        <DialogContent
+          title="View all subthreads"
+          description="Every child session in this thread. Click one to open its transcript."
+        >
+          <Input
+            value={subthreadFilter}
+            onChange={(event) => setSubthreadFilter(event.target.value)}
+            placeholder="Filter subthreads…"
+            autoFocus
+          />
+          <ul className="mt-2 max-h-72 divide-y divide-border overflow-y-auto rounded-md border border-border">
+            {(bundle.data?.bundle.subagents ?? [])
+              .filter((subagent) =>
+                subagent.title
+                  .toLowerCase()
+                  .includes(subthreadFilter.trim().toLowerCase()),
+              )
+              .map((subagent) => (
+                <li key={subagent.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11.5px] text-fg hover:bg-hover"
+                    onClick={() => {
+                      setSubthreadPickerOpen(false);
+                      navigate(
+                        `/p/${encodeURIComponent(
+                          bundle.data?.bundle.project.id ?? "",
+                        )}/t/${encodeURIComponent(
+                          bundle.data?.bundle.thread.id ?? "",
+                        )}/s/${encodeURIComponent(subagent.id)}`,
+                      );
+                    }}
+                  >
+                    <span className="size-1.5 rounded-full bg-border-strong" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {subagent.title}
+                    </span>
+                    <span className="text-[9.5px] text-faint">
+                      {subagent.status}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            {(bundle.data?.bundle.subagents.length ?? 0) === 0 ? (
+              <li className="px-3 py-4 text-[10.5px] text-faint">
+                No subthreads in this thread.
+              </li>
+            ) : null}
+          </ul>
+          <div className="mt-2 flex justify-end">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSubthreadPickerOpen(false)}
+            >
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {bundle.data ? (
         <ShareDialog
           open={shareOpen}
@@ -471,25 +565,7 @@ export function WorkspaceLayout() {
         />
       ) : null}
 
-      {newThreadProject ? (
-        <NewThreadDialog
-          open
-          project={newThreadProject}
-          onOpenChange={(open) => {
-            if (!open) {
-              setNewThreadProjectId(null);
-            }
-          }}
-          onCreated={(thread) => {
-            setNewThreadProjectId(null);
-            navigate(
-              `/p/${encodeURIComponent(thread.projectId)}/t/${encodeURIComponent(
-                thread.id,
-              )}`,
-            );
-          }}
-        />
-      ) : null}
+
     </>
   );
 }
