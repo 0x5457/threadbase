@@ -606,3 +606,53 @@ async fn turn_start_snapshots_the_worktree_for_last_turn_baseline() {
     assert_eq!(row.last_turn_sha.as_deref(), Some(head.as_str()));
     assert_ne!(row.last_turn_sha.as_deref(), Some(base.as_str()));
 }
+
+#[tokio::test]
+async fn first_turn_replaces_the_default_thread_title() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let thread = threads::create(
+        &fixture.state.pool,
+        fixture.data.path(),
+        &fixture.user,
+        fixture.project.id.as_str(),
+        &CreateThreadRequest {
+            title: Some("New thread".into()),
+            agent: Some("codex".into()),
+            model: None,
+            effort: None,
+            base_branch: Some("main".into()),
+            initial_prompt: None,
+        },
+    )
+    .await
+    .unwrap();
+    fixture
+        .state
+        .agents
+        .ensure_started(thread.id.as_str())
+        .await
+        .unwrap();
+    fixture
+        .state
+        .agents
+        .send(
+            thread.id.as_str(),
+            &fixture.user,
+            "stream",
+            Some(threadbase_shared::api::DeliveryMode::Auto),
+        )
+        .await
+        .unwrap();
+    wait_for(&fixture.state.pool, thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+    let title: String = sqlx::query_scalar("SELECT title FROM threads WHERE id = ?")
+        .bind(thread.id.as_str())
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(title, "stream");
+}

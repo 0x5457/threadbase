@@ -65,8 +65,8 @@
 
 | 需求 | 状态 | 代码路径 | 验证 |
 | --- | --- | --- | --- |
-| F1 添加并打开 project | 已验证 | `projects.rs`、`routes_fs.rs`、`NewProjectDialog.tsx` | 目录下拉/路径补全；非 git、相对路径、重复路径校验；e2e 打开路径选择器并选择 git 仓库 |
-| F2 新建 thread / worktree / agent | 已验证 | `threads.rs`、`workspace/src/git.rs`、`agents.rs`、`WorkspaceLayout.tsx`、`ProjectPage.tsx` | 主按钮点击即建 thread 并跳转，无标题弹窗；相邻 chevron 菜单可选 agent、模型、起始分支；worktree/启动/初始化 prompt/自动标题测试；fake + 真实 Codex 完成 turn |
+| F1 添加并打开 project | 已验证 | `projects.rs`、`routes_fs.rs`、`NewProjectDialog.tsx` | 目录下拉/路径补全；非 git、相对路径、重复路径校验；e2e 打开路径选择器、填入仓库路径并断言 “Use repo” 入口 |
+| F2 新建 thread / worktree / agent | 已验证 | `threads.rs`、`workspace/src/git.rs`、`agents.rs`、`WorkspaceLayout.tsx`、`ProjectPage.tsx` | 主按钮点击即建 thread 并跳转，无标题弹窗；相邻 chevron 菜单可选 agent、模型、起始分支；worktree/启动/初始化 prompt；自动标题回归测试；fake + 真实 Codex 完成 turn |
 | F3 对话与工具调用 | 已验证 | `agents.rs`、`ThreadEvent` 归约、`ThreadTimeline.tsx`、`Composer.tsx` | fake agent 流式文本/思考/工具更新/计划/用量；e2e 显示 “Hello”“Run tests”、计划；真实 Codex 返回 `pong` |
 | F4 审批 | 已验证 | `approvals.rs`、`routes_actions.rs`、`ThreadTimeline.tsx`、`RightDrawer.tsx` | 默认 pending 不自动放行；按 adapter options 渲染允许/会话/线程/拒绝；拒绝输入原因并随 `DecisionRequest.note` 落库；viewer 拒绝；内联 + 抽屉 e2e；审计行测试 |
 | F5 分享与加入 | 已验证 | `sharing.rs`、`ShareDialog.tsx`、`InvitePage.tsx` | 仅邀请/整个工作区；成员增删改；14 天 token invite 接受/撤销；viewer 只读 e2e |
@@ -139,7 +139,7 @@ scripts/      install.sh、e2e-server.sh
 ```
 cargo fmt --all --check                                  pass
 cargo clippy --workspace --all-targets -- -D warnings    pass
-cargo nextest run --workspace                            251 passed, 1 skipped
+cargo nextest run --workspace                            252 passed, 1 skipped
 cargo test --workspace                                   pass（含 ignored 的真实 Codex smoke 之外的全部测试）
 pnpm --dir web typecheck                                 pass
 pnpm --dir web lint                                      pass
