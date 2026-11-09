@@ -113,10 +113,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
   await expect(admin.getByText("Fix the login redirect").first()).toBeVisible();
   await expect(admin.getByText("Agent is running", { exact: false }).or(admin.getByText("Shared draft", { exact: false }))).toBeVisible();
-  await admin.screenshot({ path: "test-results/screenshots/thread-1440.png", fullPage: true });
-  await admin.getByRole("button", { name: "Switch to light theme" }).click();
-  await admin.screenshot({ path: "test-results/screenshots/thread-1440-light.png", fullPage: true });
-  await admin.getByRole("button", { name: "Switch to dark theme" }).click();
+
 
   const composer = admin.getByPlaceholder("Write a message…");
   await composer.fill("stream");
@@ -130,7 +127,16 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.getByRole("button", { name: "Allow once" }).click();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible();
   await expect(admin.getByText("Allow once", { exact: true })).toBeHidden({ timeout: 10_000 });
-  await admin.screenshot({ path: "test-results/screenshots/thread-approved.png", fullPage: true });
+  await admin.screenshot({
+    path: "test-results/screenshots/thread-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.getByRole("button", { name: "Switch to light theme" }).click();
+  await admin.screenshot({
+    path: "test-results/screenshots/thread-1440-light.png",
+    fullPage: true,
+  });
+  await admin.getByRole("button", { name: "Switch to dark theme" }).click();
 
   await composer.fill("permission");
   await admin.getByRole("button", { name: "Send", exact: true }).click();

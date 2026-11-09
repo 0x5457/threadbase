@@ -51,7 +51,7 @@
 | P2 列“终端面板、文件浏览”，非目标列“不做 IDE” | 文件浏览只读；终端面板只读展示 agent 执行的命令与输出；不提供 shell | 同上 |
 | 01 §9 有 Reviews / Merge 相关 thread，02 已定 14 明确不做 | 保留单 thread 内的 Changes 审阅与“合回主工作区”，不做 Reviews/Merge 两类 thread，不做 PR merge 流程 | 02 已定 14 |
 | 分享档位在 01 为三档，02 已定 15 改为两档 | 只做“仅邀请 / 整个工作区” | 02 已定 15、17 |
-| 通知为 P2（浏览器 + Webhook） | 浏览器通知 + 应用内收件箱；Webhook 为最小 POST，使用 `THREADBASE_WEBHOOK_URL`，契约见 §7 | P2 完整覆盖，不扩成通知平台 |
+| 通知为 P2（浏览器 + Webhook） | 浏览器通知 + 应用内收件箱；Webhook 优先读取设置页的 `webhook_url`，环境变量作为覆盖，契约见 §7 | P2 完整覆盖，不扩成通知平台 |
 | ACP v1 RFD 禁止向子会话发 prompt | 子会话无 composer；只提供取消（`can_cancel`）和“让父 agent 转达” | 04 §3.3 |
 | 05 的“每个 turn 一个导航刻度”没有可验证样式 | 不做导航轨，保留折叠摘要、时间戳与详情；不写未验证样式 | 05 §4.5 标为 P2/未验证 |
 
@@ -94,7 +94,7 @@
 | P1 | presence 与跟随 | 已验证 | 语义锚点、50ms 合并、隐身、跟随退出 |
 | P1 | archive / fork / delete | 已验证 | 归档列表、worktree 清理、未提交变更提示 |
 | P1 | 多 agent | 已验证（结构）/ 环境 smoke | 四条 profile；Codex 真实 smoke；其余 adapter 由 fake 契约与 doctor 覆盖 |
-| P1 | 模型与 effort 切换 | 能力缺失时隐藏 | 当前 adapter 的 `configOptions` 未进入 DTO，因此 UI 不显示不可用选项（符合“缺失时隐藏”） |
+| P1 | 模型与 effort 切换 | 已验证（能力探测） | New Thread 选择 agent/model/effort；`AcpHarness` 从 `NewSessionResponse.configOptions` 读取 Model/ThoughtLevel 并用 `session/set_config_option` 应用；adapter 未声明时发出 Notice |
 | P1 | 多人草稿块 | 已验证 | per-author blocks、块内 Y.Text、他人可编辑、awareness 编辑标记、服务端串行发送 |
 | P1 | 焦点共享 | 已验证 | 见 F11 |
 | P1 | 子 agent 树 | 已验证 | 左栏嵌套 + tab + 面包屑 + 状态点 |
@@ -102,9 +102,9 @@
 | P1 | 评论与标注 | 已验证 | thread/diff/message/tool 锚点、pending 批处理、漂移降级 |
 | P1 | 提问表单 | 已验证 | accept/decline/cancel、secret 拒绝、第一个回答生效 |
 | P2 | project 概览 / 收件箱 | 已验证 | 概览、全局 inbox、未读计数、@提及 |
-| P2 | 多 agent 并行对比 | 已验证（对照方式） | 同一 project 下并行 thread，左栏树 + tab 并列打开；不额外造一套 diff 视图 |
+| P2 | 多 agent 并行对比 | 已验证 | `/p/:projectId/compare` 选择任意两条 thread，并排显示状态、消息数、增删行、审批和最近消息 |
 | P2 | 只读文件浏览 / agent 输出 | 已验证 | Files 面板只读树 + 文件内容；Output 面板只读命令输出，无 shell |
-| P2 | 子 agent 聚焦 / 对比 | 已验证（对照方式） | 子 thread 页面 + 面包屑 + 树中并列节点；子会话无 composer |
+| P2 | 子 agent 聚焦 / 对比 | 已验证 | 子 thread 页面 + 面包屑 + 树中节点；`/p/:projectId/t/:threadId/subagents/compare` 并排对照两个子会话；子会话无 composer |
 | P2 | URL 模式提问 | 已验证 | 显示完整 URL 与主机名，显式点击后新标签页打开，无 iframe/预取 |
 | P2 | 通知 | 已验证 | 浏览器 Notification、收件箱、最小 Webhook POST |
 | P2 | 终端面板 | 已验证（只读） | 见冲突裁决；不是 PTY |
@@ -139,7 +139,7 @@ scripts/      install.sh、e2e-server.sh
 ```
 cargo fmt --all --check                                  pass
 cargo clippy --workspace --all-targets -- -D warnings    pass
-cargo nextest run --workspace                            240 passed, 1 skipped
+cargo nextest run --workspace                            241 passed, 1 skipped
 cargo test --workspace                                   pass（含 ignored 的真实 Codex smoke 之外的全部测试）
 pnpm --dir web typecheck                                 pass
 pnpm --dir web lint                                      pass
@@ -189,6 +189,9 @@ MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored -
 - `MBX_BLAZE=false cargo build --release -p threadbase-server` 成功。
 - 在 `/tmp` 运行 release 二进制（不依赖工作区 `web/`），`/api/health`、SPA、`/assets/*` 均 200；把 `web/dist` 临时移走后仍返回 200，证明发布产物使用内嵌资源。
 - release 二进制 + fake ACP agent 完整跑通：setup → project → thread → “stream” → tool card → “permission” → 审批 → `permission_resolved`，共 16 条事件。
+- 路由级 first prompt 验证：`initialPrompt: "stream"` 创建后 2 秒内产生 10 条事件，队列 worker 已启动 agent。
+- viewer 审批绕过回归：`agent_flow::viewer_cannot_unblock_a_tool_through_the_http_route` 返回 403，approval 仍 pending，agent 不产生 completed 工具更新。
+- 规则自动放行回归：AllowThread 后第二条同工具请求自动 `permission_resolved`，pending 数为 0。
 - `threadbase doctor`：识别 Rust/Node/git、SQLite、四条 adapter（codex/claude/opencode/pi），并给出 `CODEX_PATH`/adapter 信息。
 - `threadbase service install --print` 生成 systemd 单元；Linux/macOS 分支实现。
 - `threadbase upgrade` 用本地 HTTP 发布的 `.sha256` fixture 验证：下载、SHA256 校验、替换当前二进制、执行新二进制均成功。
@@ -220,7 +223,7 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 
 ## 7. 通知 Webhook 契约
 
-- 配置：`THREADBASE_WEBHOOK_URL`（环境变量）；不阻塞 thread。
+- 配置：设置页 `webhook_url`；`THREADBASE_WEBHOOK_URL` 作为环境覆盖。不阻塞 thread。
 - 事件：`approval.pending`、`elicitation.pending`。
 - 请求：`POST`，`Content-Type: application/json`，body `{ event, threadId, summary, createdAt }`。
 - 超时 5 秒，失败只写日志；不重试、不做签名队列。
@@ -244,6 +247,11 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - 事件与草稿是两套存储：`events` 是权威序列，`draft_updates`/`draft_snapshots` 只服务 Y.Doc。不要跨层写。
 - WebSocket 事件通道有 4096 条缓冲；滞后时发送 `resync` 页面。presence 每 50ms 合并一次，不落库。
 - 服务端发送草稿时由 `DraftHub::take_blocks` 串行取块；两人同时发送只有第一个拿到内容，第二个返回空消息校验错误。
+- 审批规则在 ACP 权限回调到达时匹配 `approval_rules`，命中后自动 `permission_resolved` 并只向 agent 发送 AllowOnce；管理员的 role/scope 校验仍由 HTTP 层先执行。viewer 绕过路由的回归测试在 `crates/server/tests/agent_flow.rs::viewer_cannot_unblock_a_tool_through_the_http_route`。
+- 新建 thread 若带 `initialPrompt`，路由在 agent 启动后调用 `kick_queue`，让服务端队列 worker 立即发送，而不是等用户再发一条消息。
+- 审批规则在 ACP 权限回调到达时匹配 `approval_rules`，命中后自动 `permission_resolved` 并只向 agent 发送 AllowOnce；HTTP 层先做角色/状态校验。
+- 新建 thread 的 `initialPrompt` 在 agent 启动后由 `kick_queue` 立即触发，不再等待用户下一条消息。
+- 模型/effort 从 New Thread 传入 `LaunchCtx`，`AcpHarness` 读取 `NewSessionResponse.config_options` 的 Model/ThoughtLevel 并调用 `session/set_config_option`；adapter 未声明时只发 Notice，不伪造能力。
 - `agent-client-protocol` 5.1 的 unstable 能力可能随 minor 变化；升级前跑 `cargo test -p threadbase-agent` 契约套件和真实 Codex smoke。
 - 发送草稿时不删除 Y.Array 中的块，而是清空文本并写 `sentAt` 墓碑。直接删除父级 map 时，客户端并发编辑可能产生悬空 Yjs 更新，yrs 0.17 会在编码时 panic；墓碑模型避免了该问题，Composer 过滤已发送块。
 - Codex adapter 需要 `codex` 在 PATH；其他 adapter 通过 `doctor` 检查。真实登录/额度属于环境，不属于仓库。

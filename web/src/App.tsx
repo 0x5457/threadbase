@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui";
 import { useTheme } from "@/lib/theme";
+import { ComparePage } from "./routes/ComparePage";
 import { InboxPage } from "./routes/InboxPage";
 import { InvitePage } from "./routes/InvitePage";
 import { LoginPage } from "./routes/LoginPage";
@@ -9,6 +10,7 @@ import { NotFoundPage } from "./routes/NotFoundPage";
 import { ProjectPage } from "./routes/ProjectPage";
 import { RequireAuth } from "./routes/RequireAuth";
 import { SettingsPage } from "./routes/SettingsPage";
+import { SubagentComparePage } from "./routes/SubagentComparePage";
 import { ThreadPage } from "./routes/ThreadPage";
 import { WorkspaceLayout } from "./routes/WorkspaceLayout";
 import { WorkspacePage } from "./routes/WorkspacePage";
@@ -31,6 +33,11 @@ export default function App() {
             <Route
               path="p/:projectId/t/:threadId/s/:subagentId"
               element={<ThreadPage />}
+            />
+            <Route path="p/:projectId/compare" element={<ComparePage />} />
+            <Route
+              path="p/:projectId/t/:threadId/subagents/compare"
+              element={<SubagentComparePage />}
             />
             <Route path="inbox" element={<InboxPage />} />
             <Route path="invite/:token" element={<InvitePage />} />

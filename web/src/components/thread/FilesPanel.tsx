@@ -1,17 +1,26 @@
 import { ChevronLeft, FileCode2, Folder, FolderOpen } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useFile, useFiles } from "@/api/queries";
 import {
   EmptyState,
   ErrorState,
   Skeleton,
 } from "@/components/ui";
+import { usePresenceStore } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
 export function FilesPanel({ threadId }: { threadId: string }) {
   const [path, setPath] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const files = useFiles(threadId, path);
+  const setLocal = usePresenceStore((state) => state.setLocal);
+  useEffect(() => {
+    setLocal({
+      panel: "files",
+      target: selected ? { kind: "file", path: selected, line: 1 } : null,
+    });
+    return () => setLocal({ target: null, panel: "transcript" });
+  }, [selected, setLocal]);
   const file = useFile(threadId, selected);
   const segments = path.split("/").filter(Boolean);
 

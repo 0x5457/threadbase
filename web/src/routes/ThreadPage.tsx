@@ -453,6 +453,15 @@ function SubagentView({
                 </span>
               </div>
             </div>
+            <Link
+              to={`/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
+                threadId,
+              )}/subagents/compare`}
+              className={cn(buttonVariants({ size: "sm", variant: "ghost" }))}
+            >
+              <Layers aria-hidden />
+              Compare
+            </Link>
             {subagent.canCancel ? (
               <Button size="sm" variant="danger" onClick={onCancel}>
                 Cancel subagent

@@ -16,6 +16,9 @@ pub enum Anchor {
     Message {
         message_id: String,
     },
+    ToolCall {
+        tool_call_id: String,
+    },
     Turn {
         turn_id: String,
     },

@@ -74,25 +74,25 @@ async fn decide_impl(
     approval_id: &str,
     request: DecisionRequest,
 ) -> Result<Json<ApprovalResolvedResponse>, ServerError> {
-    let row = crate::approvals::load(&state.pool, approval_id).await?;
+    // Authorization and the atomic pending -> decided transition happen before
+    // anything reaches the agent. A viewer must not be able to unblock a tool.
+    let approval = crate::approvals::decide(
+        &state.pool,
+        &state.events,
+        approval_id,
+        user,
+        request.decision,
+        request.note.as_deref(),
+    )
+    .await?;
     if let Err(error) = state
         .agents
-        .decide(&row.thread_id, approval_id, request.decision)
+        .decide(approval.thread_id.as_str(), approval_id, request.decision)
         .await
     {
         tracing::warn!(%error, approval_id, "could not deliver decision to agent");
     }
-    Ok(Json(ApprovalResolvedResponse {
-        approval: crate::approvals::decide(
-            &state.pool,
-            &state.events,
-            approval_id,
-            user,
-            request.decision,
-            request.note.as_deref(),
-        )
-        .await?,
-    }))
+    Ok(Json(ApprovalResolvedResponse { approval }))
 }
 
 async fn list_rules(

@@ -72,6 +72,10 @@ impl AgentManager {
         Self { inner }
     }
 
+    pub fn kick_queue(&self, thread_id: &str) {
+        let _ = self.inner.queue_tx.send(thread_id.to_owned());
+    }
+
     pub async fn ensure_started(&self, thread_id: &str) -> Result<(), ServerError> {
         if self.inner.sessions.lock().await.contains_key(thread_id) {
             return Ok(());
@@ -106,7 +110,7 @@ impl AgentManager {
         let ctx = LaunchCtx {
             thread_id: thread_id.to_owned(),
             cwd: PathBuf::from(&cwd),
-            agent,
+            agent: agent.clone(),
             model: row.model.clone(),
             effort: row.effort.clone(),
             subagents: true,
@@ -150,10 +154,18 @@ impl AgentManager {
                 .await?;
         }
         let run = Arc::new(Mutex::new(RunState::default()));
+        let pump_agent = agent.clone();
+        let session = Arc::new(Mutex::new(Session {
+            harness,
+            capabilities,
+            _session_id: session_id,
+            turn: None,
+            run: run.clone(),
+        }));
         let pump = Pump {
-            pool: self.inner.pool.clone(),
-            events: self.inner.events.clone(),
+            inner: self.inner.clone(),
             thread_id: thread_id.to_owned(),
+            agent: pump_agent,
             run: run.clone(),
             queue_tx: self.inner.queue_tx.clone(),
         };
@@ -164,16 +176,7 @@ impl AgentManager {
                 }
             }
         });
-        sessions.insert(
-            thread_id.to_owned(),
-            Arc::new(Mutex::new(Session {
-                harness,
-                capabilities,
-                _session_id: session_id,
-                turn: None,
-                run,
-            })),
-        );
+        sessions.insert(thread_id.to_owned(), session);
         sqlx::query("UPDATE threads SET status = 'idle', updated_at = ? WHERE id = ?")
             .bind(now_ms())
             .bind(thread_id)
@@ -439,9 +442,9 @@ impl Inner {
 }
 
 struct Pump {
-    pool: SqlitePool,
-    events: EventStore,
+    inner: Arc<Inner>,
     thread_id: String,
+    agent: String,
     run: Arc<Mutex<RunState>>,
     queue_tx: mpsc::UnboundedSender<String>,
 }
@@ -519,20 +522,20 @@ impl Pump {
                         label: option.label.clone(),
                     })
                     .collect();
-                crate::approvals::create(
-                    &self.pool,
-                    &self.events,
+                let approval = crate::approvals::create(
+                    &self.inner.pool,
+                    &self.inner.events,
                     crate::approvals::NewApproval {
                         id: request.id.clone(),
                         thread_id: self.thread_id.clone(),
                         subagent_id: None,
                         turn_id: self.run.lock().await.turn_id.clone().map(|id| id.0),
                         tool_call_id: None,
-                        agent: "agent".into(),
+                        agent: self.agent.clone(),
                         title: request.title,
                         kind: tool_kind_str(request.kind).to_owned(),
-                        command: request.command,
-                        cwd: request.cwd,
+                        command: request.command.clone(),
+                        cwd: request.cwd.clone(),
                         paths: request.paths,
                         options,
                     },
@@ -541,6 +544,7 @@ impl Pump {
                 )
                 .await?;
                 self.set_status("requires_action").await?;
+                self.try_auto_rule(&approval).await?;
             }
             RawAgentEvent::ElicitationRequest { request } => {
                 let elicitation = ElicitationDto {
@@ -548,7 +552,7 @@ impl Pump {
                     thread_id: ThreadId::from(self.thread_id.clone()),
                     subagent_id: None,
                     tool_call_id: request.tool_call_id.map(Into::into),
-                    agent: "agent".into(),
+                    agent: self.agent.clone(),
                     message: request.message,
                     mode: if request.mode == "url" {
                         ElicitationMode::Url
@@ -564,8 +568,8 @@ impl Pump {
                     created_at: now_ms(),
                 };
                 crate::approvals::create_elicitation(
-                    &self.pool,
-                    &self.events,
+                    &self.inner.pool,
+                    &self.inner.events,
                     elicitation,
                     Actor::agent("Threadbase agent"),
                     EventMeta::default(),
@@ -593,7 +597,7 @@ impl Pump {
                 .bind(event.usage.as_ref().map(|usage| serde_json::to_string(usage).unwrap_or_default()))
                 .bind(now)
                 .bind(now)
-                .execute(&self.pool)
+                .execute(&self.inner.pool)
                 .await?;
                 let dto = SubagentDto {
                     id: event.id.into(),
@@ -699,8 +703,60 @@ impl Pump {
         Ok(())
     }
 
+    async fn try_auto_rule(
+        &self,
+        approval: &threadbase_shared::ApprovalDto,
+    ) -> Result<(), ServerError> {
+        let agent: String =
+            sqlx::query_scalar("SELECT agent FROM agent_bindings WHERE thread_id = ?")
+                .bind(&self.thread_id)
+                .fetch_one(&self.inner.pool)
+                .await?;
+        let Some(rule) = crate::approvals::match_rule(
+            &self.inner.pool,
+            &self.thread_id,
+            &agent,
+            approval_kind_db(approval.kind),
+            approval.command.as_deref(),
+            approval.cwd.as_deref(),
+            approval.subagent_id.is_some(),
+        )
+        .await?
+        else {
+            return Ok(());
+        };
+        let session = self
+            .inner
+            .sessions
+            .lock()
+            .await
+            .get(&self.thread_id)
+            .cloned();
+        let Some(session) = session else {
+            return Ok(());
+        };
+        crate::approvals::auto_allow(
+            &self.inner.pool,
+            &self.inner.events,
+            approval.id.as_str(),
+            &rule,
+        )
+        .await?;
+        {
+            let mut session = session.lock().await;
+            session
+                .harness
+                .decide(approval.id.as_str(), SharedDecision::AllowOnce)
+                .await
+                .map_err(agent_error)?;
+        }
+        self.set_status("running").await?;
+        Ok(())
+    }
+
     async fn append(&self, payload: ThreadEvent, meta: EventMeta) -> Result<(), ServerError> {
-        self.events
+        self.inner
+            .events
             .append(
                 &ThreadId::from(self.thread_id.clone()),
                 Actor::agent("Threadbase agent"),
@@ -716,7 +772,7 @@ impl Pump {
             .bind(status)
             .bind(now_ms())
             .bind(&self.thread_id)
-            .execute(&self.pool)
+            .execute(&self.inner.pool)
             .await?;
         Ok(())
     }
@@ -923,6 +979,16 @@ fn tool_data(
         subagent_id: None,
         created_at: now_ms(),
         updated_at: now_ms(),
+    }
+}
+
+fn approval_kind_db(kind: threadbase_shared::ApprovalKind) -> &'static str {
+    match kind {
+        threadbase_shared::ApprovalKind::Command => "command",
+        threadbase_shared::ApprovalKind::FileRead => "file_read",
+        threadbase_shared::ApprovalKind::FileWrite => "file_write",
+        threadbase_shared::ApprovalKind::Network => "network",
+        threadbase_shared::ApprovalKind::Other => "other",
     }
 }
 

@@ -8,9 +8,9 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useState } from "react";
-import { Link, useOutletContext, useParams } from "react-router-dom";
+import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { useProject, useProjectOverview, useProjectThreads } from "@/api/queries";
-import { Archive } from "lucide-react";
+import { Archive, ArrowLeftRight } from "lucide-react";
 import type { ThreadDto } from "@/api/types/ThreadDto";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import {
@@ -96,6 +96,7 @@ function ThreadRow({
 export function ProjectPage() {
   const { projectId } = useParams();
   const { openNewThread } = useOutletContext<WorkspaceOutletContext>();
+  const navigate = useNavigate();
   const [showArchived, setShowArchived] = useState(false);
   const project = useProject(projectId);
   const threads = useProjectThreads(projectId, showArchived);
@@ -221,6 +222,16 @@ export function ProjectPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() =>
+                navigate(`/p/${encodeURIComponent(projectId)}/compare`)
+              }
+            >
+              <ArrowLeftRight aria-hidden />
+              Compare
+            </Button>
             <Button
               variant="secondary"
               size="md"

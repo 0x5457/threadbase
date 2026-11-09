@@ -128,16 +128,28 @@ async fn create_thread(
     Path(project_id): Path<String>,
     Json(request): Json<CreateThreadRequest>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
-    Ok(Json(ThreadResponse {
-        thread: threads::create(
-            &state.pool,
-            &state.config.data_dir,
-            &user,
-            &project_id,
-            &request,
-        )
-        .await?,
-    }))
+    let thread = threads::create(
+        &state.pool,
+        &state.config.data_dir,
+        &user,
+        &project_id,
+        &request,
+    )
+    .await?;
+    let manager = state.agents.clone();
+    let thread_id = thread.id.0.clone();
+    let has_initial_prompt = request
+        .initial_prompt
+        .as_deref()
+        .is_some_and(|prompt| !prompt.trim().is_empty());
+    tokio::spawn(async move {
+        match manager.ensure_started(&thread_id).await {
+            Ok(()) if has_initial_prompt => manager.kick_queue(&thread_id),
+            Ok(()) => {}
+            Err(error) => tracing::warn!(thread_id, %error, "agent startup failed"),
+        }
+    });
+    Ok(Json(ThreadResponse { thread }))
 }
 
 async fn list_all_threads(

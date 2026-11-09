@@ -10,6 +10,7 @@ import { queryKeys, useMe } from "@/api/queries";
 import type { DeliveryMode } from "@/api/types/DeliveryMode";
 import type { Participant } from "@/api/types/Participant";
 import { Button } from "@/components/ui";
+import { usePresenceStore } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
 interface ComposerProps {
@@ -348,6 +349,7 @@ function DraftBlockEditor({
   }, [textRef]);
 
   const [remoteEditors, setRemoteEditors] = useState<string[]>([]);
+  const setLocal = usePresenceStore((state) => state.setLocal);
 
   useEffect(() => {
     const refresh = () => {
@@ -427,10 +429,14 @@ function DraftBlockEditor({
         value={value}
         rows={Math.max(1, Math.min(6, value.split("\n").length))}
         onChange={(event) => update(event.target.value)}
-        onFocus={() =>
-          awareness.setLocalStateField("blockId", block.get("id"))
-        }
-        onBlur={() => awareness.setLocalStateField("blockId", null)}
+        onFocus={() => {
+          awareness.setLocalStateField("blockId", block.get("id"));
+          setLocal({ panel: "transcript", typing: true });
+        }}
+        onBlur={() => {
+          awareness.setLocalStateField("blockId", null);
+          setLocal({ typing: false });
+        }}
         placeholder={isMine ? "Write a message…" : "Edit this shared draft…"}
         className="mt-0.5 w-full resize-none bg-transparent text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint"
       />

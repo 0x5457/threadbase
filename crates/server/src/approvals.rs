@@ -1,10 +1,11 @@
 //! Approval records and agent permission decisions.
 
 use crate::error::ServerError;
+use crate::events::EventStore;
 use sqlx::{FromRow, SqlitePool};
 use threadbase_shared::{
-    ApprovalDecision, ApprovalDto, ApprovalKind, ApprovalOption, ApprovalScope, ApprovalStatus,
-    ToolCallId,
+    Actor, ApprovalDecision, ApprovalDto, ApprovalKind, ApprovalOption, ApprovalScope,
+    ApprovalStatus, ToolCallId,
 };
 
 #[derive(Debug, FromRow)]
@@ -173,10 +174,12 @@ pub async fn create(
         )
         .await?;
     webhook(
+        pool,
         "approval.pending",
         &approval.thread_id,
         &format!("Approval requested: {}", approval.title),
-    );
+    )
+    .await;
     notify_thread_members(
         pool,
         &approval.thread_id,
@@ -350,13 +353,15 @@ pub async fn create_elicitation(
         )
         .await?;
     webhook(
+        pool,
         "elicitation.pending",
         elicitation.thread_id.as_str(),
         &format!(
             "Question from {}: {}",
             elicitation.agent, elicitation.message
         ),
-    );
+    )
+    .await;
     notify_thread_members(
         pool,
         elicitation.thread_id.as_str(),
@@ -799,10 +804,24 @@ fn parse_inbox_kind(value: &str) -> threadbase_shared::InboxKind {
 }
 
 /// Minimal webhook contract: POST JSON once, no retries, never blocks a thread.
-fn webhook(event: &str, thread_id: &str, summary: &str) {
-    let Ok(url) = std::env::var("THREADBASE_WEBHOOK_URL") else {
-        return;
-    };
+/// Reads the thread creator's saved setting, falling back to the environment.
+async fn webhook(pool: &SqlitePool, event: &str, thread_id: &str, summary: &str) {
+    let mut url = std::env::var("THREADBASE_WEBHOOK_URL").unwrap_or_default();
+    if url.trim().is_empty() {
+        if let Ok(settings_json) = sqlx::query_scalar::<_, String>(
+            "SELECT u.settings_json FROM threads t JOIN users u ON u.id = t.created_by WHERE t.id = ?",
+        )
+        .bind(thread_id)
+        .fetch_one(pool)
+        .await
+        {
+            if let Ok(settings) =
+                serde_json::from_str::<threadbase_shared::SettingsDto>(&settings_json)
+            {
+                url = settings.webhook_url.unwrap_or_default();
+            }
+        }
+    }
     if url.trim().is_empty() {
         return;
     }
@@ -824,4 +843,142 @@ fn webhook(event: &str, thread_id: &str, summary: &str) {
             tracing::warn!(%error, event = %event_name, "webhook delivery failed");
         }
     });
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchedRule {
+    pub scope: threadbase_shared::ApprovalScope,
+    pub created_by: String,
+}
+
+pub async fn match_rule(
+    pool: &SqlitePool,
+    thread_id: &str,
+    agent: &str,
+    tool: &str,
+    command: Option<&str>,
+    cwd: Option<&str>,
+    is_subagent: bool,
+) -> Result<Option<MatchedRule>, ServerError> {
+    let (project_id, worktree): (String, Option<String>) =
+        sqlx::query_as("SELECT project_id, worktree_path FROM threads WHERE id = ?")
+            .bind(thread_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| {
+                ServerError(threadbase_shared::ApiError::not_found("thread not found"))
+            })?;
+    let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT scope, created_by, agent, command_prefix FROM approval_rules
+         WHERE project_id = ? AND agent = ? AND tool = ? AND (thread_id = ? OR thread_id IS NULL)
+         ORDER BY created_at DESC",
+    )
+    .bind(project_id)
+    .bind(agent)
+    .bind(tool)
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await?;
+    for (scope, created_by, rule_agent, prefix) in rows {
+        if !threadbase_core::rule_matches(
+            &rule_agent,
+            tool,
+            prefix.as_deref(),
+            agent,
+            tool,
+            command,
+        ) {
+            continue;
+        }
+        if is_subagent {
+            if let (Some(cwd), Some(root)) = (cwd, worktree.as_deref()) {
+                if !threadbase_core::rule_inherits_to_child(root, cwd) {
+                    continue;
+                }
+            }
+        }
+        let scope = match scope.as_str() {
+            "thread" => threadbase_shared::ApprovalScope::Thread,
+            _ => threadbase_shared::ApprovalScope::Session,
+        };
+        return Ok(Some(MatchedRule { scope, created_by }));
+    }
+    Ok(None)
+}
+
+pub async fn auto_allow(
+    pool: &SqlitePool,
+    events: &EventStore,
+    approval_id: &str,
+    rule: &MatchedRule,
+) -> Result<ApprovalDto, ServerError> {
+    let row = load(pool, approval_id).await?;
+    let decided_by = crate::auth::load_user_by_id(pool, &rule.created_by)
+        .await?
+        .ok_or_else(|| {
+            ServerError(threadbase_shared::ApiError::not_found(
+                "rule owner not found",
+            ))
+        })?;
+    let decision = match rule.scope {
+        threadbase_shared::ApprovalScope::Thread => {
+            threadbase_shared::ApprovalDecision::AllowThread
+        }
+        _ => threadbase_shared::ApprovalDecision::AllowSession,
+    };
+    let scope = match rule.scope {
+        threadbase_shared::ApprovalScope::Thread => "thread",
+        _ => "session",
+    };
+    let now = threadbase_shared::now_ms();
+    let updated = sqlx::query(
+        "UPDATE approvals SET status = 'allowed', decision = ?, scope = ?, decided_by = ?,
+            decided_at = ?, note = 'matched standing rule' WHERE id = ? AND status = 'pending'",
+    )
+    .bind(decision_str(decision))
+    .bind(scope)
+    .bind(rule.created_by.as_str())
+    .bind(now)
+    .bind(approval_id)
+    .execute(pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(ServerError(threadbase_shared::ApiError::conflict(
+            "approval is no longer pending",
+        )));
+    }
+    sqlx::query("DELETE FROM inbox WHERE approval_id = ?")
+        .bind(approval_id)
+        .execute(pool)
+        .await?;
+    let mut resolved = to_dto(load(pool, approval_id).await?);
+    resolved.decided_by = Some(user_brief(&decided_by));
+    events
+        .append(
+            &row.thread_id.clone().into(),
+            Actor::system(),
+            threadbase_shared::ThreadEvent::PermissionResolved {
+                approval_id: approval_id.to_owned().into(),
+                decision,
+                scope: Some(rule.scope),
+                decided_by: Some(user_brief(&decided_by)),
+            },
+            crate::events::EventMeta {
+                tool_call_id: row.tool_call_id.clone(),
+                subagent_id: row.subagent_id.clone(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    crate::auth::audit(
+        pool,
+        Some(rule.created_by.as_str()),
+        "approval.auto_allowed",
+        Some("approval"),
+        Some(approval_id),
+        Some(scope),
+        None,
+    )
+    .await;
+    Ok(resolved)
 }

@@ -72,10 +72,16 @@ export function WorkspaceLayout() {
   const workspaceState = useWorkspaceState();
   const bundle = useThreadBundle(params.threadId);
   const presence = usePresenceStore();
+  const localFocus = usePresenceStore((state) => state.local);
   const hiddenPresence = me.data?.user.hiddenPresence === true;
   const presenceProjectId =
     params.projectId ?? bundle.data?.bundle.thread.projectId;
-  usePresence(presenceProjectId, params.threadId, hiddenPresence);
+  usePresence(
+    presenceProjectId,
+    params.threadId,
+    hiddenPresence,
+    localFocus,
+  );
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newThreadProjectId, setNewThreadProjectId] = useState<string | null>(
     null,
@@ -213,18 +219,16 @@ export function WorkspaceLayout() {
   }, [followedFocus?.threadId, followedFocus?.projectId, navigate, params.threadId]);
 
   useEffect(() => {
-    if (
-      followUserId &&
-      presence.online.length > 0 &&
-      !presence.online.includes(followUserId)
-    ) {
-      const timer = window.setTimeout(() => {
-        setFollowUserId(null);
-        setFollowUserName(null);
-        toast.message("The followed member went offline");
-      }, 0);
-      return () => window.clearTimeout(timer);
+    if (!followUserId || presence.online.includes(followUserId)) {
+      return;
     }
+    // Give the member 30 seconds to reconnect before ending the follow.
+    const timer = window.setTimeout(() => {
+      setFollowUserId(null);
+      setFollowUserName(null);
+      toast.message("The followed member went offline");
+    }, 30_000);
+    return () => window.clearTimeout(timer);
   }, [followUserId, presence.online]);
 
   useEffect(() => {

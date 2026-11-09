@@ -3,6 +3,7 @@ import type { ProjectId } from "./ProjectId";
 
 export type Anchor =
   | { "kind": "message"; messageId: string }
+  | { "kind": "tool_call"; toolCallId: string }
   | { "kind": "turn"; turnId: string }
   | { "kind": "diff"; file: string; hunkId: string; line: number }
   | { "kind": "file"; path: string; line: number }

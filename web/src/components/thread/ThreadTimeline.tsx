@@ -37,6 +37,7 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { ElicitationCard } from "@/components/thread/ElicitationCard";
+import { usePresenceStore } from "@/lib/presence";
 import { formatTimestamp } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -430,6 +431,7 @@ export function ThreadTimeline({
   onComment,
 }: ThreadTimelineProps) {
   const items = useMemo(() => buildTimeline(events), [events]);
+  const setLocal = usePresenceStore((state) => state.setLocal);
   const approvalById = useMemo(
     () => new Map(approvals.map((approval) => [approval.id, approval])),
     [approvals],
@@ -438,7 +440,16 @@ export function ThreadTimeline({
   const renderTool = (call: ToolCallData, key: string) => {
     const Icon = TOOL_ICONS[call.kind];
     return (
-      <div key={key} className="flex gap-3">
+      <div
+        key={key}
+        className="flex gap-3"
+        onClick={() =>
+          setLocal({
+            panel: "transcript",
+            target: { kind: "tool_call", toolCallId: call.id },
+          })
+        }
+      >
         <div className="w-7 shrink-0" />
         <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
           <div className="flex items-center gap-2 px-3 py-2">
@@ -557,7 +568,16 @@ export function ThreadTimeline({
                   displayName: "Agent",
                 };
             return (
-              <div key={item.key} className="flex gap-3">
+              <div
+                key={item.key}
+                className="flex gap-3"
+                onClick={() =>
+                  setLocal({
+                    panel: "transcript",
+                    target: { kind: "message", messageId: item.messageId },
+                  })
+                }
+              >
                 <div className="flex w-7 shrink-0 justify-center pt-0.5">
                   <Avatar person={person} size="md" />
                 </div>

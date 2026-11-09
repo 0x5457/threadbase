@@ -18,6 +18,7 @@ import {
   Skeleton,
   Textarea,
 } from "@/components/ui";
+import { usePresenceStore } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
 const BASELINES: { value: BaselineKind; label: string }[] = [
@@ -84,6 +85,14 @@ export function ChangesPanel({
   const changes = useChanges(threadId, baseline);
   const diff = useFileDiff(threadId, selected, baseline);
   const comments = useComments(threadId);
+  const setLocal = usePresenceStore((state) => state.setLocal);
+  useEffect(() => {
+    setLocal({
+      panel: "changes",
+      target: selected ? { kind: "file", path: selected, line: 1 } : null,
+    });
+    return () => setLocal({ target: null, panel: "transcript" });
+  }, [selected, setLocal]);
   const invalidate = () => {
     void queryClient.invalidateQueries({
       queryKey: queryKeys.threadBundle(threadId),
@@ -326,13 +335,22 @@ export function ChangesPanel({
                       <button
                         type="button"
                         key={`${hunk.id}-${index}`}
-                        onClick={() =>
+                        onClick={() => {
                           setCommentTarget({
                             hunkId: hunk.id,
                             line: lineNumber,
                             contextHash: hunk.contextHash,
-                          })
-                        }
+                          });
+                          setLocal({
+                            panel: "changes",
+                            target: {
+                              kind: "diff",
+                              file: selected,
+                              hunkId: hunk.id,
+                              line: lineNumber,
+                            },
+                          });
+                        }}
                         className={cn(
                           "grid w-full grid-cols-[2.5rem_2.5rem_1fr] gap-2 px-2 py-px text-left hover:bg-hover",
                           lineClass(line),

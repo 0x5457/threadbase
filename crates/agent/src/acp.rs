@@ -22,10 +22,11 @@ use agent_client_protocol::v1::schema::{
     Plan as AcpPlan, PlanEntry as AcpPlanEntry, PlanEntryPriority as AcpPlanPriority,
     PlanEntryStatus as AcpPlanStatus, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionId as AcpSessionId, SessionNotification, SessionUpdate,
-    StateUpdate, StopReason, SubagentCapabilities, SubagentUpdate, TextContent, ToolCall,
-    ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind as AcpToolKind, Usage as AcpUsage,
-    UsageUpdate, WriteTextFileRequest, WriteTextFileResponse,
+    SelectedPermissionOutcome, SessionConfigOptionCategory, SessionId as AcpSessionId,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, StateUpdate, StopReason,
+    SubagentCapabilities, SubagentUpdate, TextContent, ToolCall, ToolCallContent, ToolCallStatus,
+    ToolCallUpdate, ToolKind as AcpToolKind, Usage as AcpUsage, UsageUpdate, WriteTextFileRequest,
+    WriteTextFileResponse,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
 use agent_client_protocol::{Agent, Client, Lines};
@@ -67,6 +68,8 @@ pub struct AcpHarness {
     connection: Option<ConnectionTo<Agent>>,
     session: Option<SessionId>,
     cwd: Option<PathBuf>,
+    model: Option<String>,
+    effort: Option<String>,
     capabilities: Capabilities,
     agent_info: Option<AgentIdentity>,
     shutdown: Option<watch::Sender<bool>>,
@@ -84,6 +87,8 @@ impl AcpHarness {
             connection: None,
             session: None,
             cwd: None,
+            model: None,
+            effort: None,
             capabilities: Capabilities::default(),
             agent_info: None,
             shutdown: None,
@@ -141,6 +146,8 @@ impl Harness for AcpHarness {
             ));
         }
         self.stopping.store(false, Ordering::SeqCst);
+        self.model.clone_from(&ctx.model);
+        self.effort.clone_from(&ctx.effort);
 
         let resolved = profile::resolve(&self.profile);
         if resolved.via_npx {
@@ -374,6 +381,59 @@ impl Harness for AcpHarness {
         let session = SessionId(response.session_id.0.to_string());
         reset_session(&mut lock_state(&self.state), &session.0);
         self.session = Some(session.clone());
+        if let (Some(model), Some(option)) = (
+            self.model.as_deref(),
+            response.config_options.as_ref().and_then(|options| {
+                options
+                    .iter()
+                    .find(|option| {
+                        matches!(option.category, Some(SessionConfigOptionCategory::Model))
+                    })
+                    .map(|option| option.id.clone())
+            }),
+        ) {
+            connection
+                .send_request(SetSessionConfigOptionRequest::new(
+                    AcpSessionId::new(session.0.as_str()),
+                    option,
+                    model,
+                ))
+                .block_task()
+                .await
+                .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        } else if self.model.is_some() {
+            self.bus.send(RawAgentEvent::Notice {
+                message: "agent did not advertise a model configuration option".into(),
+            });
+        }
+        if let (Some(effort), Some(option)) = (
+            self.effort.as_deref(),
+            response.config_options.as_ref().and_then(|options| {
+                options
+                    .iter()
+                    .find(|option| {
+                        matches!(
+                            option.category,
+                            Some(SessionConfigOptionCategory::ThoughtLevel)
+                        )
+                    })
+                    .map(|option| option.id.clone())
+            }),
+        ) {
+            connection
+                .send_request(SetSessionConfigOptionRequest::new(
+                    AcpSessionId::new(session.0.as_str()),
+                    option,
+                    effort,
+                ))
+                .block_task()
+                .await
+                .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        } else if self.effort.is_some() {
+            self.bus.send(RawAgentEvent::Notice {
+                message: "agent did not advertise an effort configuration option".into(),
+            });
+        }
         Ok(session)
     }
 
