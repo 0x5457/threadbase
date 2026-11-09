@@ -76,7 +76,7 @@
 | F9 thread 生命周期 | 已验证 | `threads.rs`、`ThreadPage.tsx`、`ProjectPage.tsx` | Thread actions 菜单提供重命名/fork/删除，归档按钮保留；删除二次确认说明 worktree 与未提交变更；e2e 实际 rename → fork → delete 并清理 worktree |
 | F10 project 概览 | 已验证 | `projects.rs`、`ProjectPage.tsx`、`WorkspacePage.tsx` | 线程数、运行中、等待审批、增删行数、最近活动；概览计数测试 |
 | F11 焦点共享与跟随 | 已验证 | `presence.rs`、`presence.ts`、`TitleBar.tsx`、`Avatar.tsx` | 50ms 合并广播、隐身过滤、在线点、跨 thread 跟随；e2e 跟随 Bob 跳转到第二个 thread 并退出 |
-| F12 子 agent 展示 | 已验证 | `SidebarTree.tsx`、`ThreadTimeline.tsx`、`ThreadPage.tsx`、`agents.rs`、`WorkspaceLayout.tsx` | 主时间线可展开派遣卡片（状态/cwd/usage/错误/无独立会话/打开子会话）、运行中总数提示；左栏树、嵌套、Show N more、`⌘/Ctrl+J` 全量选择器、面包屑、子视图无 composer；fake `subagents` e2e 截图 |
+| F12 子 agent 展示 | 已验证 | `SidebarTree.tsx`、`ThreadTimeline.tsx`、`ThreadPage.tsx`、`agents.rs`、`WorkspaceLayout.tsx` | 主时间线可展开派遣卡片（状态/cwd/usage/错误原因/无独立会话/打开子会话）、运行中总数提示；左栏树、嵌套、Show N more、`⌘/Ctrl+J` 全量选择器、面包屑、子视图无 composer；fake `subagents` e2e 截图 |
 | F13 提问与回答 | 已验证 | `approvals.rs`、`ElicitationCard.tsx`、`routes_actions.rs`、`agents.rs` | 表单/URL 两种模式；三种动作；首个响应获胜；secret 字段拒绝；取消 turn 时 pending elicitation 置 cancelled 并写 `ElicitationResolved`；审计/回归测试 |
 | F14 队列与中途插话 | 已验证 | `core/delivery.rs`、`agents.rs`、`routes_agent.rs`、`Composer.tsx` | steering 四种结果、停止并发送、Stop 取消、队列 tray 显示位置/作者/撤回；取消后 superseded 标记；队列顺序/持久化测试 |
 | F15 评论与标注 | 已验证 | `comments.rs`、`ChangesPanel.tsx`、`CommentsPanel.tsx`、`CommentDialog.tsx`、`SelectionComment.tsx`、`ThreadTimeline.tsx` | thread/message/tool/file/diff/elicitation 锚点；选中文本直接评论；文件行评论；回复链；`#message-*` 与 `#event-*` 双向跳转、消息头打开评论区；diff hunk 评论可按 hunk 折叠并保留行 gutter 标记；pending→下一条消息投递及 delivered_seq 跳转；漂移写回 DB 并降级为 File |

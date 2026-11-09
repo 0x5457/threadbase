@@ -1278,7 +1278,10 @@ fn apply_subagent_state(event: &mut SubagentEvent, state: &StateUpdate) {
         StateUpdate::Idle(idle) => {
             event.status = match &idle.stop_reason {
                 Some(IdleStopReason::Cancelled) => SubagentStatus::Cancelled,
-                Some(IdleStopReason::Error(_)) => SubagentStatus::Error,
+                Some(IdleStopReason::Error(reason)) => {
+                    event.description = Some(format!("Stopped with error: {reason:?}"));
+                    SubagentStatus::Error
+                }
                 _ => SubagentStatus::Idle,
             };
             if let Some(usage) = &idle.usage {
