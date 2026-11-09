@@ -471,3 +471,22 @@ async fn diff_comment_drift_and_revert_to_base() {
     );
     assert!(!worktree.join("untracked.txt").exists());
 }
+
+#[tokio::test]
+async fn project_path_can_be_relocated() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let moved = TempDir::new().unwrap();
+    init_repo(moved.path()).await;
+    let updated = projects::update(
+        &fixture.pool,
+        project.id.as_str(),
+        None,
+        None,
+        Some(moved.path().to_str().unwrap()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.path, moved.path().to_string_lossy());
+    assert!(updated.available);
+}

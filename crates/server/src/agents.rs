@@ -681,6 +681,7 @@ impl Pump {
                         cwd: request.cwd.clone(),
                         paths: request.paths,
                         options,
+                        input: Some(serde_json::to_string(&request.raw).unwrap_or_default()),
                     },
                     Actor::agent("Threadbase agent"),
                     EventMeta::default(),
@@ -758,6 +759,27 @@ impl Pump {
                 };
                 self.append(
                     ThreadEvent::SubagentUpdated { subagent: dto },
+                    EventMeta::default(),
+                )
+                .await?;
+            }
+            RawAgentEvent::AgentMessage {
+                direction,
+                from,
+                to,
+                text,
+            } => {
+                let direction = match direction.as_str() {
+                    "sent" => threadbase_shared::AgentMessageDirection::Sent,
+                    _ => threadbase_shared::AgentMessageDirection::Received,
+                };
+                self.append(
+                    ThreadEvent::AgentMessage {
+                        direction,
+                        from,
+                        to,
+                        text,
+                    },
                     EventMeta::default(),
                 )
                 .await?;
@@ -1159,7 +1181,7 @@ fn tool_data(
         input: call.input,
         output: call.output,
         locations: call.locations,
-        diff: None,
+        diff: call.diff,
         terminal_id: call.terminal_id,
         subagent_id: None,
         created_at: now_ms(),

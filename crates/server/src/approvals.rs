@@ -22,6 +22,7 @@ pub struct ApprovalRow {
     pub cwd: Option<String>,
     pub paths_json: String,
     pub options_json: String,
+    pub input_json: Option<String>,
     pub status: String,
     pub decision: Option<String>,
     pub scope: Option<String>,
@@ -36,7 +37,7 @@ pub async fn list_pending_for_thread(
 ) -> Result<Vec<ApprovalDto>, ServerError> {
     let rows = sqlx::query_as::<_, ApprovalRow>(
         "SELECT id, thread_id, subagent_id, turn_id, tool_call_id, agent, title, kind, command,
-                cwd, paths_json, options_json, status, decision, scope, decided_by, decided_at, created_at
+                cwd, paths_json, options_json, input_json, status, decision, scope, decided_by, decided_at, created_at
          FROM approvals WHERE thread_id = ? AND status = 'pending' ORDER BY created_at ASC",
     )
     .bind(thread_id)
@@ -70,6 +71,7 @@ pub fn to_dto(row: ApprovalRow) -> ApprovalDto {
         cwd: row.cwd,
         paths: serde_json::from_str(&row.paths_json).unwrap_or_default(),
         options: serde_json::from_str::<Vec<ApprovalOption>>(&row.options_json).unwrap_or_default(),
+        input: row.input_json,
         status: parse_status(&row.status),
         decision: row.decision.as_deref().and_then(parse_decision),
         scope: row.scope.as_deref().and_then(parse_scope),
@@ -131,6 +133,7 @@ pub struct NewApproval {
     pub cwd: Option<String>,
     pub paths: Vec<String>,
     pub options: Vec<ApprovalOption>,
+    pub input: Option<String>,
 }
 
 pub async fn create(
@@ -143,8 +146,8 @@ pub async fn create(
     let now = threadbase_shared::now_ms();
     sqlx::query(
         "INSERT INTO approvals(id, thread_id, subagent_id, turn_id, tool_call_id, agent, title, kind,
-            command, cwd, paths_json, options_json, status, created_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            command, cwd, paths_json, options_json, input_json, status, created_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
     )
     .bind(&approval.id)
     .bind(&approval.thread_id)
@@ -158,6 +161,7 @@ pub async fn create(
     .bind(approval.cwd.as_deref())
     .bind(serde_json::to_string(&approval.paths).unwrap_or_else(|_| "[]".into()))
     .bind(serde_json::to_string(&approval.options).unwrap_or_else(|_| "[]".into()))
+    .bind(approval.input.as_deref())
     .bind(now)
     .execute(pool)
     .await?;
@@ -196,7 +200,7 @@ pub async fn create(
 pub async fn load(pool: &SqlitePool, approval_id: &str) -> Result<ApprovalRow, ServerError> {
     sqlx::query_as::<_, ApprovalRow>(
         "SELECT id, thread_id, subagent_id, turn_id, tool_call_id, agent, title, kind, command,
-                cwd, paths_json, options_json, status, decision, scope, decided_by, decided_at, created_at
+                cwd, paths_json, options_json, input_json, status, decision, scope, decided_by, decided_at, created_at
          FROM approvals WHERE id = ?",
     )
     .bind(approval_id)
@@ -799,6 +803,7 @@ fn parse_inbox_kind(value: &str) -> threadbase_shared::InboxKind {
         "elicitation" => threadbase_shared::InboxKind::Elicitation,
         "mention" => threadbase_shared::InboxKind::Mention,
         "invite" => threadbase_shared::InboxKind::Invite,
+        "access" => threadbase_shared::InboxKind::Access,
         _ => threadbase_shared::InboxKind::Error,
     }
 }

@@ -6,6 +6,7 @@ import {
   createThread,
   decideApproval,
   logout as logoutRequest,
+  updateProject,
 } from "@/api/endpoints";
 import {
   queryKeys,
@@ -88,6 +89,8 @@ export function WorkspaceLayout() {
     localFocus,
   );
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [locateProjectId, setLocateProjectId] = useState<string | null>(null);
+  const [locatePath, setLocatePath] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [subthreadPickerOpen, setSubthreadPickerOpen] = useState(false);
   const [subthreadFilter, setSubthreadFilter] = useState("");
@@ -165,6 +168,7 @@ export function WorkspaceLayout() {
     mutationFn: (input: {
       approvalId: string;
       decision: ApprovalDecision;
+      note?: string;
     }) => {
       if (!params.threadId) {
         throw new Error("No active thread");
@@ -173,6 +177,7 @@ export function WorkspaceLayout() {
         params.threadId,
         input.approvalId,
         input.decision,
+        input.note ?? null,
       );
     },
     onSuccess: () => {
@@ -191,8 +196,12 @@ export function WorkspaceLayout() {
     },
   });
 
-  const decide = (approval: ApprovalDto, decision: ApprovalDecision) => {
-    decisionMutation.mutate({ approvalId: approval.id, decision });
+  const decide = (
+    approval: ApprovalDto,
+    decision: ApprovalDecision,
+    note?: string,
+  ) => {
+    decisionMutation.mutate({ approvalId: approval.id, decision, note });
   };
 
   const share = () => {
@@ -200,6 +209,22 @@ export function WorkspaceLayout() {
       setShareOpen(true);
     }
   };
+
+  const locateMutation = useMutation({
+    mutationFn: () =>
+      updateProject(locateProjectId ?? "", {
+        name: null,
+        remoteUrl: null,
+        path: locatePath.trim() || null,
+      }),
+    onSuccess: () => {
+      setLocateProjectId(null);
+      setLocatePath("");
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
+    },
+    onError: (error) => toast.error(String(error)),
+  });
 
   const createThreadMutation = useMutation({
     mutationFn: ({
@@ -480,6 +505,10 @@ export function WorkspaceLayout() {
             }}
             onNewProject={() => setNewProjectOpen(true)}
             onNewThread={openNewThread}
+            onLocateProject={(projectId) => {
+              setLocateProjectId(projectId);
+              setLocatePath("");
+            }}
             onOpenInbox={() => navigate("/inbox")}
             onOpenSettings={() => navigate("/settings")}
             onLogout={() => logoutMutation.mutate()}
@@ -530,6 +559,48 @@ export function WorkspaceLayout() {
           }}
         />
       ) : null}
+
+      <Dialog
+        open={Boolean(locateProjectId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setLocateProjectId(null);
+            setLocatePath("");
+          }
+        }}
+      >
+        <DialogContent
+          title="Locate project"
+          footer={
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setLocateProjectId(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                loading={locateMutation.isPending}
+                disabled={!locatePath.trim()}
+                onClick={() => locateMutation.mutate()}
+              >
+                Locate
+              </Button>
+            </>
+          }
+        >
+          <Input
+            autoFocus
+            aria-label="Project path"
+            value={locatePath}
+            onChange={(event) => setLocatePath(event.target.value)}
+            placeholder="/path/to/repo"
+          />
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={subthreadPickerOpen}

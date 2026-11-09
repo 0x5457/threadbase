@@ -96,6 +96,15 @@ interface SubagentItem {
   subagent: import("@/api/types/SubagentDto").SubagentDto;
 }
 
+interface AgentMessageItem {
+  kind: "agent_message";
+  key: string;
+  direction: "sent" | "received";
+  from: string;
+  to: string;
+  text: string;
+}
+
 interface NoticeItem {
   kind: "notice";
   key: string;
@@ -112,6 +121,7 @@ type TimelineItem =
   | ElicitationItem
   | ApprovalItem
   | SubagentItem
+  | AgentMessageItem
   | NoticeItem;
 
 const TOOL_ICONS: Record<ToolKind, typeof Wrench> = {
@@ -200,17 +210,6 @@ function noticeForEvent(event: EventEnvelope): NoticeItem | null {
         tone: "muted",
         label: "Changes updated",
         text: `+${payload.stats.additions} −${payload.stats.deletions} across ${payload.stats.files} files`,
-      };
-    case "agent_message":
-      return {
-        kind: "notice",
-        key,
-        tone: "info",
-        label:
-          payload.direction === "sent"
-            ? `Sent agent message to ${payload.to}`
-            : `Received agent message from ${payload.from}`,
-        text: payload.text,
       };
     case "context_compacted":
       return {
@@ -355,6 +354,17 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
           subagent,
         });
       }
+      continue;
+    }
+    if (payload.type === "agent_message") {
+      items.push({
+        kind: "agent_message",
+        key: `agent-message-${event.seq}`,
+        direction: payload.direction,
+        from: payload.from,
+        to: payload.to,
+        text: payload.text,
+      });
       continue;
     }
     if (payload.type === "permission_requested") {
@@ -536,10 +546,26 @@ export function ThreadTimeline({
               ))}
             </ul>
           ) : null}
-          {call.diff?.patch ? (
-            <pre className="mt-0 max-h-64 overflow-auto whitespace-pre-wrap break-all border-t border-border/70 bg-canvas p-2 font-mono text-[10px] text-fg">
-              {call.diff.patch}
-            </pre>
+          {call.diff ? (
+            <details className="group border-t border-border/70">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-[10px]">
+                <span className="truncate font-mono text-muted">
+                  {call.diff.path}
+                </span>
+                <span className="ml-auto shrink-0 font-mono text-success">
+                  +{call.diff.additions}
+                </span>
+                <span className="shrink-0 font-mono text-danger">
+                  −{call.diff.deletions}
+                </span>
+                <ChevronRight className="size-3 shrink-0 text-faint group-open:rotate-90" aria-hidden />
+              </summary>
+              {call.diff.patch ? (
+                <pre className="mt-0 max-h-64 overflow-auto whitespace-pre-wrap break-all border-t border-border/70 bg-canvas p-2 font-mono text-[10px] text-fg">
+                  {call.diff.patch}
+                </pre>
+              ) : null}
+            </details>
           ) : null}
           {call.input || call.output ? (
             <details className="border-t border-border/70 px-3 py-1.5 text-[10.5px] text-muted">
@@ -761,6 +787,28 @@ export function ThreadTimeline({
             );
           }
 
+          if (item.kind === "agent_message") {
+            const label =
+              item.direction === "sent"
+                ? `Sent Agent Message to ${item.to}`
+                : `Received Agent Message from ${item.from}`;
+            return (
+              <div key={item.key} className="flex gap-3">
+                <div className="w-7 shrink-0" />
+                <details className="group min-w-0 flex-1 rounded-lg border border-border bg-panel">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[11px] text-muted">
+                    <ArrowLeftRight className="size-3.5 shrink-0 text-faint" aria-hidden />
+                    <span className="truncate">{label}</span>
+                    <ChevronRight className="ml-auto size-3 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
+                  </summary>
+                  <p className="whitespace-pre-wrap border-t border-border/70 px-3 py-2 text-[11.5px] leading-relaxed text-fg">
+                    {item.text}
+                  </p>
+                </details>
+              </div>
+            );
+          }
+
           if (item.kind === "subagent") {
             const subagent = item.subagent;
             const active =
@@ -874,6 +922,16 @@ export function ThreadTimeline({
                       <p className="break-all font-mono text-[10px] text-faint">
                         {approval.paths.join(", ")}
                       </p>
+                    ) : null}
+                    {approval.input ? (
+                      <details className="text-[10px] text-muted">
+                        <summary className="cursor-pointer text-faint hover:text-fg">
+                          Full parameters
+                        </summary>
+                        <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
+                          {approval.input}
+                        </pre>
+                      </details>
                     ) : null}
                     {!item.resolved && approval.status === "pending" && onDecide ? (
                       denyFor === approval.id ? (

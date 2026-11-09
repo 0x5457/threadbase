@@ -4,6 +4,7 @@ import {
   CheckCheck,
   CircleHelp,
   Inbox,
+  KeyRound,
   ShieldAlert,
   UserPlus,
 } from "lucide-react";
@@ -30,6 +31,7 @@ const KIND_ICONS: Record<InboxKind, typeof Bell> = {
   elicitation: CircleHelp,
   mention: AtSign,
   invite: UserPlus,
+  access: KeyRound,
   error: Bell,
 };
 

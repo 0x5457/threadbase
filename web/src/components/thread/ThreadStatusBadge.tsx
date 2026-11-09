@@ -5,7 +5,7 @@ import { Badge, type BadgeProps } from "@/components/ui";
 export function threadStatusLabel(status: ThreadStatus): string {
   switch (status) {
     case "preparing":
-      return "preparing";
+      return "Preparing…";
     case "running":
       return "running";
     case "requires_action":
@@ -42,7 +42,15 @@ function threadStatusVariant(
 
 export function ThreadStatusBadge({ status }: { status: ThreadStatus }) {
   return (
-    <Badge variant={threadStatusVariant(status)} size="sm">
+    <Badge
+      variant={threadStatusVariant(status)}
+      size="sm"
+      title={
+        status === "preparing"
+          ? "Creating worktree → starting agent → binding session"
+          : undefined
+      }
+    >
       <span
         className={
           status === "running" || status === "preparing"

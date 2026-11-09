@@ -158,8 +158,9 @@ pub async fn update(
     project_id: &str,
     name: Option<&str>,
     remote_url: Option<&str>,
+    path: Option<&str>,
 ) -> Result<ProjectDto, ServerError> {
-    row(pool, project_id).await?;
+    let current = row(pool, project_id).await?;
     if let Some(name) = name {
         let name = name.trim();
         if name.is_empty() || name.len() > 80 {
@@ -181,6 +182,57 @@ pub async fn update(
             .bind(project_id)
             .execute(pool)
             .await?;
+    }
+    if let Some(path) = path {
+        let raw = path.trim();
+        if raw.is_empty() {
+            return Err(ServerError(ApiError::validation(
+                "project path is required",
+            )));
+        }
+        let path_buf = PathBuf::from(raw);
+        if !path_buf.is_absolute() {
+            return Err(ServerError(ApiError::validation(
+                "project path must be absolute",
+            )));
+        }
+        let info = git::inspect(&path_buf).await.map_err(|_| {
+            ServerError(ApiError::validation(
+                "the directory is not a git repository",
+            ))
+        })?;
+        let canonical = info.root.to_string_lossy().to_string();
+        let duplicate: Option<String> =
+            sqlx::query_scalar("SELECT id FROM projects WHERE path = ? AND id != ?")
+                .bind(&canonical)
+                .bind(project_id)
+                .fetch_optional(pool)
+                .await?;
+        if duplicate.is_some() {
+            return Err(ServerError(ApiError::conflict(
+                "this project has already been added",
+            )));
+        }
+        sqlx::query(
+            "UPDATE projects SET path = ?, default_branch = ?, remote_url = COALESCE(?, remote_url), updated_at = ? WHERE id = ?",
+        )
+        .bind(&canonical)
+        .bind(info.branch.clone().unwrap_or_else(|| current.default_branch.clone()))
+        .bind(info.remote_url.as_deref())
+        .bind(now_ms())
+        .bind(project_id)
+        .execute(pool)
+        .await?;
+        crate::auth::audit(
+            pool,
+            None,
+            "project.located",
+            Some("project"),
+            Some(project_id),
+            Some(&canonical),
+            None,
+        )
+        .await;
     }
     get(pool, project_id).await
 }

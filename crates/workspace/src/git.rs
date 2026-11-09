@@ -140,6 +140,22 @@ pub async fn remote_branch(root: &Path) -> Result<Option<String>, GitError> {
     Ok(head.filter(|value| !value.is_empty()))
 }
 
+pub async fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool, GitError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .output()
+        .await?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(GitError::Message(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        )),
+    }
+}
+
 pub async fn head_sha(root: &Path) -> Result<String, GitError> {
     git(root, &["rev-parse", "HEAD"]).await
 }

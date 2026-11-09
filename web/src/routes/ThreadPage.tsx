@@ -10,6 +10,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -19,7 +20,9 @@ import {
   forkThread,
   markThreadRead,
   restartAgent,
+  requestAccess,
   respondElicitation,
+  revertThread,
   updateThread,
 } from "@/api/endpoints";
 import {
@@ -244,6 +247,7 @@ export function ThreadPage() {
       }
     },
   });
+  const [divergedDismissed, setDivergedDismissed] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -274,6 +278,21 @@ export function ThreadPage() {
         }
       }
     },
+  });
+  const discardDiverged = useMutation({
+    mutationFn: () => revertThread(threadId ?? ""),
+    onSuccess: () => {
+      setDivergedDismissed(true);
+      if (threadId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadBundle(threadId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.threadEvents(threadId),
+        });
+      }
+    },
+    onError: (error) => toast.error(String(error)),
   });
   const fork = useMutation({
     mutationFn: () => forkThread(threadId ?? "", null),
@@ -344,6 +363,11 @@ export function ThreadPage() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
       }
     },
+  });
+  const requestAccessMutation = useMutation({
+    mutationFn: () => requestAccess(threadId ?? ""),
+    onSuccess: () => toast.success("Access request sent"),
+    onError: (error) => toast.error(String(error)),
   });
   const decision = useMutation({
     mutationFn: ({
@@ -660,10 +684,31 @@ export function ThreadPage() {
           anchor={commentAnchor}
         />
       ) : null}
+      {thread.diverged && !divergedDismissed ? (
+        <div className="flex flex-wrap items-center gap-2 border-t border-warning/30 bg-warning/5 px-4 py-2 text-[11px] text-warning">
+          <span>This thread has diverged from the project branch.</span>
+          <button
+            type="button"
+            className="font-medium text-fg underline decoration-warning/50 underline-offset-2 hover:decoration-fg"
+            onClick={() => fork.mutate()}
+          >
+            Keep local changes in a new thread
+          </button>
+          <button
+            type="button"
+            className="text-faint hover:text-danger"
+            disabled={discardDiverged.isPending}
+            onClick={() => discardDiverged.mutate()}
+          >
+            Discard
+          </button>
+        </div>
+      ) : null}
       {selectedSubagent ? null : (
         <Composer
           threadId={thread.id}
           canWrite={canWrite}
+          onRequestAccess={() => requestAccessMutation.mutate()}
           threadStatus={thread.status}
           participants={thread.participants}
           model={thread.model}

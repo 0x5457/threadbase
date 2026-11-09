@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 interface ComposerProps {
   threadId: string;
   canWrite: boolean;
+  onRequestAccess?: () => void;
   threadStatus: string;
   participants?: Participant[];
   model?: string | null;
@@ -44,6 +45,7 @@ function randomId(): string {
 export function Composer({
   threadId,
   canWrite,
+  onRequestAccess,
   threadStatus,
   participants = [],
   model,
@@ -217,7 +219,16 @@ export function Composer({
     return (
       <div className="border-t border-border bg-panel px-4 py-3 text-center text-[11px] text-muted">
         <Users className="mr-1.5 inline size-3.5" aria-hidden />
-        You are viewing this thread read-only. Ask an owner for edit access.
+        You are viewing this thread read-only.
+        {onRequestAccess ? (
+          <button
+            type="button"
+            className="ml-2 text-accent hover:underline"
+            onClick={onRequestAccess}
+          >
+            Request access
+          </button>
+        ) : null}
       </div>
     );
   }

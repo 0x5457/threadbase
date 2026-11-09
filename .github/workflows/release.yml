@@ -40,7 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build binary
-        run: cargo build --release -p threadbase-server
+        run: cargo build --release -p threadbase
       - name: Package
         shell: bash
         run: |

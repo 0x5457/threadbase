@@ -98,6 +98,7 @@ pub struct ToolCallEvent {
     pub output: Option<String>,
     pub locations: Vec<ToolLocation>,
     pub terminal_id: Option<String>,
+    pub diff: Option<threadbase_shared::DiffSummary>,
     pub raw: Value,
 }
 
@@ -144,6 +145,12 @@ pub enum RawAgentEvent {
     },
     Subagent {
         event: SubagentEvent,
+    },
+    AgentMessage {
+        direction: String,
+        from: String,
+        to: String,
+        text: String,
     },
     Usage {
         usage: Usage,

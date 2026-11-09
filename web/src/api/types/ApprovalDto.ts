@@ -23,6 +23,7 @@ export type ApprovalDto = {
   cwd: string | null;
   paths: Array<string>;
   options: Array<ApprovalOption>;
+  input: string | null;
   status: ApprovalStatus;
   decision: ApprovalDecision | null;
   scope: ApprovalScope | null;

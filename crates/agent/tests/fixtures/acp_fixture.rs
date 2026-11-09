@@ -278,6 +278,7 @@ impl Fixture {
             "permission-none" => self.permission(reader, out, id, &session, "permission-none"),
             "elicit" => self.elicitation(reader, out, id, &session),
             "subagents" => self.subagents(out, id, &session),
+            "agent-message" => self.agent_message(out, id, &session),
             "malformed" => self.malformed(out, id, &session),
             "crash" => {
                 self.chunk(out, &session, "crashing")?;
@@ -308,6 +309,12 @@ impl Fixture {
                 "kind": "execute",
                 "status": "pending",
                 "locations": [{"path": "/tmp/work/src/lib.rs", "line": 12}],
+                "content": [{
+                    "type": "diff",
+                    "path": "/tmp/work/src/lib.rs",
+                    "oldText": "fn main() {\n}\n",
+                    "newText": "fn main() {\n    run();\n}\n"
+                }],
                 "rawInput": {"command": "cargo test"},
             }),
         )?;
@@ -508,6 +515,21 @@ impl Fixture {
                     "stopReason": "cancelled",
                     "usage": {"totalTokens": 120, "inputTokens": 100, "outputTokens": 20},
                 },
+            }),
+        )?;
+        self.respond(out, id, json!({"stopReason": "end_turn"}))
+    }
+
+    fn agent_message(&self, out: &mut impl Write, id: &Value, session: &str) -> io::Result<()> {
+        self.notify_update(
+            out,
+            session,
+            json!({
+                "sessionUpdate": "session_message",
+                "messageId": "msg-agent-1",
+                "senderSessionId": session,
+                "recipientSessionId": "sub-1",
+                "content": [{"type": "text", "text": "peer message"}],
             }),
         )?;
         self.respond(out, id, json!({"stopReason": "end_turn"}))

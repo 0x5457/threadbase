@@ -371,6 +371,10 @@ pub fn router() -> Router<crate::state::AppState> {
             axum::routing::delete(revoke_invite_route),
         )
         .route("/api/threads/{thread_id}/share", patch(set_share_route))
+        .route(
+            "/api/threads/{thread_id}/request-access",
+            post(request_access_route),
+        )
 }
 
 async fn add_member_route(
@@ -489,6 +493,38 @@ pub async fn revoke_invite(
     )
     .await;
     Ok(())
+}
+
+async fn request_access_route(
+    State(state): State<crate::state::AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<threadbase_shared::OkResponse>, ServerError> {
+    crate::authz::require_read(&state.pool, &thread_id, &user).await?;
+    let members: Vec<(String, String)> =
+        sqlx::query_as("SELECT user_id, role FROM thread_members WHERE thread_id = ?")
+            .bind(&thread_id)
+            .fetch_all(&state.pool)
+            .await?;
+    let actor = brief(&user.user);
+    for (user_id, role) in members {
+        if user_id == user.user.id.as_str() || role == "viewer" {
+            continue;
+        }
+        sqlx::query(
+            "INSERT INTO inbox(id, user_id, kind, thread_id, actor_id, summary, created_at)
+             VALUES(?, ?, 'access', ?, ?, ?, ?)",
+        )
+        .bind(Ulid::new().to_string())
+        .bind(&user_id)
+        .bind(&thread_id)
+        .bind(user.user.id.as_str())
+        .bind(format!("{} requested edit access", actor.display_name))
+        .bind(now_ms())
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(Json(threadbase_shared::OkResponse { ok: true }))
 }
 
 #[cfg(test)]

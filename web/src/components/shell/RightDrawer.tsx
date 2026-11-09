@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { useState } from "react";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
 import type { ThreadBundleDto } from "@/api/types/ThreadBundleDto";
@@ -24,6 +25,7 @@ import {
   Kbd,
   Skeleton,
   Tabs,
+  Textarea,
   TabsContent,
   TabsList,
   TabsTrigger,
@@ -49,7 +51,11 @@ export interface RightDrawerProps {
   onRetry?: () => void;
   decidingApprovalId?: string | null;
   overlay?: boolean;
-  onDecideApproval?: (approval: ApprovalDto, decision: ApprovalDecision) => void;
+  onDecideApproval?: (
+    approval: ApprovalDto,
+    decision: ApprovalDecision,
+    note?: string,
+  ) => void;
   threadId?: string;
   canWrite?: boolean;
 }
@@ -80,6 +86,8 @@ export function RightDrawer({
   threadId,
   canWrite = false,
 }: RightDrawerProps) {
+  const [denyApproval, setDenyApproval] = useState<ApprovalDto | null>(null);
+  const [denyNote, setDenyNote] = useState("");
   if (!open) {
     return null;
   }
@@ -256,24 +264,83 @@ export function RightDrawer({
                             ))}
                           </ul>
                         ) : null}
+                        {approval.input ? (
+                          <details className="text-[10px] text-muted">
+                            <summary className="cursor-pointer text-faint hover:text-fg">
+                              Full parameters
+                            </summary>
+                            <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
+                              {approval.input}
+                            </pre>
+                          </details>
+                        ) : null}
                       </div>
-                      <div className="flex flex-wrap gap-1.5 border-t border-border bg-canvas/40 px-3 py-2">
-                        {approval.options.map((option) => (
-                          <Button
-                            key={option.id}
-                            size="sm"
-                            variant={
-                              option.kind === "deny" ? "danger" : "secondary"
-                            }
-                            loading={deciding}
-                            disabled={!onDecideApproval}
-                            onClick={() =>
-                              onDecideApproval?.(approval, option.kind)
-                            }
-                          >
-                            {option.label}
-                          </Button>
-                        ))}
+                      <div className="space-y-1.5 border-t border-border bg-canvas/40 px-3 py-2">
+                        {denyApproval?.id === approval.id ? (
+                          <>
+                            <Textarea
+                              autoFocus
+                              value={denyNote}
+                              onChange={(event) => setDenyNote(event.target.value)}
+                              placeholder="Why deny?"
+                              rows={2}
+                              className="text-[10.5px]"
+                            />
+                            <div className="flex gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setDenyApproval(null);
+                                  setDenyNote("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                loading={deciding}
+                                disabled={!denyNote.trim()}
+                                onClick={() => {
+                                  onDecideApproval?.(
+                                    approval,
+                                    "deny",
+                                    denyNote.trim(),
+                                  );
+                                  setDenyApproval(null);
+                                  setDenyNote("");
+                                }}
+                              >
+                                Deny with reason
+                              </Button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {approval.options.map((option) => (
+                              <Button
+                                key={option.id}
+                                size="sm"
+                                variant={
+                                  option.kind === "deny" ? "danger" : "secondary"
+                                }
+                                loading={deciding}
+                                disabled={!onDecideApproval}
+                                onClick={() => {
+                                  if (option.kind === "deny") {
+                                    setDenyApproval(approval);
+                                    setDenyNote("");
+                                  } else {
+                                    onDecideApproval?.(approval, option.kind);
+                                  }
+                                }}
+                              >
+                                {option.label}
+                              </Button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </li>
                   );

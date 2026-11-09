@@ -34,9 +34,10 @@ use agent_client_protocol::{Agent, Client, Lines};
 use futures_util::{Sink, Stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use similar::{ChangeTag, TextDiff};
 use threadbase_shared::{
-    ApprovalDecision, ElicitationAction, PlanEntry, PlanPriority, PlanStatus, SubagentStatus,
-    ToolKind, ToolLocation, ToolStatus, Usage,
+    ApprovalDecision, DiffSummary, ElicitationAction, PlanEntry, PlanPriority, PlanStatus,
+    SubagentStatus, ToolKind, ToolLocation, ToolStatus, Usage,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -1042,6 +1043,44 @@ fn handle_session_notification(
         SessionUpdate::SubagentUpdate(update) => {
             handle_subagent_update(state, bus, &origin, &update);
         }
+        SessionUpdate::SessionMessage(message) => {
+            let text = message
+                .content
+                .as_opt_ref()
+                .flatten()
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(content_text)
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .unwrap_or_default();
+            if text.is_empty() {
+                return;
+            }
+            let sender = message
+                .sender_session_id
+                .as_opt_ref()
+                .flatten()
+                .map(|value| value.0.to_string());
+            let recipient = message
+                .recipient_session_id
+                .as_opt_ref()
+                .flatten()
+                .map(|value| value.0.to_string());
+            let direction = if sender.as_deref() == Some(origin.as_str()) {
+                "sent"
+            } else {
+                "received"
+            };
+            bus.send(RawAgentEvent::AgentMessage {
+                direction: direction.to_owned(),
+                from: sender.unwrap_or_else(|| origin.clone()),
+                to: recipient.unwrap_or_else(|| origin.clone()),
+                text,
+            });
+        }
         _ => {}
     }
 }
@@ -1063,6 +1102,7 @@ fn tool_call_event(call: &ToolCall) -> ToolCallEvent {
         output: call.raw_output.as_ref().map(Value::to_string),
         locations: map_locations(&call.locations),
         terminal_id: terminal_id(&call.content),
+        diff: diff_summary(&call.content),
         raw: to_value(call),
     }
 }
@@ -1084,6 +1124,7 @@ fn apply_tool_update(previous: Option<ToolCallEvent>, update: &ToolCallUpdate) -
         output: None,
         locations: Vec::new(),
         terminal_id: None,
+        diff: None,
         raw: Value::Null,
     });
     if let Some(title) = &fields.title {
@@ -1106,6 +1147,9 @@ fn apply_tool_update(previous: Option<ToolCallEvent>, update: &ToolCallUpdate) -
     }
     if let Some(content) = &fields.content {
         event.terminal_id = terminal_id(content);
+        if let Some(diff) = diff_summary(content) {
+            event.diff = Some(diff);
+        }
     }
     event.raw = to_value(update);
     event
@@ -1145,6 +1189,34 @@ fn map_locations(
             line: location.line,
         })
         .collect()
+}
+
+fn diff_summary(content: &[ToolCallContent]) -> Option<DiffSummary> {
+    for item in content {
+        let ToolCallContent::Diff(diff) = item else {
+            continue;
+        };
+        let old = diff.old_text.as_deref().unwrap_or_default();
+        let changes = TextDiff::from_lines(old, &diff.new_text);
+        let additions = changes
+            .iter_all_changes()
+            .filter(|change| change.tag() == ChangeTag::Insert)
+            .count();
+        let deletions = changes
+            .iter_all_changes()
+            .filter(|change| change.tag() == ChangeTag::Delete)
+            .count();
+        let path = diff.path.to_string_lossy().into_owned();
+        let mut patch = format!("--- a/{path}\n+++ b/{path}\n");
+        patch.push_str(&changes.unified_diff().context_radius(3).to_string());
+        return Some(DiffSummary {
+            path,
+            additions: u32::try_from(additions).unwrap_or(u32::MAX),
+            deletions: u32::try_from(deletions).unwrap_or(u32::MAX),
+            patch: Some(patch),
+        });
+    }
+    None
 }
 
 fn terminal_id(content: &[ToolCallContent]) -> Option<String> {

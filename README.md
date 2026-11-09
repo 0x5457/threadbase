@@ -20,7 +20,7 @@ pnpm --dir web install --frozen-lockfile
 pnpm --dir web build
 
 # 启动本地服务，默认 http://127.0.0.1:7777
-MBX_BLAZE=false cargo run -p threadbase-server
+MBX_BLAZE=false cargo run -p threadbase
 ```
 
 首次打开页面创建本地管理员。服务启动后运行 `threadbase doctor` 检查 Node、git、数据库和 Codex/Claude/opencode/pi adapter。
@@ -91,7 +91,7 @@ pnpm --dir web exec playwright test
 真实 Codex 契约 smoke（需要登录）：
 
 ```bash
-MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored --nocapture
+MBX_BLAZE=false cargo test -p threadbase --test real_codex -- --ignored --nocapture
 ```
 
 构建加速：本机使用 `mr-boxington` + blaze 时，`cargo check` 会走 blaze；测试、release 与 fixture 使用 `MBX_BLAZE=false`，原因和配置见 [docs/06](docs/06-implementation-status.md) §6。
@@ -99,7 +99,7 @@ MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored -
 ## 打包
 
 ```bash
-MBX_BLAZE=false cargo build --release -p threadbase-server
+MBX_BLAZE=false cargo build --release -p threadbase
 threadbase doctor
 threadbase service install --print
 ```

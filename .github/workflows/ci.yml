@@ -56,5 +56,5 @@ jobs:
 
       - name: Verify embedded assets
         run: |
-          cargo build -p threadbase-server
+          cargo build -p threadbase
           test -f web/dist/index.html

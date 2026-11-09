@@ -96,6 +96,7 @@ async fn update_project(
             &project_id,
             request.name.as_deref(),
             request.remote_url.as_deref(),
+            request.path.as_deref(),
         )
         .await?,
     }))

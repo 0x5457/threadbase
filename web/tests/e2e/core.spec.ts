@@ -122,10 +122,12 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.getByRole("button", { name: "Send", exact: true }).click();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible({ timeout: 15_000 });
   await expect(admin.getByText("Run tests", { exact: false }).first()).toBeVisible();
+  await expect(admin.getByText("Full parameters")).toBeHidden();
 
   await composer.fill("permission");
   await admin.getByRole("button", { name: "Send", exact: true }).click();
   await expect(admin.getByText("Allow once", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(admin.getByText("Full parameters")).toBeVisible();
   await admin.getByRole("button", { name: "Allow once" }).click();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible();
   await expect(admin.getByText("Allow once", { exact: true })).toBeHidden({ timeout: 10_000 });
@@ -170,6 +172,8 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(bob.getByText("Hello", { exact: false })).toBeVisible({ timeout: 10_000 });
   await expect(bob.getByText("read-only", { exact: false })).toBeVisible();
   await expect(bob.getByPlaceholder("Message")).toHaveCount(0);
+  await bob.getByRole("button", { name: "Request access" }).click();
+  await expect(bob.getByText("Access request sent")).toBeVisible({ timeout: 5_000 });
   await bob.screenshot({ path: "test-results/screenshots/thread-768-readonly.png", fullPage: true });
   await bob.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
   await bob.reload();

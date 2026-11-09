@@ -3837,46 +3837,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "threadbase-agent"
-version = "0.1.0"
-dependencies = [
- "agent-client-protocol",
- "async-trait",
- "futures-util",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "threadbase-shared",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "threadbase-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "threadbase-shared",
-]
-
-[[package]]
-name = "threadbase-draft"
-version = "0.1.0"
-dependencies = [
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "threadbase-shared",
- "tokio",
- "y-sync",
- "yrs",
-]
-
-[[package]]
-name = "threadbase-server"
+name = "threadbase"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3908,6 +3869,46 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "url",
+ "y-sync",
+ "yrs",
+]
+
+[[package]]
+name = "threadbase-agent"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "async-trait",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "threadbase-shared",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "threadbase-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "threadbase-shared",
+]
+
+[[package]]
+name = "threadbase-draft"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "threadbase-shared",
+ "tokio",
  "y-sync",
  "yrs",
 ]

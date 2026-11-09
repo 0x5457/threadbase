@@ -27,6 +27,7 @@ export type ThreadDto = {
   pinned: boolean;
   unread: boolean;
   shareLevel: ShareLevel;
+  diverged: boolean;
   participants: Array<Participant>;
   pendingApprovals: number;
   queuedInputs: number;

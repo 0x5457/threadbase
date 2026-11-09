@@ -656,3 +656,44 @@ async fn first_turn_replaces_the_default_thread_title() {
         .unwrap();
     assert_eq!(title, "stream");
 }
+
+#[tokio::test]
+async fn inter_session_messages_are_persisted_as_thread_events() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    fixture
+        .state
+        .agents
+        .send(
+            fixture.thread.id.as_str(),
+            &fixture.user,
+            "agent-message",
+            Some(threadbase_shared::api::DeliveryMode::Auto),
+        )
+        .await
+        .unwrap();
+    let event = wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::AgentMessage { .. })
+    })
+    .await;
+    let ThreadEvent::AgentMessage {
+        direction,
+        from,
+        to,
+        text,
+    } = event
+    else {
+        unreachable!();
+    };
+    assert!(format!("{direction:?}").eq_ignore_ascii_case("sent"));
+    assert_eq!(from, "sess-1");
+    assert_eq!(to, "sub-1");
+    assert_eq!(text, "peer message");
+}

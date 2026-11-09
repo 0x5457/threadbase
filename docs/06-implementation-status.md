@@ -67,16 +67,16 @@
 | --- | --- | --- | --- |
 | F1 添加并打开 project | 已验证 | `projects.rs`、`routes_fs.rs`、`NewProjectDialog.tsx` | 目录下拉/路径补全；非 git、相对路径、重复路径校验；e2e 打开路径选择器、填入仓库路径并断言 “Use repo” 入口 |
 | F2 新建 thread / worktree / agent | 已验证 | `threads.rs`、`workspace/src/git.rs`、`agents.rs`、`WorkspaceLayout.tsx`、`ProjectPage.tsx` | 主按钮点击即建 thread 并跳转，无标题弹窗；相邻 chevron 菜单可选 agent、模型、起始分支；worktree/启动/初始化 prompt；自动标题回归测试；fake + 真实 Codex 完成 turn |
-| F3 对话与工具调用 | 已验证 | `agents.rs`、`ThreadEvent` 归约、`ThreadTimeline.tsx`、`Composer.tsx` | fake agent 流式文本/思考/工具更新/计划/用量；e2e 显示 “Hello”“Run tests”、计划；真实 Codex 返回 `pong` |
-| F4 审批 | 已验证 | `approvals.rs`、`routes_actions.rs`、`ThreadTimeline.tsx`、`RightDrawer.tsx` | 默认 pending 不自动放行；按 adapter options 渲染允许/会话/线程/拒绝；拒绝输入原因并随 `DecisionRequest.note` 落库；viewer 拒绝；内联 + 抽屉 e2e；审计行测试 |
+| F3 对话与工具调用 | 已验证 | `agents.rs`、`acp.rs`、`ThreadEvent` 归约、`ThreadTimeline.tsx`、`Composer.tsx` | ACP `ToolCallContent::Diff` 映射为路径/+N/−M/完整 patch，工具卡折叠显示摘要、展开完整 diff；契约测试断言 diff；fake agent 流式文本/思考/工具更新/计划/用量；e2e 显示 “Hello”“Run tests”与 diff 摘要；真实 Codex 返回 `pong` |
+| F4 审批 | 已验证 | `approvals.rs`、`routes_actions.rs`、`ThreadTimeline.tsx`、`RightDrawer.tsx` | 默认 pending 不自动放行；按 adapter options 渲染允许/会话/线程/拒绝；审批 DTO 持久化完整 `input_json` 并在内联/抽屉显示 “Full parameters”；内联与抽屉拒绝都要求原因并随 `DecisionRequest.note` 落库；viewer 拒绝；e2e；审计行测试 |
 | F5 分享与加入 | 已验证 | `sharing.rs`、`ShareDialog.tsx`、`InvitePage.tsx` | 仅邀请/整个工作区；成员增删改；14 天 token invite 接受/撤销；viewer 只读 e2e |
 | F6 多人实时 | 已验证 | `/ws` 事件、`EventStore` 广播、`useThreadLiveEvents` | 双浏览器草稿收敛、审批广播、afterSeq 重放、断线重连测试 |
-| F7 变更审阅 | 已验证 | `diff.rs`、`ChangesPanel.tsx`、`routes_workspace.rs`、`git.rs` | 四档基线（含任意 commit 输入）；turn 开始时 snapshot 工作树，Last Turn 基线真实可用；逐文件 hunk、Seen 进度/重置、整体 Revert 到 base、合回不自动提交；e2e 行评论与 Seen；`diff_comment_drift_and_revert_to_base` 验证 hunk 漂移写回/降级与 revert |
+| F7 变更审阅 | 已验证 | `diff.rs`、`ChangesPanel.tsx`、`routes_workspace.rs`、`git.rs` | 四档基线（含任意 commit 输入）；turn 开始时 snapshot 工作树，Last Turn 基线真实可用；逐文件 hunk、Seen 进度/重置、整体 Revert 到 base、合回不自动提交；thread 与 project 分支分叉时 footer 提供 Keep Local Changes in a New Thread / Discard；e2e 行评论与 Seen；`diff_comment_drift_and_revert_to_base` 验证漂移写回/降级与 revert |
 | F8 断线与恢复 | 已验证 | WS 重连、`after_seq` 重放、事件快照、thread 状态、`agents.rs` | afterSeq/replay/resync 测试；浏览器 reload 后消息完整；断线条与重连 UI；loadSession 失败时发 `SystemNotice` 告知上下文已重置 |
 | F9 thread 生命周期 | 已验证 | `threads.rs`、`ThreadPage.tsx`、`ProjectPage.tsx` | Thread actions 菜单提供重命名/fork/删除，归档按钮保留；删除二次确认说明 worktree 与未提交变更；e2e 实际 rename → fork → delete 并清理 worktree |
 | F10 project 概览 | 已验证 | `projects.rs`、`ProjectPage.tsx`、`WorkspacePage.tsx` | 线程数、运行中、等待审批、增删行数、最近活动；概览计数测试 |
 | F11 焦点共享与跟随 | 已验证 | `presence.rs`、`presence.ts`、`TitleBar.tsx`、`Avatar.tsx` | 50ms 合并广播、隐身过滤、在线点、跨 thread 跟随；e2e 跟随 Bob 跳转到第二个 thread 并退出 |
-| F12 子 agent 展示 | 已验证 | `SidebarTree.tsx`、`ThreadTimeline.tsx`、`ThreadPage.tsx`、`agents.rs`、`WorkspaceLayout.tsx` | 主时间线可展开派遣卡片（状态/cwd/usage/错误原因/无独立会话/打开子会话）、运行中总数提示；左栏树、嵌套、Show N more、`⌘/Ctrl+J` 全量选择器、面包屑、子视图无 composer；fake `subagents` e2e 截图 |
+| F12 子 agent 展示 | 已验证 | `SidebarTree.tsx`、`ThreadTimeline.tsx`、`ThreadPage.tsx`、`agents.rs`、`acp.rs`、`WorkspaceLayout.tsx` | 主时间线可展开派遣卡片（状态/cwd/usage/错误原因/无独立会话/打开子会话）、运行中总数提示；ACP `SessionMessage` 生产 `Sent/Received Agent Message` 并持久化；左栏树、嵌套、Show N more、`⌘/Ctrl+J` 全量选择器、面包屑、子视图无 composer；fake `subagents` 与 `agent-message` 测试/截图 |
 | F13 提问与回答 | 已验证 | `approvals.rs`、`ElicitationCard.tsx`、`routes_actions.rs`、`agents.rs` | 表单/URL 两种模式；三种动作；首个响应获胜；secret 字段拒绝；取消 turn 时 pending elicitation 置 cancelled 并写 `ElicitationResolved`；审计/回归测试 |
 | F14 队列与中途插话 | 已验证 | `core/delivery.rs`、`agents.rs`、`routes_agent.rs`、`Composer.tsx` | steering 四种结果、停止并发送、Stop 取消、队列 tray 显示位置/作者/撤回；取消后 superseded 标记；队列顺序/持久化测试 |
 | F15 评论与标注 | 已验证 | `comments.rs`、`ChangesPanel.tsx`、`CommentsPanel.tsx`、`CommentDialog.tsx`、`SelectionComment.tsx`、`ThreadTimeline.tsx` | thread/message/tool/file/diff/elicitation 锚点；选中文本直接评论；文件行评论；回复链；`#message-*` 与 `#event-*` 双向跳转、消息头打开评论区；diff hunk 评论可按 hunk 折叠并保留行 gutter 标记；pending→下一条消息投递及 delivered_seq 跳转；漂移写回 DB 并降级为 File |
@@ -106,7 +106,7 @@
 | P2 | 只读文件浏览 / agent 输出 | 已验证 | Files 面板只读树 + 文件内容；Output 面板只读命令输出，无 shell |
 | P2 | 子 agent 聚焦 / 对比 | 已验证 | 子 thread 页面 + 面包屑 + 树中节点；`/p/:projectId/t/:threadId/subagents/compare` 并排对照两个子会话；子会话无 composer |
 | P2 | URL 模式提问 | 已验证 | 显示完整 URL 与主机名，显式点击后新标签页打开，无 iframe/预取 |
-| P2 | 通知 | 已验证 | 审批/提问/@提及浏览器通知受 `settings.browserNotifications` 控制；收件箱 5s 轮询覆盖任意页面；最小 Webhook POST（设置项优先） |
+| P2 | 通知 | 已验证 | 审批/提问/@提及浏览器通知受 `settings.browserNotifications` 控制；收件箱 5s 轮询覆盖任意页面；请求编辑权限写入 owner/editor 收件箱；最小 Webhook POST（设置项优先） |
 | P2 | 终端面板 | 已验证（只读） | 见冲突裁决；不是 PTY |
 
 ---
@@ -139,7 +139,7 @@ scripts/      install.sh、e2e-server.sh
 ```
 cargo fmt --all --check                                  pass
 cargo clippy --workspace --all-targets -- -D warnings    pass
-cargo nextest run --workspace                            252 passed, 1 skipped
+cargo nextest run --workspace                            255 passed, 1 skipped
 cargo test --workspace                                   pass（含 ignored 的真实 Codex smoke 之外的全部测试）
 pnpm --dir web typecheck                                 pass
 pnpm --dir web lint                                      pass
@@ -150,7 +150,7 @@ pnpm --dir web exec playwright test                      pass（单一 worker，
 `cargo nextest` 跳过的 1 个是 `real_codex_streams_a_reply`（标记 `#[ignore]`，需要 Codex 登录）。单独执行：
 
 ```
-MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored --nocapture
+MBX_BLAZE=false cargo test -p threadbase --test real_codex -- --ignored --nocapture
 → TurnEnded { stop_reason: "end_turn" }
 → message_completed text = "pong"
 ```
@@ -169,7 +169,9 @@ MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored -
 - Changes：修改 worktree、打开 diff、行内评论、Seen 1/1、文件再变后 Seen 0/1、评论随下一条消息 delivered。
 - Thread actions 实际 rename → fork → delete，删除后 project 列表与 worktree 同步刷新。
 - 发送 `subagents`：主时间线出现 “Test investigator / No cancel / Nested helper” 可展开卡片，`⌘/Ctrl+J` 打开全量子会话选择器。
-- 拒绝审批时填写原因并提交，确认 `note` 请求路径。
+- 工具卡显示 ACP diff 摘要（路径 / +N / −N），展开查看完整 patch。
+- 审批卡显示 “Full parameters”；拒绝审批时填写原因并提交，确认 `note` 请求路径。
+- viewer 点击 `Request access` 后 owner 收件箱出现请求。
 - 生成 thread/changes/project/share/inbox/subagents/subagent-picker/new-thread-menu/composer 截图；浏览器 console error 断言为空；1440 thread 截图包含消息、工具卡、Usage、审批，Composer 为 152px 输入区。
 - 真实 Codex 的 UI 截图 `composer-real-codex.png` 显示 Model/Reasoning effort 下拉（`gpt-6.1-sol` / `max`）。
 
@@ -190,7 +192,7 @@ MBX_BLAZE=false cargo test -p threadbase-server --test real_codex -- --ignored -
 
 ### 5.4 打包与分发
 
-- `MBX_BLAZE=false cargo build --release -p threadbase-server` 成功。
+- `MBX_BLAZE=false cargo build --release -p threadbase` 成功（package 名为 `threadbase`，lib 名仍为 `threadbase_server` 以保持内部导入稳定）。
 - 在 `/tmp` 运行 release 二进制（不依赖工作区 `web/`），`/api/health`、SPA、`/assets/*` 均 200；把 `web/dist` 临时移走后仍返回 200，证明发布产物使用内嵌资源。
 - release 二进制 + fake ACP agent 完整跑通：setup → project → thread → “stream” → tool card → “permission” → 审批 → `permission_resolved`，共 16 条事件。
 - 路由级 first prompt 验证：`initialPrompt: "stream"` 创建后 2 秒内产生 10 条事件，队列 worker 已启动 agent。
@@ -256,6 +258,7 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - 左栏是唯一导航；分组和行高收敛，移除口号、营销文案和重复说明。
 - 右栏标签改为图标按钮（Changes / Approvals / Output / Comments / Files），避免 380px 抽屉里五项文字挤压。
 - 空状态只留一句动作说明；错误状态说明可操作原因。
+- 状态矩阵：worktree 准备时显示 `Preparing…` + 步骤 tooltip；路径失效的 project 行提供 `Locate…`；分叉 thread 底部给出 Keep Local Changes in a New Thread / Discard；只读视图提供 `Request access`，不渲染禁用输入框。
 
 设计约束：所有交互必须同时改善 UX（更少步骤）、DX（组件和 API 一致、可测试）与 AX（agent 可通过语义锚点理解和操纵）。不得用装饰性渐变、无意义动画或说明文字弥补布局问题。
 

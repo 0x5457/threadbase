@@ -1,7 +1,7 @@
 //! Real-adapter contract smoke. Ignored by default; requires Codex login.
 //!
 //! Run with:
-//!   cargo test -p threadbase-server --test real_codex -- --ignored --nocapture
+//!   cargo test -p threadbase --test real_codex -- --ignored --nocapture
 
 use sqlx::SqlitePool;
 use std::path::Path;

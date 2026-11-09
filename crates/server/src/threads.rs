@@ -508,6 +508,7 @@ pub async fn dto(
     .fetch_optional(pool)
     .await?
     .unwrap_or(0);
+    let diverged = is_diverged(pool, row).await;
     let changes = crate::diff::stats(pool, row, user)
         .await
         .unwrap_or(ChangeStats {
@@ -537,11 +538,37 @@ pub async fn dto(
         pinned: row.pinned != 0,
         unread: max_seq > last_read,
         share_level: parse_share(&row.share_level),
+        diverged,
         participants,
         pending_approvals,
         queued_inputs: u32::try_from(queued_inputs).unwrap_or(0),
         changes,
     })
+}
+
+async fn is_diverged(pool: &SqlitePool, row: &ThreadRow) -> bool {
+    let (Some(base), Some(worktree)) = (row.base_sha.as_deref(), row.worktree_path.as_deref())
+    else {
+        return false;
+    };
+    let _ = worktree;
+    let Ok(project) = crate::projects::row(pool, &row.project_id).await else {
+        return false;
+    };
+    let Ok(head) = threadbase_workspace::git::rev_parse(
+        std::path::Path::new(&project.path),
+        &project.default_branch,
+    )
+    .await
+    else {
+        return false;
+    };
+    if head == base {
+        return false;
+    }
+    !threadbase_workspace::git::is_ancestor(std::path::Path::new(&project.path), base, &head)
+        .await
+        .unwrap_or(false)
 }
 
 async fn participants(pool: &SqlitePool, row: &ThreadRow) -> Result<Vec<Participant>, ServerError> {

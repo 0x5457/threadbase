@@ -3,4 +3,5 @@
 export type UpdateProjectRequest = {
   name: string | null;
   remoteUrl: string | null;
+  path: string | null;
 };

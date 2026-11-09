@@ -269,6 +269,7 @@ pub enum InboxKind {
     Elicitation,
     Mention,
     Invite,
+    Access,
     Error,
 }
 
@@ -367,6 +368,7 @@ pub struct ThreadDto {
     pub pinned: bool,
     pub unread: bool,
     pub share_level: ShareLevel,
+    pub diverged: bool,
     pub participants: Vec<Participant>,
     pub pending_approvals: u32,
     pub queued_inputs: u32,
@@ -436,6 +438,7 @@ pub struct ApprovalDto {
     pub cwd: Option<String>,
     pub paths: Vec<String>,
     pub options: Vec<ApprovalOption>,
+    pub input: Option<String>,
     pub status: ApprovalStatus,
     pub decision: Option<ApprovalDecision>,
     pub scope: Option<ApprovalScope>,

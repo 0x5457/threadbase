@@ -5,4 +5,5 @@ export type InboxKind =
   | "elicitation"
   | "mention"
   | "invite"
+  | "access"
   | "error";

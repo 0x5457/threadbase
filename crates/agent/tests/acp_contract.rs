@@ -251,6 +251,15 @@ async fn prompt_streams_text_tools_plan_usage_and_completion() {
     assert_eq!(call.locations[0].path, "/tmp/work/src/lib.rs");
     assert_eq!(call.locations[0].line, Some(12));
     assert_eq!(call.input.as_deref(), Some(r#"{"command":"cargo test"}"#));
+    let diff = call.diff.as_ref().expect("diff summary");
+    assert_eq!(diff.path, "/tmp/work/src/lib.rs");
+    assert_eq!(diff.additions, 1);
+    assert_eq!(diff.deletions, 0);
+    assert!(diff
+        .patch
+        .as_deref()
+        .unwrap_or_default()
+        .contains("+    run();"));
 
     let update = expect_event(&mut test.events, |event| {
         matches!(
@@ -767,4 +776,33 @@ async fn process_crash_emits_process_exited_and_closes_the_event_channel() {
         test.harness.events().try_recv(),
         Err(broadcast::error::TryRecvError::Closed)
     ));
+}
+
+#[tokio::test]
+async fn inter_session_messages_map_to_agent_message_events() {
+    let mut test = start(true).await;
+    new_session(&mut test).await;
+    test.harness
+        .prompt(vec!["agent-message".to_owned()])
+        .await
+        .expect("prompt");
+    let event = expect_event(&mut test.events, |event| {
+        matches!(event, RawAgentEvent::AgentMessage { .. })
+    })
+    .await;
+    let RawAgentEvent::AgentMessage {
+        direction,
+        from,
+        to,
+        text,
+    } = event
+    else {
+        unreachable!("filtered for agent message")
+    };
+    assert_eq!(direction, "sent");
+    assert_eq!(from, "sess-1");
+    assert_eq!(to, "sub-1");
+    assert_eq!(text, "peer message");
+    expect_prompt_done(&mut test.events).await;
+    test.harness.shutdown().await.expect("shutdown");
 }

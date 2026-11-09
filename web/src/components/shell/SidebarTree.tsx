@@ -67,6 +67,7 @@ export interface SidebarTreeProps {
   onSelectSubagent: (subagent: SubagentDto) => void;
   onNewProject: () => void;
   onNewThread: (projectId: string) => void;
+  onLocateProject?: (projectId: string) => void;
   onOpenInbox: () => void;
   onOpenSettings: () => void;
   onLogout: () => void;
@@ -552,6 +553,7 @@ interface ProjectNodeProps {
   onSelectThread: (thread: ThreadDto) => void;
   onSelectSubagent: (subagent: SubagentDto) => void;
   onNewThread: (projectId: string) => void;
+  onLocateProject?: (projectId: string) => void;
 }
 
 function ProjectNode({
@@ -572,6 +574,7 @@ function ProjectNode({
   onSelectThread,
   onSelectSubagent,
   onNewThread,
+  onLocateProject,
 }: ProjectNodeProps) {
   const [showAll, setShowAll] = useState(false);
   const expanded = !collapsedProjects.has(project.id);
@@ -598,6 +601,7 @@ function ProjectNode({
           selected={selectedProjectId === project.id && !selectedThreadId}
           onToggle={() => onToggleProject(project.id)}
           onSelect={() => onSelectProject(project.id)}
+          onLocate={() => onLocateProject?.(project.id)}
         />
         {expanded ? (
           <div className="relative ml-3 border-l border-border/70 pl-1">
@@ -621,6 +625,7 @@ function ProjectNode({
         selected={selectedProjectId === project.id && !selectedThreadId}
         onToggle={() => onToggleProject(project.id)}
         onSelect={() => onSelectProject(project.id)}
+        onLocate={() => onLocateProject?.(project.id)}
       />
       {expanded ? (
         <div className="relative ml-3 border-l border-border/70 pl-1">
@@ -665,12 +670,14 @@ function ProjectRow({
   selected,
   onToggle,
   onSelect,
+  onLocate,
 }: {
   project: ProjectDto;
   expanded: boolean;
   selected: boolean;
   onToggle: () => void;
   onSelect: () => void;
+  onLocate?: () => void;
 }) {
   return (
     <div
@@ -706,10 +713,17 @@ function ProjectRow({
         </Badge>
       ) : null}
       {!project.available ? (
-        <span
-          className="size-1.5 rounded-full bg-warning"
+        <button
+          type="button"
+          className="shrink-0 rounded px-1 text-[10px] text-warning hover:bg-hover hover:text-warning"
           title="Project path is unavailable"
-        />
+          onClick={(event) => {
+            event.stopPropagation();
+            onLocate?.();
+          }}
+        >
+          Locate…
+        </button>
       ) : null}
       {project.activeThreads > 0 ? (
         <span className="text-[10px] tabular-nums text-faint">
@@ -739,6 +753,7 @@ export function SidebarTree({
   onSelectSubagent,
   onNewProject,
   onNewThread,
+  onLocateProject,
   onOpenInbox,
   onOpenSettings,
   onLogout,
@@ -1005,6 +1020,7 @@ export function SidebarTree({
                       onNewThread(projectId);
                       onNavigate?.();
                     }}
+                    onLocateProject={(projectId) => onLocateProject?.(projectId)}
                   />
                 ))}
               </div>

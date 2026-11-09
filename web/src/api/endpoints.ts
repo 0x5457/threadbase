@@ -26,6 +26,7 @@ import type { Role } from "@/api/types/Role";
 import type { SeenRequest } from "@/api/types/SeenRequest";
 import type { UpdateCommentRequest } from "@/api/types/UpdateCommentRequest";
 import type { UpdateThreadRequest } from "@/api/types/UpdateThreadRequest";
+import type { UpdateProjectRequest } from "@/api/types/UpdateProjectRequest";
 import type { CreateThreadRequest } from "@/api/types/CreateThreadRequest";
 import type { DecisionRequest } from "@/api/types/DecisionRequest";
 import type { EventsPageDto } from "@/api/types/EventsPageDto";
@@ -232,6 +233,12 @@ export function forkThread(
   return api<ThreadResponse>(endpoints.forkThread(threadId), {
     method: "POST",
     body: { title },
+  });
+}
+
+export function requestAccess(threadId: ThreadId): Promise<OkResponse> {
+  return api<OkResponse>(`/api/threads/${segment(threadId)}/request-access`, {
+    method: "POST",
   });
 }
 
@@ -513,4 +520,14 @@ export function decideApproval(
     endpoints.approvalDecision(threadId, approvalId),
     { method: "POST", body: request },
   );
+}
+
+export function updateProject(
+  projectId: string,
+  request: UpdateProjectRequest,
+): Promise<ProjectResponse> {
+  return api<ProjectResponse>(`/api/projects/${segment(projectId)}`, {
+    method: "PATCH",
+    body: request,
+  });
 }
