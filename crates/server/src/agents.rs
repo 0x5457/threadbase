@@ -3,6 +3,7 @@
 use crate::auth::CurrentUser;
 use crate::error::ServerError;
 use crate::events::{EventMeta, EventStore};
+use crate::state::StateStore;
 use crate::threads;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ use threadbase_agent::{
     all_profiles, find_profile, AcpHarness, Capabilities, Harness, LaunchCtx, NewSession,
     RawAgentEvent, SessionId, SteeringOutcome, TurnHandle,
 };
+use threadbase_core::state::{ApprovalAction, SubagentAction, SubagentMachine, ThreadAction};
 use threadbase_core::{resolve_delivery, DeliveryContext, SendAction};
 use threadbase_shared::api::{DeliveryMode, SendMessageResponse};
 use threadbase_shared::{
@@ -31,6 +33,7 @@ pub struct AgentManager {
 struct Inner {
     pool: SqlitePool,
     events: EventStore,
+    state: StateStore,
     sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
     queue_tx: mpsc::UnboundedSender<String>,
 }
@@ -52,6 +55,32 @@ struct RunState {
     author: Option<UserBrief>,
 }
 
+async fn cancel_pending_approvals(inner: &Inner, thread_id: &str) {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM approvals WHERE thread_id = ? AND status = 'pending'")
+            .bind(thread_id)
+            .fetch_all(&inner.pool)
+            .await
+            .unwrap_or_default();
+    for id in ids {
+        let _ = inner
+            .state
+            .set_approval_status(thread_id, &id, ApprovalAction::Cancel)
+            .await;
+        let _ = inner
+            .events
+            .append(
+                &ThreadId::from(thread_id.to_owned()),
+                Actor::system(),
+                ThreadEvent::PermissionCancelled {
+                    approval_id: id.into(),
+                },
+                EventMeta::default(),
+            )
+            .await;
+    }
+}
+
 async fn cancel_pending_elicitations(inner: &Inner, thread_id: &str) {
     let ids: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM elicitations WHERE thread_id = ? AND status = 'pending'",
@@ -60,18 +89,11 @@ async fn cancel_pending_elicitations(inner: &Inner, thread_id: &str) {
     .fetch_all(&inner.pool)
     .await
     .unwrap_or_default();
+    if ids.is_empty() {
+        return;
+    }
+    let _ = inner.state.cancel_elicitations(thread_id).await;
     for id in ids {
-        if sqlx::query(
-            "UPDATE elicitations SET status = 'cancelled', responded_at = ? WHERE id = ? AND status = 'pending'",
-        )
-        .bind(now_ms())
-        .bind(&id)
-        .execute(&inner.pool)
-        .await
-        .is_err()
-        {
-            continue;
-        }
         let _ = inner
             .events
             .append(
@@ -91,11 +113,12 @@ async fn cancel_pending_elicitations(inner: &Inner, thread_id: &str) {
 
 impl AgentManager {
     #[must_use]
-    pub fn new(pool: SqlitePool, events: EventStore) -> Self {
+    pub fn new(pool: SqlitePool, events: EventStore, state: StateStore) -> Self {
         let (queue_tx, mut queue_rx) = mpsc::unbounded_channel::<String>();
         let inner = Arc::new(Inner {
             pool,
             events,
+            state,
             sessions: Mutex::new(HashMap::new()),
             queue_tx: queue_tx.clone(),
         });
@@ -116,10 +139,9 @@ impl AgentManager {
             let mut session = session.lock().await;
             let _ = session.harness.shutdown().await;
         }
-        sqlx::query("UPDATE threads SET status = 'preparing', updated_at = ? WHERE id = ?")
-            .bind(now_ms())
-            .bind(thread_id)
-            .execute(&self.inner.pool)
+        self.inner
+            .state
+            .transition_thread(thread_id, ThreadAction::Restart)
             .await?;
         self.ensure_started(thread_id).await
     }
@@ -217,11 +239,17 @@ impl AgentManager {
             },
         };
         if let Some(session) = session_id.as_ref() {
-            sqlx::query("UPDATE agent_bindings SET session_id = ?, status = 'idle', updated_at = ? WHERE thread_id = ?")
-                .bind(session.0.as_str())
-                .bind(now_ms())
-                .bind(thread_id)
-                .execute(&self.inner.pool)
+            sqlx::query(
+                "UPDATE agent_bindings SET session_id = ?, updated_at = ? WHERE thread_id = ?",
+            )
+            .bind(session.0.as_str())
+            .bind(now_ms())
+            .bind(thread_id)
+            .execute(&self.inner.pool)
+            .await?;
+            self.inner
+                .state
+                .set_binding_status(thread_id, "idle", None)
                 .await?;
         }
         if reset_context {
@@ -259,17 +287,18 @@ impl AgentManager {
         };
         tokio::spawn(async move {
             while let Ok(event) = events.recv().await {
-                if pump.handle(event).await.is_err() {
-                    break;
+                if let Err(error) = pump.handle(event).await {
+                    tracing::warn!(%error, thread_id = %pump.thread_id, "agent pump event failed");
                 }
             }
         });
         sessions.insert(thread_id.to_owned(), session);
-        sqlx::query("UPDATE threads SET status = 'idle', updated_at = ? WHERE id = ?")
-            .bind(now_ms())
-            .bind(thread_id)
-            .execute(&self.inner.pool)
-            .await?;
+        if self.inner.state.thread_status(thread_id).await.ok() == Some(ThreadStatus::Preparing) {
+            self.inner
+                .state
+                .transition_thread(thread_id, ThreadAction::StartSucceeded)
+                .await?;
+        }
         Ok(())
     }
 
@@ -297,7 +326,8 @@ impl AgentManager {
         );
         match action {
             SendAction::Queue => {
-                let position = enqueue(&self.inner.pool, thread_id, user, text).await?;
+                let position =
+                    enqueue(&self.inner.pool, &self.inner.state, thread_id, user, text).await?;
                 let _ =
                     crate::queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
                 Ok(SendMessageResponse {
@@ -338,16 +368,23 @@ impl AgentManager {
                         })
                     }
                     SteeringOutcome::PromptRequired => {
-                        let position = enqueue(&self.inner.pool, thread_id, user, text).await?;
+                        let position =
+                            enqueue(&self.inner.pool, &self.inner.state, thread_id, user, text)
+                                .await?;
                         Ok(SendMessageResponse {
                             delivery: Delivery::Queued,
                             queue_position: Some(position),
                             message_id: None,
                         })
                     }
-                    SteeringOutcome::Failed { reason } => Err(ServerError::internal(
-                        reason.unwrap_or_else(|| "steering failed".into()),
-                    )),
+                    SteeringOutcome::Failed { reason } => {
+                        tracing::warn!(?reason, "steering failed; dropping input");
+                        Ok(SendMessageResponse {
+                            delivery: Delivery::Dropped,
+                            queue_position: None,
+                            message_id: None,
+                        })
+                    }
                 }
             }
             SendAction::StopAndSend => {
@@ -426,14 +463,15 @@ impl AgentManager {
             run.agent_text.clear();
             run.author = Some(author);
         }
-        let handle = session
-            .harness
-            .prompt(vec![text.to_owned()])
-            .await
-            .map_err(agent_error)?;
+        let mut parts = vec![text.to_owned()];
+        if let Some(summary) = self.inner.state.summary(thread_id).await {
+            parts.push(summary);
+        }
+        let handle = session.harness.prompt(parts).await.map_err(agent_error)?;
         session.turn = Some(handle);
         self.inner
-            .set_thread_status(thread_id, ThreadStatus::Running)
+            .state
+            .transition_thread(thread_id, ThreadAction::Prompt)
             .await?;
         Ok(SendMessageResponse {
             delivery,
@@ -473,13 +511,19 @@ impl AgentManager {
             session.harness.cancel(&turn).await.map_err(agent_error)?;
         }
         crate::queue::mark_superseded(
-            &self.inner.pool,
+            &self.inner.state,
             thread_id,
             session.turn.as_ref().map(|turn| turn.turn_id.as_str()),
         )
         .await
         .map_err(|error| ServerError::internal(error.to_string()))?;
+        cancel_pending_approvals(&self.inner, thread_id).await;
         cancel_pending_elicitations(&self.inner, thread_id).await;
+        let _ = self
+            .inner
+            .state
+            .transition_thread(thread_id, ThreadAction::Cancel)
+            .await;
         let _ = crate::queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
         Ok(())
     }
@@ -497,8 +541,17 @@ impl AgentManager {
             .decide(approval_id, decision)
             .await
             .map_err(agent_error)?;
+        let turn_active = session.turn.is_some();
+        let remaining = crate::approvals::count_pending_items(&self.inner.pool, thread_id).await?;
         self.inner
-            .set_thread_status(thread_id, ThreadStatus::Running)
+            .state
+            .transition_thread(
+                thread_id,
+                ThreadAction::ApprovalResolved {
+                    turn_active,
+                    remaining_pending: remaining,
+                },
+            )
             .await?;
         Ok(())
     }
@@ -522,6 +575,18 @@ impl AgentManager {
             .respond_elicitation(elicitation_id, mapped, values)
             .await
             .map_err(agent_error)?;
+        let turn_active = session.turn.is_some();
+        let remaining = crate::approvals::count_pending_items(&self.inner.pool, thread_id).await?;
+        self.inner
+            .state
+            .transition_thread(
+                thread_id,
+                ThreadAction::ElicitationResolved {
+                    turn_active,
+                    remaining_pending: remaining,
+                },
+            )
+            .await?;
         Ok(())
     }
 
@@ -530,6 +595,16 @@ impl AgentManager {
         thread_id: &str,
         subagent_id: &str,
     ) -> Result<(), ServerError> {
+        let status = self
+            .inner
+            .state
+            .subagent_status(thread_id, subagent_id)
+            .await?;
+        if SubagentMachine::is_terminal(status) || !SubagentMachine::can_cancel(status) {
+            return Err(ServerError(threadbase_shared::ApiError::conflict(
+                "subagent can no longer be cancelled",
+            )));
+        }
         let session = self.session(thread_id).await?;
         let mut session = session.lock().await;
         session
@@ -551,19 +626,14 @@ impl AgentManager {
 }
 
 impl Inner {
-    async fn set_thread_status(
-        &self,
-        thread_id: &str,
-        status: ThreadStatus,
-    ) -> Result<(), ServerError> {
-        let value = status_str(status);
-        sqlx::query("UPDATE threads SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(value)
-            .bind(now_ms())
-            .bind(thread_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+    /// Clear the in-memory turn handle for a thread.
+    ///
+    /// Called before a turn's completion events are published so a concurrent
+    /// `send` observes an idle session instead of injecting into a finished turn.
+    async fn clear_turn(&self, thread_id: &str) {
+        if let Some(session) = self.sessions.lock().await.get(thread_id).cloned() {
+            session.lock().await.turn = None;
+        }
     }
 
     async fn current_turn(&self, thread_id: &str) -> Option<TurnId> {
@@ -667,6 +737,7 @@ impl Pump {
                     .collect();
                 let approval = crate::approvals::create(
                     &self.inner.pool,
+                    &self.inner.state,
                     &self.inner.events,
                     crate::approvals::NewApproval {
                         id: request.id.clone(),
@@ -687,7 +758,8 @@ impl Pump {
                     EventMeta::default(),
                 )
                 .await?;
-                self.set_status("requires_action").await?;
+                self.set_thread_status(ThreadAction::ApprovalPending)
+                    .await?;
                 self.try_auto_rule(&approval).await?;
             }
             RawAgentEvent::ElicitationRequest { request } => {
@@ -713,43 +785,59 @@ impl Pump {
                 };
                 crate::approvals::create_elicitation(
                     &self.inner.pool,
+                    &self.inner.state,
                     &self.inner.events,
                     elicitation,
                     Actor::agent("Threadbase agent"),
                     EventMeta::default(),
                 )
                 .await?;
-                self.set_status("requires_action").await?;
+                self.set_thread_status(ThreadAction::ElicitationPending)
+                    .await?;
             }
             RawAgentEvent::Subagent { event } => {
+                let usage_json = event
+                    .usage
+                    .as_ref()
+                    .map(|usage| serde_json::to_string(usage).unwrap_or_default());
+                let next_status = match self
+                    .inner
+                    .state
+                    .create_subagent(
+                        &self.thread_id,
+                        &event.id,
+                        event.parent_id.as_deref(),
+                        &event.title,
+                        event.description.as_deref(),
+                        event.cwd.as_deref(),
+                        event.can_cancel,
+                        usage_json.as_deref(),
+                        subagent_action(event.status),
+                    )
+                    .await
+                {
+                    Ok(next) => next,
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            subagent_id = %event.id,
+                            "illegal subagent transition"
+                        );
+                        self.inner
+                            .state
+                            .subagent_status(&self.thread_id, &event.id)
+                            .await
+                            .unwrap_or(event.status)
+                    }
+                };
                 let now = now_ms();
-                sqlx::query(
-                    "INSERT INTO subagents(id, thread_id, parent_id, title, description, status, cwd, can_cancel, usage_json, last_seq, created_at, updated_at)
-                     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-                     ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description,
-                        status = excluded.status, cwd = excluded.cwd, can_cancel = excluded.can_cancel,
-                        usage_json = excluded.usage_json, updated_at = excluded.updated_at",
-                )
-                .bind(&event.id)
-                .bind(&self.thread_id)
-                .bind(event.parent_id.as_deref())
-                .bind(&event.title)
-                .bind(event.description.as_deref())
-                .bind(subagent_status_str(event.status))
-                .bind(event.cwd.as_deref())
-                .bind(i64::from(event.can_cancel))
-                .bind(event.usage.as_ref().map(|usage| serde_json::to_string(usage).unwrap_or_default()))
-                .bind(now)
-                .bind(now)
-                .execute(&self.inner.pool)
-                .await?;
                 let dto = SubagentDto {
                     id: event.id.into(),
                     thread_id: ThreadId::from(self.thread_id.clone()),
                     parent_id: event.parent_id.map(Into::into),
                     title: event.title,
                     description: event.description,
-                    status: event.status,
+                    status: next_status,
                     cwd: event.cwd,
                     can_cancel: event.can_cancel,
                     usage: event.usage,
@@ -789,6 +877,9 @@ impl Pump {
                     .await?;
             }
             RawAgentEvent::PromptDone { stop_reason } => {
+                // Publish the turn as finished in memory before the completion
+                // events so a concurrent send starts a fresh prompt.
+                self.inner.clear_turn(&self.thread_id).await;
                 let (turn_id, message_id, text, author) = {
                     let mut run = self.run.lock().await;
                     (
@@ -827,7 +918,7 @@ impl Pump {
                     )
                     .await?;
                 }
-                self.set_status("idle").await?;
+                self.set_thread_status(ThreadAction::TurnEnded).await?;
                 let _ = self.queue_tx.send(self.thread_id.clone());
                 let _ = author;
             }
@@ -840,7 +931,7 @@ impl Pump {
                     EventMeta::default(),
                 )
                 .await?;
-                self.set_status("error").await?;
+                self.set_thread_status(ThreadAction::TurnError).await?;
             }
             RawAgentEvent::ProcessExited { code, signal } => {
                 self.append(
@@ -852,7 +943,7 @@ impl Pump {
                     EventMeta::default(),
                 )
                 .await?;
-                self.set_status("interrupted").await?;
+                self.set_thread_status(ThreadAction::ProcessExited).await?;
             }
             RawAgentEvent::Notice { message } => {
                 self.append(
@@ -902,20 +993,33 @@ impl Pump {
         };
         crate::approvals::auto_allow(
             &self.inner.pool,
+            &self.inner.state,
             &self.inner.events,
             approval.id.as_str(),
             &rule,
         )
         .await?;
-        {
+        let turn_active = {
             let mut session = session.lock().await;
             session
                 .harness
                 .decide(approval.id.as_str(), SharedDecision::AllowOnce)
                 .await
                 .map_err(agent_error)?;
-        }
-        self.set_status("running").await?;
+            session.turn.is_some()
+        };
+        let remaining =
+            crate::approvals::count_pending_items(&self.inner.pool, &self.thread_id).await?;
+        self.inner
+            .state
+            .transition_thread(
+                &self.thread_id,
+                ThreadAction::ApprovalResolved {
+                    turn_active,
+                    remaining_pending: remaining,
+                },
+            )
+            .await?;
         Ok(())
     }
 
@@ -932,12 +1036,10 @@ impl Pump {
         Ok(())
     }
 
-    async fn set_status(&self, status: &str) -> Result<(), ServerError> {
-        sqlx::query("UPDATE threads SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(status)
-            .bind(now_ms())
-            .bind(&self.thread_id)
-            .execute(&self.inner.pool)
+    async fn set_thread_status(&self, action: ThreadAction) -> Result<(), ServerError> {
+        self.inner
+            .state
+            .transition_thread(&self.thread_id, action)
             .await?;
         Ok(())
     }
@@ -972,11 +1074,7 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
     let Some((id, author_id, text)) = row else {
         return Ok(());
     };
-    sqlx::query("UPDATE queued_inputs SET status = 'sending', updated_at = ? WHERE id = ?")
-        .bind(now_ms())
-        .bind(&id)
-        .execute(&inner.pool)
-        .await?;
+    inner.state.dispatch_queue_item(thread_id, &id).await?;
     let author = crate::auth::load_user_by_id(&inner.pool, &author_id)
         .await?
         .map(|user| user_dto_brief(&user))
@@ -1014,25 +1112,28 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
         run.agent_text.clear();
         run.author = Some(author);
     }
-    match session.harness.prompt(vec![text]).await {
+    let mut parts = vec![text];
+    if let Some(summary) = inner.state.summary(thread_id).await {
+        parts.push(summary);
+    }
+    match session.harness.prompt(parts).await {
         Ok(handle) => {
             session.turn = Some(handle);
-            sqlx::query("UPDATE queued_inputs SET status = 'sent', turn_id = ?, updated_at = ? WHERE id = ?")
-                .bind(session.turn.as_ref().map(|turn| turn.turn_id.clone()))
-                .bind(now_ms())
-                .bind(&id)
-                .execute(&inner.pool)
+            inner
+                .state
+                .complete_queue_item(
+                    thread_id,
+                    &id,
+                    session.turn.as_ref().map(|turn| turn.turn_id.as_str()),
+                )
                 .await?;
             inner
-                .set_thread_status(thread_id, ThreadStatus::Running)
+                .state
+                .transition_thread(thread_id, ThreadAction::Prompt)
                 .await?;
         }
         Err(error) => {
-            sqlx::query("UPDATE queued_inputs SET status = 'dropped', updated_at = ? WHERE id = ?")
-                .bind(now_ms())
-                .bind(&id)
-                .execute(&inner.pool)
-                .await?;
+            inner.state.fail_queue_item(thread_id, &id).await?;
             let _ = crate::queue::publish(&inner.pool, &inner.events, thread_id).await;
             return Err(agent_error(error));
         }
@@ -1042,6 +1143,7 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
 
 async fn enqueue(
     pool: &SqlitePool,
+    state: &crate::state::StateStore,
     thread_id: &str,
     user: &CurrentUser,
     text: &str,
@@ -1052,33 +1154,28 @@ async fn enqueue(
     .bind(thread_id)
     .fetch_one(pool)
     .await?;
-    sqlx::query(
-        "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position, created_at, updated_at)
-         VALUES(?, ?, ?, ?, 'queued', ?, ?, ?)",
-    )
-    .bind(Ulid::new().to_string())
-    .bind(thread_id)
-    .bind(user.user.id.as_str())
-    .bind(text)
-    .bind(position)
-    .bind(now_ms())
-    .bind(now_ms())
-    .execute(pool)
-    .await?;
+    let id = Ulid::new().to_string();
+    state
+        .enqueue(
+            &id,
+            thread_id,
+            user.user.id.as_str(),
+            text,
+            position,
+            now_ms(),
+        )
+        .await?;
     Ok(u32::try_from(position).unwrap_or(0))
 }
 
 async fn mark_agent_error(inner: &Arc<Inner>, thread_id: &str, message: &str) {
-    let _ = sqlx::query("UPDATE threads SET status = 'error', updated_at = ? WHERE id = ?")
-        .bind(now_ms())
-        .bind(thread_id)
-        .execute(&inner.pool)
+    let _ = inner
+        .state
+        .transition_thread(thread_id, ThreadAction::AgentFailed)
         .await;
-    let _ = sqlx::query("UPDATE agent_bindings SET status = 'error', last_error = ?, updated_at = ? WHERE thread_id = ?")
-        .bind(message)
-        .bind(now_ms())
-        .bind(thread_id)
-        .execute(&inner.pool)
+    let _ = inner
+        .state
+        .set_binding_status(thread_id, "error", Some(message))
         .await;
     let _ = inner
         .events
@@ -1210,25 +1307,13 @@ fn tool_kind_str(kind: threadbase_shared::ToolKind) -> &'static str {
     }
 }
 
-fn subagent_status_str(status: SubagentStatus) -> &'static str {
+fn subagent_action(status: SubagentStatus) -> SubagentAction {
     match status {
-        SubagentStatus::Running => "running",
-        SubagentStatus::RequiresAction => "requires_action",
-        SubagentStatus::Idle => "idle",
-        SubagentStatus::Cancelled => "cancelled",
-        SubagentStatus::Error => "error",
-    }
-}
-
-fn status_str(status: ThreadStatus) -> &'static str {
-    match status {
-        ThreadStatus::Preparing => "preparing",
-        ThreadStatus::Idle => "idle",
-        ThreadStatus::Running => "running",
-        ThreadStatus::RequiresAction => "requires_action",
-        ThreadStatus::Interrupted => "interrupted",
-        ThreadStatus::Error => "error",
-        ThreadStatus::Archived => "archived",
+        SubagentStatus::Running => SubagentAction::Run,
+        SubagentStatus::Idle => SubagentAction::Idle,
+        SubagentStatus::RequiresAction => SubagentAction::RequireAction,
+        SubagentStatus::Error => SubagentAction::Fail,
+        SubagentStatus::Cancelled => SubagentAction::Cancel,
     }
 }
 

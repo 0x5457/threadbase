@@ -18,6 +18,7 @@ import {
   fetchState,
   fetchThreadBundle,
   fetchThreadEvents,
+  fetchThreadState,
   fetchWorkspaceThreads,
   searchWorkspace,
   type InboxFilter,
@@ -34,6 +35,7 @@ export const queryKeys = {
     ["projects", projectId, "threads", includeArchived] as const,
   threads: ["threads"] as const,
   threadBundle: (threadId: string) => ["threads", threadId, "bundle"] as const,
+  threadState: (threadId: string) => ["threads", threadId, "state"] as const,
   threadEvents: (threadId: string) => ["threads", threadId, "events"] as const,
   changes: (threadId: string, kind: string) =>
     ["threads", threadId, "changes", kind] as const,
@@ -116,6 +118,14 @@ export function useThreadBundle(threadId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.threadBundle(threadId ?? ""),
     queryFn: () => fetchThreadBundle(threadId ?? ""),
+    enabled: Boolean(threadId),
+  });
+}
+
+export function useThreadState(threadId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.threadState(threadId ?? ""),
+    queryFn: () => fetchThreadState(threadId ?? ""),
     enabled: Boolean(threadId),
   });
 }

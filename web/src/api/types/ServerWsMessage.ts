@@ -3,8 +3,7 @@ import type { EventEnvelope } from "./EventEnvelope";
 import type { EventsPageDto } from "./EventsPageDto";
 import type { Focus } from "./Focus";
 import type { ProjectId } from "./ProjectId";
-import type { ThreadId } from "./ThreadId";
-import type { ThreadStatus } from "./ThreadStatus";
+import type { ThreadState } from "./ThreadState";
 import type { UserId } from "./UserId";
 
 export type ServerWsMessage =
@@ -16,13 +15,7 @@ export type ServerWsMessage =
     focuses: Array<Focus>;
     onlineUserIds: Array<UserId>;
   }
-  | {
-    "type": "thread_state";
-    threadId: ThreadId;
-    status: ThreadStatus;
-    pendingApprovals: number;
-    queuedInputs: number;
-  }
+  | { "type": "thread_state"; state: ThreadState }
   | { "type": "inbox_count"; unread: number }
   | { "type": "notice"; level: string; message: string }
   | { "type": "pong" };

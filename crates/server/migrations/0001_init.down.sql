@@ -1,0 +1,26 @@
+-- Rollback for 0001_init: drop the full Threadbase schema.
+DROP TABLE IF EXISTS webhooks;
+DROP TABLE IF EXISTS user_settings;
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS inbox;
+DROP TABLE IF EXISTS thread_reads;
+DROP TABLE IF EXISTS seen_files;
+DROP TABLE IF EXISTS invites;
+DROP TABLE IF EXISTS attachments;
+DROP TABLE IF EXISTS draft_snapshots;
+DROP TABLE IF EXISTS draft_updates;
+DROP TABLE IF EXISTS comments;
+DROP TABLE IF EXISTS elicitations;
+DROP TABLE IF EXISTS approval_rules;
+DROP TABLE IF EXISTS approvals;
+DROP TABLE IF EXISTS queued_inputs;
+DROP TABLE IF EXISTS subagents;
+DROP TABLE IF EXISTS snapshots;
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS thread_counters;
+DROP TABLE IF EXISTS agent_bindings;
+DROP TABLE IF EXISTS thread_members;
+DROP TABLE IF EXISTS threads;
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS auth_sessions;
+DROP TABLE IF EXISTS users;

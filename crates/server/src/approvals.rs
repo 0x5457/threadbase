@@ -3,6 +3,10 @@
 use crate::error::ServerError;
 use crate::events::EventStore;
 use sqlx::{FromRow, SqlitePool};
+use threadbase_core::state::{
+    approval_status_str, elicitation_status_str, parse_approval_status, parse_elicitation_status,
+    ElicitationAction, ReadRules,
+};
 use threadbase_shared::{
     Actor, ApprovalDecision, ApprovalDto, ApprovalKind, ApprovalOption, ApprovalScope,
     ApprovalStatus, ToolCallId,
@@ -56,6 +60,23 @@ pub async fn count_pending(pool: &SqlitePool, thread_id: &str) -> Result<u32, Se
     Ok(u32::try_from(count).unwrap_or(0))
 }
 
+/// Total pending approvals plus elicitations for a thread.
+pub async fn count_pending_items(pool: &SqlitePool, thread_id: &str) -> Result<u32, ServerError> {
+    let approvals: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM approvals WHERE thread_id = ? AND status = 'pending'",
+    )
+    .bind(thread_id)
+    .fetch_one(pool)
+    .await?;
+    let elicitations: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM elicitations WHERE thread_id = ? AND status = 'pending'",
+    )
+    .bind(thread_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(u32::try_from(approvals + elicitations).unwrap_or(0))
+}
+
 #[must_use]
 pub fn to_dto(row: ApprovalRow) -> ApprovalDto {
     ApprovalDto {
@@ -72,7 +93,7 @@ pub fn to_dto(row: ApprovalRow) -> ApprovalDto {
         paths: serde_json::from_str(&row.paths_json).unwrap_or_default(),
         options: serde_json::from_str::<Vec<ApprovalOption>>(&row.options_json).unwrap_or_default(),
         input: row.input_json,
-        status: parse_status(&row.status),
+        status: parse_approval_status(&row.status).unwrap_or(ApprovalStatus::Pending),
         decision: row.decision.as_deref().and_then(parse_decision),
         scope: row.scope.as_deref().and_then(parse_scope),
         decided_by: None,
@@ -88,15 +109,6 @@ fn parse_kind(value: &str) -> ApprovalKind {
         "file_write" => ApprovalKind::FileWrite,
         "network" => ApprovalKind::Network,
         _ => ApprovalKind::Other,
-    }
-}
-
-fn parse_status(value: &str) -> ApprovalStatus {
-    match value {
-        "allowed" => ApprovalStatus::Allowed,
-        "denied" => ApprovalStatus::Denied,
-        "cancelled" => ApprovalStatus::Cancelled,
-        _ => ApprovalStatus::Pending,
     }
 }
 
@@ -138,33 +150,24 @@ pub struct NewApproval {
 
 pub async fn create(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &crate::events::EventStore,
     approval: NewApproval,
     actor: threadbase_shared::Actor,
     meta: crate::events::EventMeta,
 ) -> Result<ApprovalDto, ServerError> {
     let now = threadbase_shared::now_ms();
-    sqlx::query(
-        "INSERT INTO approvals(id, thread_id, subagent_id, turn_id, tool_call_id, agent, title, kind,
-            command, cwd, paths_json, options_json, input_json, status, created_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-    )
-    .bind(&approval.id)
-    .bind(&approval.thread_id)
-    .bind(approval.subagent_id.as_deref())
-    .bind(approval.turn_id.as_deref())
-    .bind(approval.tool_call_id.as_deref())
-    .bind(&approval.agent)
-    .bind(&approval.title)
-    .bind(&approval.kind)
-    .bind(approval.command.as_deref())
-    .bind(approval.cwd.as_deref())
-    .bind(serde_json::to_string(&approval.paths).unwrap_or_else(|_| "[]".into()))
-    .bind(serde_json::to_string(&approval.options).unwrap_or_else(|_| "[]".into()))
-    .bind(approval.input.as_deref())
-    .bind(now)
-    .execute(pool)
-    .await?;
+    let paths_json = serde_json::to_string(&approval.paths).unwrap_or_else(|_| "[]".into());
+    let options_json = serde_json::to_string(&approval.options).unwrap_or_else(|_| "[]".into());
+    state_store
+        .insert_approval(
+            &approval,
+            &paths_json,
+            &options_json,
+            approval.input.as_deref(),
+            now,
+        )
+        .await?;
     let row = load(pool, &approval.id).await?;
     let dto = to_dto(row);
     events
@@ -211,6 +214,7 @@ pub async fn load(pool: &SqlitePool, approval_id: &str) -> Result<ApprovalRow, S
 
 pub async fn decide(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &crate::events::EventStore,
     approval_id: &str,
     user: &crate::auth::CurrentUser,
@@ -224,11 +228,11 @@ pub async fn decide(
         )));
     }
     crate::authz::require_write_role(pool, &row.thread_id, user).await?;
-    let (status, mut scope) = match decision {
-        threadbase_shared::ApprovalDecision::AllowOnce => ("allowed", Some("once")),
-        threadbase_shared::ApprovalDecision::AllowSession => ("allowed", Some("session")),
-        threadbase_shared::ApprovalDecision::AllowThread => ("allowed", Some("thread")),
-        threadbase_shared::ApprovalDecision::Deny => ("denied", None),
+    let mut scope = match decision {
+        threadbase_shared::ApprovalDecision::AllowOnce => Some("once"),
+        threadbase_shared::ApprovalDecision::AllowSession => Some("session"),
+        threadbase_shared::ApprovalDecision::AllowThread => Some("thread"),
+        threadbase_shared::ApprovalDecision::Deny => None,
     };
     if scope == Some("thread") && row.subagent_id.is_some() {
         let worktree: Option<String> =
@@ -243,24 +247,17 @@ pub async fn decide(
         }
     }
     let now = threadbase_shared::now_ms();
-    let updated = sqlx::query(
-        "UPDATE approvals SET status = ?, decision = ?, scope = ?, decided_by = ?, decided_at = ?,
-            note = ? WHERE id = ? AND status = 'pending'",
-    )
-    .bind(status)
-    .bind(decision_str(decision))
-    .bind(scope)
-    .bind(user.user.id.as_str())
-    .bind(now)
-    .bind(note)
-    .bind(approval_id)
-    .execute(pool)
-    .await?;
-    if updated.rows_affected() == 0 {
-        return Err(ServerError(threadbase_shared::ApiError::conflict(
-            "this request has already been handled",
-        )));
-    }
+    let next_status = state_store
+        .decide_approval(
+            &row.thread_id,
+            approval_id,
+            decision,
+            scope,
+            user.user.id.as_str(),
+            now,
+            note,
+        )
+        .await?;
     if matches!(scope, Some("session" | "thread")) {
         let project_id: String = sqlx::query_scalar("SELECT project_id FROM threads WHERE id = ?")
             .bind(&row.thread_id)
@@ -307,7 +304,7 @@ pub async fn decide(
         "approval.decided",
         Some("approval"),
         Some(approval_id),
-        Some(status),
+        Some(approval_status_str(next_status)),
         None,
     )
     .await;
@@ -316,36 +313,15 @@ pub async fn decide(
 
 pub async fn create_elicitation(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &crate::events::EventStore,
     elicitation: threadbase_shared::ElicitationDto,
     actor: threadbase_shared::Actor,
     meta: crate::events::EventMeta,
 ) -> Result<threadbase_shared::ElicitationDto, ServerError> {
-    sqlx::query(
-        "INSERT INTO elicitations(id, thread_id, subagent_id, tool_call_id, agent, message, mode,
-            schema_json, blocking, status, created_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-    )
-    .bind(elicitation.id.as_str())
-    .bind(elicitation.thread_id.as_str())
-    .bind(elicitation.subagent_id.as_ref().map(|value| value.as_str()))
-    .bind(
-        elicitation
-            .tool_call_id
-            .as_ref()
-            .map(|value| value.as_str()),
-    )
-    .bind(&elicitation.agent)
-    .bind(&elicitation.message)
-    .bind(match elicitation.mode {
-        threadbase_shared::ElicitationMode::Form => "form",
-        threadbase_shared::ElicitationMode::Url => "url",
-    })
-    .bind(serde_json::to_string(&elicitation.requested_schema).unwrap_or_else(|_| "{}".into()))
-    .bind(i64::from(elicitation.blocking))
-    .bind(elicitation.created_at)
-    .execute(pool)
-    .await?;
+    state_store
+        .insert_elicitation(&elicitation, elicitation.created_at)
+        .await?;
     events
         .append(
             &elicitation.thread_id.clone(),
@@ -384,6 +360,7 @@ pub async fn create_elicitation(
 
 pub async fn respond_elicitation(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &crate::events::EventStore,
     elicitation_id: &str,
     user: &crate::auth::CurrentUser,
@@ -400,36 +377,22 @@ pub async fn respond_elicitation(
     if action == threadbase_shared::ElicitationAction::Accept {
         reject_secret_schema(&row.schema_json)?;
     }
-    let status = match action {
-        threadbase_shared::ElicitationAction::Accept => "accepted",
-        threadbase_shared::ElicitationAction::Decline => "declined",
-        threadbase_shared::ElicitationAction::Cancel => "cancelled",
+    let machine_action = match action {
+        threadbase_shared::ElicitationAction::Accept => ElicitationAction::Accept,
+        threadbase_shared::ElicitationAction::Decline => ElicitationAction::Decline,
+        threadbase_shared::ElicitationAction::Cancel => ElicitationAction::Cancel,
     };
     let now = threadbase_shared::now_ms();
-    let updated = sqlx::query(
-        "UPDATE elicitations SET status = ?, response_json = ?, responded_by = ?, responded_at = ?
-         WHERE id = ? AND status = 'pending'",
-    )
-    .bind(status)
-    .bind(
-        values
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|error| {
-                ServerError(threadbase_shared::ApiError::validation(error.to_string()))
-            })?,
-    )
-    .bind(user.user.id.as_str())
-    .bind(now)
-    .bind(elicitation_id)
-    .execute(pool)
-    .await?;
-    if updated.rows_affected() == 0 {
-        return Err(ServerError(threadbase_shared::ApiError::conflict(
-            "this question has already been answered",
-        )));
-    }
+    let next_status = state_store
+        .respond_elicitation(
+            &row.thread_id,
+            elicitation_id,
+            machine_action,
+            values.as_ref(),
+            user.user.id.as_str(),
+            now,
+        )
+        .await?;
     events
         .append(
             &row.thread_id.clone().into(),
@@ -453,7 +416,7 @@ pub async fn respond_elicitation(
         "elicitation.responded",
         Some("elicitation"),
         Some(elicitation_id),
-        Some(status),
+        Some(elicitation_status_str(next_status)),
         None,
     )
     .await;
@@ -599,12 +562,8 @@ fn to_elicitation_dto(
         },
         requested_schema: serde_json::from_str(&row.schema_json).unwrap_or(serde_json::Value::Null),
         blocking: row.blocking != 0,
-        status: match row.status.as_str() {
-            "accepted" => threadbase_shared::ElicitationStatus::Accepted,
-            "declined" => threadbase_shared::ElicitationStatus::Declined,
-            "cancelled" => threadbase_shared::ElicitationStatus::Cancelled,
-            _ => threadbase_shared::ElicitationStatus::Pending,
-        },
+        status: parse_elicitation_status(&row.status)
+            .unwrap_or(threadbase_shared::ElicitationStatus::Pending),
         response: row
             .response_json
             .as_deref()
@@ -676,15 +635,6 @@ async fn notify_thread_members(
     Ok(())
 }
 
-fn decision_str(decision: threadbase_shared::ApprovalDecision) -> &'static str {
-    match decision {
-        threadbase_shared::ApprovalDecision::AllowOnce => "allow_once",
-        threadbase_shared::ApprovalDecision::AllowSession => "allow_session",
-        threadbase_shared::ApprovalDecision::AllowThread => "allow_thread",
-        threadbase_shared::ApprovalDecision::Deny => "deny",
-    }
-}
-
 fn user_brief(user: &threadbase_shared::UserDto) -> threadbase_shared::UserBrief {
     threadbase_shared::UserBrief {
         id: user.id.clone(),
@@ -739,7 +689,7 @@ pub async fn list_inbox(
     let items = rows
         .into_iter()
         .map(|row| {
-            if row.read_at.is_none() {
+            if ReadRules::inbox_unread(row.read_at) {
                 unread += 1;
             }
             let actor = row
@@ -761,7 +711,7 @@ pub async fn list_inbox(
                 project_id: row.project_id.into(),
                 summary: row.summary,
                 created_at: row.created_at,
-                read: row.read_at.is_some(),
+                read: !ReadRules::inbox_unread(row.read_at),
                 approval_id: row.approval_id.map(Into::into),
                 elicitation_id: row.elicitation_id.map(Into::into),
                 comment_id: row.comment_id.map(Into::into),
@@ -913,11 +863,16 @@ pub async fn match_rule(
 
 pub async fn auto_allow(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &EventStore,
     approval_id: &str,
     rule: &MatchedRule,
 ) -> Result<ApprovalDto, ServerError> {
     let row = load(pool, approval_id).await?;
+    if row.status != "pending" {
+        // A concurrent decision already handled this approval.
+        return Ok(to_dto(row));
+    }
     let decided_by = crate::auth::load_user_by_id(pool, &rule.created_by)
         .await?
         .ok_or_else(|| {
@@ -936,22 +891,16 @@ pub async fn auto_allow(
         _ => "session",
     };
     let now = threadbase_shared::now_ms();
-    let updated = sqlx::query(
-        "UPDATE approvals SET status = 'allowed', decision = ?, scope = ?, decided_by = ?,
-            decided_at = ?, note = 'matched standing rule' WHERE id = ? AND status = 'pending'",
-    )
-    .bind(decision_str(decision))
-    .bind(scope)
-    .bind(rule.created_by.as_str())
-    .bind(now)
-    .bind(approval_id)
-    .execute(pool)
-    .await?;
-    if updated.rows_affected() == 0 {
-        return Err(ServerError(threadbase_shared::ApiError::conflict(
-            "approval is no longer pending",
-        )));
-    }
+    state_store
+        .auto_allow_approval(
+            &row.thread_id,
+            approval_id,
+            decision,
+            scope,
+            rule.created_by.as_str(),
+            now,
+        )
+        .await?;
     sqlx::query("DELETE FROM inbox WHERE approval_id = ?")
         .bind(approval_id)
         .execute(pool)

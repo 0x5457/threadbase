@@ -12,6 +12,11 @@ use threadbase_shared::{
 };
 use ulid::Ulid;
 
+fn test_state_store(pool: &SqlitePool) -> threadbase_server::state::StateStore {
+    let (state_tx, _) = tokio::sync::broadcast::channel(16);
+    threadbase_server::state::StateStore::new(pool.clone(), state_tx)
+}
+
 struct Fixture {
     pool: SqlitePool,
     events: EventStore,
@@ -116,6 +121,7 @@ async fn make_user(pool: &SqlitePool, name: &str, admin: bool) -> UserDto {
 async fn new_approval(fixture: &Fixture) -> threadbase_shared::ApprovalDto {
     approvals::create(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         approvals::NewApproval {
             id: Ulid::new().to_string(),
@@ -167,6 +173,7 @@ async fn approvals_are_visible_and_viewers_cannot_decide() {
 
     let err = approvals::decide(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         approval.id.as_str(),
         &fixture.viewer,
@@ -179,6 +186,7 @@ async fn approvals_are_visible_and_viewers_cannot_decide() {
 
     let decided = approvals::decide(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         approval.id.as_str(),
         &fixture.owner,
@@ -268,6 +276,7 @@ async fn first_elicitation_response_wins_and_secrets_are_rejected() {
     );
     approvals::create_elicitation(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         secret.clone(),
         Actor::agent("codex"),
@@ -277,6 +286,7 @@ async fn first_elicitation_response_wins_and_secrets_are_rejected() {
     .unwrap();
     let err = approvals::respond_elicitation(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         secret.id.as_str(),
         &fixture.owner,
@@ -293,6 +303,7 @@ async fn first_elicitation_response_wins_and_secrets_are_rejected() {
     );
     approvals::create_elicitation(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         form.clone(),
         Actor::agent("codex"),
@@ -302,6 +313,7 @@ async fn first_elicitation_response_wins_and_secrets_are_rejected() {
     .unwrap();
     let answered = approvals::respond_elicitation(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         form.id.as_str(),
         &fixture.owner,
@@ -314,6 +326,7 @@ async fn first_elicitation_response_wins_and_secrets_are_rejected() {
     assert_eq!(answered.responded_by.as_ref().unwrap().username, "ada");
     let err = approvals::respond_elicitation(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         form.id.as_str(),
         &fixture.viewer,
@@ -335,6 +348,7 @@ async fn subagent_outside_worktree_does_not_get_a_reusable_rule() {
         .unwrap();
     let approval = approvals::create(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         approvals::NewApproval {
             id: Ulid::new().to_string(),
@@ -358,6 +372,7 @@ async fn subagent_outside_worktree_does_not_get_a_reusable_rule() {
     .unwrap();
     let decided = approvals::decide(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &fixture.events,
         approval.id.as_str(),
         &fixture.owner,
@@ -384,6 +399,7 @@ async fn decline_and_cancel_have_distinct_states() {
         let question = elicitation(&fixture, serde_json::json!({"type":"object"}));
         approvals::create_elicitation(
             &fixture.pool,
+            &test_state_store(&fixture.pool),
             &fixture.events,
             question.clone(),
             Actor::agent("codex"),
@@ -393,6 +409,7 @@ async fn decline_and_cancel_have_distinct_states() {
         .unwrap();
         let answered = approvals::respond_elicitation(
             &fixture.pool,
+            &test_state_store(&fixture.pool),
             &fixture.events,
             question.id.as_str(),
             &fixture.owner,

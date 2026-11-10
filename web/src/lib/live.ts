@@ -180,6 +180,9 @@ export function useThreadLiveEvents(threadId: string | undefined) {
             break;
           }
           case "thread_state": {
+            if (parsed.state.threadId !== threadId) {
+              break;
+            }
             queryClient.setQueryData<ThreadBundleResponse>(
               queryKeys.threadBundle(threadId),
               (current) =>
@@ -190,19 +193,24 @@ export function useThreadLiveEvents(threadId: string | undefined) {
                         ...current.bundle,
                         thread: {
                           ...current.bundle.thread,
-                          status: parsed.status as ThreadStatus,
-                          pendingApprovals: parsed.pendingApprovals,
-                          queuedInputs: parsed.queuedInputs,
+                          status: parsed.state.status as ThreadStatus,
+                          pendingApprovals: parsed.state.pendingApprovals,
+                          queuedInputs: parsed.state.queuedInputs,
                         },
                       },
                     }
                   : current,
             );
-            if (parsed.pendingApprovals > 0) {
+            if (parsed.state.pendingApprovals > 0) {
               void queryClient.invalidateQueries({
                 queryKey: queryKeys.inbox("unread"),
               });
             }
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.threads,
+              exact: true,
+            });
+            queryClient.setQueryData(queryKeys.threadState(threadId), parsed.state);
             break;
           }
           case "inbox_count": {

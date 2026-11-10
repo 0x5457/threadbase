@@ -9,7 +9,7 @@ use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
-use threadbase_shared::{now_ms, ClientWsMessage, Focus, ServerWsMessage, ThreadId, ThreadStatus};
+use threadbase_shared::{now_ms, ClientWsMessage, Focus, ServerWsMessage, ThreadId};
 use tokio::sync::broadcast::error::RecvError;
 
 pub async fn handler(
@@ -24,6 +24,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
     let (mut sender, mut receiver) = socket.split();
     let mut events = state.events.subscribe();
     let mut presence = state.presence.subscribe();
+    let mut state_rx = state.state_tx.subscribe();
     let mut subscriptions: HashMap<String, u64> = HashMap::new();
     let mut projects: HashSet<String> = HashSet::new();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
@@ -165,6 +166,17 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
                     Err(RecvError::Closed) => break,
                 }
             }
+            state_message = state_rx.recv() => {
+                match state_message {
+                    Ok(message) => {
+                        if send_json(&mut sender, &message).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => break,
+                }
+            }
             _ = heartbeat.tick() => {
                 if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                     break;
@@ -180,37 +192,12 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
 }
 
 async fn thread_state(state: &AppState, thread_id: &ThreadId) -> Option<ServerWsMessage> {
-    let row = crate::threads::load_row(&state.pool, thread_id.as_str())
+    let projection = state
+        .state_store
+        .projection(thread_id.as_str())
         .await
         .ok()?;
-    let pending = crate::approvals::count_pending(&state.pool, thread_id.as_str())
-        .await
-        .unwrap_or(0);
-    let queued: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
-    )
-    .bind(thread_id.as_str())
-    .fetch_one(&state.pool)
-    .await
-    .unwrap_or(0);
-    Some(ServerWsMessage::ThreadState {
-        thread_id: thread_id.clone(),
-        status: parse_status(&row.status),
-        pending_approvals: pending,
-        queued_inputs: u32::try_from(queued).unwrap_or(0),
-    })
-}
-
-fn parse_status(value: &str) -> ThreadStatus {
-    match value {
-        "preparing" => ThreadStatus::Preparing,
-        "running" => ThreadStatus::Running,
-        "requires_action" => ThreadStatus::RequiresAction,
-        "interrupted" => ThreadStatus::Interrupted,
-        "error" => ThreadStatus::Error,
-        "archived" => ThreadStatus::Archived,
-        _ => ThreadStatus::Idle,
-    }
+    Some(ServerWsMessage::ThreadState { state: projection })
 }
 
 async fn send_json(

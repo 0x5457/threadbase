@@ -14,7 +14,7 @@ use axum::Router;
 use serde::Deserialize;
 use threadbase_shared::api::{
     CreateProjectRequest, CreateThreadRequest, ForkThreadRequest, MergeBackRequest, SeenRequest,
-    UpdateProjectRequest, UpdateThreadRequest,
+    ThreadState, UpdateProjectRequest, UpdateThreadRequest,
 };
 use threadbase_shared::{
     ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse, OkResponse,
@@ -25,6 +25,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/threads", get(list_all_threads))
         .route("/api/threads/{thread_id}/bundle", get(thread_bundle))
+        .route("/api/threads/{thread_id}/state", get(thread_state))
         .route("/api/projects", get(list_projects).post(create_project))
         .route(
             "/api/projects/{project_id}",
@@ -48,6 +49,15 @@ pub fn router() -> Router<AppState> {
         .route("/api/threads/{thread_id}/seen", post(mark_seen))
         .route("/api/threads/{thread_id}/merge-back", post(merge_back))
         .route("/api/threads/{thread_id}/revert", post(revert_thread))
+}
+
+async fn thread_state(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<ThreadState>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    Ok(Json(state.state_store.projection(&thread_id).await?))
 }
 
 async fn list_projects(
@@ -132,6 +142,7 @@ async fn create_thread(
 ) -> Result<Json<ThreadResponse>, ServerError> {
     let thread = threads::create(
         &state.pool,
+        &state.state_store,
         &state.config.data_dir,
         &user,
         &project_id,
@@ -191,7 +202,8 @@ async fn update_thread(
     Path(thread_id): Path<String>,
     Json(request): Json<UpdateThreadRequest>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
-    let thread = threads::update(&state.pool, &thread_id, &user, &request).await?;
+    let thread =
+        threads::update(&state.pool, &state.state_store, &thread_id, &user, &request).await?;
     if request.model.is_some() || request.effort.is_some() {
         if let Err(error) = state
             .agents
@@ -237,6 +249,7 @@ async fn fork_thread(
     Ok(Json(ThreadResponse {
         thread: threads::fork(
             &state.pool,
+            &state.state_store,
             &state.config.data_dir,
             &thread_id,
             &user,

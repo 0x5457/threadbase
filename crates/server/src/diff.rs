@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use threadbase_core::state::ReadRules;
 use threadbase_shared::{
     now_ms, ApiError, BaselineDto, BaselineKind, ChangeStats, ChangesDto, DiffHunkDto, DiffLineDto,
     DiffLineKind, FileChangeDto, FileDiffDto, FileStatus, MergeBackResponse,
@@ -121,7 +122,7 @@ pub async fn list(
     for file in files.values_mut() {
         let current = current_hash(&worktree, &file.path).await;
         match seen_map.get(&file.path) {
-            Some(stored) if stored == &current => {
+            Some(stored) if ReadRules::seen(Some(stored), &current) => {
                 file.seen = true;
                 seen_count += 1;
             }

@@ -48,17 +48,16 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
 }
 
 fn prompt_text(params: &Value) -> String {
+    // The first text block is the user prompt; any trailing blocks are
+    // server-injected state summaries and must not change scenario dispatch.
     params
         .get("prompt")
         .and_then(Value::as_array)
-        .map(|blocks| {
-            blocks
-                .iter()
-                .filter_map(|block| block.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("")
-        })
+        .and_then(|blocks| blocks.first())
+        .and_then(|block| block.get("text"))
+        .and_then(Value::as_str)
         .unwrap_or_default()
+        .to_owned()
 }
 
 fn steering_result(text: &str) -> (&'static str, Option<&'static str>) {

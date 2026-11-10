@@ -171,6 +171,9 @@ pub enum ThreadEvent {
         scope: Option<ApprovalScope>,
         decided_by: Option<UserBrief>,
     },
+    PermissionCancelled {
+        approval_id: ApprovalId,
+    },
     ElicitationRequested {
         elicitation: ElicitationDto,
     },
@@ -252,6 +255,7 @@ impl ThreadEvent {
             Self::PlanUpdated { .. } => "plan_updated",
             Self::PermissionRequested { .. } => "permission_requested",
             Self::PermissionResolved { .. } => "permission_resolved",
+            Self::PermissionCancelled { .. } => "permission_cancelled",
             Self::ElicitationRequested { .. } => "elicitation_requested",
             Self::ElicitationResolved { .. } => "elicitation_resolved",
             Self::SubagentUpdated { .. } => "subagent_updated",

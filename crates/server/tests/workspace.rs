@@ -16,6 +16,11 @@ use threadbase_shared::{
 };
 use tokio::process::Command as TokioCommand;
 
+fn test_state_store(pool: &SqlitePool) -> threadbase_server::state::StateStore {
+    let (state_tx, _) = tokio::sync::broadcast::channel(16);
+    threadbase_server::state::StateStore::new(pool.clone(), state_tx)
+}
+
 struct Fixture {
     repo: TempDir,
     data: TempDir,
@@ -94,6 +99,7 @@ async fn create_project(fixture: &Fixture) -> threadbase_shared::ProjectDto {
 async fn create_thread(fixture: &Fixture, project_id: &str) -> threadbase_shared::ThreadDto {
     threads::create(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         fixture.data.path(),
         &fixture.current,
         project_id,
@@ -161,6 +167,7 @@ async fn project_validation_and_thread_lifecycle() {
 
     let archived = threads::update(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         thread.id.as_str(),
         &fixture.current,
         &UpdateThreadRequest {
@@ -186,6 +193,7 @@ async fn project_validation_and_thread_lifecycle() {
 
     let unarchived = threads::update(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         thread.id.as_str(),
         &fixture.current,
         &UpdateThreadRequest {
@@ -209,6 +217,7 @@ async fn project_validation_and_thread_lifecycle() {
     .unwrap();
     let fork = threads::fork(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         fixture.data.path(),
         thread.id.as_str(),
         &fixture.current,
@@ -429,6 +438,7 @@ async fn diff_comment_drift_and_revert_to_base() {
     let events = EventStore::new(fixture.pool.clone());
     let comment = comments::create(
         &fixture.pool,
+        &test_state_store(&fixture.pool),
         &events,
         thread.id.as_str(),
         &fixture.current,

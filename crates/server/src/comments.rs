@@ -4,6 +4,7 @@ use crate::auth::CurrentUser;
 use crate::error::ServerError;
 use crate::events::EventStore;
 use sqlx::{FromRow, SqlitePool};
+use threadbase_core::state::{comment_action_for, parse_comment_status};
 use threadbase_shared::api::{CreateCommentRequest, UpdateCommentRequest};
 use threadbase_shared::{
     now_ms, user_color, Actor, ApiError, BaselineDto, BaselineKind, CommentAnchor, CommentDto,
@@ -38,7 +39,7 @@ pub async fn list_for_thread(
                 c.anchor_changed, c.status, c.delivered_seq, c.created_at, c.updated_at,
                 u.username, u.display_name, u.avatar_url
          FROM comments c JOIN users u ON u.id = c.author_id
-         WHERE c.thread_id = ? AND c.status != 'draft'
+         WHERE c.thread_id = ?
          ORDER BY c.created_at ASC",
     )
     .bind(thread_id)
@@ -134,12 +135,7 @@ fn dto(row: CommentRow) -> CommentDto {
         body: row.body,
         anchor,
         anchor_changed: row.anchor_changed != 0,
-        status: match row.status.as_str() {
-            "draft" => CommentStatus::Draft,
-            "delivered" => CommentStatus::Delivered,
-            "resolved" => CommentStatus::Resolved,
-            _ => CommentStatus::Pending,
-        },
+        status: parse_comment_status(&row.status).unwrap_or(CommentStatus::Pending),
         created_at: row.created_at,
         updated_at: row.updated_at,
         delivered_seq: row
@@ -150,6 +146,7 @@ fn dto(row: CommentRow) -> CommentDto {
 
 pub async fn create(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &EventStore,
     thread_id: &str,
     user: &CurrentUser,
@@ -164,24 +161,26 @@ pub async fn create(
     }
     let id = Ulid::new().to_string();
     let now = now_ms();
-    let status = if request.send { "delivered" } else { "pending" };
-    sqlx::query(
-        "INSERT INTO comments(id, thread_id, parent_id, author_id, body, anchor_kind, anchor_json,
-            anchor_changed, status, created_at, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(thread_id)
-    .bind(request.parent_id.as_ref().map(|value| value.as_str()))
-    .bind(user.user.id.as_str())
-    .bind(body)
-    .bind(anchor_kind(&request.anchor))
-    .bind(serde_json::to_string(&request.anchor).unwrap_or_else(|_| "{\"kind\":\"thread\"}".into()))
-    .bind(status)
-    .bind(now)
-    .bind(now)
-    .execute(pool)
-    .await?;
+    let target = if request.send {
+        CommentStatus::Delivered
+    } else {
+        CommentStatus::Pending
+    };
+    let anchor_json =
+        serde_json::to_string(&request.anchor).unwrap_or_else(|_| "{\"kind\":\"thread\"}".into());
+    state_store
+        .insert_comment(
+            &id,
+            thread_id,
+            request.parent_id.as_ref().map(|value| value.as_str()),
+            user.user.id.as_str(),
+            body,
+            anchor_kind(&request.anchor),
+            &anchor_json,
+            target,
+            now,
+        )
+        .await?;
     let comment = load(pool, &id).await?;
     events
         .append(
@@ -199,6 +198,7 @@ pub async fn create(
 
 pub async fn update(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &EventStore,
     comment_id: &str,
     user: &CurrentUser,
@@ -228,11 +228,10 @@ pub async fn update(
             .await?;
     }
     if let Some(status) = request.status {
-        sqlx::query("UPDATE comments SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(comment_status_str(status))
-            .bind(now_ms())
-            .bind(comment_id)
-            .execute(pool)
+        let action = comment_action_for(status)
+            .ok_or_else(|| ServerError::internal("cannot transition to draft"))?;
+        state_store
+            .set_comment_status(current.thread_id.as_str(), comment_id, action)
             .await?;
     }
     let comment = load(pool, comment_id).await?;
@@ -269,19 +268,16 @@ pub async fn delete(
 
 pub async fn mark_delivered(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &EventStore,
     comment_id: &str,
     user: &CurrentUser,
     delivered_seq: Option<u64>,
 ) -> Result<CommentDto, ServerError> {
-    sqlx::query(
-        "UPDATE comments SET status = 'delivered', delivered_seq = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(delivered_seq.and_then(|value| i64::try_from(value).ok()))
-    .bind(now_ms())
-    .bind(comment_id)
-    .execute(pool)
-    .await?;
+    let current = load(pool, comment_id).await?;
+    state_store
+        .mark_comment_delivered(current.thread_id.as_str(), comment_id, delivered_seq)
+        .await?;
     let comment = load(pool, comment_id).await?;
     events
         .append(
@@ -360,15 +356,6 @@ fn anchor_kind(anchor: &CommentAnchor) -> &'static str {
     }
 }
 
-fn comment_status_str(status: CommentStatus) -> &'static str {
-    match status {
-        CommentStatus::Draft => "draft",
-        CommentStatus::Pending => "pending",
-        CommentStatus::Delivered => "delivered",
-        CommentStatus::Resolved => "resolved",
-    }
-}
-
 fn brief(user: &threadbase_shared::UserDto) -> threadbase_shared::UserBrief {
     threadbase_shared::UserBrief {
         id: user.id.clone(),
@@ -400,6 +387,7 @@ pub async fn pending_for_thread(
 
 pub async fn mark_pending_delivered(
     pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     events: &EventStore,
     thread_id: &str,
     user: &CurrentUser,
@@ -407,8 +395,15 @@ pub async fn mark_pending_delivered(
 ) -> Result<(), ServerError> {
     let pending = pending_for_thread(pool, thread_id).await?;
     for comment in pending {
-        let comment =
-            mark_delivered(pool, events, comment.id.as_str(), user, delivered_seq).await?;
+        let comment = mark_delivered(
+            pool,
+            state_store,
+            events,
+            comment.id.as_str(),
+            user,
+            delivered_seq,
+        )
+        .await?;
         let _ = comment;
     }
     Ok(())

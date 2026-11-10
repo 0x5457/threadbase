@@ -298,6 +298,23 @@ pub struct ThreadBundleDto {
     pub share: ShareStateDto,
 }
 
+/// Single read model shared by the web UI and the agent summary.
+///
+/// Derived from the authoritative state store; see `docs/08` §3.3.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThreadState {
+    pub thread_id: ThreadId,
+    pub status: crate::model::ThreadStatus,
+    pub current_turn: Option<String>,
+    pub pending_approvals: u32,
+    pub pending_elicitations: u32,
+    pub queued_inputs: u32,
+    pub active_subagents: u32,
+    pub diverged: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -406,10 +423,7 @@ pub enum ServerWsMessage {
         online_user_ids: Vec<crate::ids::UserId>,
     },
     ThreadState {
-        thread_id: ThreadId,
-        status: crate::model::ThreadStatus,
-        pending_approvals: u32,
-        queued_inputs: u32,
+        state: ThreadState,
     },
     InboxCount {
         unread: u32,

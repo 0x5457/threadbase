@@ -86,6 +86,7 @@ async fn fixture() -> Option<Fixture> {
     .unwrap();
     let thread = threads::create(
         &state.pool,
+        &state.state_store,
         data.path(),
         &current,
         project.id.as_str(),
@@ -141,19 +142,38 @@ fn init_repo(path: &Path) {
         .success());
 }
 
+async fn max_seq(pool: &SqlitePool, thread_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM events WHERE thread_id = ?")
+        .bind(thread_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 async fn wait_for(
     pool: &SqlitePool,
     thread_id: &str,
     predicate: impl Fn(&ThreadEvent) -> bool,
 ) -> ThreadEvent {
-    for _ in 0..100 {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT payload_json FROM events WHERE thread_id = ? ORDER BY seq ASC")
-                .bind(thread_id)
-                .fetch_all(pool)
-                .await
-                .unwrap();
-        for (json,) in rows {
+    wait_for_after(pool, thread_id, 0, predicate).await
+}
+
+async fn wait_for_after(
+    pool: &SqlitePool,
+    thread_id: &str,
+    after_seq: i64,
+    predicate: impl Fn(&ThreadEvent) -> bool,
+) -> ThreadEvent {
+    for _ in 0..200 {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT payload_json, seq FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC",
+        )
+        .bind(thread_id)
+        .bind(after_seq)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        for (json, _) in rows {
             let event: ThreadEvent = serde_json::from_str(&json).unwrap();
             if predicate(&event) {
                 return event;
@@ -161,7 +181,7 @@ async fn wait_for(
         }
         sleep(Duration::from_millis(50)).await;
     }
-    panic!("timed out waiting for event");
+    panic!("timed out waiting for event after seq {after_seq}");
 }
 
 #[tokio::test]
@@ -195,6 +215,7 @@ async fn fake_agent_streams_tools_and_permissions() {
     })
     .await;
     eprintln!("got stream turn end");
+    let before_permission_turn = max_seq(&fixture.state.pool, fixture.thread.id.as_str()).await;
 
     fixture
         .state
@@ -216,6 +237,17 @@ async fn fake_agent_streams_tools_and_permissions() {
     let ThreadEvent::PermissionRequested { approval } = approval else {
         unreachable!();
     };
+    threadbase_server::approvals::decide(
+        &fixture.state.pool,
+        &fixture.state.state_store,
+        &fixture.state.events,
+        approval.id.as_str(),
+        &fixture.user,
+        ApprovalDecision::AllowThread,
+        None,
+    )
+    .await
+    .unwrap();
     fixture
         .state
         .agents
@@ -226,22 +258,16 @@ async fn fake_agent_streams_tools_and_permissions() {
         )
         .await
         .unwrap();
-    threadbase_server::approvals::decide(
-        &fixture.state.pool,
-        &fixture.state.events,
-        approval.id.as_str(),
-        &fixture.user,
-        ApprovalDecision::AllowThread,
-        None,
-    )
-    .await
-    .unwrap();
     eprintln!("waiting for stream turn end");
-    wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
-        matches!(event, ThreadEvent::TurnEnded { .. })
-    })
+    wait_for_after(
+        &fixture.state.pool,
+        fixture.thread.id.as_str(),
+        before_permission_turn,
+        |event| matches!(event, ThreadEvent::TurnEnded { .. }),
+    )
     .await;
     eprintln!("got stream turn end");
+    let before_elicit_turn = max_seq(&fixture.state.pool, fixture.thread.id.as_str()).await;
 
     fixture
         .state
@@ -258,6 +284,17 @@ async fn fake_agent_streams_tools_and_permissions() {
     let ThreadEvent::ElicitationRequested { elicitation } = question else {
         unreachable!();
     };
+    threadbase_server::approvals::respond_elicitation(
+        &fixture.state.pool,
+        &fixture.state.state_store,
+        &fixture.state.events,
+        elicitation.id.as_str(),
+        &fixture.user,
+        ElicitationAction::Accept,
+        Some(serde_json::json!({"environment":"staging"})),
+    )
+    .await
+    .unwrap();
     fixture
         .state
         .agents
@@ -269,19 +306,12 @@ async fn fake_agent_streams_tools_and_permissions() {
         )
         .await
         .unwrap();
-    threadbase_server::approvals::respond_elicitation(
+    wait_for_after(
         &fixture.state.pool,
-        &fixture.state.events,
-        elicitation.id.as_str(),
-        &fixture.user,
-        ElicitationAction::Accept,
-        Some(serde_json::json!({"environment":"staging"})),
+        fixture.thread.id.as_str(),
+        before_elicit_turn,
+        |event| matches!(event, ThreadEvent::TurnEnded { .. }),
     )
-    .await
-    .unwrap();
-    wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
-        matches!(event, ThreadEvent::TurnEnded { .. })
-    })
     .await;
     // A standing thread rule must auto-allow the next matching request without a UI decision.
     let rules = threadbase_server::approvals::list_rules(&fixture.state.pool)
@@ -346,6 +376,7 @@ async fn fake_agent_streams_tools_and_permissions() {
     // A thread created with an initial prompt must actually start the agent and run it.
     let second = threads::create(
         &fixture.state.pool,
+        &fixture.state.state_store,
         fixture.data.path(),
         &fixture.user,
         fixture.project.id.as_str(),
@@ -386,6 +417,7 @@ async fn fake_agent_streams_tools_and_permissions() {
     let _ = agents::AgentManager::new(
         fixture.state.pool.clone(),
         EventStore::new(fixture.state.pool.clone()),
+        fixture.state.state_store.clone(),
     );
 }
 
@@ -537,8 +569,11 @@ async fn failed_session_restore_emits_a_context_reset_notice() {
         .execute(&fixture.state.pool)
         .await
         .unwrap();
-    let manager =
-        agents::AgentManager::new(fixture.state.pool.clone(), fixture.state.events.clone());
+    let manager = agents::AgentManager::new(
+        fixture.state.pool.clone(),
+        fixture.state.events.clone(),
+        fixture.state.state_store.clone(),
+    );
     manager
         .ensure_started(fixture.thread.id.as_str())
         .await
@@ -614,6 +649,7 @@ async fn first_turn_replaces_the_default_thread_title() {
     };
     let thread = threads::create(
         &fixture.state.pool,
+        &fixture.state.state_store,
         fixture.data.path(),
         &fixture.user,
         fixture.project.id.as_str(),
@@ -696,4 +732,70 @@ async fn inter_session_messages_are_persisted_as_thread_events() {
     assert_eq!(from, "sess-1");
     assert_eq!(to, "sub-1");
     assert_eq!(text, "peer message");
+}
+
+#[tokio::test]
+async fn agent_prompt_includes_state_summary_when_pending() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    // Make the projection non-trivial so the summary is injected.
+    threadbase_server::approvals::create(
+        &fixture.state.pool,
+        &fixture.state.state_store,
+        &fixture.state.events,
+        threadbase_server::approvals::NewApproval {
+            id: ulid::Ulid::new().to_string(),
+            thread_id: fixture.thread.id.0.clone(),
+            subagent_id: None,
+            turn_id: None,
+            tool_call_id: None,
+            agent: "codex".to_owned(),
+            title: "Write file".to_owned(),
+            kind: "file_write".to_owned(),
+            command: Some("echo hi".to_owned()),
+            cwd: None,
+            paths: Vec::new(),
+            options: Vec::new(),
+            input: None,
+        },
+        threadbase_shared::Actor::agent("codex"),
+        threadbase_server::events::EventMeta::default(),
+    )
+    .await
+    .unwrap();
+    fixture
+        .state
+        .agents
+        .send(fixture.thread.id.as_str(), &fixture.user, "stream", None)
+        .await
+        .unwrap();
+    wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::ToolCall { .. })
+    })
+    .await;
+    // The backend projection and the agent summary must report the same count.
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM approvals WHERE thread_id = ? AND status = 'pending'",
+    )
+    .bind(fixture.thread.id.as_str())
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pending, 1,
+        "backend projection must report one pending approval"
+    );
+    let journal = std::fs::read_to_string(fixture.data.path().join("journal.log")).unwrap();
+    assert!(
+        journal.contains("pending_approvals=1"),
+        "agent prompt should report the same pending count; journal:\n{journal}"
+    );
 }

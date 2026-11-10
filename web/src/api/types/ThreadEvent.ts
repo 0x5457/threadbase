@@ -52,6 +52,7 @@ export type ThreadEvent =
     scope: ApprovalScope | null;
     decidedBy: UserBrief | null;
   }
+  | { "type": "permission_cancelled"; approvalId: ApprovalId }
   | { "type": "elicitation_requested"; elicitation: ElicitationDto }
   | {
     "type": "elicitation_resolved";

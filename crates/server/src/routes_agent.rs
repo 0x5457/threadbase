@@ -9,6 +9,7 @@ use axum::routing::{delete, get, post};
 use axum::Json;
 use axum::Router;
 use sqlx::FromRow;
+use threadbase_core::state::parse_queue_status;
 use threadbase_shared::api::SendMessageRequest;
 use threadbase_shared::{
     now_ms, user_color, ApiError, OkResponse, QueueItemDto, QueueResponse, QueueStatus,
@@ -92,6 +93,7 @@ async fn send_message(
             .ok();
         crate::comments::mark_pending_delivered(
             &state.pool,
+            &state.state_store,
             &state.events,
             &thread_id,
             &user,
@@ -191,21 +193,12 @@ async fn retry_queue_item(
     Path((thread_id, item_id)): Path<(String, String)>,
 ) -> Result<Json<OkResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
-    let result = sqlx::query(
-        "UPDATE queued_inputs SET superseded = 0, updated_at = ?
-         WHERE id = ? AND thread_id = ? AND status = 'queued'",
-    )
-    .bind(now_ms())
-    .bind(&item_id)
-    .bind(&thread_id)
-    .execute(&state.pool)
-    .await?;
-    if result.rows_affected() == 0 {
-        return Err(ServerError(ApiError::not_found(
-            "queued message not found or already sent",
-        )));
-    }
+    state
+        .state_store
+        .retry_queue_item(&thread_id, &item_id)
+        .await?;
     let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
+    state.agents.kick_queue(&thread_id);
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -215,20 +208,10 @@ async fn drop_queue_item(
     Path((thread_id, item_id)): Path<(String, String)>,
 ) -> Result<Json<OkResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
-    let result = sqlx::query(
-        "UPDATE queued_inputs SET status = 'dropped', updated_at = ?
-         WHERE id = ? AND thread_id = ? AND status = 'queued'",
-    )
-    .bind(now_ms())
-    .bind(&item_id)
-    .bind(&thread_id)
-    .execute(&state.pool)
-    .await?;
-    if result.rows_affected() == 0 {
-        return Err(ServerError(ApiError::not_found(
-            "queued message not found or already sent",
-        )));
-    }
+    state
+        .state_store
+        .drop_queue_item(&thread_id, &item_id)
+        .await?;
     let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
     Ok(Json(OkResponse { ok: true }))
 }
@@ -245,13 +228,7 @@ fn queue_dto(row: QueueRow) -> QueueItemDto {
             color: user_color(&row.author_id).to_owned(),
         },
         text: row.text,
-        status: match row.status.as_str() {
-            "sending" => QueueStatus::Sending,
-            "sent" => QueueStatus::Sent,
-            "superseded" => QueueStatus::Superseded,
-            "dropped" => QueueStatus::Dropped,
-            _ => QueueStatus::Queued,
-        },
+        status: parse_queue_status(&row.status).unwrap_or(QueueStatus::Queued),
         position: u32::try_from(row.position).unwrap_or(0),
         created_at: row.created_at,
         superseded: row.superseded != 0,

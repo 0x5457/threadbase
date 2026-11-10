@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use threadbase_shared::model::{ApprovalDto, ChangeStats, ElicitationDto, QueueItemDto};
 use threadbase_shared::{
     ApprovalStatus, CommentDto, EventEnvelope, MessageDto, MessageRole, PlanEntry, SubagentDto,
-    ThreadEvent, ThreadStatus, ToolCallData, TurnId, Usage,
+    ThreadEvent, ToolCallData, TurnId, Usage,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,11 +18,10 @@ pub struct ThinkingBlock {
     pub completed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineState {
     pub last_seq: u64,
-    pub status: ThreadStatus,
     pub title: Option<String>,
     pub pinned: bool,
     pub messages: Vec<MessageDto>,
@@ -38,30 +37,6 @@ pub struct TimelineState {
     pub changes: Option<ChangeStats>,
     pub current_turn: Option<TurnId>,
     pub notices: Vec<String>,
-}
-
-impl Default for TimelineState {
-    fn default() -> Self {
-        Self {
-            last_seq: 0,
-            status: ThreadStatus::Idle,
-            title: None,
-            pinned: false,
-            messages: Vec::new(),
-            thinking: Vec::new(),
-            tools: Vec::new(),
-            plan: Vec::new(),
-            approvals: Vec::new(),
-            elicitations: Vec::new(),
-            subagents: Vec::new(),
-            queue: Vec::new(),
-            comments: Vec::new(),
-            usage: None,
-            changes: None,
-            current_turn: None,
-            notices: Vec::new(),
-        }
-    }
 }
 
 impl TimelineState {
@@ -88,7 +63,6 @@ impl TimelineState {
                 author,
                 prompt,
             } => {
-                self.status = ThreadStatus::Running;
                 self.current_turn = Some(turn_id.clone());
                 if !self
                     .messages
@@ -185,9 +159,6 @@ impl TimelineState {
             }
             ThreadEvent::PermissionRequested { approval } => {
                 upsert_approval(&mut self.approvals, approval.clone());
-                if approval.status == ApprovalStatus::Pending {
-                    self.status = ThreadStatus::RequiresAction;
-                }
             }
             ThreadEvent::PermissionResolved {
                 approval_id,
@@ -210,19 +181,21 @@ impl TimelineState {
                             ApprovalStatus::Allowed
                         };
                 }
-                if !self
+            }
+            ThreadEvent::PermissionCancelled { approval_id } => {
+                if let Some(approval) = self
                     .approvals
-                    .iter()
-                    .any(|item| item.status == ApprovalStatus::Pending)
+                    .iter_mut()
+                    .find(|item| &item.id == approval_id)
                 {
-                    self.status = ThreadStatus::Running;
+                    approval.status = ApprovalStatus::Cancelled;
+                    approval.decision = None;
+                    approval.scope = None;
+                    approval.decided_by = None;
                 }
             }
             ThreadEvent::ElicitationRequested { elicitation } => {
                 upsert_elicitation(&mut self.elicitations, elicitation.clone());
-                if elicitation.status == threadbase_shared::ElicitationStatus::Pending {
-                    self.status = ThreadStatus::RequiresAction;
-                }
             }
             ThreadEvent::ElicitationResolved {
                 elicitation_id,
@@ -257,7 +230,6 @@ impl TimelineState {
                 self.usage = Some(usage.clone());
             }
             ThreadEvent::TurnEnded { .. } => {
-                self.status = ThreadStatus::Idle;
                 self.current_turn = None;
                 for message in &mut self.messages {
                     if message.role == MessageRole::Agent {
@@ -266,12 +238,10 @@ impl TimelineState {
                 }
             }
             ThreadEvent::TurnError { message, .. } => {
-                self.status = ThreadStatus::Error;
                 self.current_turn = None;
                 self.notices.push(message.clone());
             }
             ThreadEvent::ProcessExited { message, .. } => {
-                self.status = ThreadStatus::Interrupted;
                 self.current_turn = None;
                 self.notices.push(message.clone());
             }
@@ -284,17 +254,9 @@ impl TimelineState {
             ThreadEvent::QueueUpdated { items } => {
                 self.queue.clone_from(items);
             }
-            ThreadEvent::ThreadUpdated {
-                title,
-                status,
-                pinned,
-                ..
-            } => {
+            ThreadEvent::ThreadUpdated { title, pinned, .. } => {
                 if title.is_some() {
                     self.title.clone_from(title);
-                }
-                if let Some(status) = status {
-                    self.status = *status;
                 }
                 if let Some(pinned) = pinned {
                     self.pinned = *pinned;
@@ -450,6 +412,5 @@ mod tests {
                 stop_reason: "end_turn".to_owned(),
             },
         ));
-        assert_eq!(state.status, ThreadStatus::Idle);
     }
 }

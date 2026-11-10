@@ -4,8 +4,10 @@ use crate::auth::{audit, CurrentUser};
 use crate::authz;
 use crate::error::ServerError;
 use crate::projects;
+use crate::state::{NewThread, StateStore};
 use sqlx::{FromRow, SqlitePool};
 use std::path::{Path, PathBuf};
+use threadbase_core::state::{parse_subagent_status, parse_thread_status, ReadRules, ThreadAction};
 use threadbase_shared::api::{CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest};
 use threadbase_shared::{
     now_ms, user_color, ApiError, ChangeStats, Participant, Role, ShareLevel, SubagentStatus,
@@ -94,6 +96,7 @@ pub async fn list(
 
 pub async fn create(
     pool: &SqlitePool,
+    state_store: &StateStore,
     data_dir: &Path,
     user: &CurrentUser,
     project_id: &str,
@@ -135,27 +138,25 @@ pub async fn create(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| "New thread".to_owned());
     let now = now_ms();
-    sqlx::query(
-        "INSERT INTO threads(id, project_id, title, status, agent, model, effort, branch, base_branch,
-            base_sha, last_turn_sha, worktree_path, created_by, created_at, updated_at, share_level)
-         VALUES(?, ?, ?, 'preparing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'invite_only')",
-    )
-    .bind(&thread_id)
-    .bind(project_id)
-    .bind(&title)
-    .bind(&agent)
-    .bind(request.model.as_deref())
-    .bind(request.effort.as_deref())
-    .bind(&branch)
-    .bind(&base_branch)
-    .bind(&base_sha)
-    .bind(&base_sha)
-    .bind(worktree.to_string_lossy().to_string())
-    .bind(user.user.id.as_str())
-    .bind(now)
-    .bind(now)
-    .execute(pool)
-    .await?;
+    let worktree_path = worktree.to_string_lossy().to_string();
+    state_store
+        .insert_thread(&NewThread {
+            id: &thread_id,
+            project_id,
+            parent_thread_id: None,
+            title: &title,
+            agent: &agent,
+            model: request.model.as_deref(),
+            effort: request.effort.as_deref(),
+            branch: &branch,
+            base_branch: &base_branch,
+            base_sha: &base_sha,
+            worktree_path: &worktree_path,
+            created_by: user.user.id.as_str(),
+            created_at: now,
+            share_level: "invite_only",
+        })
+        .await?;
 
     if let Err(error) = git::create_worktree(&project_root, &worktree, &branch, &base_sha).await {
         sqlx::query("DELETE FROM threads WHERE id = ?")
@@ -176,20 +177,11 @@ pub async fn create(
     .bind(now)
     .execute(pool)
     .await?;
-    sqlx::query(
-        "INSERT INTO agent_bindings(thread_id, agent, cwd, status, updated_at)
-         VALUES(?, ?, ?, 'idle', ?)",
-    )
-    .bind(&thread_id)
-    .bind(&agent)
-    .bind(worktree.to_string_lossy().to_string())
-    .bind(now)
-    .execute(pool)
-    .await?;
-    sqlx::query("UPDATE threads SET status = 'idle', updated_at = ? WHERE id = ?")
-        .bind(now)
-        .bind(&thread_id)
-        .execute(pool)
+    state_store
+        .insert_binding(&thread_id, &agent, &worktree.to_string_lossy(), now)
+        .await?;
+    state_store
+        .transition_thread(&thread_id, ThreadAction::StartSucceeded)
         .await?;
 
     if let Some(prompt) = request
@@ -198,18 +190,10 @@ pub async fn create(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        sqlx::query(
-            "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position, created_at, updated_at)
-             VALUES(?, ?, ?, ?, 'queued', 1, ?, ?)",
-        )
-        .bind(Ulid::new().to_string())
-        .bind(&thread_id)
-        .bind(user.user.id.as_str())
-        .bind(prompt)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+        let id = Ulid::new().to_string();
+        state_store
+            .enqueue(&id, &thread_id, user.user.id.as_str(), prompt, 1, now)
+            .await?;
     }
     audit(
         pool,
@@ -227,6 +211,7 @@ pub async fn create(
 
 pub async fn update(
     pool: &SqlitePool,
+    state_store: &StateStore,
     thread_id: &str,
     user: &CurrentUser,
     request: &UpdateThreadRequest,
@@ -261,18 +246,19 @@ pub async fn update(
             .await?;
     }
     if let Some(archived) = request.archived {
-        let (status, archived_at) = if archived {
-            ("archived", Some(now_ms()))
-        } else {
-            ("idle", None)
-        };
-        sqlx::query("UPDATE threads SET archived_at = ?, status = ?, updated_at = ? WHERE id = ?")
+        let archived_at = if archived { Some(now_ms()) } else { None };
+        sqlx::query("UPDATE threads SET archived_at = ?, updated_at = ? WHERE id = ?")
             .bind(archived_at)
-            .bind(status)
             .bind(now_ms())
             .bind(thread_id)
             .execute(pool)
             .await?;
+        let action = if archived {
+            ThreadAction::Archive
+        } else {
+            ThreadAction::Unarchive
+        };
+        state_store.transition_thread(thread_id, action).await?;
     }
     if let Some(model) = request.model.as_deref() {
         sqlx::query("UPDATE threads SET model = ?, updated_at = ? WHERE id = ?")
@@ -317,6 +303,7 @@ pub async fn update(
 
 pub async fn fork(
     pool: &SqlitePool,
+    state_store: &StateStore,
     data_dir: &Path,
     thread_id: &str,
     user: &CurrentUser,
@@ -350,29 +337,25 @@ pub async fn fork(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("{} (fork)", source.title));
     let now = now_ms();
-    sqlx::query(
-        "INSERT INTO threads(id, project_id, parent_thread_id, title, status, agent, model, effort,
-            branch, base_branch, base_sha, last_turn_sha, worktree_path, created_by, created_at, updated_at, share_level)
-         VALUES(?, ?, ?, ?, 'preparing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&new_id)
-    .bind(&source.project_id)
-    .bind(&source.id)
-    .bind(&title)
-    .bind(&source.agent)
-    .bind(source.model.as_deref())
-    .bind(source.effort.as_deref())
-    .bind(&branch)
-    .bind(&source.branch)
-    .bind(&head)
-    .bind(&head)
-    .bind(worktree.to_string_lossy().to_string())
-    .bind(user.user.id.as_str())
-    .bind(now)
-    .bind(now)
-    .bind(&source.share_level)
-    .execute(pool)
-    .await?;
+    let worktree_path = worktree.to_string_lossy().to_string();
+    state_store
+        .insert_thread(&NewThread {
+            id: &new_id,
+            project_id: &source.project_id,
+            parent_thread_id: Some(&source.id),
+            title: &title,
+            agent: &source.agent,
+            model: source.model.as_deref(),
+            effort: source.effort.as_deref(),
+            branch: &branch,
+            base_branch: &source.branch,
+            base_sha: &head,
+            worktree_path: &worktree_path,
+            created_by: user.user.id.as_str(),
+            created_at: now,
+            share_level: &source.share_level,
+        })
+        .await?;
     if let Err(error) = git::create_worktree(&project_root, &worktree, &branch, &head).await {
         sqlx::query("DELETE FROM threads WHERE id = ?")
             .bind(&new_id)
@@ -415,20 +398,11 @@ pub async fn fork(
     .bind(now)
     .execute(pool)
     .await?;
-    sqlx::query(
-        "INSERT INTO agent_bindings(thread_id, agent, cwd, status, updated_at)
-         SELECT ?, agent, ?, 'idle', ? FROM agent_bindings WHERE thread_id = ?",
-    )
-    .bind(&new_id)
-    .bind(worktree.to_string_lossy().to_string())
-    .bind(now)
-    .bind(&source.id)
-    .execute(pool)
-    .await?;
-    sqlx::query("UPDATE threads SET status = 'idle', updated_at = ? WHERE id = ?")
-        .bind(now)
-        .bind(&new_id)
-        .execute(pool)
+    state_store
+        .copy_binding(&new_id, &worktree.to_string_lossy(), &source.id, now)
+        .await?;
+    state_store
+        .transition_thread(&new_id, ThreadAction::StartSucceeded)
         .await?;
     audit(
         pool,
@@ -523,7 +497,7 @@ pub async fn dto(
         project_id: row.project_id.clone().into(),
         parent_thread_id: row.parent_thread_id.clone().map(Into::into),
         title: row.title.clone(),
-        status: parse_status(&row.status),
+        status: parse_thread_status(&row.status).unwrap_or(ThreadStatus::Idle),
         agent: row.agent.clone(),
         model: row.model.clone(),
         effort: row.effort.clone(),
@@ -536,7 +510,7 @@ pub async fn dto(
         updated_at: row.updated_at,
         archived_at: row.archived_at,
         pinned: row.pinned != 0,
-        unread: max_seq > last_read,
+        unread: ReadRules::thread_unread(last_read as u64, max_seq as u64),
         share_level: parse_share(&row.share_level),
         diverged,
         participants,
@@ -546,7 +520,7 @@ pub async fn dto(
     })
 }
 
-async fn is_diverged(pool: &SqlitePool, row: &ThreadRow) -> bool {
+pub(crate) async fn is_diverged(pool: &SqlitePool, row: &ThreadRow) -> bool {
     let (Some(base), Some(worktree)) = (row.base_sha.as_deref(), row.worktree_path.as_deref())
     else {
         return false;
@@ -632,18 +606,6 @@ async fn resolve_base(project_root: &Path, base_branch: &str) -> Result<String, 
     Err(ServerError(ApiError::validation(format!(
         "base branch `{base_branch}` was not found"
     ))))
-}
-
-fn parse_status(value: &str) -> ThreadStatus {
-    match value {
-        "preparing" => ThreadStatus::Preparing,
-        "running" => ThreadStatus::Running,
-        "requires_action" => ThreadStatus::RequiresAction,
-        "interrupted" => ThreadStatus::Interrupted,
-        "error" => ThreadStatus::Error,
-        "archived" => ThreadStatus::Archived,
-        _ => ThreadStatus::Idle,
-    }
 }
 
 fn parse_share(value: &str) -> ShareLevel {
@@ -788,7 +750,7 @@ async fn list_subagents(
             parent_id: row.parent_id.map(Into::into),
             title: row.title,
             description: row.description,
-            status: parse_subagent_status(&row.status),
+            status: parse_subagent_status(&row.status).unwrap_or(SubagentStatus::Idle),
             cwd: row.cwd,
             can_cancel: row.can_cancel != 0,
             usage: row
@@ -872,14 +834,4 @@ async fn invites(
             accepted_at: row.accepted_at,
         })
         .collect())
-}
-
-fn parse_subagent_status(value: &str) -> SubagentStatus {
-    match value {
-        "running" => SubagentStatus::Running,
-        "requires_action" => SubagentStatus::RequiresAction,
-        "cancelled" => SubagentStatus::Cancelled,
-        "error" => SubagentStatus::Error,
-        _ => SubagentStatus::Idle,
-    }
 }

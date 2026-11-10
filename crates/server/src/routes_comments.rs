@@ -42,8 +42,15 @@ async fn create_comment(
     Json(request): Json<CreateCommentRequest>,
 ) -> Result<Json<CommentResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
-    let comment =
-        crate::comments::create(&state.pool, &state.events, &thread_id, &user, &request).await?;
+    let comment = crate::comments::create(
+        &state.pool,
+        &state.state_store,
+        &state.events,
+        &thread_id,
+        &user,
+        &request,
+    )
+    .await?;
     if request.send {
         if let Err(error) = state
             .agents
@@ -63,8 +70,15 @@ async fn update_comment(
     Json(request): Json<UpdateCommentRequest>,
 ) -> Result<Json<CommentResponse>, ServerError> {
     Ok(Json(CommentResponse {
-        comment: crate::comments::update(&state.pool, &state.events, &comment_id, &user, &request)
-            .await?,
+        comment: crate::comments::update(
+            &state.pool,
+            &state.state_store,
+            &state.events,
+            &comment_id,
+            &user,
+            &request,
+        )
+        .await?,
     }))
 }
 
@@ -105,6 +119,7 @@ async fn send_comment(
     Ok(Json(CommentResponse {
         comment: crate::comments::mark_delivered(
             &state.pool,
+            &state.state_store,
             &state.events,
             &comment_id,
             &user,

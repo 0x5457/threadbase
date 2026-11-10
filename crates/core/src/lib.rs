@@ -3,6 +3,7 @@
 pub mod delivery;
 pub mod permissions;
 pub mod reducer;
+pub mod state;
 
 pub use delivery::{resolve_delivery, DeliveryContext, SendAction};
 pub use permissions::{

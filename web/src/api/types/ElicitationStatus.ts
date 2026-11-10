@@ -4,5 +4,4 @@ export type ElicitationStatus =
   | "pending"
   | "accepted"
   | "declined"
-  | "cancelled"
-  | "expired";
+  | "cancelled";

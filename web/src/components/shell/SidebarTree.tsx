@@ -24,6 +24,7 @@ import {
 } from "react";
 import type { ProjectDto } from "@/api/types/ProjectDto";
 import type { SubagentDto } from "@/api/types/SubagentDto";
+import type { SubagentStatus } from "@/api/types/SubagentStatus";
 import type { ThreadDto } from "@/api/types/ThreadDto";
 import type { UserDto } from "@/api/types/UserDto";
 import type { ThreadStatus } from "@/api/types/ThreadStatus";
@@ -74,7 +75,9 @@ export interface SidebarTreeProps {
   onNavigate?: () => void;
 }
 
-function statusColor(status: ThreadStatus): string {
+type AnyStatus = ThreadStatus | SubagentStatus;
+
+function statusColor(status: AnyStatus): string {
   switch (status) {
     case "running":
       return "bg-success";
@@ -93,7 +96,7 @@ function statusColor(status: ThreadStatus): string {
   }
 }
 
-function statusLabel(status: ThreadStatus): string {
+function statusLabel(status: AnyStatus): string {
   switch (status) {
     case "running":
       return "Running";
@@ -107,6 +110,8 @@ function statusLabel(status: ThreadStatus): string {
       return "Interrupted";
     case "archived":
       return "Archived";
+    case "cancelled":
+      return "Cancelled";
     default:
       return "Idle";
   }
@@ -117,7 +122,7 @@ function StatusDot({
   pulse,
   className,
 }: {
-  status: ThreadStatus;
+  status: AnyStatus;
   pulse?: boolean;
   className?: string;
 }) {
@@ -468,14 +473,6 @@ function SubagentNode({
   const children = childrenMap.get(subagent.id) ?? [];
   const expanded = !collapsedSubagents.has(subagent.id);
   const selected = selectedSubagentId === subagent.id;
-  const status: ThreadStatus =
-    subagent.status === "running"
-      ? "running"
-      : subagent.status === "requires_action"
-        ? "requires_action"
-        : subagent.status === "error"
-          ? "error"
-          : "idle";
   const activate = () => onSelectSubagent(subagent);
 
   return (
@@ -511,7 +508,7 @@ function SubagentNode({
         ) : (
           <span className="size-4 shrink-0" aria-hidden />
         )}
-        <StatusDot status={status} pulse={status === "running"} />
+        <StatusDot status={subagent.status} pulse={subagent.status === "running"} />
         <Bot className="ml-0.5 size-3.5 shrink-0 text-faint" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{subagent.title}</span>
       </div>

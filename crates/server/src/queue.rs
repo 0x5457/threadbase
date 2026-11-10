@@ -2,6 +2,7 @@
 
 use crate::error::ServerError;
 use sqlx::{FromRow, SqlitePool};
+use threadbase_core::state::parse_queue_status;
 use threadbase_shared::{user_color, QueueItemDto, QueueStatus, UserBrief};
 
 #[derive(Debug, FromRow)]
@@ -48,13 +49,7 @@ fn dto(row: QueueRow) -> QueueItemDto {
             color: user_color(&row.author_id).to_owned(),
         },
         text: row.text,
-        status: match row.status.as_str() {
-            "sending" => QueueStatus::Sending,
-            "sent" => QueueStatus::Sent,
-            "superseded" => QueueStatus::Superseded,
-            "dropped" => QueueStatus::Dropped,
-            _ => QueueStatus::Queued,
-        },
+        status: parse_queue_status(&row.status).unwrap_or(QueueStatus::Queued),
         position: u32::try_from(row.position).unwrap_or(0),
         created_at: row.created_at,
         superseded: row.superseded != 0,
@@ -66,19 +61,14 @@ use crate::events::EventStore;
 use threadbase_shared::{Actor, ThreadEvent, ThreadId};
 
 pub async fn mark_superseded(
-    pool: &SqlitePool,
+    state_store: &crate::state::StateStore,
     thread_id: &str,
     turn_id: Option<&str>,
 ) -> Result<(), QueueError> {
-    sqlx::query(
-        "UPDATE queued_inputs SET superseded = 1, turn_id = ?, updated_at = ?
-         WHERE thread_id = ? AND status = 'queued'",
-    )
-    .bind(turn_id)
-    .bind(threadbase_shared::now_ms())
-    .bind(thread_id)
-    .execute(pool)
-    .await?;
+    state_store
+        .supersede_queue(thread_id, turn_id)
+        .await
+        .map_err(|error| QueueError::internal(error.to_string()))?;
     Ok(())
 }
 
@@ -121,7 +111,9 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        mark_superseded(&pool, thread.as_str(), Some("turn-1"))
+        let (state_tx, _) = tokio::sync::broadcast::channel(1);
+        let state_store = crate::state::StateStore::new(pool.clone(), state_tx);
+        mark_superseded(&state_store, thread.as_str(), Some("turn-1"))
             .await
             .unwrap();
         let items = list_for_thread(&pool, thread.as_str()).await.unwrap();

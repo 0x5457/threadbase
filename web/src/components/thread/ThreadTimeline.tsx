@@ -42,6 +42,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import { ElicitationCard } from "@/components/thread/ElicitationCard";
+import { SubagentStatusBadge } from "@/components/thread/SubagentStatusBadge";
 import { usePresenceStore } from "@/lib/presence";
 import { formatTimestamp } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -236,12 +237,20 @@ function noticeForEvent(event: EventEnvelope): NoticeItem | null {
         label: "Approval resolved",
         text: `${payload.decision}${payload.scope ? ` · ${payload.scope}` : ""}`,
       };
+    case "permission_cancelled":
+      return {
+        kind: "notice",
+        key,
+        tone: "muted",
+        label: "Approval cancelled",
+        text: "The turn was cancelled",
+      };
     default:
       return null;
   }
 }
 
-function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
+function buildTimeline(events: EventEnvelope[], activeSubagentCount = 0): TimelineItem[] {
   const sorted = [...events].sort(
     (left, right) => Number(left.seq) - Number(right.seq),
   );
@@ -268,6 +277,9 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
     }
     if (event.payload.type === "permission_resolved") {
       resolvedApprovals.set(event.payload.approvalId, event.payload.decision);
+    }
+    if (event.payload.type === "permission_cancelled") {
+      resolvedApprovals.set(event.payload.approvalId, "cancelled");
     }
     if (event.payload.type === "elicitation_resolved") {
       resolvedElicitations.set(
@@ -402,16 +414,18 @@ function buildTimeline(events: EventEnvelope[]): TimelineItem[] {
       grouped.push(item);
     }
   }
-  const activeSubagents = [...latestSubagents.values()].filter(
+  const derivedActiveSubagents = [...latestSubagents.values()].filter(
     (subagent) => subagent.status === "running" || subagent.status === "requires_action",
   );
-  if (activeSubagents.length > 0) {
+  const activeSubagents =
+    activeSubagentCount > 0 ? activeSubagentCount : derivedActiveSubagents.length;
+  if (activeSubagents > 0) {
     grouped.push({
       kind: "notice",
       key: "subagents-running",
       tone: "info",
-      label: `${activeSubagents.length} subagent${activeSubagents.length === 1 ? "" : "s"} still running`,
-      text: activeSubagents.map((subagent) => subagent.title).join(", "),
+      label: `${activeSubagents} subagent${activeSubagents === 1 ? "" : "s"} still running`,
+      text: derivedActiveSubagents.map((subagent) => subagent.title).join(", "),
     });
   }
   if (latestPlan && latestPlan.length > 0) {
@@ -459,6 +473,8 @@ function summarizeTools(calls: ToolCallData[]): string {
 export interface ThreadTimelineProps {
   events: EventEnvelope[];
   approvals: ApprovalDto[];
+  /** Active subagent count from the shared ThreadState projection. */
+  activeSubagentCount?: number;
   loading?: boolean;
   error?: unknown;
   onRetry?: () => void;
@@ -479,6 +495,7 @@ export interface ThreadTimelineProps {
 export function ThreadTimeline({
   events,
   approvals,
+  activeSubagentCount = 0,
   loading = false,
   error,
   onRetry,
@@ -487,7 +504,10 @@ export function ThreadTimeline({
   onComment,
   onOpenSubagent,
 }: ThreadTimelineProps) {
-  const items = useMemo(() => buildTimeline(events), [events]);
+  const items = useMemo(
+    () => buildTimeline(events, activeSubagentCount),
+    [events, activeSubagentCount],
+  );
   const setLocal = usePresenceStore((state) => state.setLocal);
   const [denyFor, setDenyFor] = useState<string | null>(null);
   const [denyNote, setDenyNote] = useState("");
@@ -814,9 +834,6 @@ export function ThreadTimeline({
 
           if (item.kind === "subagent") {
             const subagent = item.subagent;
-            const active =
-              subagent.status === "running" ||
-              subagent.status === "requires_action";
             return (
               <div key={item.key} className="flex gap-3">
                 <div className="w-7 shrink-0" />
@@ -826,21 +843,7 @@ export function ThreadTimeline({
                     <span className="truncate text-[13px] font-medium text-fg">
                       {subagent.title}
                     </span>
-                    <Badge
-                      size="sm"
-                      variant={
-                        subagent.status === "error"
-                          ? "danger"
-                          : subagent.status === "requires_action"
-                            ? "warning"
-                            : active
-                              ? "info"
-                              : "neutral"
-                      }
-                      className="ml-auto shrink-0"
-                    >
-                      {subagent.status.replace("_", " ")}
-                    </Badge>
+                    <SubagentStatusBadge status={subagent.status} />
                     <ChevronRight className="size-3 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
                   </summary>
                   <div className="space-y-1 border-t border-border/70 px-3 py-2 text-[13px] text-muted-foreground">

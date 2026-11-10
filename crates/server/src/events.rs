@@ -2,6 +2,7 @@
 
 use sqlx::{FromRow, SqlitePool};
 use std::sync::Arc;
+use threadbase_core::state::{delivery_str, parse_delivery};
 use threadbase_core::TimelineState;
 use threadbase_shared::{
     now_ms, Actor, ActorKind, ApiError, Delivery, EventEnvelope, EventsPageDto, Origin,
@@ -333,25 +334,6 @@ fn parse_origin(value: &str) -> Origin {
     match value {
         "relay" => Origin::Relay,
         _ => Origin::Local,
-    }
-}
-
-fn delivery_str(delivery: Delivery) -> &'static str {
-    match delivery {
-        Delivery::Injected => "injected",
-        Delivery::StoppedAndSent => "stopped_and_sent",
-        Delivery::Queued => "queued",
-        Delivery::Dropped => "dropped",
-    }
-}
-
-fn parse_delivery(value: &str) -> Option<Delivery> {
-    match value {
-        "injected" => Some(Delivery::Injected),
-        "stopped_and_sent" => Some(Delivery::StoppedAndSent),
-        "queued" => Some(Delivery::Queued),
-        "dropped" => Some(Delivery::Dropped),
-        _ => None,
     }
 }
 

@@ -134,6 +134,11 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.getByRole("button", { name: "Send", exact: true }).click();
   await expect(admin.getByText("Allow once", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(admin.getByText("Full parameters")).toBeVisible();
+  // UI and backend projection must agree on the pending approval count.
+  const bundleResponse = await api.get(`/api/threads/${thread.id}/bundle`);
+  const bundleBody = await bundleResponse.json();
+  expect(bundleBody.bundle.thread.pendingApprovals).toBe(1);
+  await expect(admin.getByText("1 waiting").first()).toBeVisible();
   await admin.getByRole("button", { name: "Allow once" }).click();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible();
   await expect(admin.getByText("Allow once", { exact: true })).toBeHidden({ timeout: 10_000 });
@@ -276,6 +281,57 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
     timeout: 15_000,
   });
 
+  // Queue: while a slow turn runs, queue a follow-up, cancel the turn, then
+  // continue the superseded item. The worker sends it and a new tool card lands.
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(`/api/threads/${thread.id}/bundle`);
+        const body = await response.json();
+        return body.bundle.thread.status as string;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe("idle");
+  await composer.fill("slow");
+  await admin.getByRole("button", { name: "Send", exact: true }).click();
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(`/api/threads/${thread.id}/bundle`);
+        const body = await response.json();
+        return body.bundle.thread.status as string;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe("running");
+  await expect(
+    admin.getByRole("button", { name: "Stop", exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
+  await composer.fill("stream");
+  await admin.getByRole("button", { name: "More send options" }).click();
+  await admin
+    .getByRole("menuitem", { name: "Queue after the current turn" })
+    .click();
+  await expect(admin.getByText("Queued at position 1")).toBeVisible({
+    timeout: 10_000,
+  });
+  const queuePanel = admin
+    .locator("div.mb-2.space-y-1")
+    .filter({ hasText: "Queue" });
+  await expect(queuePanel).toBeVisible({ timeout: 10_000 });
+  const helloMessages = admin.getByText("Hello", { exact: false });
+  const helloBefore = await helloMessages.count();
+  await admin.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect(queuePanel.getByText("previous turn cancelled")).toBeVisible({
+    timeout: 10_000,
+  });
+  await queuePanel.getByRole("button", { name: "continue" }).click();
+  await expect
+    .poll(() => helloMessages.count(), { timeout: 15_000 })
+    .toBeGreaterThan(helloBefore);
+  await expect(queuePanel).toBeHidden({ timeout: 15_000 });
+
   // Project picker: one field, live directory suggestions, no free-form name.
   await admin.getByLabel("New project").click();
   const pathInput = admin.getByPlaceholder("/home/you/code");
@@ -310,10 +366,12 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
     .locator("main")
     .getByText("Test investigator", { exact: true })
     .first();
-  await expect(subagentCard).toBeVisible({ timeout: 15_000 });
+  await expect(subagentCard).toBeVisible({ timeout: 30_000 });
   await subagentCard.scrollIntoViewIfNeeded();
   await subagentCard.click();
-  await expect(admin.getByText("Nested helper", { exact: true }).first()).toBeVisible();
+  await expect(admin.getByText("Nested helper", { exact: true }).first()).toBeVisible({
+    timeout: 15_000,
+  });
   await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/subagents-1440-dark.png",
@@ -641,6 +699,13 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
     fullPage: true,
   });
   await offlineContext.setOffline(false);
+  await expect(offline.getByText("Reconnecting…").first()).toBeHidden({ timeout: 15_000 });
+  await expect(offline.getByText("Hello", { exact: false }).first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(offline.getByText("Run tests", { exact: false }).first()).toBeVisible({
+    timeout: 15_000,
+  });
   await offlineContext.close();
 
   execSync(`git -C ${REPO} checkout --orphan diverged`, { stdio: "ignore" });

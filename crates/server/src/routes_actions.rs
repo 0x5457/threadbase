@@ -78,6 +78,7 @@ async fn decide_impl(
     // anything reaches the agent. A viewer must not be able to unblock a tool.
     let approval = crate::approvals::decide(
         &state.pool,
+        &state.state_store,
         &state.events,
         approval_id,
         user,
@@ -133,6 +134,7 @@ async fn respond_elicitation(
 ) -> Result<Json<ElicitationResolvedResponse>, ServerError> {
     let elicitation = crate::approvals::respond_elicitation(
         &state.pool,
+        &state.state_store,
         &state.events,
         &elicitation_id,
         &user,

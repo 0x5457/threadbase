@@ -45,6 +45,7 @@ import type { SendMessageResponse } from "@/api/types/SendMessageResponse";
 import type { SetupRequest } from "@/api/types/SetupRequest";
 import type { StateResponse } from "@/api/types/StateResponse";
 import type { ThreadBundleResponse } from "@/api/types/ThreadBundleResponse";
+import type { ThreadState } from "@/api/types/ThreadState";
 import type { ThreadId } from "@/api/types/ThreadId";
 import type { ThreadResponse } from "@/api/types/ThreadResponse";
 import type { ThreadsResponse } from "@/api/types/ThreadsResponse";
@@ -71,6 +72,8 @@ export const endpoints = {
   threads: "/api/threads",
   threadBundle: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/bundle`,
+  threadState: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/state`,
   sendMessage: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/messages`,
   markRead: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/read`,
@@ -287,6 +290,10 @@ export function fetchThreadBundle(
   threadId: ThreadId,
 ): Promise<ThreadBundleResponse> {
   return api<ThreadBundleResponse>(endpoints.threadBundle(threadId));
+}
+
+export function fetchThreadState(threadId: ThreadId): Promise<ThreadState> {
+  return api<ThreadState>(endpoints.threadState(threadId));
 }
 
 export function fetchApprovalRules(): Promise<ApprovalRulesResponse> {

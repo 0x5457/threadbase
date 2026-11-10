@@ -112,6 +112,7 @@ async fn real_codex_streams_a_reply() {
     .unwrap();
     let thread = threads::create(
         &state.pool,
+        &state.state_store,
         data.path(),
         &current,
         project.id.as_str(),

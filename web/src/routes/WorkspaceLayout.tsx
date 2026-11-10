@@ -23,6 +23,7 @@ import type { SubagentDto } from "@/api/types/SubagentDto";
 import type { ThreadDto } from "@/api/types/ThreadDto";
 import { AppShell } from "@/components/shell/AppShell";
 import { SidebarTree } from "@/components/shell/SidebarTree";
+import { SubagentStatusBadge } from "@/components/thread/SubagentStatusBadge";
 import { Button, Dialog, DialogContent, Input } from "@/components/ui";
 import { NewProjectDialog } from "@/components/workspace/NewProjectDialog";
 import { ShareDialog } from "@/components/workspace/ShareDialog";
@@ -643,9 +644,7 @@ export function WorkspaceLayout() {
                     <span className="min-w-0 flex-1 truncate">
                       {subagent.title}
                     </span>
-                    <span className="text-[9.5px] text-faint">
-                      {subagent.status}
-                    </span>
+                    <SubagentStatusBadge status={subagent.status} />
                   </button>
                 </li>
               ))}

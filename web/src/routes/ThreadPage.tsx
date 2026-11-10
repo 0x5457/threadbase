@@ -3,6 +3,7 @@ import {
   Archive,
   ArrowLeft,
   Bot,
+  CircleHelp,
   MoreHorizontal,
   ChevronRight,
   Layers,
@@ -30,6 +31,7 @@ import {
   useMe,
   useThreadBundle,
   useThreadEvents,
+  useThreadState,
 } from "@/api/queries";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { CommentAnchor } from "@/api/types/CommentAnchor";
@@ -43,6 +45,7 @@ import {
   type SelectionTarget,
 } from "@/components/thread/SelectionComment";
 import { Composer } from "@/components/thread/Composer";
+import { SubagentStatusBadge } from "@/components/thread/SubagentStatusBadge";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
 import {
@@ -67,21 +70,6 @@ import { useLiveStore, useThreadLiveEvents } from "@/lib/live";
 import { formatTokenCount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-function subagentStatus(status: SubagentDto["status"]) {
-  switch (status) {
-    case "running":
-      return "running" as const;
-    case "requires_action":
-      return "requires_action" as const;
-    case "error":
-      return "error" as const;
-    case "cancelled":
-      return "interrupted" as const;
-    default:
-      return "idle" as const;
-  }
-}
-
 export function ThreadPage() {
   const { projectId, threadId, subagentId } = useParams();
   const online = useOnlineStatus();
@@ -90,6 +78,7 @@ export function ThreadPage() {
   const queryClient = useQueryClient();
   const bundle = useThreadBundle(threadId);
   const events = useThreadEvents(threadId);
+  const threadState = useThreadState(threadId);
   useThreadLiveEvents(threadId);
   const liveConnected = useLiveStore((state) => state.connected);
   const elicitation = useMutation({
@@ -448,6 +437,12 @@ export function ThreadPage() {
   }
 
   const { thread, project, approvals, subagents, members } = bundle.data.bundle;
+  // Shared projection is authoritative; the bundle is only the initial fallback.
+  const liveStatus = threadState.data?.status ?? thread.status;
+  const livePendingApprovals = threadState.data?.pendingApprovals ?? thread.pendingApprovals;
+  const liveQueuedInputs = threadState.data?.queuedInputs ?? thread.queuedInputs;
+  const livePendingElicitations = threadState.data?.pendingElicitations ?? 0;
+  const liveDiverged = threadState.data?.diverged ?? thread.diverged;
   const myRole = members.find(
     (member) => member.user.id === me.data?.user.id,
   )?.role;
@@ -513,9 +508,9 @@ export function ThreadPage() {
         ) : (
           <span className="truncate text-fg">{thread.title}</span>
         )}
-        <ThreadStatusBadge status={thread.status} />
+        <ThreadStatusBadge status={liveStatus} />
         <div className="ml-auto flex items-center gap-2 text-faint">
-          {thread.status === "error" || thread.status === "interrupted" ? (
+          {liveStatus === "error" || liveStatus === "interrupted" ? (
             <Button
               size="sm"
               variant="danger"
@@ -527,10 +522,10 @@ export function ThreadPage() {
             </Button>
           ) : null}
           <IconButton
-            label={thread.status === "archived" ? "Unarchive thread" : "Archive thread"}
+            label={liveStatus === "archived" ? "Unarchive thread" : "Archive thread"}
             size="sm"
             disabled={!canWrite || archive.isPending}
-            onClick={() => archive.mutate(thread.status !== "archived")}
+            onClick={() => archive.mutate(liveStatus !== "archived")}
           >
             <Archive />
           </IconButton>
@@ -558,15 +553,31 @@ export function ThreadPage() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
           </DropdownMenu>
-          {thread.pendingApprovals > 0 ? (
+          {livePendingApprovals > 0 ? (
             <Badge variant="warning" size="sm">
               <ShieldCheck className="size-2.5" aria-hidden />
-              {thread.pendingApprovals} waiting
+              {livePendingApprovals} waiting
             </Badge>
           ) : null}
-          {thread.queuedInputs > 0 ? (
+          {livePendingElicitations > 0 ? (
             <Badge variant="info" size="sm">
-              {thread.queuedInputs} queued
+              <CircleHelp className="size-2.5" aria-hidden />
+              {livePendingElicitations} question{livePendingElicitations > 1 ? "s" : ""}
+            </Badge>
+          ) : null}
+          {liveQueuedInputs > 0 ? (
+            <Badge variant="info" size="sm">
+              {liveQueuedInputs} queued
+            </Badge>
+          ) : null}
+          {threadState.data?.currentTurn ? (
+            <Badge
+              variant="outline"
+              size="sm"
+              title={`Current turn ${threadState.data.currentTurn}`}
+            >
+              <span className="size-1.5 animate-pulse rounded-full bg-current" aria-hidden />
+              live turn
             </Badge>
           ) : null}
         </div>
@@ -590,6 +601,7 @@ export function ThreadPage() {
           <ThreadTimeline
             events={visibleEvents}
             approvals={visibleApprovals}
+            activeSubagentCount={threadState.data?.activeSubagents ?? 0}
             loading={events.isLoading}
             error={events.error}
             onRetry={() => void events.refetch()}
@@ -680,7 +692,7 @@ export function ThreadPage() {
           anchor={commentAnchor}
         />
       ) : null}
-      {thread.diverged && !divergedDismissed ? (
+      {liveDiverged && !divergedDismissed ? (
         <div className="flex flex-wrap items-center gap-2 border-t border-warning/30 bg-warning/5 px-4 py-2 text-[13px] text-warning">
           <span>This thread has diverged from the project branch.</span>
           <Button
@@ -707,7 +719,7 @@ export function ThreadPage() {
           threadId={thread.id}
           canWrite={canWrite}
           onRequestAccess={() => requestAccessMutation.mutate()}
-          threadStatus={thread.status}
+          threadStatus={liveStatus}
           participants={thread.participants}
           model={thread.model}
           effort={thread.effort}
@@ -756,7 +768,7 @@ function SubagentView({
                 <h1 className="truncate text-[13px] font-semibold text-fg">
                   {subagent.title}
                 </h1>
-                <ThreadStatusBadge status={subagentStatus(subagent.status)} />
+                <SubagentStatusBadge status={subagent.status} />
               </div>
               {subagent.description ? (
                 <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">
