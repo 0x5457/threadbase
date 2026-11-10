@@ -1,9 +1,16 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is([data-theme="dark"] *));
 
 @theme inline {
-  --font-sans: var(--font-ui);
-  --font-mono: var(--font-code);
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-heading: var(--font-sans);
 
+  /* App surfaces */
   --color-canvas: var(--canvas);
   --color-panel: var(--panel);
   --color-surface: var(--surface);
@@ -12,11 +19,17 @@
   --color-active: var(--active);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
-  --color-fg: var(--fg);
+  --color-fg: var(--foreground);
   --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
   --color-faint: var(--faint);
   --color-accent: var(--accent);
-  --color-accent-soft: var(--accent-soft);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
@@ -24,63 +37,110 @@
   --color-add: var(--add);
   --color-del: var(--del);
 
+  /* shadcn semantic tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
   --radius-xs: 4px;
   --radius-sm: 6px;
-  --radius-md: 9px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 :root {
-  --font-ui:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Helvetica Neue",
-    sans-serif;
-  --font-code:
-    "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-code: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  --canvas: #101214;
-  --panel: #15181b;
-  --surface: #1a1e21;
-  --raised: #202529;
-  --hover: #23282c;
-  --active: #2a3035;
-  --border: #2a3034;
-  --border-strong: #3a4248;
-  --fg: #e7e9eb;
-  --muted: #929aa1;
-  --faint: #6b737a;
-  --accent: #8aa4ff;
-  --accent-soft: rgb(138 164 255 / 0.12);
-  --success: #58c98a;
-  --warning: #e2b35b;
-  --danger: #e87373;
-  --info: #6fb7e8;
-  --add: rgb(88 201 138 / 0.14);
-  --del: rgb(232 115 115 / 0.14);
+  --canvas: #09090b;
+  --panel: #0c0c0e;
+  --surface: #111113;
+  --raised: #18181b;
+  --hover: #1c1c20;
+  --active: #27272a;
+  --border: #232327;
+  --border-strong: #3f3f46;
+  --foreground: #fafafa;
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa;
+  --faint: #71717a;
+  --primary: #fafafa;
+  --primary-foreground: #09090b;
+  --secondary: #18181b;
+  --secondary-foreground: #fafafa;
+  --accent: #1c1c20;
+  --accent-foreground: #fafafa;
+  --destructive: #ef4444;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+  --add: rgb(74 222 128 / 0.12);
+  --del: rgb(248 113 113 / 0.12);
+
+  --background: var(--canvas);
+  --card: var(--panel);
+  --card-foreground: var(--foreground);
+  --popover: var(--panel);
+  --popover-foreground: var(--foreground);
+  --input: var(--border);
+  --ring: #d4d4d8;
+  --sidebar: var(--panel);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--hover);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --radius: 0.5rem;
 
   color-scheme: dark;
 }
 
 :root[data-theme="light"] {
-  --canvas: #f6f7f8;
-  --panel: #fbfbfc;
+  --canvas: #fafafa;
+  --panel: #ffffff;
   --surface: #ffffff;
-  --raised: #f0f2f4;
-  --hover: #eceff2;
-  --active: #e3e8ed;
-  --border: #dde2e7;
-  --border-strong: #c6ced6;
-  --fg: #1c2126;
-  --muted: #606a73;
-  --faint: #8b959e;
-  --accent: #4f6ef2;
-  --accent-soft: rgb(79 110 242 / 0.1);
-  --success: #238a55;
-  --warning: #9a6b12;
-  --danger: #c24141;
-  --info: #1f6f9e;
-  --add: rgb(35 138 85 / 0.1);
-  --del: rgb(194 65 65 / 0.1);
+  --raised: #f4f4f5;
+  --hover: #f4f4f5;
+  --active: #e4e4e7;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --faint: #71717a;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --info: #2563eb;
+  --add: rgb(22 163 74 / 0.1);
+  --del: rgb(220 38 38 / 0.1);
+  --ring: #18181b;
 
   color-scheme: light;
 }
@@ -88,6 +148,7 @@
 @layer base {
   * {
     border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
   }
 
   html,
@@ -99,8 +160,8 @@
   body {
     margin: 0;
     background: var(--canvas);
-    color: var(--fg);
-    font-family: var(--font-ui);
+    color: var(--foreground);
+    font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
@@ -110,16 +171,16 @@
   code,
   pre,
   kbd {
-    font-family: var(--font-code);
+    font-family: var(--font-mono);
   }
 
   ::selection {
-    background: rgb(138 164 255 / 0.28);
+    background: color-mix(in oklab, var(--primary) 24%, transparent);
   }
 
   :focus-visible {
-    outline: 1.5px solid var(--accent);
-    outline-offset: 1px;
+    outline: 1.5px solid var(--ring);
+    outline-offset: 2px;
   }
 
   button,
@@ -128,10 +189,6 @@
   select {
     font: inherit;
     color: inherit;
-  }
-
-  button {
-    cursor: pointer;
   }
 
   ::-webkit-scrollbar {

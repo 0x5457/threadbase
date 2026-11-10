@@ -53,7 +53,7 @@ export function TitleBar({
   }));
 
   return (
-    <header className="drag-region relative z-30 flex h-12 shrink-0 items-center gap-2 border-b border-border bg-panel/95 px-2.5 backdrop-blur">
+    <header className="drag-region relative z-30 flex h-11 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3">
       <div className="no-drag flex items-center gap-1">
         <Tooltip content={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
           <IconButton
@@ -67,7 +67,7 @@ export function TitleBar({
         <button
           type="button"
           onClick={onOpenSearch}
-          className="no-drag flex h-8 items-center gap-2 rounded-md border border-border bg-canvas/70 px-2 text-muted transition-colors hover:border-border-strong hover:text-fg"
+          className="no-drag flex h-8 items-center gap-2 rounded-md bg-muted/50 px-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="Search workspace"
         >
           <Search className="size-3.5" aria-hidden />
@@ -77,7 +77,7 @@ export function TitleBar({
 
       <div className="flex min-w-0 flex-1 items-center justify-center gap-2 px-2">
         <div className="min-w-0 text-center">
-          <p className="truncate text-[12.5px] font-medium leading-tight text-fg">
+          <p className="truncate text-[13px] font-medium leading-tight text-foreground">
             {title}
           </p>
         </div>
@@ -122,7 +122,7 @@ export function TitleBar({
             disabled={shareDisabled || !onShare}
             onClick={onShare}
             className={cn(
-              "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg disabled:pointer-events-none disabled:opacity-40",
+              "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
             )}
           >
             <Share2 className="size-3.5" aria-hidden />

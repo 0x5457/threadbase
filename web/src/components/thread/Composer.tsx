@@ -1,4 +1,3 @@
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Send, Square, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -15,7 +14,22 @@ import { queryKeys, useAgentConfig, useMe, useQueue } from "@/api/queries";
 import type { DeliveryMode } from "@/api/types/DeliveryMode";
 import type { QueueItemDto } from "@/api/types/QueueItemDto";
 import type { Participant } from "@/api/types/Participant";
-import { Button } from "@/components/ui";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from "@/components/ui";
 import { usePresenceStore } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
@@ -217,13 +231,13 @@ export function Composer({
 
   if (!canWrite) {
     return (
-      <div className="border-t border-border bg-panel px-4 py-3 text-center text-[11px] text-muted">
+      <div className="border-t border-border/60 bg-background px-4 py-3 text-center text-[12px] text-muted-foreground">
         <Users className="mr-1.5 inline size-3.5" aria-hidden />
-        You are viewing this thread read-only.
+        Read-only.
         {onRequestAccess ? (
           <button
             type="button"
-            className="ml-2 text-accent hover:underline"
+            className="ml-2 text-primary hover:underline"
             onClick={onRequestAccess}
           >
             Request access
@@ -235,11 +249,11 @@ export function Composer({
 
   return (
     <>
-    <div className="bg-panel/80 px-3 pt-2">
+    <div className="bg-background px-4 pt-2">
       <div className="mx-auto w-full max-w-3xl">
         {(queue.data?.items.length ?? 0) > 0 ? (
-          <div className="mb-2 space-y-1 rounded-lg border border-border bg-surface p-2">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-faint">
+          <div className="mb-2 space-y-1 rounded-xl border border-border/60 bg-card/70 p-2.5">
+            <div className="flex items-center gap-2 text-[13px] uppercase tracking-wide text-faint">
               Queue
               <span className="font-mono">{queue.data?.items.length}</span>
             </div>
@@ -248,11 +262,11 @@ export function Composer({
                 key={item.id}
                 className="flex items-start gap-2 rounded bg-canvas px-2 py-1.5"
               >
-                <span className="font-mono text-[10px] text-faint">
+                <span className="font-mono text-[13px] text-faint">
                   {item.position}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[10.5px] text-fg">{item.text}</p>
+                  <p className="truncate text-[13px] text-fg">{item.text}</p>
                   <p className="text-[9px] text-faint">
                     {item.author.displayName}
                     {item.superseded ? " · previous turn cancelled" : ""}
@@ -261,7 +275,7 @@ export function Composer({
                 {item.superseded ? (
                   <button
                     type="button"
-                    className="text-[9.5px] text-accent hover:underline"
+                    className="text-[9.5px] text-primary hover:underline"
                     onClick={() => retry.mutate(item)}
                   >
                     continue
@@ -281,7 +295,7 @@ export function Composer({
       </div>
     </div>
     <div
-      className="border-t border-border bg-panel/80 px-3 py-2.5"
+      className="border-t border-border/60 bg-background px-4 py-3"
       onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           event.preventDefault();
@@ -292,8 +306,8 @@ export function Composer({
       }}
     >
       <div className="mx-auto w-full max-w-3xl">
-        <div className="rounded-xl border border-border bg-surface shadow-sm focus-within:border-border-strong">
-          <div className="max-h-[46vh] min-h-[152px] space-y-1 overflow-y-auto px-3 py-3">
+        <div className="rounded-2xl border border-border/70 bg-card/60 transition-colors focus-within:border-border-strong/80">
+          <div className="max-h-[46vh] min-h-[148px] space-y-1 overflow-y-auto px-3.5 py-3">
             {list.map((block) => {
               const author = participants.find(
                 (participant) =>
@@ -311,7 +325,7 @@ export function Composer({
               );
             })}
           </div>
-          <div className="flex min-h-10 items-center gap-2 border-t border-border/70 px-2.5 py-1.5">
+          <div className="flex min-h-10 items-center gap-1.5 border-t border-border/50 px-2.5 py-1.5">
             <span
               className={cn(
                 "size-1.5 rounded-full",
@@ -328,95 +342,115 @@ export function Composer({
               }
             />
             {modelOption ? (
-              <select
-                aria-label="Model"
-                value={modelValue}
-                onChange={(event) => {
-                  setModelOverride(event.target.value);
-                  onApplyConfig?.(event.target.value, effortValue);
+              <Select
+                value={modelValue || undefined}
+                onValueChange={(next) => {
+                  setModelOverride(next);
+                  onApplyConfig?.(next, effortValue);
                 }}
-                className="h-7 max-w-[180px] rounded-md border border-border bg-surface px-1.5 text-[10.5px] text-muted"
               >
-                {!modelOption.options.some(
-                  (value) => value.value === modelValue,
-                ) && modelValue ? (
-                  <option value={modelValue}>{modelValue}</option>
-                ) : null}
-                {modelOption.options.map((value) => (
-                  <option key={value.value} value={value.value}>
-                    {value.name}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  aria-label="Model"
+                  size="sm"
+                  className="h-7 max-w-[190px] border-0 bg-transparent px-2 text-[12px] text-muted-foreground shadow-none hover:bg-muted/60"
+                >
+                  <SelectValue placeholder="Model" />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {!modelOption.options.some(
+                    (value) => value.value === modelValue,
+                  ) && modelValue ? (
+                    <SelectItem value={modelValue}>{modelValue}</SelectItem>
+                  ) : null}
+                  {modelOption.options.map((value) => (
+                    <SelectItem key={value.value} value={value.value}>
+                      {value.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : null}
             {effortOption ? (
-              <select
-                aria-label="Effort"
-                value={effortValue}
-                onChange={(event) => {
-                  setEffortOverride(event.target.value);
-                  onApplyConfig?.(modelValue, event.target.value);
+              <Select
+                value={effortValue || undefined}
+                onValueChange={(next) => {
+                  setEffortOverride(next);
+                  onApplyConfig?.(modelValue, next);
                 }}
-                className="h-7 rounded-md border border-border bg-surface px-1.5 text-[10.5px] text-muted"
               >
-                {effortOption.options.map((value) => (
-                  <option key={value.value} value={value.value}>
-                    {value.name}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  aria-label="Effort"
+                  size="sm"
+                  className="h-7 border-0 bg-transparent px-2 text-[12px] text-muted-foreground shadow-none hover:bg-muted/60"
+                >
+                  <SelectValue placeholder="Effort" />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {effortOption.options.map((value) => (
+                    <SelectItem key={value.value} value={value.value}>
+                      {value.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : null}
-            <div className="relative">
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setMentionOpen((open) => !open)}
-                aria-label="Mention a teammate"
+            <Popover open={mentionOpen} onOpenChange={setMentionOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Mention a teammate"
+                >
+                  @
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                side="top"
+                className="w-52 p-1"
               >
-                @
-              </Button>
-              {mentionOpen ? (
-                <div className="absolute bottom-8 left-0 z-20 w-52 overflow-hidden rounded-md border border-border bg-panel py-1 shadow-xl">
-                  {participants.length === 0 ? (
-                    <p className="px-2 py-1.5 text-[10.5px] text-faint">
-                      No teammates to mention
-                    </p>
-                  ) : (
-                    participants.map((participant) => (
-                      <button
-                        key={participant.user.id}
-                        type="button"
-                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px] text-fg hover:bg-hover"
-                        onClick={() => {
-                          const own = blocks
-                            .toArray()
-                            .find(
-                              (block) =>
-                                block.get("author") === userId &&
-                                block.get("text") instanceof Y.Text,
-                            );
-                          const text = own?.get("text");
-                          if (text instanceof Y.Text) {
-                            text.insert(text.length, `@${participant.user.username} `);
-                          }
-                          setMentionOpen(false);
-                        }}
-                      >
-                        <span
-                          className="size-2 rounded-full"
-                          style={{ background: participant.user.color }}
-                        />
-                        {participant.user.displayName}
-                        <span className="ml-auto text-[9.5px] text-faint">
-                          @{participant.user.username}
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              ) : null}
-            </div>
+                {participants.length === 0 ? (
+                  <p className="px-2 py-1.5 text-[12px] text-muted-foreground">
+                    No teammates to mention
+                  </p>
+                ) : (
+                  participants.map((participant) => (
+                    <button
+                      key={participant.user.id}
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-foreground hover:bg-accent"
+                      onClick={() => {
+                        const own = blocks
+                          .toArray()
+                          .find(
+                            (block) =>
+                              block.get("author") === userId &&
+                              block.get("text") instanceof Y.Text,
+                          );
+                        const text = own?.get("text");
+                        if (text instanceof Y.Text) {
+                          text.insert(
+                            text.length,
+                            `@${participant.user.username} `,
+                          );
+                        }
+                        setMentionOpen(false);
+                      }}
+                    >
+                      <span
+                        className="size-2 rounded-full"
+                        style={{ background: participant.user.color }}
+                      />
+                      {participant.user.displayName}
+                      <span className="ml-auto text-[10px] text-muted-foreground">
+                        @{participant.user.username}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </PopoverContent>
+            </Popover>
             <div className="ml-auto flex items-center">
               {threadStatus === "running" ? (
                 <Button
@@ -454,8 +488,8 @@ export function Composer({
                 <Send aria-hidden />
                 Send
               </Button>
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <Button
                     type="button"
                     size="icon-sm"
@@ -465,28 +499,16 @@ export function Composer({
                   >
                     <ChevronDown aria-hidden />
                   </Button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    className="z-50 min-w-44 rounded-lg border border-border bg-panel p-1 shadow-xl"
-                    sideOffset={6}
-                    align="end"
-                  >
-                    <DropdownMenu.Item
-                      className="cursor-pointer rounded px-2 py-1.5 text-[12px] outline-none data-[highlighted]:bg-hover"
-                      onSelect={() => send.mutate("queue")}
-                    >
-                      Queue after the current turn
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      className="cursor-pointer rounded px-2 py-1.5 text-[12px] outline-none data-[highlighted]:bg-hover"
-                      onSelect={() => send.mutate("inject")}
-                    >
-                      Inject into current turn
-                    </DropdownMenu.Item>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-44">
+                  <DropdownMenuItem onSelect={() => send.mutate("queue")}>
+                    Queue after the current turn
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => send.mutate("inject")}>
+                    Inject into current turn
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
@@ -594,19 +616,19 @@ function DraftBlockEditor({
       className="group border-l-2 py-1 pl-2"
       style={{ borderLeftColor: authorColor ?? "var(--border-strong)" }}
     >
-      <div className="flex items-center gap-1.5 text-[10px] text-faint">
+      <div className="flex items-center gap-1.5 text-[13px] text-faint">
         <span
           className="size-1.5 rounded-full"
           style={{ background: authorColor ?? "var(--border-strong)" }}
         />
-        <span className={isMine ? "text-muted" : ""}>
+        <span className={isMine ? "text-muted-foreground" : ""}>
           {isMine ? "You" : (authorName ?? "Member")}
         </span>
         {remoteEditors.length > 0 ? (
           <span className="text-info">· {remoteEditors.join(", ")} editing</span>
         ) : null}
       </div>
-      <textarea
+      <Textarea
         ref={area}
         value={value}
         rows={Math.max(4, Math.min(12, value.split("\n").length))}
@@ -619,8 +641,9 @@ function DraftBlockEditor({
           awareness.setLocalStateField("blockId", null);
           setLocal({ typing: false });
         }}
+        aria-label={isMine ? "Message" : "Edit shared draft"}
         placeholder={isMine ? "Message" : "Edit draft…"}
-        className="mt-0.5 min-h-20 w-full resize-none bg-transparent py-1 text-[13.5px] leading-[1.65] text-fg outline-none placeholder:text-faint"
+        className="mt-0.5 min-h-20 resize-none border-0 bg-transparent px-0 py-1 text-[14px] leading-[1.65] shadow-none focus-visible:ring-0"
       />
     </div>
   );

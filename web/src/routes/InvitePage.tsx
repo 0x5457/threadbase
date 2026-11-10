@@ -29,7 +29,7 @@ export function InvitePage() {
 
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="w-full max-w-md rounded-xl border border-border bg-panel">
+      <div className="w-full max-w-md">
         {accept.isError ? (
           <EmptyState
             title="Invite could not be accepted"

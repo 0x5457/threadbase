@@ -41,7 +41,7 @@ export function StatusBar({
       : null;
 
   return (
-    <footer className="z-20 flex h-7 shrink-0 items-center gap-3 border-t border-border bg-panel px-2.5 text-[10.5px] text-muted">
+    <footer className="z-20 flex h-8 shrink-0 items-center gap-3 border-t border-border/50 bg-background px-3 text-[11px] text-muted-foreground">
       <div className="flex min-w-0 items-center gap-2.5">
         <Tooltip content={project?.path ?? "No project selected"}>
           <span className="flex min-w-0 items-center gap-1">
@@ -98,7 +98,7 @@ export function StatusBar({
           <button
             type="button"
             onClick={onOpenChanges}
-            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-muted transition-colors hover:bg-hover hover:text-fg"
+            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             title="Open changes"
           >
             <FileDiff className="size-3 text-faint" aria-hidden />

@@ -3,7 +3,15 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useThreadBundle, useThreadEvents } from "@/api/queries";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
-import { EmptyState, Skeleton } from "@/components/ui";
+import {
+  EmptyState,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Skeleton,
+} from "@/components/ui";
 
 export function SubagentComparePage() {
   const { projectId, threadId } = useParams();
@@ -30,44 +38,46 @@ export function SubagentComparePage() {
               ? `/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(threadId)}`
               : "/"
           }
-          className="inline-flex items-center gap-1 text-[11px] text-faint hover:text-fg"
+          className="inline-flex items-center gap-1 text-[13px] text-faint hover:text-fg"
         >
           <ChevronLeft className="size-3" aria-hidden />
           Back to thread
         </Link>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="flex items-center gap-2 text-[18px] font-semibold tracking-[-0.02em] text-fg">
-              <ArrowLeftRight className="size-4 text-muted" aria-hidden />
+            <h1 className="flex items-center gap-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground">
+              <ArrowLeftRight className="size-4 text-muted-foreground" aria-hidden />
               Compare subagents
             </h1>
-            <p className="text-[11px] text-muted">
+            <p className="text-[13px] text-muted-foreground">
               Two child sessions from the same thread, side by side.
             </p>
           </div>
           <div className="flex gap-1.5">
-            <select
-              value={left}
-              onChange={(event) => setLeftId(event.target.value)}
-              className="h-8 max-w-56 rounded-md border border-border bg-panel px-2 text-[11px]"
-            >
-              {subagents.map((subagent) => (
-                <option key={subagent.id} value={subagent.id}>
-                  {subagent.title}
-                </option>
-              ))}
-            </select>
-            <select
-              value={right}
-              onChange={(event) => setRightId(event.target.value)}
-              className="h-8 max-w-56 rounded-md border border-border bg-panel px-2 text-[11px]"
-            >
-              {subagents.map((subagent) => (
-                <option key={subagent.id} value={subagent.id}>
-                  {subagent.title}
-                </option>
-              ))}
-            </select>
+            <Select value={left} onValueChange={setLeftId}>
+              <SelectTrigger className="h-8 w-48">
+                <SelectValue placeholder="Left subagent" />
+              </SelectTrigger>
+              <SelectContent>
+                {subagents.map((subagent) => (
+                  <SelectItem key={subagent.id} value={subagent.id}>
+                    {subagent.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={right} onValueChange={setRightId}>
+              <SelectTrigger className="h-8 w-48">
+                <SelectValue placeholder="Right subagent" />
+              </SelectTrigger>
+              <SelectContent>
+                {subagents.map((subagent) => (
+                  <SelectItem key={subagent.id} value={subagent.id}>
+                    {subagent.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
         {bundle.isLoading ? (
@@ -86,13 +96,13 @@ export function SubagentComparePage() {
               return (
                 <div
                   key={id}
-                  className="min-w-0 rounded-xl border border-border bg-panel"
+                  className="min-w-0 rounded-xl border border-border/40 bg-card/30"
                 >
-                  <div className="border-b border-border px-3 py-2">
-                    <p className="text-[11px] font-medium text-fg">
+                  <div className="border-b border-border/40 px-4 py-3">
+                    <p className="text-[13px] font-medium text-fg">
                       {subagent?.title ?? "Subagent"}
                     </p>
-                    <p className="mt-0.5 text-[9.5px] text-faint">
+                    <p className="mt-0.5 text-[11px] text-faint">
                       {subagent?.status ?? "unknown"}
                       {subagent?.cwd ? ` · ${subagent.cwd}` : ""}
                       {subagent?.usage
@@ -101,7 +111,7 @@ export function SubagentComparePage() {
                     </p>
                   </div>
                   {timeline.length === 0 ? (
-                    <div className="p-3 text-[10.5px] text-faint">
+                    <div className="p-4 text-[12px] text-muted-foreground">
                       No child-session transcript was emitted by this adapter.
                       The parent timeline still contains the dispatch card.
                     </div>

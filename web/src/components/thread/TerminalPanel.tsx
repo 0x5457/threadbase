@@ -54,7 +54,7 @@ export function TerminalPanel({ threadId }: { threadId: string }) {
         <div key={call.id} className="overflow-hidden rounded-md border border-border bg-canvas">
           <div className="flex items-center gap-2 border-b border-border px-2 py-1.5">
             <Terminal className="size-3 text-faint" aria-hidden />
-            <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-fg">
+            <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-fg">
               {call.title}
             </span>
             <Badge

@@ -23,6 +23,7 @@ import {
   ErrorState,
   IconButton,
   Kbd,
+  ScrollArea,
   Skeleton,
   Tabs,
   Textarea,
@@ -104,14 +105,14 @@ export function RightDrawer({
     <aside
       aria-label="Right drawer"
       className={cn(
-        "flex flex-col border-l border-border bg-panel",
+        "flex flex-col border-l border-border/50 bg-background",
         overlay
           ? "absolute inset-y-0 right-0 z-40 w-[min(380px,calc(100vw-1rem))] shadow-2xl"
-          : "relative h-full w-[380px] shrink-0",
+          : "relative h-full w-[360px] shrink-0",
       )}
     >
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        <p className="text-[12px] font-semibold text-fg">Review</p>
+      <div className="flex h-11 shrink-0 items-center gap-2 px-4">
+        <p className="text-[12px] font-semibold text-foreground">Review</p>
         <div className="ml-auto flex items-center gap-1">
           {onRetry ? (
             <Tooltip content="Refresh thread data">
@@ -131,8 +132,8 @@ export function RightDrawer({
         onValueChange={(value) => onTabChange(value as DrawerTab)}
         className="flex min-h-0 flex-1 flex-col"
       >
-        <div className="shrink-0 border-b border-border px-2 py-1.5">
-          <TabsList className="flex w-full gap-0.5">
+        <div className="shrink-0 px-3 pb-2">
+          <TabsList className="flex h-8 w-full gap-0.5 rounded-lg bg-muted/50 p-0.5">
             <TabsTrigger
               value="changes"
               aria-label="Changes"
@@ -184,7 +185,7 @@ export function RightDrawer({
           </TabsList>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <ScrollArea className="min-h-0 flex-1">
           <TabsContent value="changes">
             {threadId ? (
               <ChangesPanel threadId={threadId} canWrite={canWrite} />
@@ -220,16 +221,16 @@ export function RightDrawer({
                   return (
                     <li
                       key={approval.id}
-                      className="overflow-hidden rounded-lg border border-border bg-surface"
+                      className="overflow-hidden rounded-xl border border-border/40 bg-card/40"
                     >
-                      <div className="border-b border-border px-3 py-2">
+                      <div className="border-b border-border/40 px-3 py-2.5">
                         <div className="flex items-start gap-2">
                           <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-warning" />
                           <div className="min-w-0 flex-1">
-                            <p className="text-[11.5px] font-medium text-fg">
+                            <p className="text-[13px] font-medium text-fg">
                               {approval.title}
                             </p>
-                            <p className="mt-0.5 text-[10px] text-faint">
+                            <p className="mt-0.5 text-[13px] text-faint">
                               {approval.agent}
                               {approval.subagentId
                                 ? ` · subagent ${approval.subagentId}`
@@ -241,14 +242,14 @@ export function RightDrawer({
                           </Badge>
                         </div>
                       </div>
-                      <div className="space-y-2 px-3 py-2">
+                      <div className="space-y-2 px-3 py-2.5">
                         {approval.command ? (
-                          <pre className="overflow-x-auto rounded bg-canvas px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-fg">
+                          <pre className="overflow-x-auto rounded bg-canvas px-2 py-1.5 font-mono text-[13px] leading-relaxed text-fg">
                             {approval.command}
                           </pre>
                         ) : null}
                         {approval.cwd ? (
-                          <p className="break-all font-mono text-[10px] text-faint">
+                          <p className="break-all font-mono text-[13px] text-faint">
                             cwd: {approval.cwd}
                           </p>
                         ) : null}
@@ -257,7 +258,7 @@ export function RightDrawer({
                             {approval.paths.map((path) => (
                               <li
                                 key={path}
-                                className="break-all font-mono text-[10px] text-muted"
+                                className="break-all font-mono text-[13px] text-muted-foreground"
                               >
                                 {path}
                               </li>
@@ -265,17 +266,17 @@ export function RightDrawer({
                           </ul>
                         ) : null}
                         {approval.input ? (
-                          <details className="text-[10px] text-muted">
+                          <details className="text-[13px] text-muted-foreground">
                             <summary className="cursor-pointer text-faint hover:text-fg">
                               Full parameters
                             </summary>
-                            <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
+                            <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[13px] text-fg">
                               {approval.input}
                             </pre>
                           </details>
                         ) : null}
                       </div>
-                      <div className="space-y-1.5 border-t border-border bg-canvas/40 px-3 py-2">
+                      <div className="space-y-1.5 border-t border-border/40 px-3 py-2.5">
                         {denyApproval?.id === approval.id ? (
                           <>
                             <Textarea
@@ -284,7 +285,7 @@ export function RightDrawer({
                               onChange={(event) => setDenyNote(event.target.value)}
                               placeholder="Why deny?"
                               rows={2}
-                              className="text-[10.5px]"
+                              className="text-[13px]"
                             />
                             <div className="flex gap-1.5">
                               <Button
@@ -384,10 +385,10 @@ export function RightDrawer({
               />
             )}
           </TabsContent>
-        </div>
+        </ScrollArea>
       </Tabs>
 
-      <div className="flex h-7 shrink-0 items-center gap-1 border-t border-border px-3 text-[10px] text-faint">
+      <div className="flex h-7 shrink-0 items-center gap-1 border-t border-border/50 px-3 text-[11px] text-faint">
         <Kbd>⇧Esc</Kbd>
         <span>to close</span>
       </div>

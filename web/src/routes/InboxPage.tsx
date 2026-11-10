@@ -70,13 +70,13 @@ function InboxRow({ item }: { item: InboxItemDto }) {
       to={`/p/${encodeURIComponent(item.projectId)}/t/${encodeURIComponent(
         item.threadId,
       )}`}
-      className="flex items-start gap-3 border-b border-border/70 px-4 py-3 transition-colors last:border-b-0 hover:bg-hover"
+      className="flex items-start gap-3 border-b border-border/40 px-4 py-4 transition-colors last:border-b-0 hover:bg-accent/40"
     >
       <Avatar person={person} size="md" />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <Icon className="size-3 shrink-0 text-faint" aria-hidden />
-          <span className="text-[12px] text-fg">
+          <span className="text-[13px] text-foreground">
             {item.actor ? (
               <span className="font-medium">{item.actor.displayName}</span>
             ) : (
@@ -88,7 +88,7 @@ function InboxRow({ item }: { item: InboxItemDto }) {
             {item.kind}
           </Badge>
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px] text-faint">
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-faint">
           <span
             className="truncate"
             title={formatTimestamp(item.createdAt)}
@@ -96,7 +96,7 @@ function InboxRow({ item }: { item: InboxItemDto }) {
             {formatRelativeTime(item.createdAt)}
           </span>
           <span aria-hidden>·</span>
-          <span className="truncate text-muted">{item.threadTitle}</span>
+          <span className="truncate text-muted-foreground">{item.threadTitle}</span>
         </div>
       </div>
       {!item.read ? (
@@ -116,15 +116,15 @@ export function InboxPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border bg-panel/50 px-5 py-4">
+      <div className="shrink-0 border-b border-border/40 bg-background px-6 py-6">
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-end justify-between gap-3">
           <div className="space-y-1">
-            <h1 className="flex items-center gap-2 text-[18px] font-semibold tracking-[-0.01em] text-fg">
-              <Inbox className="size-4 text-muted" aria-hidden />
+            <h1 className="flex items-center gap-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground">
+              <Inbox className="size-4 text-muted-foreground" aria-hidden />
               Inbox
             </h1>
-            <p className="text-[11.5px] text-muted">
-              Approvals, mentions and invitations from your threads.
+            <p className="text-[12px] text-muted-foreground">
+              Approvals, mentions and invitations.
             </p>
           </div>
           <Tabs
@@ -163,7 +163,7 @@ export function InboxPage() {
               />
             </div>
           ) : (inbox.data?.items.length ?? 0) === 0 ? (
-            <div className="mx-4 rounded-xl border border-dashed border-border bg-panel/60">
+            <div className="mx-4 rounded-xl border border-dashed border-border/60 bg-card/20">
               <EmptyState
                 icon={filter === "unread" ? CheckCheck : Inbox}
                 title={
@@ -179,7 +179,7 @@ export function InboxPage() {
                     <button
                       type="button"
                       onClick={() => setFilter("all")}
-                      className="text-[11px] text-muted underline-offset-4 hover:text-fg hover:underline"
+                      className="text-[13px] text-muted-foreground underline-offset-4 hover:text-fg hover:underline"
                     >
                       View all items
                     </button>
@@ -187,7 +187,7 @@ export function InboxPage() {
                     <button
                       type="button"
                       onClick={() => navigate("/")}
-                      className="text-[11px] text-muted underline-offset-4 hover:text-fg hover:underline"
+                      className="text-[13px] text-muted-foreground underline-offset-4 hover:text-fg hover:underline"
                     >
                       Back to projects
                     </button>
@@ -196,7 +196,7 @@ export function InboxPage() {
               />
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-border bg-panel">
+            <div className="divide-y divide-border/40">
               {inbox.data?.items.map((item) => (
                 <InboxRow key={item.id} item={item} />
               ))}

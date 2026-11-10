@@ -509,10 +509,10 @@ export function ThreadTimeline({
         }
       >
         <div className="w-7 shrink-0" />
-        <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
+        <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-card/50">
           <div className="flex items-center gap-2 px-3 py-2">
             <Icon className="size-3.5 shrink-0 text-faint" aria-hidden />
-            <span className="truncate text-[11.5px] font-medium text-fg">
+            <span className="truncate text-[13px] font-medium text-fg">
               {call.title}
             </span>
             {onComment ? (
@@ -538,7 +538,7 @@ export function ThreadTimeline({
               {call.locations.map((location) => (
                 <li
                   key={`${location.path}:${location.line ?? 0}`}
-                  className="truncate font-mono text-[10px] text-faint"
+                  className="truncate font-mono text-[13px] text-faint"
                 >
                   {location.path}
                   {location.line ? `:${location.line}` : ""}
@@ -548,8 +548,8 @@ export function ThreadTimeline({
           ) : null}
           {call.diff ? (
             <details className="group border-t border-border/70">
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-[10px]">
-                <span className="truncate font-mono text-muted">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-[13px]">
+                <span className="truncate font-mono text-muted-foreground">
                   {call.diff.path}
                 </span>
                 <span className="ml-auto shrink-0 font-mono text-success">
@@ -561,24 +561,24 @@ export function ThreadTimeline({
                 <ChevronRight className="size-3 shrink-0 text-faint group-open:rotate-90" aria-hidden />
               </summary>
               {call.diff.patch ? (
-                <pre className="mt-0 max-h-64 overflow-auto whitespace-pre-wrap break-all border-t border-border/70 bg-canvas p-2 font-mono text-[10px] text-fg">
+                <pre className="mt-0 max-h-64 overflow-auto whitespace-pre-wrap break-all border-t border-border/70 bg-canvas p-2 font-mono text-[13px] text-fg">
                   {call.diff.patch}
                 </pre>
               ) : null}
             </details>
           ) : null}
           {call.input || call.output ? (
-            <details className="border-t border-border/70 px-3 py-1.5 text-[10.5px] text-muted">
+            <details className="border-t border-border/70 px-3 py-1.5 text-[13px] text-muted-foreground">
               <summary className="cursor-pointer select-none text-faint hover:text-fg">
                 Details
               </summary>
               {call.input ? (
-                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[13px] text-fg">
                   {call.input}
                 </pre>
               ) : null}
               {call.output ? (
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
+                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[13px] text-fg">
                   {call.output}
                 </pre>
               ) : null}
@@ -621,8 +621,8 @@ export function ThreadTimeline({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 py-5">
-      <div className="space-y-3">
+    <div className="mx-auto w-full max-w-3xl px-6 py-7">
+      <div className="space-y-4">
         {items.map((item) => {
           if (item.kind === "message") {
             const author = item.author;
@@ -657,8 +657,8 @@ export function ThreadTimeline({
                   <Avatar person={person} size="md" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center gap-2 text-[10.5px] text-faint">
-                    <span className="font-medium text-muted">
+                  <div className="mb-1.5 flex items-center gap-2 text-[11.5px] text-faint">
+                    <span className="font-medium text-muted-foreground">
                       {author?.displayName ?? (item.role === "agent" ? "Agent" : "User")}
                     </span>
                     {item.authors.length > 1 ? (
@@ -699,9 +699,9 @@ export function ThreadTimeline({
                   </div>
                   <div
                     className={cn(
-                      "whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-[12.5px] leading-relaxed",
+                      "whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-[13px] leading-relaxed",
                       item.role === "user"
-                        ? "border border-border bg-surface text-fg"
+                        ? "bg-muted/50 text-foreground"
                         : "text-fg",
                     )}
                   >
@@ -724,8 +724,8 @@ export function ThreadTimeline({
             return (
               <div key={item.key} className="flex gap-3">
                 <div className="w-7 shrink-0" />
-                <details className="group min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
-                  <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[11.5px] text-muted hover:text-fg">
+                <details className="group min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-card/40">
+                  <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[13px] text-muted-foreground hover:text-fg">
                     <ChevronRight className="size-3.5 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
                     <span className="truncate">{summarizeTools(item.calls)}</span>
                     <Badge variant="neutral" size="sm" className="ml-auto shrink-0">
@@ -758,14 +758,14 @@ export function ThreadTimeline({
             return (
               <div key={item.key} className="flex gap-3">
                 <div className="w-7 shrink-0" />
-                <div className="min-w-0 flex-1 rounded-lg border border-border bg-panel px-3 py-2">
-                  <div className="flex items-center gap-2 text-[11.5px] font-medium text-fg">
+                <div className="min-w-0 flex-1 rounded-xl bg-card/40 px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-[13px] font-medium text-fg">
                     <ListChecks className="size-3.5 text-faint" aria-hidden />
                     Plan
                   </div>
                   <ul className="mt-1.5 space-y-1">
                     {item.entries.map((entry) => (
-                      <li key={entry.content} className="flex items-start gap-1.5 text-[11px] text-muted">
+                      <li key={entry.content} className="flex items-start gap-1.5 text-[13px] text-muted-foreground">
                         <span
                           className={cn(
                             "mt-1 size-1.5 shrink-0 rounded-full",
@@ -795,13 +795,13 @@ export function ThreadTimeline({
             return (
               <div key={item.key} className="flex gap-3">
                 <div className="w-7 shrink-0" />
-                <details className="group min-w-0 flex-1 rounded-lg border border-border bg-panel">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[11px] text-muted">
+                <details className="group min-w-0 flex-1 rounded-xl border border-border/40 bg-card/40">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[13px] text-muted-foreground">
                     <ArrowLeftRight className="size-3.5 shrink-0 text-faint" aria-hidden />
                     <span className="truncate">{label}</span>
                     <ChevronRight className="ml-auto size-3 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
                   </summary>
-                  <p className="whitespace-pre-wrap border-t border-border/70 px-3 py-2 text-[11.5px] leading-relaxed text-fg">
+                  <p className="whitespace-pre-wrap border-t border-border/70 px-3 py-2 text-[13px] leading-relaxed text-fg">
                     {item.text}
                   </p>
                 </details>
@@ -817,10 +817,10 @@ export function ThreadTimeline({
             return (
               <div key={item.key} className="flex gap-3">
                 <div className="w-7 shrink-0" />
-                <details className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border bg-panel">
+                <details className="min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-card/40">
                   <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
                     <GitBranch className="size-3.5 shrink-0 text-faint" aria-hidden />
-                    <span className="truncate text-[11.5px] font-medium text-fg">
+                    <span className="truncate text-[13px] font-medium text-fg">
                       {subagent.title}
                     </span>
                     <Badge
@@ -840,7 +840,7 @@ export function ThreadTimeline({
                     </Badge>
                     <ChevronRight className="size-3 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
                   </summary>
-                  <div className="space-y-1 border-t border-border/70 px-3 py-2 text-[10.5px] text-muted">
+                  <div className="space-y-1 border-t border-border/70 px-3 py-2 text-[13px] text-muted-foreground">
                     {subagent.description ? (
                       <p className="whitespace-pre-wrap text-fg">{subagent.description}</p>
                     ) : null}
@@ -851,7 +851,7 @@ export function ThreadTimeline({
                       </p>
                     ) : null}
                     {subagent.cwd ? (
-                      <p className="break-all font-mono text-[9.5px] text-faint">
+                      <p className="break-all font-mono text-[10.5px] text-faint">
                         {subagent.cwd}
                       </p>
                     ) : (
@@ -883,10 +883,10 @@ export function ThreadTimeline({
             return (
               <div key={item.key} className="flex gap-3">
                 <div className="w-7 shrink-0" />
-                <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-warning/30 bg-warning/5">
+                <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-warning/25 bg-warning/[0.04]">
                   <div className="flex items-center gap-2 px-3 py-2">
                     <ShieldAlert className="size-3.5 shrink-0 text-warning" />
-                    <span className="text-[11.5px] font-medium text-fg">
+                    <span className="text-[13px] font-medium text-fg">
                       {approval.title}
                     </span>
                     <Badge
@@ -902,33 +902,33 @@ export function ThreadTimeline({
                     </Badge>
                   </div>
                   <div className="space-y-1.5 border-t border-warning/20 px-3 py-2">
-                    <p className="text-[10.5px] text-muted">
+                    <p className="text-[13px] text-muted-foreground">
                       {approval.agent}
                       {approval.subagentId
                         ? ` · subagent ${approval.subagentId}`
                         : ""}
                     </p>
                     {approval.command ? (
-                      <pre className="overflow-x-auto rounded bg-canvas px-2 py-1.5 font-mono text-[10.5px] text-fg">
+                      <pre className="overflow-x-auto rounded bg-canvas px-2 py-1.5 font-mono text-[13px] text-fg">
                         {approval.command}
                       </pre>
                     ) : null}
                     {approval.cwd ? (
-                      <p className="break-all font-mono text-[10px] text-faint">
+                      <p className="break-all font-mono text-[13px] text-faint">
                         cwd: {approval.cwd}
                       </p>
                     ) : null}
                     {approval.paths.length > 0 ? (
-                      <p className="break-all font-mono text-[10px] text-faint">
+                      <p className="break-all font-mono text-[13px] text-faint">
                         {approval.paths.join(", ")}
                       </p>
                     ) : null}
                     {approval.input ? (
-                      <details className="text-[10px] text-muted">
+                      <details className="text-[13px] text-muted-foreground">
                         <summary className="cursor-pointer text-faint hover:text-fg">
                           Full parameters
                         </summary>
-                        <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[10px] text-fg">
+                        <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[13px] text-fg">
                           {approval.input}
                         </pre>
                       </details>
@@ -942,7 +942,7 @@ export function ThreadTimeline({
                             onChange={(event) => setDenyNote(event.target.value)}
                             placeholder="Why deny?"
                             rows={2}
-                            className="text-[10.5px]"
+                            className="text-[13px]"
                           />
                           <div className="flex gap-1.5">
                             <Button
@@ -1017,12 +1017,12 @@ export function ThreadTimeline({
 
           const toneClass =
             item.tone === "danger"
-              ? "border-danger/25 bg-danger/5 text-danger"
+              ? "bg-danger/5 text-danger"
               : item.tone === "warning"
-                ? "border-warning/25 bg-warning/5 text-warning"
+                ? "bg-warning/5 text-warning"
                 : item.tone === "info"
-                  ? "border-info/25 bg-info/5 text-info"
-                  : "border-border bg-panel text-faint";
+                  ? "bg-info/5 text-info"
+                  : "bg-muted/25 text-muted-foreground";
           const NoticeIcon =
             item.tone === "danger"
               ? AlertTriangle
@@ -1036,14 +1036,14 @@ export function ThreadTimeline({
               <div className="w-7 shrink-0" />
               <div
                 className={cn(
-                  "flex min-w-0 flex-1 items-start gap-2 rounded-lg border px-3 py-2",
+                  "flex min-w-0 flex-1 items-start gap-2 rounded-xl px-3 py-2",
                   toneClass,
                 )}
               >
                 <NoticeIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                <p className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+                <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">
                   <span className="font-medium">{item.label}</span>
-                  {item.text ? <span className="text-muted"> · {item.text}</span> : null}
+                  {item.text ? <span className="text-muted-foreground"> · {item.text}</span> : null}
                 </p>
                 <CheckCircle2 className="ml-auto size-3 shrink-0 opacity-40" aria-hidden />
               </div>

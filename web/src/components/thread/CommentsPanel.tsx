@@ -121,7 +121,7 @@ export function CommentsPanel({
               onChange={(event) => setBody(event.target.value)}
               placeholder="Leave a comment for the thread…"
               rows={2}
-              className="text-[11.5px]"
+              className="text-[13px]"
             />
             <div className="flex justify-end gap-1.5">
               <Button
@@ -146,7 +146,7 @@ export function CommentsPanel({
             </div>
           </div>
         ) : (
-          <p className="text-[10.5px] text-faint">
+          <p className="text-[13px] text-faint">
             Comments are visible to thread members.
           </p>
         )}
@@ -164,21 +164,21 @@ export function CommentsPanel({
               key={comment.id}
               className="rounded-lg border border-border bg-surface p-2.5"
             >
-              <div className="flex items-center gap-1.5 text-[10.5px]">
+              <div className="flex items-center gap-1.5 text-[13px]">
                 <span className="text-fg">{comment.author.displayName}</span>
                 <span className="text-faint">@{comment.author.username}</span>
                 <Badge size="sm" variant="neutral" className="ml-auto">
                   {comment.status}
                 </Badge>
               </div>
-              <p className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed text-fg">
+              <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-fg">
                 {comment.body}
               </p>
               <div className="mt-1 flex flex-wrap gap-2 text-[9.5px]">
                 {comment.anchor.kind === "message" ? (
                   <a
                     href={`#message-${comment.anchor.messageId}`}
-                    className="text-accent hover:underline"
+                    className="text-primary hover:underline"
                   >
                     jump to message
                   </a>
@@ -186,14 +186,14 @@ export function CommentsPanel({
                 {comment.deliveredSeq ? (
                   <a
                     href={`#event-${comment.deliveredSeq}`}
-                    className="text-accent hover:underline"
+                    className="text-primary hover:underline"
                   >
                     delivered at #{String(comment.deliveredSeq)}
                   </a>
                 ) : null}
               </div>
               {comment.anchorChanged ? (
-                <p className="mt-1 text-[10px] text-warning">
+                <p className="mt-1 text-[13px] text-warning">
                   The original diff position changed; this comment is anchored to
                   the file instead.
                 </p>
@@ -239,7 +239,7 @@ export function CommentsPanel({
               {repliesFor(comment.id).map((replyComment) => (
                 <div
                   key={replyComment.id}
-                  className="mt-1.5 border-l-2 border-border pl-2 text-[10.5px]"
+                  className="mt-1.5 border-l-2 border-border pl-2 text-[13px]"
                 >
                   <p className="text-faint">
                     {replyComment.author.displayName} · {replyComment.status}
@@ -254,7 +254,7 @@ export function CommentsPanel({
                     onChange={(event) => setReplyBody(event.target.value)}
                     placeholder="Reply to this comment…"
                     rows={2}
-                    className="text-[10.5px]"
+                    className="text-[13px]"
                   />
                   <div className="flex justify-end gap-1">
                     <Button size="sm" variant="ghost" onClick={() => setReplyTo(null)}>

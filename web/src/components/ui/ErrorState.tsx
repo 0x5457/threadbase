@@ -1,7 +1,7 @@
 import { AlertTriangle, RotateCw } from "lucide-react";
 import { describeError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { Button } from "./Button";
+import { Button } from "./app-button";
 
 export interface ErrorStateProps {
   error?: unknown;
@@ -46,7 +46,7 @@ export function ErrorState({
       <div className="space-y-1">
         <p className="text-[13px] font-medium text-fg">{resolvedTitle}</p>
         {resolvedDescription ? (
-          <p className="max-w-md text-[12px] leading-relaxed text-muted">
+          <p className="max-w-md text-[12px] leading-relaxed text-muted-foreground">
             {resolvedDescription}
           </p>
         ) : null}

@@ -115,6 +115,11 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
   await expect(admin.getByText("Fix the login redirect").first()).toBeVisible();
   await expect(admin.getByPlaceholder("Message")).toBeVisible();
+  await admin.getByRole("button", { name: "Thread actions" }).focus();
+  await admin.keyboard.press("Enter");
+  await expect(admin.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await admin.keyboard.press("Escape");
+  await expect(admin.getByRole("menuitem", { name: "Rename" })).toBeHidden();
 
 
   const composer = admin.getByPlaceholder("Message");
@@ -147,11 +152,13 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
 
   await admin.reload();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible({ timeout: 10_000 });
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/thread-1440-dark.png",
     fullPage: true,
   });
   await admin.getByRole("button", { name: "Switch to light theme" }).click();
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/thread-1440-light.png",
     fullPage: true,
@@ -174,10 +181,12 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(bob.getByPlaceholder("Message")).toHaveCount(0);
   await bob.getByRole("button", { name: "Request access" }).click();
   await expect(bob.getByText("Access request sent")).toBeVisible({ timeout: 5_000 });
+  await bob.waitForTimeout(300);
   await bob.screenshot({ path: "test-results/screenshots/thread-768-readonly.png", fullPage: true });
   await bob.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
   await bob.reload();
   await expect(bob.getByText("Hello", { exact: false })).toBeVisible();
+  await bob.waitForTimeout(300);
   await bob.screenshot({ path: "test-results/screenshots/thread-768-light.png", fullPage: true });
   await bob.evaluate(() => localStorage.setItem("threadbase.theme", "dark"));
   await bob.reload();
@@ -204,7 +213,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
     timeout: 10_000,
   });
   await admin.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(admin.getByText("shared draft from ada + bob", { exact: false })).toBeVisible({
+  await expect(admin.getByText("shared draft from ada + bob", { exact: false }).first()).toBeVisible({
     timeout: 15_000,
   });
   await expect(bobComposer).toHaveValue("", { timeout: 10_000 });
@@ -235,6 +244,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(drawerAgain.getByText("three", { exact: false }).first()).toBeVisible({
     timeout: 10_000,
   });
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/changes-1440-dark.png",
     fullPage: true,
@@ -284,6 +294,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.keyboard.press("Shift+Escape");
   await admin.getByPlaceholder("Message").fill("Draft in progress");
   await admin.waitForTimeout(300);
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/composer-1440-dark.png",
     fullPage: true,
@@ -302,12 +313,14 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await subagentCard.scrollIntoViewIfNeeded();
   await subagentCard.click();
   await expect(admin.getByText("Nested helper", { exact: true }).first()).toBeVisible();
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/subagents-1440-dark.png",
     fullPage: true,
   });
   await admin.keyboard.press("Control+j");
   await expect(admin.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/subagent-picker-1440-dark.png",
     fullPage: true,
@@ -332,6 +345,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(admin.getByText("Share thread", { exact: true })).toBeVisible({
     timeout: 5_000,
   });
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/share-1440-dark.png",
     fullPage: true,
@@ -361,17 +375,20 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   expect(forkedUrl).not.toBe(admin.url());
 
   // Project and new-thread options, then inbox evidence.
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/project-1440-dark.png",
     fullPage: true,
   });
   await admin.getByRole("button", { name: "New thread options" }).click();
   await expect(admin.getByText("Base branch", { exact: true })).toBeVisible();
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/new-thread-menu-1440-dark.png",
     fullPage: true,
   });
-  await admin.getByLabel("Agent").selectOption("claude");
+  await admin.getByLabel("Agent").click();
+  await admin.getByRole("option", { name: "Claude Code" }).click();
   await admin.getByLabel("Model").fill("sonnet");
   await admin.getByLabel("Base branch").fill("main");
   await admin.getByRole("button", { name: "Create", exact: true }).click();
@@ -388,10 +405,94 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
     },
   });
   await admin.goto("/inbox");
+  await expect(admin.getByText("Inbox", { exact: false }).first()).toBeVisible();
+  await admin.waitForTimeout(300);
   await admin.screenshot({
     path: "test-results/screenshots/inbox-1440-dark.png",
     fullPage: true,
   });
+  await admin.goto("/");
+  await expect(
+    admin.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/workspace-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.goto("/settings");
+  await expect(admin.getByText("Settings", { exact: true }).first()).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/settings-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.evaluate(() =>
+    localStorage.setItem("threadbase.theme", "light"),
+  );
+  await admin.reload();
+  await expect(admin.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/settings-1440-light.png",
+    fullPage: true,
+  });
+  await admin.goto("/");
+  await expect(
+    admin.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/workspace-1440-light.png",
+    fullPage: true,
+  });
+
+  const narrowContext = await browser.newContext({
+    storageState: storage,
+    viewport: { width: 768, height: 900 },
+  });
+  const narrow = await narrowContext.newPage();
+  await narrow.goto("/");
+  await expect(narrow.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+  await narrow.waitForTimeout(300);
+  await narrow.screenshot({
+    path: "test-results/screenshots/workspace-768-dark.png",
+    fullPage: true,
+  });
+  await narrow.goto("/settings");
+  await expect(narrow.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await narrow.waitForTimeout(300);
+  await narrow.screenshot({
+    path: "test-results/screenshots/settings-768-dark.png",
+    fullPage: true,
+  });
+  await narrow.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
+  await narrow.reload();
+  await narrow.waitForTimeout(300);
+  await narrow.screenshot({
+    path: "test-results/screenshots/settings-768-light.png",
+    fullPage: true,
+  });
+  await narrow.goto("/");
+  await narrow.waitForTimeout(300);
+  await narrow.screenshot({
+    path: "test-results/screenshots/workspace-768-light.png",
+    fullPage: true,
+  });
+  await narrowContext.close();
+
+  const loginContext = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const login = await loginContext.newPage();
+  await login.goto("/login");
+  await expect(login.getByLabel("Username")).toBeVisible();
+  await login.waitForTimeout(300);
+  await login.screenshot({
+    path: "test-results/screenshots/login-1440-dark.png",
+    fullPage: true,
+  });
+  await loginContext.close();
 
   expect(adminErrors, adminErrors.join("\n")).toEqual([]);
   expect(bobErrors, bobErrors.join("\n")).toEqual([]);

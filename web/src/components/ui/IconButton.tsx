@@ -1,6 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
-import { buttonVariants, type ButtonVariant } from "./Button";
+import { Button, type ButtonVariant } from "./app-button";
 
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
@@ -23,21 +23,19 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
     },
     ref,
   ) => (
-    <button
+    <Button
       ref={ref}
       type={type}
       aria-label={label}
       title={label}
       aria-pressed={pressed}
-      className={cn(
-        buttonVariants({ variant, size: size === "sm" ? "icon-sm" : "icon" }),
-        pressed && "bg-active text-fg",
-        className,
-      )}
+      variant={variant}
+      size={size === "sm" ? "icon-sm" : "icon"}
+      className={cn("p-0", pressed && "bg-active text-fg", className)}
       {...props}
     >
       {children}
-    </button>
+    </Button>
   ),
 );
 IconButton.displayName = "IconButton";

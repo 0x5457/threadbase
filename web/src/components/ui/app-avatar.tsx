@@ -1,5 +1,10 @@
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
+import {
+  Avatar as AvatarRoot,
+  AvatarFallback,
+  AvatarImage,
+} from "./avatar";
 
 const AVATAR_COLORS = [
   "#e08b53",
@@ -36,35 +41,33 @@ export interface AvatarProps {
 }
 
 const sizeClasses = {
-  xs: "size-4 text-[8px]",
-  sm: "size-5 text-[9px]",
-  md: "size-6 text-[10px]",
-  lg: "size-8 text-[11px]",
+  xs: "size-4 text-[8px] [&_[data-slot=avatar-fallback]]:text-[8px]",
+  sm: "size-5 text-[9px] [&_[data-slot=avatar-fallback]]:text-[9px]",
+  md: "size-6 text-[10px] [&_[data-slot=avatar-fallback]]:text-[10px]",
+  lg: "size-8 text-[11px] [&_[data-slot=avatar-fallback]]:text-[11px]",
 } as const;
 
 export function Avatar({ person, size = "md", className, online }: AvatarProps) {
   const fallbackColor = person.color || colorFor(person.id || person.displayName);
   return (
     <span className={cn("relative inline-flex shrink-0", className)}>
-      <span
+      <AvatarRoot
         className={cn(
-          "inline-flex items-center justify-center overflow-hidden rounded-full border border-black/20 font-semibold text-white ring-1 ring-black/10",
+          "rounded-full border border-black/20 ring-1 ring-black/10",
           sizeClasses[size],
         )}
-        style={{ backgroundColor: fallbackColor }}
         title={person.displayName}
       >
         {person.avatarUrl ? (
-          <img
-            src={person.avatarUrl}
-            alt=""
-            className="size-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          initials(person.displayName)
-        )}
-      </span>
+          <AvatarImage src={person.avatarUrl} alt={person.displayName} />
+        ) : null}
+        <AvatarFallback
+          className="font-semibold text-white"
+          style={{ backgroundColor: fallbackColor }}
+        >
+          {initials(person.displayName)}
+        </AvatarFallback>
+      </AvatarRoot>
       {online ? (
         <span
           aria-label="Online"
@@ -103,9 +106,7 @@ export function AvatarStack({
             key={person.id}
             type="button"
             className="rounded-full focus-visible:outline-offset-2"
-            title={
-              onSelect ? `Follow ${person.displayName}` : person.displayName
-            }
+            title={onSelect ? `Follow ${person.displayName}` : person.displayName}
             onClick={() => onSelect?.(person)}
             disabled={!onSelect}
           >

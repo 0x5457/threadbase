@@ -135,9 +135,10 @@ export function NewProjectDialog({
                   }
                 }
               }}
+              aria-label="Project path"
               placeholder="/home/you/code"
               spellCheck={false}
-              className="font-mono text-[12px]"
+              className="font-mono text-[13px]"
             />
           </div>
 
@@ -145,10 +146,10 @@ export function NewProjectDialog({
             <button
               type="button"
               onClick={submit}
-              className="flex w-full items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-2.5 py-2 text-left"
+              className="flex w-full items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2 text-left"
             >
-              <FolderGit2 className="size-4 shrink-0 text-accent" aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
+              <FolderGit2 className="size-4 shrink-0 text-primary" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-[13px] text-fg">
                 Use {basename(path)}
               </span>
               <Badge variant="accent" size="sm">
@@ -158,7 +159,7 @@ export function NewProjectDialog({
           ) : null}
 
           {listing.isError ? (
-            <p className="px-1 text-[10.5px] text-danger">
+            <p className="px-1 text-[13px] text-danger">
               {describeError(listing.error, "Cannot open directory").description}
             </p>
           ) : listing.isLoading ? (
@@ -178,11 +179,11 @@ export function NewProjectDialog({
                     onClick={() => go(entry.path)}
                   >
                     {entry.isGit ? (
-                      <FolderGit2 className="size-3.5 shrink-0 text-accent" aria-hidden />
+                      <FolderGit2 className="size-3.5 shrink-0 text-primary" aria-hidden />
                     ) : (
                       <Folder className="size-3.5 shrink-0 text-faint" aria-hidden />
                     )}
-                    <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-fg">
                       {entry.name}
                     </span>
                     {entry.isGit ? (
@@ -194,7 +195,7 @@ export function NewProjectDialog({
                 </li>
               ))}
               {choices.length === 0 ? (
-                <li className="flex items-center gap-2 px-2 py-2 text-[11px] text-faint">
+                <li className="flex items-center gap-2 px-2 py-2 text-[13px] text-faint">
                   <FolderPlus className="size-3.5" aria-hidden />
                   No subdirectories
                 </li>
@@ -203,7 +204,7 @@ export function NewProjectDialog({
           )}
 
           {mutation.isError ? (
-            <p role="alert" className="px-1 text-[10.5px] text-danger">
+            <p role="alert" className="px-1 text-[13px] text-danger">
               {describeError(mutation.error, "Cannot add project").description}
             </p>
           ) : null}

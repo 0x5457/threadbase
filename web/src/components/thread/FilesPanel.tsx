@@ -67,7 +67,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
           >
             <ChevronLeft className="size-3.5" aria-hidden />
           </button>
-          <span className="truncate font-mono text-[10px] text-faint">
+          <span className="truncate font-mono text-[13px] text-faint">
             {selected}
           </span>
         </div>
@@ -84,7 +84,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
           />
         ) : (
           <div className="min-h-0 flex-1 overflow-auto">
-            <div className="font-mono text-[10px] leading-relaxed">
+            <div className="font-mono text-[13px] leading-relaxed">
               {(file.data?.file.content ?? "").split("\n").map((text, index) => {
                 const number = index + 1;
                 return (
@@ -114,7 +114,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
                   onChange={(event) => setComment(event.target.value)}
                   placeholder="Leave a file comment…"
                   rows={2}
-                  className="text-[10.5px]"
+                  className="text-[13px]"
                 />
                 <div className="flex justify-end gap-1">
                   <Button size="sm" variant="ghost" onClick={() => setLine(null)}>
@@ -143,7 +143,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
       <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-1 border-b border-border px-2 py-1">
         <button
           type="button"
-          className="text-[10.5px] text-accent hover:underline"
+          className="text-[13px] text-primary hover:underline"
           onClick={() => setPath("")}
         >
           worktree
@@ -152,10 +152,10 @@ export function FilesPanel({ threadId }: { threadId: string }) {
           const next = segments.slice(0, index + 1).join("/");
           return (
             <span key={next} className="flex items-center gap-1">
-              <span className="text-[10px] text-faint">/</span>
+              <span className="text-[13px] text-faint">/</span>
               <button
                 type="button"
-                className="text-[10.5px] text-muted hover:text-fg"
+                className="text-[13px] text-muted-foreground hover:text-fg"
                 onClick={() => setPath(next)}
               >
                 {segment}
@@ -205,7 +205,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
                 ) : (
                   <FileCode2 className="size-3.5 shrink-0 text-faint" aria-hidden />
                 )}
-                <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-fg">
+                <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-fg">
                   {entry.name}
                 </span>
                 {!entry.isDir ? (

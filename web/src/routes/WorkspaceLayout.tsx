@@ -627,7 +627,7 @@ export function WorkspaceLayout() {
                 <li key={subagent.id}>
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11.5px] text-fg hover:bg-hover"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-fg hover:bg-hover"
                     onClick={() => {
                       setSubthreadPickerOpen(false);
                       navigate(
@@ -650,7 +650,7 @@ export function WorkspaceLayout() {
                 </li>
               ))}
             {(bundle.data?.bundle.subagents.length ?? 0) === 0 ? (
-              <li className="px-3 py-4 text-[10.5px] text-faint">
+              <li className="px-3 py-4 text-[13px] text-faint">
                 No subthreads in this thread.
               </li>
             ) : null}

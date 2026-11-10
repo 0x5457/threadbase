@@ -18,6 +18,11 @@ import {
   Dialog,
   DialogContent,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -113,7 +118,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
       >
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <p className="text-[11px] font-medium text-muted">Access</p>
+            <p className="text-[13px] font-medium text-muted-foreground">Access</p>
             <div className="grid grid-cols-2 gap-1.5">
               {(
                 [
@@ -125,17 +130,18 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                   key={value}
                   type="button"
                   disabled={!owner}
+                  aria-pressed={thread.shareLevel === value}
                   onClick={() => level.mutate(value)}
                   className={cn(
-                    "rounded-md border px-2.5 py-2 text-left text-[11.5px] transition-colors",
+                    "rounded-lg px-3 py-2 text-left text-[12px] transition-colors",
                     thread.shareLevel === value
-                      ? "border-accent/50 bg-accent/10 text-fg"
-                      : "border-border bg-surface text-muted hover:bg-hover",
+                      ? "bg-primary/10 text-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                   )}
                 >
                   <span className="flex items-center gap-1.5">
                     {thread.shareLevel === value ? (
-                      <Check className="size-3 text-accent" aria-hidden />
+                      <Check className="size-3 text-primary" aria-hidden />
                     ) : null}
                     {label}
                   </span>
@@ -145,22 +151,22 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
           </div>
 
           <div className="space-y-1.5">
-            <p className="text-[11px] font-medium text-muted">
+            <p className="text-[13px] font-medium text-muted-foreground">
               Members <span className="text-faint">({bundle.members.length})</span>
             </p>
-            <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+            <ul className="divide-y divide-border/40 overflow-hidden rounded-lg border border-border/40">
               {bundle.members.map((entry) => (
                 <li
                   key={entry.user.id}
-                  className="flex items-center gap-2 bg-surface px-2.5 py-1.5"
+                  className="flex items-center gap-2 bg-card/30 px-3 py-2"
                 >
                   <span
                     className="size-2 rounded-full"
                     style={{ background: entry.user.color }}
                   />
-                  <span className="min-w-0 flex-1 truncate text-[11.5px] text-fg">
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-fg">
                     {entry.user.displayName}
-                    <span className="ml-1 text-[10px] text-faint">
+                    <span className="ml-1 text-[13px] text-faint">
                       @{entry.user.username}
                     </span>
                   </span>
@@ -172,7 +178,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                   entry.role !== "owner" ? (
                     <button
                       type="button"
-                      className="text-[10px] text-faint hover:text-danger"
+                      className="text-[13px] text-faint hover:text-danger"
                       onClick={() => remove.mutate(entry.user.id)}
                     >
                       remove
@@ -185,14 +191,14 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
 
           {bundle.share.pendingInvites.length > 0 ? (
             <div className="space-y-1.5">
-              <p className="text-[11px] font-medium text-muted">Pending links</p>
-              <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+              <p className="text-[13px] font-medium text-muted-foreground">Pending links</p>
+              <ul className="divide-y divide-border/40 overflow-hidden rounded-lg border border-border/40">
                 {bundle.share.pendingInvites.map((invite) => (
                   <li
                     key={invite.id}
-                    className="flex items-center gap-2 bg-surface px-2.5 py-1.5 text-[10.5px]"
+                    className="flex items-center gap-2 bg-surface px-2.5 py-1.5 text-[13px]"
                   >
-                    <span className="min-w-0 flex-1 truncate text-muted">
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
                       {invite.email ?? "invite link"} · {invite.role}
                     </span>
                     {owner ? (
@@ -212,7 +218,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
 
           {owner ? (
             <div className="space-y-1.5">
-              <p className="text-[11px] font-medium text-muted">Invite</p>
+              <p className="text-[13px] font-medium text-muted-foreground">Invite</p>
               <div className="flex gap-1.5">
                 <Input
                   value={username}
@@ -220,15 +226,19 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                   placeholder="username or email"
                   className="h-8"
                 />
-                <select
+                <Select
                   value={role}
-                  onChange={(event) => setRole(event.target.value as Role)}
-                  className="h-8 rounded-md border border-border bg-surface px-2 text-[11px] text-muted"
+                  onValueChange={(value) => setRole(value as Role)}
                 >
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
-                  <option value="owner">Owner</option>
-                </select>
+                  <SelectTrigger className="h-8 w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="editor">Editor</SelectItem>
+                    <SelectItem value="viewer">Viewer</SelectItem>
+                    <SelectItem value="owner">Owner</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Button
                   size="sm"
                   variant="primary"
@@ -242,14 +252,14 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
               </div>
               <button
                 type="button"
-                className="text-[10.5px] text-accent hover:underline"
+                className="text-[13px] text-primary hover:underline"
                 onClick={() => invite.mutate()}
               >
                 Create a 14-day invite link instead
               </button>
               {inviteLink ? (
-                <div className="flex items-center gap-1.5 rounded-md border border-border bg-raised px-2 py-1.5">
-                  <code className="min-w-0 flex-1 truncate text-[10px] text-fg">
+                <div className="flex items-center gap-1.5 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-2">
+                  <code className="min-w-0 flex-1 truncate text-[13px] text-fg">
                     {inviteLink}
                   </code>
                   <button
@@ -263,7 +273,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
               ) : null}
             </div>
           ) : (
-            <p className="text-[10.5px] text-faint">
+            <p className="text-[13px] text-faint">
               Only the thread owner can change access or invite people.
             </p>
           )}

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 export function NotFoundPage() {
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="w-full max-w-md rounded-xl border border-border bg-panel">
+      <div className="w-full max-w-md">
         <EmptyState
           icon={FileQuestion}
           title="Page not found"

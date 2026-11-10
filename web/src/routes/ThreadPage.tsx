@@ -435,7 +435,7 @@ export function ThreadPage() {
           <div className="border-t border-border px-4 py-3 text-center">
             <Link
               to={`/p/${encodeURIComponent(projectId)}`}
-              className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-fg"
+              className="inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:text-fg"
             >
               <ArrowLeft className="size-3" aria-hidden />
               Back to project
@@ -471,24 +471,24 @@ export function ThreadPage() {
     : approvals;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col bg-background">
       {!online || !liveConnected ? (
-        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 text-[11px] text-warning">
+        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 text-[13px] text-warning">
           <WifiOff className="size-3.5" aria-hidden />
           Reconnecting… Input is preserved while the connection is offline.
         </div>
       ) : null}
       {events.data?.resync ? (
-        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-info/25 bg-info/10 px-3 text-[11px] text-info">
+        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-info/25 bg-info/10 px-3 text-[13px] text-info">
           <AlertCircle className="size-3.5" aria-hidden />
           Event history was compacted. The latest window has been loaded.
         </div>
       ) : null}
 
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-panel/70 px-3 text-[11px]">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/50 bg-background px-4 text-[12px]">
         <Link
           to={`/p/${encodeURIComponent(project.id)}`}
-          className="truncate text-muted hover:text-fg"
+          className="truncate text-muted-foreground hover:text-fg"
         >
           {project.name}
         </Link>
@@ -499,7 +499,7 @@ export function ThreadPage() {
               to={`/p/${encodeURIComponent(project.id)}/t/${encodeURIComponent(
                 thread.id,
               )}`}
-              className="max-w-[180px] truncate text-muted hover:text-fg"
+              className="max-w-[180px] truncate text-muted-foreground hover:text-fg"
             >
               {thread.title}
             </Link>
@@ -513,7 +513,7 @@ export function ThreadPage() {
           <span className="truncate text-fg">{thread.title}</span>
         )}
         <ThreadStatusBadge status={thread.status} />
-        <div className="ml-auto flex items-center gap-2.5 text-faint">
+        <div className="ml-auto flex items-center gap-2 text-faint">
           {thread.status === "error" || thread.status === "interrupted" ? (
             <Button
               size="sm"
@@ -527,6 +527,7 @@ export function ThreadPage() {
           ) : null}
           <button
             type="button"
+            aria-label={thread.status === "archived" ? "Unarchive thread" : "Archive thread"}
             className="rounded p-1 text-faint hover:bg-hover hover:text-fg disabled:opacity-40"
             title={thread.status === "archived" ? "Unarchive thread" : "Archive thread"}
             disabled={!canWrite || archive.isPending}
@@ -685,7 +686,7 @@ export function ThreadPage() {
         />
       ) : null}
       {thread.diverged && !divergedDismissed ? (
-        <div className="flex flex-wrap items-center gap-2 border-t border-warning/30 bg-warning/5 px-4 py-2 text-[11px] text-warning">
+        <div className="flex flex-wrap items-center gap-2 border-t border-warning/30 bg-warning/5 px-4 py-2 text-[13px] text-warning">
           <span>This thread has diverged from the project branch.</span>
           <button
             type="button"
@@ -750,7 +751,7 @@ function SubagentView({
       <div className="border-b border-border bg-panel/60">
         <div className="mx-auto w-full max-w-3xl px-5 py-3">
           <div className="flex flex-wrap items-start gap-2">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-raised text-muted">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-raised text-muted-foreground">
               <Bot className="size-4" aria-hidden />
             </span>
             <div className="min-w-0 flex-1">
@@ -761,11 +762,11 @@ function SubagentView({
                 <ThreadStatusBadge status={subagentStatus(subagent.status)} />
               </div>
               {subagent.description ? (
-                <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted">
+                <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">
                   {subagent.description}
                 </p>
               ) : null}
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-faint">
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-faint">
                 {subagent.cwd ? (
                   <span className="break-all font-mono">cwd: {subagent.cwd}</span>
                 ) : null}
@@ -828,7 +829,7 @@ function SubagentView({
       </div>
 
       <div className="border-t border-border bg-panel px-5 py-2.5">
-        <p className="mx-auto max-w-3xl text-[10.5px] leading-relaxed text-faint">
+        <p className="mx-auto max-w-3xl text-[13px] leading-relaxed text-faint">
           Subagent sessions cannot be prompted from the client. Ask the parent
           agent to relay the instruction in the parent thread.
         </p>

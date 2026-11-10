@@ -3,7 +3,17 @@ import { useState } from "react";
 import type { ElicitationAction } from "@/api/types/ElicitationAction";
 import type { ElicitationDto } from "@/api/types/ElicitationDto";
 import type { CommentAnchor } from "@/api/types/CommentAnchor";
-import { Badge, Button, Input } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui";
 
 interface SchemaProperty {
   type?: string;
@@ -61,7 +71,7 @@ export function ElicitationCard({
       <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-info/30 bg-info/5">
         <div className="flex items-center gap-2 px-3 py-2">
           <HelpCircle className="size-3.5 shrink-0 text-info" />
-          <span className="text-[11.5px] font-medium text-fg">
+          <span className="text-[13px] font-medium text-fg">
             Agent needs input
           </span>
           {onComment ? (
@@ -88,28 +98,28 @@ export function ElicitationCard({
           </Badge>
         </div>
         <div className="space-y-2 border-t border-info/20 px-3 py-2">
-          <p className="text-[11.5px] text-fg">{elicitation.message}</p>
+          <p className="text-[13px] text-fg">{elicitation.message}</p>
           {authorizationUrl ? (
             <div className="space-y-1 rounded border border-border bg-canvas px-2 py-1.5">
-              <p className="break-all font-mono text-[9.5px] text-muted">
+              <p className="break-all font-mono text-[9.5px] text-muted-foreground">
                 {authorizationUrl}
               </p>
               <a
                 href={authorizationUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex text-[10.5px] text-accent hover:underline"
+                className="inline-flex text-[13px] text-primary hover:underline"
               >
                 Open authorization page
               </a>
             </div>
           ) : null}
-          <p className="text-[10px] text-faint">
+          <p className="text-[13px] text-faint">
             {elicitation.agent}
             {elicitation.blocking ? "" : " · non-blocking"}
           </p>
           {secret ? (
-            <p className="flex items-start gap-1.5 rounded border border-warning/30 bg-warning/5 px-2 py-1.5 text-[10.5px] text-warning">
+            <p className="flex items-start gap-1.5 rounded border border-warning/30 bg-warning/5 px-2 py-1.5 text-[13px] text-warning">
               <ShieldAlert className="mt-0.5 size-3 shrink-0" />
               This form asks for a secret. Threadbase will not submit passwords
               or tokens through elicitation.
@@ -119,39 +129,43 @@ export function ElicitationCard({
             <>
               {fields.map(([key, property]) => (
                 <label key={key} className="block space-y-1">
-                  <span className="text-[10.5px] text-muted">
+                  <span className="text-[13px] text-muted-foreground">
                     {property.title ?? key}
                   </span>
                   {property.type === "boolean" ? (
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={Boolean(values[key])}
-                      onChange={(event) =>
+                      onCheckedChange={(checked) =>
                         setValues((current) => ({
                           ...current,
-                          [key]: event.target.checked,
+                          [key]: checked === true,
                         }))
                       }
-                      className="block size-4 accent-[var(--accent)]"
                     />
                   ) : property.enum ? (
-                    <select
+                    <Select
                       value={String(values[key] ?? "")}
-                      onChange={(event) =>
+                      onValueChange={(next) =>
                         setValues((current) => ({
                           ...current,
-                          [key]: event.target.value,
+                          [key]: next,
                         }))
                       }
-                      className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px]"
                     >
-                      <option value="">Select…</option>
-                      {property.enum.map((option) => (
-                        <option key={String(option)} value={String(option)}>
-                          {String(option)}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {property.enum.map((option) => (
+                          <SelectItem
+                            key={String(option)}
+                            value={String(option)}
+                          >
+                            {String(option)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <Input
                       type={property.type === "number" ? "number" : "text"}
@@ -169,7 +183,7 @@ export function ElicitationCard({
                     />
                   )}
                   {property.description ? (
-                    <span className="block text-[10px] text-faint">
+                    <span className="block text-[13px] text-faint">
                       {property.description}
                     </span>
                   ) : null}
@@ -201,7 +215,7 @@ export function ElicitationCard({
               </div>
             </>
           ) : elicitation.respondedBy ? (
-            <p className="text-[10.5px] text-faint">
+            <p className="text-[13px] text-faint">
               Answered by {elicitation.respondedBy.displayName}
             </p>
           ) : null}

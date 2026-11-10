@@ -8,7 +8,15 @@ import {
 } from "@/api/queries";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
-import { EmptyState, Skeleton } from "@/components/ui";
+import {
+  EmptyState,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Skeleton,
+} from "@/components/ui";
 
 function recentText(events: EventEnvelope[]): string[] {
   return events
@@ -46,58 +54,58 @@ function CompareColumn({ threadId }: { threadId: string }) {
   const data = bundle.data.bundle;
   const recent = recentText(events.data?.events ?? []);
   return (
-    <section className="min-w-0 rounded-xl border border-border bg-panel">
-      <div className="border-b border-border px-3 py-2.5">
+    <section className="min-w-0 rounded-xl border border-border/40 bg-card/30">
+      <div className="border-b border-border/40 px-4 py-3">
         <div className="flex items-center gap-2">
-          <h2 className="min-w-0 flex-1 truncate text-[12px] font-semibold text-fg">
+          <h2 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-fg">
             {data.thread.title}
           </h2>
           <ThreadStatusBadge status={data.thread.status} />
         </div>
-        <p className="mt-0.5 text-[10px] text-faint">
+        <p className="mt-0.5 text-[11px] text-faint">
           {data.thread.agent}
           {data.thread.model ? ` · ${data.thread.model}` : ""} ·{" "}
           {data.thread.branch}
         </p>
       </div>
-      <div className="grid grid-cols-3 gap-1 border-b border-border px-3 py-2 text-center">
+      <div className="grid grid-cols-3 gap-1 border-b border-border/40 px-4 py-3 text-center">
         <div>
-          <p className="text-[9px] uppercase text-faint">Messages</p>
-          <p className="font-mono text-[11px] text-fg">{events.data?.events.length ?? 0}</p>
+          <p className="text-[10px] uppercase tracking-wide text-faint">Messages</p>
+          <p className="font-mono text-[13px] text-fg">{events.data?.events.length ?? 0}</p>
         </div>
         <div>
-          <p className="text-[9px] uppercase text-faint">Changes</p>
-          <p className="font-mono text-[11px] text-fg">
+          <p className="text-[10px] uppercase tracking-wide text-faint">Changes</p>
+          <p className="font-mono text-[13px] text-fg">
             +{data.thread.changes.additions} −{data.thread.changes.deletions}
           </p>
         </div>
         <div>
-          <p className="text-[9px] uppercase text-faint">Approvals</p>
-          <p className="font-mono text-[11px] text-fg">
+          <p className="text-[10px] uppercase tracking-wide text-faint">Approvals</p>
+          <p className="font-mono text-[13px] text-fg">
             {data.thread.pendingApprovals}
           </p>
         </div>
       </div>
       <div className="space-y-1.5 p-3">
         {recent.length === 0 ? (
-          <p className="text-[10.5px] text-faint">No messages yet.</p>
+          <p className="text-[13px] text-faint">No messages yet.</p>
         ) : (
           recent.map((text, index) => (
             <p
               key={`${threadId}-${index}`}
-              className="line-clamp-2 rounded bg-canvas px-2 py-1 text-[10.5px] leading-relaxed text-muted"
+              className="line-clamp-2 rounded bg-canvas px-2 py-1 text-[13px] leading-relaxed text-muted-foreground"
             >
               {text}
             </p>
           ))
         )}
       </div>
-      <div className="border-t border-border px-3 py-1.5">
+      <div className="border-t border-border/40 px-4 py-2">
         <Link
           to={`/p/${encodeURIComponent(data.project.id)}/t/${encodeURIComponent(
             data.thread.id,
           )}`}
-          className="text-[10px] text-accent hover:underline"
+          className="text-[13px] text-primary hover:underline"
         >
           Open thread
         </Link>
@@ -120,47 +128,49 @@ export function ComparePage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl px-6 py-5">
+      <div className="mx-auto w-full max-w-6xl px-6 py-8">
         <Link
           to={projectId ? `/p/${encodeURIComponent(projectId)}` : "/"}
-          className="inline-flex items-center gap-1 text-[11px] text-faint hover:text-fg"
+          className="inline-flex items-center gap-1 text-[13px] text-faint hover:text-fg"
         >
           <ChevronLeft className="size-3" aria-hidden />
           Back to project
         </Link>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="flex items-center gap-2 text-[19px] font-semibold tracking-[-0.02em] text-fg">
-              <ArrowLeftRight className="size-4 text-muted" aria-hidden />
+            <h1 className="flex items-center gap-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground">
+              <ArrowLeftRight className="size-4 text-muted-foreground" aria-hidden />
               Compare threads
             </h1>
-            <p className="text-[11px] text-muted">
-              Same-task runs side by side. Pick any two threads in this project.
+            <p className="text-[12px] text-muted-foreground">
+              Same-task runs side by side.
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            <select
-              value={selectedLeft}
-              onChange={(event) => setLeft(event.target.value)}
-              className="h-8 max-w-56 rounded-md border border-border bg-panel px-2 text-[11px]"
-            >
-              {list.map((thread) => (
-                <option key={thread.id} value={thread.id}>
-                  {thread.title} · {thread.agent}
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedRight}
-              onChange={(event) => setRight(event.target.value)}
-              className="h-8 max-w-56 rounded-md border border-border bg-panel px-2 text-[11px]"
-            >
-              {list.map((thread) => (
-                <option key={thread.id} value={thread.id}>
-                  {thread.title} · {thread.agent}
-                </option>
-              ))}
-            </select>
+            <Select value={selectedLeft} onValueChange={setLeft}>
+              <SelectTrigger className="h-8 w-56">
+                <SelectValue placeholder="Left thread" />
+              </SelectTrigger>
+              <SelectContent>
+                {list.map((thread) => (
+                  <SelectItem key={thread.id} value={thread.id}>
+                    {thread.title} · {thread.agent}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedRight} onValueChange={setRight}>
+              <SelectTrigger className="h-8 w-56">
+                <SelectValue placeholder="Right thread" />
+              </SelectTrigger>
+              <SelectContent>
+                {list.map((thread) => (
+                  <SelectItem key={thread.id} value={thread.id}>
+                    {thread.title} · {thread.agent}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
         <div className="mt-4 grid gap-3 lg:grid-cols-2">

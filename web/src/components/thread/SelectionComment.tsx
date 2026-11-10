@@ -66,7 +66,7 @@ export function SelectionComment({
         }}
         placeholder="Comment on selection…"
         rows={3}
-        className="text-[11px]"
+        className="text-[13px]"
       />
       <div className="mt-1 flex items-center justify-between text-[9.5px] text-faint">
         <span>
@@ -74,7 +74,7 @@ export function SelectionComment({
         </span>
         <button
           type="button"
-          className="flex items-center gap-1 text-accent disabled:opacity-40"
+          className="flex items-center gap-1 text-primary disabled:opacity-40"
           disabled={!body.trim() || create.isPending}
           onClick={() => create.mutate()}
         >

@@ -48,7 +48,7 @@ tailscale serve --bg 443 http://127.0.0.1:7777
 ## 技术栈
 
 - 后端：Rust、axum、sqlx/SQLite、`agent-client-protocol` 5.1、`yrs`/`y-sync`、`rust-embed`。
-- 前端：Vite 8、React 19、TypeScript strict、Tailwind v4、shadcn/ui 风格组件、TanStack Query、Zustand、CodeMirror 6。
+- 前端：Vite 8、React 19、TypeScript strict、Tailwind v4、官方 shadcn/ui（Radix）、TanStack Query、Zustand、CodeMirror 6。
 - 分发：单二进制，内嵌 web 资源；macOS 与 Linux 优先。
 
 详细版本与偏差见 [docs/06](docs/06-implementation-status.md)。

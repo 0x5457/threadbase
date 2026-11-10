@@ -331,10 +331,10 @@ function ThreadNode({
         onClick={activate}
         onKeyDown={(event) => activateRow(event, activate)}
         className={cn(
-          "group flex h-[30px] cursor-default items-center gap-1 rounded-md pr-1.5 text-[12px] outline-none transition-colors",
+          "group flex h-8 cursor-default items-center gap-1 rounded-md pr-2 text-[13px] outline-none transition-colors",
           selected
-            ? "bg-active text-fg"
-            : "text-muted hover:bg-hover hover:text-fg",
+            ? "bg-accent text-foreground"
+            : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
         )}
         style={{ paddingLeft: `${4 + depth * 14}px` }}
       >
@@ -389,7 +389,7 @@ function ThreadNode({
       </div>
       {showProjectName && depth === 0 ? (
         <p
-          className="truncate pb-1 pl-9 pr-2 text-[10px] text-faint"
+          className="truncate pb-1 pl-9 pr-2 text-[13px] text-faint"
           aria-hidden
         >
           {projectName}
@@ -435,7 +435,7 @@ function ThreadNode({
                 event.stopPropagation();
                 setShowAll(true);
               }}
-              className="flex h-7 w-full items-center rounded-md pl-6 pr-2 text-left text-[11px] text-faint hover:bg-hover hover:text-fg"
+              className="flex h-7 w-full items-center rounded-md pl-6 pr-2 text-left text-[13px] text-faint hover:bg-hover hover:text-fg"
             >
               Show {remaining} more
             </button>
@@ -492,10 +492,10 @@ function SubagentNode({
         onClick={activate}
         onKeyDown={(event) => activateRow(event, activate)}
         className={cn(
-          "flex h-[28px] cursor-default items-center gap-1 rounded-md pr-1.5 text-[11.5px] outline-none transition-colors",
+          "flex h-[28px] cursor-default items-center gap-1 rounded-md pr-1.5 text-[13px] outline-none transition-colors",
           selected
             ? "bg-active text-fg"
-            : "text-muted hover:bg-hover hover:text-fg",
+            : "text-muted-foreground hover:bg-hover hover:text-fg",
         )}
         style={{ paddingLeft: `${4 + depth * 14}px` }}
       >
@@ -585,7 +585,7 @@ function ProjectNode({
         event.stopPropagation();
         onNewThread(project.id);
       }}
-      className="flex h-7 w-full items-center gap-2 rounded-md pl-6 pr-2 text-left text-[11px] text-faint transition-colors hover:bg-hover hover:text-fg"
+      className="flex h-7 w-full items-center gap-2 rounded-md pl-6 pr-2 text-left text-[13px] text-faint transition-colors hover:bg-hover hover:text-fg"
     >
       <Plus className="size-3" aria-hidden />
       New Thread
@@ -605,7 +605,7 @@ function ProjectNode({
         />
         {expanded ? (
           <div className="relative ml-3 border-l border-border/70 pl-1">
-            <p className="px-2 py-1 text-[11px] text-faint">No threads yet</p>
+            <p className="px-2 py-1 text-[13px] text-faint">No threads yet</p>
             {addThread}
           </div>
         ) : null}
@@ -653,7 +653,7 @@ function ProjectNode({
             <button
               type="button"
               onClick={() => setShowAll(true)}
-              className="flex h-7 w-full items-center rounded-md pl-6 pr-2 text-left text-[11px] text-faint hover:bg-hover hover:text-fg"
+              className="flex h-7 w-full items-center rounded-md pl-6 pr-2 text-left text-[13px] text-faint hover:bg-hover hover:text-fg"
             >
               Show {remaining} more
             </button>
@@ -692,8 +692,8 @@ function ProjectRow({
       onClick={onSelect}
       onKeyDown={(event) => activateRow(event, onSelect)}
       className={cn(
-        "flex h-[30px] cursor-default items-center gap-1 rounded-md pr-1.5 text-[12px] outline-none transition-colors",
-        selected ? "bg-active text-fg" : "text-muted hover:bg-hover hover:text-fg",
+        "flex h-8 cursor-default items-center gap-1 rounded-md pr-2 text-[13px] outline-none transition-colors",
+        selected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
       )}
       style={{ paddingLeft: "4px" }}
     >
@@ -715,7 +715,7 @@ function ProjectRow({
       {!project.available ? (
         <button
           type="button"
-          className="shrink-0 rounded px-1 text-[10px] text-warning hover:bg-hover hover:text-warning"
+          className="shrink-0 rounded px-1 text-[13px] text-warning hover:bg-hover hover:text-warning"
           title="Project path is unavailable"
           onClick={(event) => {
             event.stopPropagation();
@@ -726,7 +726,7 @@ function ProjectRow({
         </button>
       ) : null}
       {project.activeThreads > 0 ? (
-        <span className="text-[10px] tabular-nums text-faint">
+        <span className="text-[13px] tabular-nums text-faint">
           {project.activeThreads}
         </span>
       ) : null}
@@ -904,9 +904,11 @@ export function SidebarTree({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-panel">
-      <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-2.5">
-        <span className="text-[12px] font-medium text-fg">Threadbase</span>
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <div className="flex h-12 shrink-0 items-center justify-between px-4">
+        <span className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+          Threadbase
+        </span>
         <Tooltip content={`New project (${modKeyLabel()}⇧A)`}>
           <IconButton
             label="New project"
@@ -922,7 +924,7 @@ export function SidebarTree({
         ref={treeRef}
         role="tree"
         aria-label="Projects and threads"
-        className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5"
+        className="min-h-0 flex-1 overflow-y-auto px-2 py-2"
         onKeyDown={(event) => {
           moveTreeFocus(event, treeRef.current);
         }}
@@ -953,7 +955,7 @@ export function SidebarTree({
               <button
                 type="button"
                 onClick={onNewProject}
-                className="rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-fg hover:bg-hover"
+                className="rounded-md border border-border bg-surface px-2 py-1 text-[13px] text-fg hover:bg-hover"
               >
                 Add project
               </button>
@@ -1060,11 +1062,11 @@ export function SidebarTree({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-border p-1.5">
+      <div className="shrink-0 border-t border-border/50 p-2">
         <button
           type="button"
           onClick={openInbox}
-          className="mb-1 flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[11.5px] text-muted transition-colors hover:bg-hover hover:text-fg"
+          className="mb-1 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
         >
           <Inbox className="size-3.5" aria-hidden />
           <span className="flex-1">Inbox</span>
@@ -1094,10 +1096,10 @@ export function SidebarTree({
             </span>
           )}
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[11.5px] font-medium text-fg">
+            <p className="truncate text-[13px] font-medium text-fg">
               {user?.displayName ?? (userLoading ? "Loading…" : "Signed out")}
             </p>
-            <p className="truncate text-[10px] text-faint">
+            <p className="truncate text-[11px] text-faint">
               {user ? `@${user.username}` : "No active session"}
             </p>
           </div>
@@ -1122,7 +1124,7 @@ export function SidebarTree({
                 Settings
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem destructive onSelect={signOut}>
+              <DropdownMenuItem variant="destructive" onSelect={signOut}>
                 <LogOut />
                 Sign out
               </DropdownMenuItem>
@@ -1142,7 +1144,7 @@ function SidebarGroupLabel({
   icon: ComponentType<{ className?: string }>;
 }) {
   return (
-    <div className="flex items-center gap-1.5 px-1.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-faint">
+    <div className="flex items-center gap-1.5 px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
       <Icon className="size-3" />
       {children}
     </div>

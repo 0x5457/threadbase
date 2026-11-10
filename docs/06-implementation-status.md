@@ -30,6 +30,8 @@
 | `pnpm` | 未指定 | **10.34.9** | 通过 `packageManager` 固定 |
 | `cargo-nextest` | 未指定 | **0.9.151** | 测试运行器 |
 | `tower-sessions` | 0.15 | **未使用** | 会话写入自建 `auth_sessions` 表，才能按用户批量撤销并保留审计；tower-sessions 的 store 表不提供该语义 |
+| `shadcn` | 未指定 | **4.23.0** | 官方 CLI/registry；`radix-nova` preset、Geist、Tailwind v4 |
+| `radix-ui` | 未指定 | **1.8.1** | shadcn 生成的统一 Radix 入口；不再逐个引入 `@radix-ui/react-*` |
 
 本机验证环境：Rust 1.99.1、Node 26.8.1、npm 12.0.2、Tailscale 已运行；Codex CLI 0.167.0（ChatGPT 登录）、Claude Code 2.1.304、opencode、pi 均已安装。`node_modules` 与 `target` 不提交。
 
@@ -172,10 +174,10 @@ MBX_BLAZE=false cargo test -p threadbase --test real_codex -- --ignored --nocapt
 - 工具卡显示 ACP diff 摘要（路径 / +N / −N），展开查看完整 patch。
 - 审批卡显示 “Full parameters”；拒绝审批时填写原因并提交，确认 `note` 请求路径。
 - viewer 点击 `Request access` 后 owner 收件箱出现请求。
-- 生成 thread/changes/project/share/inbox/subagents/subagent-picker/new-thread-menu/composer 截图；浏览器 console error 断言为空；1440 thread 截图包含消息、工具卡、Usage、审批，Composer 为 152px 输入区。
-- 真实 Codex 的 UI 截图 `composer-real-codex.png` 显示 Model/Reasoning effort 下拉（`gpt-6.1-sol` / `max`）。
+- 生成 thread/changes/project/share/inbox/subagents/subagent-picker/new-thread-menu/composer/workspace/settings/login 截图；覆盖 1440 与 768、深色与浅色；键盘打开 Thread actions 菜单并用 Escape 关闭；浏览器 console error 断言为空。
+- 真实 Codex 的 UI 截图 `composer-real-codex.png` 显示 shadcn Select 的 Model/Reasoning effort 下拉（适配器显示名 `6.1 Sol` / `Max`）。
 
-截图见 `docs/screenshots/`：`thread-1440-dark/light`、`thread-768-dark/light`、`composer-1440-dark`、`composer-real-codex`、`changes-1440-dark`、`project-1440-dark`、`share-1440-dark`、`inbox-1440-dark`、`subagents-1440-dark`、`subagent-picker-1440-dark`、`new-thread-menu-1440-dark`。
+截图见 `docs/screenshots/`：`workspace-1440-dark/light`、`workspace-768-dark/light`、`settings-1440-dark/light`、`settings-768-dark/light`、`login-1440-dark`、`thread-1440-dark/light`、`thread-768-dark/light`、`composer-1440-dark`、`composer-real-codex`、`changes-1440-dark`、`project-1440-dark`、`share-1440-dark`、`inbox-1440-dark`、`subagents-1440-dark`、`subagent-picker-1440-dark`、`new-thread-menu-1440-dark`。
 
 ### 5.3 安全
 
@@ -256,8 +258,8 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - Composer：per-author block 使用作者色细边、3–10 行自适应高度、最小 152px 输入区；块内可编辑他人草稿；模型/推理强度以下拉呈现，adapter 未提供 configOptions 时完全隐藏。
 - Thread 头部只保留 project/thread、状态、审批/队列与归档；branch、模型、agent 等移入状态栏或 Composer。标题栏去掉副标题与 “Search” 文字。
 - 左栏是唯一导航；分组和行高收敛，移除口号、营销文案和重复说明。
-- 右栏标签改为图标按钮（Changes / Approvals / Output / Comments / Files），避免 380px 抽屉里五项文字挤压。
-- 空状态只留一句动作说明；错误状态说明可操作原因。
+- 右栏标签改为 shadcn Tabs 图标按钮（Changes / Approvals / Output / Comments / Files），抽屉宽度 360px，内容用 ScrollArea。
+- 空状态只留一句动作说明；错误状态说明可操作原因；基础交互统一使用 shadcn 组件，业务组件只做组合。
 - 状态矩阵：worktree 准备时显示 `Preparing…` + 步骤 tooltip；路径失效的 project 行提供 `Locate…`；分叉 thread 底部给出 Keep Local Changes in a New Thread / Discard；只读视图提供 `Request access`，不渲染禁用输入框。
 
 设计约束：所有交互必须同时改善 UX（更少步骤）、DX（组件和 API 一致、可测试）与 AX（agent 可通过语义锚点理解和操纵）。不得用装饰性渐变、无意义动画或说明文字弥补布局问题。
@@ -277,3 +279,16 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - `agent-client-protocol` 5.1 的 unstable 能力可能随 minor 变化；升级前跑 `cargo test -p threadbase-agent` 契约套件和真实 Codex smoke。
 - 发送草稿时不删除 Y.Array 中的块，而是清空文本并写 `sentAt` 墓碑。直接删除父级 map 时，客户端并发编辑可能产生悬空 Yjs 更新，yrs 0.17 会在编码时 panic；墓碑模型避免了该问题，Composer 过滤已发送块。
 - Codex adapter 需要 `codex` 在 PATH；其他 adapter 通过 `doctor` 检查。真实登录/额度属于环境，不属于仓库。
+
+
+---
+
+## 11. shadcn/ui 重构（2026-11-10）
+
+- 使用官方 `shadcn@4.23.0` CLI 初始化 `web/components.json`，preset 为 `radix-nova`，base 为 Radix，样式为 Tailwind v4 CSS variables；字体切换到 `@fontsource-variable/geist`。
+- 生成并直接使用官方组件：`button`、`badge`、`avatar`、`input`、`textarea`、`checkbox`、`select`、`dialog`、`dropdown-menu`、`tabs`、`tooltip`、`popover`、`command`、`scroll-area`、`sheet`、`switch`、`label`、`separator`、`skeleton`、`input-group`。
+- `app-button.tsx`、`app-badge.tsx`、`app-avatar.tsx`、`app-dialog.tsx`、`app-tooltip.tsx` 只保留为应用 API 适配层（loading、业务 label、title/footer 等），内部组合官方组件；旧的 `Button.tsx`、`Input.tsx`、`Dialog.tsx`、`Tabs.tsx`、`Tooltip.tsx` 等手写实现已删除，不再维护两套基础件。
+- 语义 token 按 shadcn 约定映射到 Threadbase 的 canvas/panel/surface/raised/border/foreground/muted/primary/accent；深色为默认，`[data-theme="light"]` 完整覆盖；避免 `--muted` 同时承担文本色和 hover 背景的冲突，应用文本统一使用 `muted-foreground`。
+- 视觉收敛为 Vercel/Linear 方向：单色 primary 按钮、hairline 分隔、减少卡片边框与阴影、统一 8px 半径、更松的页面留白、Geist 字体和 11–14px 信息层级。
+- 所有页面/面板的组合入口已在 e2e 中实际点击验证；`CommandPalette`、`Composer` 模型选择、`Changes` 基线、`Compare` 选择器、`Share` 角色、`Elicitation` 枚举均使用 shadcn Select/Command/Dialog。
+- 验证：`pnpm typecheck`、`pnpm lint`、`pnpm build`、Playwright 1 passed（双浏览器、键盘菜单、1440/768、深/浅色截图）；`cargo nextest` 作为前端改动后的 API 回归。

@@ -125,7 +125,7 @@ export function LoginPage() {
     <LoginFrame>
       <div className="mb-5 space-y-1.5">
         <div className="flex items-center gap-2">
-          <h1 className="text-[18px] font-semibold tracking-[-0.01em] text-fg">
+          <h1 className="text-[24px] font-semibold tracking-[-0.03em] text-foreground">
             {needsSetup ? "Set up your workspace" : "Sign in to Threadbase"}
           </h1>
           {needsSetup ? (
@@ -134,13 +134,15 @@ export function LoginPage() {
             </Badge>
           ) : null}
         </div>
-        <p className="text-[12px] leading-relaxed text-muted">
-          {needsSetup ? "Create the local admin account." : ""}
-        </p>
+        {needsSetup ? (
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            Create the local admin account.
+          </p>
+        ) : null}
       </div>
 
       {!needsSetup && auth.tailscaleHeader ? (
-        <div className="mb-4 flex items-start gap-2 rounded-md border border-info/25 bg-info/5 px-2.5 py-2 text-[11px] text-muted">
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-info/25 bg-info/5 px-2.5 py-2 text-[13px] text-muted-foreground">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-info" />
           <span>
             Tailscale identity detected. If this browser is already trusted,
@@ -150,7 +152,7 @@ export function LoginPage() {
       ) : null}
 
       {!auth.localLogin ? (
-        <div className="mb-4 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-2 text-[11px] text-muted">
+        <div className="mb-4 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-2 text-[13px] text-muted-foreground">
           Local password login is disabled from this address. Open Threadbase
           through Tailscale or from the host machine.
         </div>
@@ -165,7 +167,7 @@ export function LoginPage() {
       >
         {needsSetup ? (
           <label className="block space-y-1.5">
-            <span className="text-[11px] font-medium text-muted">
+            <span className="text-[13px] font-medium text-muted-foreground">
               Display name
             </span>
             <Input
@@ -178,7 +180,7 @@ export function LoginPage() {
           </label>
         ) : null}
         <label className="block space-y-1.5">
-          <span className="text-[11px] font-medium text-muted">Username</span>
+          <span className="text-[13px] font-medium text-muted-foreground">Username</span>
           <Input
             value={username}
             onChange={(event) => setUsername(event.target.value)}
@@ -190,7 +192,7 @@ export function LoginPage() {
           />
         </label>
         <label className="block space-y-1.5">
-          <span className="text-[11px] font-medium text-muted">Password</span>
+          <span className="text-[13px] font-medium text-muted-foreground">Password</span>
           <Input
             type="password"
             value={password}
@@ -201,7 +203,7 @@ export function LoginPage() {
         </label>
         {needsSetup ? (
           <label className="block space-y-1.5">
-            <span className="text-[11px] font-medium text-muted">
+            <span className="text-[13px] font-medium text-muted-foreground">
               Confirm password
             </span>
             <Input
@@ -215,12 +217,12 @@ export function LoginPage() {
         ) : null}
 
         {validation ? (
-          <p role="alert" className="text-[11px] text-danger">
+          <p role="alert" className="text-[13px] text-danger">
             {validation}
           </p>
         ) : null}
         {mutation.isError ? (
-          <p role="alert" className="text-[11px] text-danger">
+          <p role="alert" className="text-[13px] text-danger">
             {describeError(
               mutation.error,
               needsSetup ? "Setup failed" : "Sign in failed",
@@ -247,28 +249,18 @@ export function LoginPage() {
 
 function LoginFrame({ children }: { children: ReactNode }) {
   return (
-    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-canvas p-6">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgb(138_164_255/0.12),transparent_55%)]"
-      />
+    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-background p-6">
       <div className="absolute right-3 top-3 z-10">
         <ThemeToggle />
       </div>
-      <div className="relative w-full max-w-[400px]">
-        <div className="mb-5 flex items-center gap-2.5">
-          <span className="flex size-9 items-center justify-center rounded-xl border border-border bg-panel text-fg shadow-sm">
-            <LogoMark size={20} />
-          </span>
-          <div>
-            <p className="text-[13px] font-semibold tracking-tight text-fg">
-              Threadbase
-            </p>
-          </div>
+      <div className="relative w-full max-w-[380px]">
+        <div className="mb-8 flex items-center justify-center gap-2.5">
+          <LogoMark size={22} />
+          <p className="text-[15px] font-semibold tracking-tight text-foreground">
+            Threadbase
+          </p>
         </div>
-        <div className="rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-black/10">
-          {children}
-        </div>
+        {children}
       </div>
     </div>
   );
@@ -276,12 +268,10 @@ function LoginFrame({ children }: { children: ReactNode }) {
 
 function LoginLoading() {
   return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-canvas text-muted">
-      <span className="flex size-10 items-center justify-center rounded-xl border border-border bg-panel">
-        <LogoMark size={22} />
-      </span>
-      <p className="flex items-center gap-2 text-[12px]">
-        <span className="size-1.5 animate-pulse rounded-full bg-accent" />
+    <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
+      <LogoMark size={24} />
+      <p className="flex items-center gap-2 text-[13px]">
+        <span className="size-1.5 animate-pulse rounded-full bg-primary" />
         Connecting to Threadbase…
       </p>
     </div>

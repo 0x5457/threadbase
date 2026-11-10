@@ -1,10 +1,26 @@
-import { Command } from "cmdk";
-import { CornerDownLeft, Search } from "lucide-react";
+import { CornerDownLeft } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceSearch } from "@/api/queries";
 import type { SearchResultDto } from "@/api/types/SearchResultDto";
-import { Badge, ErrorState, Kbd, Skeleton } from "@/components/ui";
+import {
+  Badge,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  ErrorState,
+  Kbd,
+  Skeleton,
+} from "@/components/ui";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useDebouncedValue } from "@/lib/hooks";
 import { ApiError } from "@/lib/api";
 
@@ -65,7 +81,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   };
 
   return (
-    <Command.Dialog
+    <Dialog
       open={open}
       onOpenChange={(next) => {
         if (!next) {
@@ -73,101 +89,98 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         }
         onOpenChange(next);
       }}
-      label="Search Threadbase"
-      shouldFilter={false}
-      loop={false}
-      overlayClassName="fixed inset-0 z-[95] bg-black/55 backdrop-blur-[1px]"
-      contentClassName="fixed left-1/2 top-[14%] z-[100] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 overflow-hidden rounded-xl border border-border-strong bg-panel shadow-2xl"
     >
-      <div className="flex items-center gap-2 border-b border-border px-3">
-        <Search className="size-4 shrink-0 text-faint" aria-hidden />
-        <Command.Input
-          autoFocus
-          value={query}
-          onValueChange={setQuery}
-          placeholder="Search projects, threads and files…"
-          className="h-11 w-full bg-transparent text-[13px] text-fg outline-none placeholder:text-faint"
-        />
-        <Kbd>Esc</Kbd>
-      </div>
-
-      <Command.List className="max-h-[min(420px,60vh)] overflow-y-auto p-1.5">
-        {searching || search.isLoading ? (
-          <div className="space-y-1.5 p-1.5">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-3/4" />
-          </div>
-        ) : search.isError ? (
-          <ErrorState
-            error={search.error}
-            title="Search failed"
-            description={
-              search.error instanceof ApiError
-                ? search.error.message
-                : undefined
-            }
-            compact
+      <DialogContent
+        className="top-[14%] max-w-xl translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
+        showCloseButton={false}
+      >
+        <DialogTitle className="sr-only">Search Threadbase</DialogTitle>
+        <DialogDescription className="sr-only">
+          Search across projects, threads and files
+        </DialogDescription>
+        <Command shouldFilter={false} loop={false} className="p-0">
+          <CommandInput
+            autoFocus
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Search projects, threads and files…"
+            className="h-11 text-[13px]"
           />
-        ) : trimmed.length === 0 ? (
-          <div className="px-3 py-8 text-center">
-            <p className="text-[12px] text-muted">
-              Search across projects, threads and files.
-            </p>
-            <p className="mt-1 text-[11px] text-faint">
-              Results are requested from the workspace search API.
-            </p>
-          </div>
-        ) : search.data && search.data.results.length === 0 ? (
-          <Command.Empty className="px-3 py-8 text-center text-[12px] text-muted">
-            No results for “{trimmed}”.
-          </Command.Empty>
-        ) : (
-          <Command.Group
-            heading="Results"
-            className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-faint"
-          >
-            {search.data?.results.map((result) => {
-              const path = resultPath(result);
-              return (
-                <Command.Item
-                  key={`${result.kind}:${result.id}`}
-                  value={`${result.kind}:${result.id}`}
-                  disabled={!path}
-                  onSelect={() => select(result)}
-                  className="flex cursor-default items-center gap-2.5 rounded-md px-2 py-2 text-[12px] text-fg data-[disabled=true]:opacity-50 data-[selected=true]:bg-active"
-                >
-                  <Badge variant="outline" size="sm">
-                    {resultIconLabel(result.kind)}
-                  </Badge>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{result.title}</span>
-                    {result.subtitle ? (
-                      <span className="block truncate text-[10.5px] text-faint">
-                        {result.subtitle}
+          <CommandList className="max-h-[min(420px,60vh)] p-1.5">
+            {searching || search.isLoading ? (
+              <div className="space-y-1.5 p-1.5">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-3/4" />
+              </div>
+            ) : search.isError ? (
+              <ErrorState
+                error={search.error}
+                title="Search failed"
+                description={
+                  search.error instanceof ApiError
+                    ? search.error.message
+                    : undefined
+                }
+                compact
+              />
+            ) : trimmed.length === 0 ? (
+              <div className="px-3 py-8 text-center">
+                <p className="text-[12px] text-muted-foreground">
+                  Search across projects, threads and files.
+                </p>
+                <p className="mt-1 text-[11px] text-faint">
+                  Results are requested from the workspace search API.
+                </p>
+              </div>
+            ) : search.data && search.data.results.length === 0 ? (
+              <CommandEmpty className="px-3 py-8 text-center text-[12px] text-muted-foreground">
+                No results for “{trimmed}”.
+              </CommandEmpty>
+            ) : (
+              <CommandGroup heading="Results">
+                {search.data?.results.map((result) => {
+                  const path = resultPath(result);
+                  return (
+                    <CommandItem
+                      key={`${result.kind}:${result.id}`}
+                      value={`${result.kind}:${result.id}`}
+                      disabled={!path}
+                      onSelect={() => select(result)}
+                      className="gap-2.5 px-2 py-2 text-[13px]"
+                    >
+                      <Badge variant="outline" size="sm">
+                        {resultIconLabel(result.kind)}
+                      </Badge>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{result.title}</span>
+                        {result.subtitle ? (
+                          <span className="block truncate text-[11px] text-muted-foreground">
+                            {result.subtitle}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
-                  <CornerDownLeft className="size-3 text-faint" aria-hidden />
-                </Command.Item>
-              );
-            })}
-          </Command.Group>
-        )}
-      </Command.List>
-
-      <div className="flex items-center gap-3 border-t border-border px-3 py-1.5 text-[10px] text-faint">
-        <span className="flex items-center gap-1">
-          <Kbd>↑</Kbd>
-          <Kbd>↓</Kbd>
-          navigate
-        </span>
-        <span className="flex items-center gap-1">
-          <Kbd>↵</Kbd>
-          open
-        </span>
-        <span className="ml-auto">Workspace search</span>
-      </div>
-    </Command.Dialog>
+                      <CornerDownLeft className="size-3 text-faint" aria-hidden />
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            )}
+          </CommandList>
+          <div className="flex items-center gap-3 border-t border-border/60 px-3 py-1.5 text-[11px] text-faint">
+            <span className="flex items-center gap-1">
+              <Kbd>↑</Kbd>
+              <Kbd>↓</Kbd>
+              navigate
+            </span>
+            <span className="flex items-center gap-1">
+              <Kbd>↵</Kbd>
+              open
+            </span>
+            <span className="ml-auto">Workspace search</span>
+          </div>
+        </Command>
+      </DialogContent>
+    </Dialog>
   );
 }

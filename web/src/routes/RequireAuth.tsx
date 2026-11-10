@@ -39,22 +39,18 @@ export function RequireAuth() {
 
 function FullPageShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-full items-center justify-center bg-canvas p-6">
-      <div className="w-full max-w-md rounded-xl border border-border bg-panel p-6">
-        {children}
-      </div>
+    <div className="flex min-h-full items-center justify-center bg-background p-6">
+      <div className="w-full max-w-md">{children}</div>
     </div>
   );
 }
 
 function FullPageLoading({ label }: { label: string }) {
   return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-canvas text-muted">
-      <span className="flex size-10 items-center justify-center rounded-xl border border-border bg-panel">
-        <LogoMark size={22} />
-      </span>
+    <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
+      <LogoMark size={24} />
       <p className="flex items-center gap-2 text-[12px]">
-        <span className="size-1.5 animate-pulse rounded-full bg-accent" />
+        <span className="size-1.5 animate-pulse rounded-full bg-primary" />
         {label}
       </p>
     </div>

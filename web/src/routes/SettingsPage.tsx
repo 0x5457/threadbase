@@ -13,6 +13,11 @@ import {
   Checkbox,
   ErrorState,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Skeleton,
 } from "@/components/ui";
 import { setTheme, useTheme, type Theme } from "@/lib/theme";
@@ -39,19 +44,19 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-border bg-panel">
-      <div className="flex items-start gap-2.5 border-b border-border px-4 py-3">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-raised text-muted">
+    <section className="rounded-xl border border-border/40 bg-card/30">
+      <div className="flex items-start gap-2.5 border-b border-border/40 px-4 py-3">
+        <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
           <Icon className="size-3.5" />
         </span>
         <div>
-          <h2 className="text-[12px] font-semibold text-fg">{title}</h2>
+          <h2 className="text-[13px] font-semibold text-foreground">{title}</h2>
           {description ? (
-            <p className="mt-0.5 text-[11px] text-muted">{description}</p>
+            <p className="mt-0.5 text-[11.5px] text-muted-foreground">{description}</p>
           ) : null}
         </div>
       </div>
-      <div className="px-4 py-3.5">{children}</div>
+      <div className="px-4 py-4">{children}</div>
     </section>
   );
 }
@@ -64,18 +69,19 @@ function ThemePicker() {
   ];
   return (
     <div className="space-y-2">
-      <p className="text-[11px] font-medium text-muted">Theme</p>
+      <p className="text-[13px] font-medium text-muted-foreground">Theme</p>
       <div className="flex gap-1.5">
         {options.map((option) => (
           <button
             key={option.value}
             type="button"
             onClick={() => setTheme(option.value)}
+            aria-pressed={theme === option.value}
             className={cn(
-              "flex h-8 min-w-20 items-center justify-center gap-1.5 rounded-md border px-3 text-[11.5px] transition-colors",
+              "flex h-8 min-w-20 items-center justify-center gap-1.5 rounded-md border px-3 text-[13px] transition-colors",
               theme === option.value
-                ? "border-accent/50 bg-accent-soft text-fg"
-                : "border-border bg-canvas text-muted hover:border-border-strong hover:text-fg",
+                ? "border-primary/50 bg-primary/10 text-fg"
+                : "border-border bg-canvas text-muted-foreground hover:border-border-strong hover:text-fg",
             )}
           >
             {theme === option.value ? <Check className="size-3" /> : null}
@@ -83,7 +89,7 @@ function ThemePicker() {
           </button>
         ))}
       </div>
-      <p className="text-[10.5px] text-faint">
+      <p className="text-[13px] text-faint">
         Saved on this device. The server keeps its own appearance defaults.
       </p>
     </div>
@@ -143,7 +149,7 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block space-y-1.5">
-            <span className="text-[11px] font-medium text-muted">
+            <span className="text-[13px] font-medium text-muted-foreground">
               Default agent
             </span>
             <Input
@@ -153,7 +159,7 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
             />
           </label>
           <label className="block space-y-1.5">
-            <span className="text-[11px] font-medium text-muted">
+            <span className="text-[13px] font-medium text-muted-foreground">
               Default model
             </span>
             <Input
@@ -163,39 +169,44 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
             />
           </label>
           <label className="block space-y-1.5">
-            <span className="text-[11px] font-medium text-muted">
+            <span className="text-[13px] font-medium text-muted-foreground">
               Default diff baseline
             </span>
-            <select
+            <Select
               value={defaultBaseline}
-              onChange={(event) =>
-                setDefaultBaseline(event.target.value as BaselineKind)
+              onValueChange={(value) =>
+                setDefaultBaseline(value as BaselineKind)
               }
-              className="h-8 w-full rounded-md border border-border bg-canvas px-2 text-[12px] text-fg outline-none focus:border-accent/70"
             >
-              {baselines.map((baseline) => (
-                <option key={baseline.value} value={baseline.value}>
-                  {baseline.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {baselines.map((baseline) => (
+                  <SelectItem key={baseline.value} value={baseline.value}>
+                    {baseline.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
           <label className="block space-y-1.5">
-            <span className="text-[11px] font-medium text-muted">
+            <span className="text-[13px] font-medium text-muted-foreground">
               Transcript width
             </span>
-            <select
-              value={textWidth}
-              onChange={(event) => setTextWidth(event.target.value)}
-              className="h-8 w-full rounded-md border border-border bg-canvas px-2 text-[12px] text-fg outline-none focus:border-accent/70"
-            >
-              <option value="default">Default</option>
-              <option value="full">Full</option>
-              <option value="custom">Custom</option>
-            </select>
+            <Select value={textWidth} onValueChange={setTextWidth}>
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default</SelectItem>
+                <SelectItem value="full">Full</SelectItem>
+                <SelectItem value="custom">Custom</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label className="block space-y-1.5">
-            <span className="text-[11px] font-medium text-muted">
+            <span className="text-[13px] font-medium text-muted-foreground">
               Subthreads per thread
             </span>
             <Input
@@ -216,7 +227,7 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
             />
             <label
               htmlFor="send-with-modifier"
-              className="text-[11.5px] text-muted"
+              className="text-[13px] text-muted-foreground"
             >
               Send with modifier key
             </label>
@@ -241,11 +252,11 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
             <div>
               <label
                 htmlFor="hidden-presence"
-                className="text-[11.5px] text-fg"
+                className="text-[13px] text-fg"
               >
                 Hide my presence
               </label>
-              <p className="text-[10.5px] text-faint">
+              <p className="text-[13px] text-faint">
                 Your focus and online status will not be shared.
               </p>
             </div>
@@ -261,18 +272,18 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
             <div>
               <label
                 htmlFor="browser-notifications"
-                className="text-[11.5px] text-fg"
+                className="text-[13px] text-fg"
               >
                 Browser notifications
               </label>
-              <p className="text-[10.5px] text-faint">
+              <p className="text-[13px] text-faint">
                 Ask the browser for permission when a new mention or approval
                 arrives.
               </p>
             </div>
           </div>
           <label className="block space-y-1.5">
-            <span className="text-[11px] font-medium text-muted">
+            <span className="text-[13px] font-medium text-muted-foreground">
               Webhook URL
             </span>
             <Input
@@ -280,7 +291,7 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
               onChange={(event) => setWebhookUrl(event.target.value)}
               placeholder="https://example.com/threadbase"
             />
-            <span className="text-[10px] text-faint">
+            <span className="text-[13px] text-faint">
               Optional POST endpoint for approval and mention events.
             </span>
           </label>
@@ -288,7 +299,7 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
       </Section>
 
       {mutation.isError ? (
-        <p role="alert" className="text-[11px] text-danger">
+        <p role="alert" className="text-[13px] text-danger">
           {describeError(mutation.error, "Cannot save settings").description}
         </p>
       ) : null}
@@ -312,14 +323,14 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl px-6 py-6">
-        <div className="mb-5 space-y-1">
-          <h1 className="flex items-center gap-2 text-[20px] font-semibold tracking-[-0.02em] text-fg">
-            <Settings2 className="size-5 text-muted" aria-hidden />
+      <div className="mx-auto w-full max-w-3xl px-6 py-10">
+        <div className="mb-6 space-y-1">
+          <h1 className="flex items-center gap-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground">
+            <Settings2 className="size-5 text-muted-foreground" aria-hidden />
             Settings
           </h1>
-          <p className="text-[12px] text-muted">
-            Workspace defaults, notifications and your local account.
+          <p className="text-[12px] text-muted-foreground">
+            Workspace defaults and your local account.
           </p>
         </div>
 
@@ -357,7 +368,7 @@ export function SettingsPage() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <p className="text-[12.5px] font-medium text-fg">
+                    <p className="text-[13px] font-medium text-fg">
                       {me.data.user.displayName}
                     </p>
                     {me.data.user.isAdmin ? (
@@ -366,7 +377,7 @@ export function SettingsPage() {
                       </Badge>
                     ) : null}
                   </div>
-                  <p className="text-[11px] text-muted">
+                  <p className="text-[13px] text-muted-foreground">
                     @{me.data.user.username} · {me.data.authMethod}
                   </p>
                 </div>
@@ -388,13 +399,13 @@ export function SettingsPage() {
           </Section>
 
           {state.isLoading ? (
-            <div className="space-y-2 rounded-xl border border-border bg-panel p-4">
+            <div className="space-y-2 rounded-xl border border-border/40 bg-card/30 p-4">
               <Skeleton className="h-4 w-32" />
               <Skeleton className="h-8 w-full" />
               <Skeleton className="h-8 w-2/3" />
             </div>
           ) : state.isError || !state.data ? (
-            <div className="rounded-xl border border-border bg-panel">
+            <div className="rounded-xl border border-border/40 bg-card/30">
               <ErrorState
                 error={state.error}
                 title="Cannot load workspace preferences"

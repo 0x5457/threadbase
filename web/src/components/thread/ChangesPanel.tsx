@@ -20,6 +20,12 @@ import {
   Checkbox,
   EmptyState,
   ErrorState,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Skeleton,
   Textarea,
 } from "@/components/ui";
@@ -58,7 +64,7 @@ function statusClass(status: FileStatus) {
     case "renamed":
       return "border-info/30 bg-info/10 text-info";
     default:
-      return "border-border bg-raised text-muted";
+      return "border-border bg-raised text-muted-foreground";
   }
 }
 
@@ -69,7 +75,7 @@ function lineClass(line: DiffLineDto) {
   if (line.kind === "delete") {
     return "bg-del text-danger";
   }
-  return "text-muted";
+  return "text-muted-foreground";
 }
 
 export function ChangesPanel({
@@ -232,33 +238,39 @@ export function ChangesPanel({
     <div className="flex min-h-0 flex-col">
       <div className="space-y-2 border-b border-border px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <select
+          <Select
             value={baseline}
-            onChange={(event) =>
-              setBaseline(event.target.value as BaselineKind)
-            }
-            className="h-7 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 text-[10.5px] text-muted"
+            onValueChange={(value) => setBaseline(value as BaselineKind)}
           >
-            {BASELINES.map((entry) => (
-              <option key={entry.value} value={entry.value}>
-                {entry.label}
-              </option>
-            ))}
-          </select>
-          <span className="font-mono text-[10px] text-faint">
+            <SelectTrigger
+              size="sm"
+              className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-muted-foreground shadow-none hover:bg-muted/60"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              {BASELINES.map((entry) => (
+                <SelectItem key={entry.value} value={entry.value}>
+                  {entry.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="font-mono text-[13px] text-faint">
             {data.stats.seen}/{data.stats.total}
           </span>
         </div>
         {baseline === "commit" ? (
-          <input
+          <Input
             value={commit}
             onChange={(event) => setCommit(event.target.value.trim())}
-            placeholder="commit SHA"
-            className="h-7 w-full rounded-md border border-border bg-surface px-2 font-mono text-[10px] text-fg outline-none placeholder:text-faint"
+            aria-label="Commit SHA"
+            placeholder="Commit SHA"
+            className="h-8 font-mono text-[12px]"
           />
         ) : null}
-        <div className="flex items-center justify-between text-[10.5px]">
-          <span className="text-muted">{data.baseLabel}</span>
+        <div className="flex items-center justify-between text-[13px]">
+          <span className="text-muted-foreground">{data.baseLabel}</span>
           <span className="font-mono">
             <span className="text-success">+{data.stats.additions}</span>{" "}
             <span className="text-danger">−{data.stats.deletions}</span>
@@ -331,13 +343,13 @@ export function ChangesPanel({
             >
               <span
                 className={cn(
-                  "flex size-5 shrink-0 items-center justify-center rounded border font-mono text-[10px] font-semibold",
+                  "flex size-5 shrink-0 items-center justify-center rounded border font-mono text-[13px] font-semibold",
                   statusClass(file.status),
                 )}
               >
                 {statusLabel(file.status)}
               </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-fg">
+              <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-fg">
                 {file.path}
               </span>
               <span className="shrink-0 font-mono text-[9.5px]">
@@ -369,7 +381,7 @@ export function ChangesPanel({
               </Badge>
             </div>
           ) : (
-            <div className="font-mono text-[10px]">
+            <div className="font-mono text-[13px]">
               {diff.data?.hunks.map((hunk) => (
                 <div key={hunk.id}>
                   <div className="sticky top-0 flex items-center gap-2 border-y border-border bg-raised px-2 py-1 text-[9.5px] text-faint">
@@ -450,7 +462,7 @@ export function ChangesPanel({
                               {comment.author.displayName}
                               {comment.status === "pending" ? " · pending" : ""}
                             </p>
-                            <p className="whitespace-pre-wrap text-[10.5px] text-fg">
+                            <p className="whitespace-pre-wrap text-[13px] text-fg">
                               {comment.body}
                             </p>
                           </div>
@@ -460,7 +472,7 @@ export function ChangesPanel({
               ))}
               {commentTarget ? (
                 <div className="space-y-1.5 border-t border-border bg-panel p-2.5">
-                  <p className="text-[10px] text-info">
+                  <p className="text-[13px] text-info">
                     Comment on {selected}:{commentTarget.line}
                   </p>
                   <Textarea
@@ -468,7 +480,7 @@ export function ChangesPanel({
                     onChange={(event) => setCommentBody(event.target.value)}
                     placeholder="Leave a review comment…"
                     rows={2}
-                    className="text-[11px]"
+                    className="text-[13px]"
                   />
                   <div className="flex justify-end gap-1.5">
                     <Button
@@ -494,7 +506,7 @@ export function ChangesPanel({
           )}
         </div>
       ) : (
-        <div className="p-3 text-[10.5px] text-faint">
+        <div className="p-3 text-[13px] text-faint">
           <Check className="mr-1 inline size-3" aria-hidden />
           Select a file to review its diff.
         </div>

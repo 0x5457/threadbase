@@ -47,10 +47,10 @@ export function ApprovalRulesSection() {
       {items.map((rule) => (
         <li key={rule.id} className="flex items-center gap-2 bg-surface px-3 py-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[11.5px] text-fg">
+            <p className="truncate text-[13px] text-fg">
               {rule.agent} · {rule.tool}
               {rule.commandPrefix ? (
-                <span className="ml-1 font-mono text-[10px] text-muted">
+                <span className="ml-1 font-mono text-[13px] text-muted-foreground">
                   {rule.commandPrefix}
                 </span>
               ) : null}
