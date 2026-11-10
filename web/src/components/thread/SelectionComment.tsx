@@ -3,7 +3,7 @@ import { CornerDownLeft } from "lucide-react";
 import { useState } from "react";
 import { createComment } from "@/api/endpoints";
 import { queryKeys } from "@/api/queries";
-import { Kbd, Textarea } from "@/components/ui";
+import { Button, Kbd, Textarea } from "@/components/ui";
 
 export interface SelectionTarget {
   messageId: string;
@@ -72,15 +72,17 @@ export function SelectionComment({
         <span>
           <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> pending comment
         </span>
-        <button
+        <Button
           type="button"
-          className="flex items-center gap-1 text-primary disabled:opacity-40"
+          size="sm"
+          variant="ghost"
+          className="h-auto gap-1 px-0 text-primary"
           disabled={!body.trim() || create.isPending}
           onClick={() => create.mutate()}
         >
           <CornerDownLeft className="size-3" aria-hidden />
           Add
-        </button>
+        </Button>
       </div>
     </div>
   );

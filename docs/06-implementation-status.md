@@ -174,10 +174,13 @@ MBX_BLAZE=false cargo test -p threadbase --test real_codex -- --ignored --nocapt
 - 工具卡显示 ACP diff 摘要（路径 / +N / −N），展开查看完整 patch。
 - 审批卡显示 “Full parameters”；拒绝审批时填写原因并提交，确认 `note` 请求路径。
 - viewer 点击 `Request access` 后 owner 收件箱出现请求。
-- 生成 thread/changes/project/share/inbox/subagents/subagent-picker/new-thread-menu/composer/workspace/settings/login 截图；覆盖 1440 与 768、深色与浅色；键盘打开 Thread actions 菜单并用 Escape 关闭；浏览器 console error 断言为空。
+- 生成 42 张关键页面截图，覆盖 1440 与 768、深色与浅色；键盘打开 Thread actions 菜单并用 Escape 关闭；浏览器 console error 断言为空。
+- 抽屉四个面板均实际打开：Changes、Files、Output、Comments；Compare 与 Subagent Compare 实际路由打开；Thread actions 的 Archive 真正执行并跳回 project。
+- 断线：`context.setOffline(true)` 后显示 `Reconnecting…` 并保留输入；恢复网络后重新连接。
+- 分叉：重写临时 project 的 main 分支后打开 thread，footer 出现 `This thread has diverged…`、Keep Local Changes in a New Thread 与 Discard。
 - 真实 Codex 的 UI 截图 `composer-real-codex.png` 显示 shadcn Select 的 Model/Reasoning effort 下拉（适配器显示名 `6.1 Sol` / `Max`）。
 
-截图见 `docs/screenshots/`：`workspace-1440-dark/light`、`workspace-768-dark/light`、`settings-1440-dark/light`、`settings-768-dark/light`、`login-1440-dark`、`thread-1440-dark/light`、`thread-768-dark/light`、`composer-1440-dark`、`composer-real-codex`、`changes-1440-dark`、`project-1440-dark`、`share-1440-dark`、`inbox-1440-dark`、`subagents-1440-dark`、`subagent-picker-1440-dark`、`new-thread-menu-1440-dark`。
+截图见 `docs/screenshots/`：`workspace-1440-dark/light`、`workspace-768-dark/light`、`settings-1440-dark/light`、`settings-768-dark/light`、`login-1440-dark`、`project-1440-dark`、`project-768-dark/light`、`thread-1440-dark/light`、`thread-768-dark/light`、`composer-1440-dark`、`composer-768-dark/light`、`composer-real-codex`、`changes-1440-dark`、`changes-768-dark/light`、`files-768-dark`、`output-768-dark`、`share-1440-dark`、`share-768-dark/light`、`inbox-1440-dark`、`inbox-768-dark/light`、`subagents-1440-dark`、`subagents-768-dark`、`subagent-picker-1440-dark`、`subagent-compare-1440-dark`、`subagent-compare-768-light`、`compare-1440-dark`、`compare-768-light`、`reconnecting-1440-dark`、`diverged-1440-dark`、`new-thread-menu-1440-dark`。
 
 ### 5.3 安全
 
@@ -290,5 +293,7 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - `app-button.tsx`、`app-badge.tsx`、`app-avatar.tsx`、`app-dialog.tsx`、`app-tooltip.tsx` 只保留为应用 API 适配层（loading、业务 label、title/footer 等），内部组合官方组件；旧的 `Button.tsx`、`Input.tsx`、`Dialog.tsx`、`Tabs.tsx`、`Tooltip.tsx` 等手写实现已删除，不再维护两套基础件。
 - 语义 token 按 shadcn 约定映射到 Threadbase 的 canvas/panel/surface/raised/border/foreground/muted/primary/accent；深色为默认，`[data-theme="light"]` 完整覆盖；避免 `--muted` 同时承担文本色和 hover 背景的冲突，应用文本统一使用 `muted-foreground`。
 - 视觉收敛为 Vercel/Linear 方向：单色 primary 按钮、hairline 分隔、减少卡片边框与阴影、统一 8px 半径、更松的页面留白、Geist 字体和 11–14px 信息层级。
-- 所有页面/面板的组合入口已在 e2e 中实际点击验证；`CommandPalette`、`Composer` 模型选择、`Changes` 基线、`Compare` 选择器、`Share` 角色、`Elicitation` 枚举均使用 shadcn Select/Command/Dialog。
+- 核心 e2e 实际打开 Workspace/Project/Thread/Inbox/Settings/Login/Changes/Files/Output/Compare/Subagent Compare，执行 Thread actions 的 Rename/Fork/Delete/Archive、Share、Reconnect 与 Diverged 状态；`CommandPalette`、Composer 模型选择、Changes 基线、Compare 选择器、Share 角色、Elicitation 枚举均使用 shadcn Select/Command/Dialog。
+- 后端 API/数据库/事件模型未改动；Inbox 中 “Bob Stone Bob Stone requested edit access” 一类的摘要去重只改 `InboxPage.tsx` 的视图层显示，`request_access` 的原有后端摘要保持不变。
+- 仍保留的手写 `<button>` 仅用于 diff 行、文件树、侧栏 treeitem/chevron 等语义化列表控件；所有命令动作使用 `Button`/`IconButton`。
 - 验证：`pnpm typecheck`、`pnpm lint`、`pnpm build`、Playwright 1 passed（双浏览器、键盘菜单、1440/768、深/浅色截图）；`cargo nextest` 作为前端改动后的 API 回归。

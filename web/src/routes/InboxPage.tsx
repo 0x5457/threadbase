@@ -17,6 +17,7 @@ import type { InboxKind } from "@/api/types/InboxKind";
 import {
   Avatar,
   Badge,
+  Button,
   EmptyState,
   ErrorState,
   Skeleton,
@@ -65,6 +66,10 @@ function InboxRow({ item }: { item: InboxItemDto }) {
         id: "system",
         displayName: "Threadbase",
       };
+  const actorName = item.actor?.displayName ?? "Threadbase";
+  const summary = item.summary.startsWith(actorName)
+    ? item.summary
+    : `${actorName} ${item.summary}`;
   return (
     <Link
       to={`/p/${encodeURIComponent(item.projectId)}/t/${encodeURIComponent(
@@ -76,14 +81,7 @@ function InboxRow({ item }: { item: InboxItemDto }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <Icon className="size-3 shrink-0 text-faint" aria-hidden />
-          <span className="text-[13px] text-foreground">
-            {item.actor ? (
-              <span className="font-medium">{item.actor.displayName}</span>
-            ) : (
-              <span className="font-medium">Threadbase</span>
-            )}{" "}
-            {item.summary}
-          </span>
+          <span className="text-[13px] text-foreground">{summary}</span>
           <Badge variant={kindVariant(item.kind)} size="sm" className="ml-auto">
             {item.kind}
           </Badge>
@@ -176,21 +174,23 @@ export function InboxPage() {
                 }
                 action={
                   filter === "unread" ? (
-                    <button
+                    <Button
                       type="button"
+                      variant="link"
+                      size="sm"
                       onClick={() => setFilter("all")}
-                      className="text-[13px] text-muted-foreground underline-offset-4 hover:text-fg hover:underline"
                     >
                       View all items
-                    </button>
+                    </Button>
                   ) : (
-                    <button
+                    <Button
                       type="button"
+                      variant="link"
+                      size="sm"
                       onClick={() => navigate("/")}
-                      className="text-[13px] text-muted-foreground underline-offset-4 hover:text-fg hover:underline"
                     >
                       Back to projects
-                    </button>
+                    </Button>
                   )
                 }
               />

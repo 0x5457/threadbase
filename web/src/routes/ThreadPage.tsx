@@ -56,6 +56,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   EmptyState,
+  IconButton,
   Input,
   ErrorState,
   Skeleton,
@@ -525,25 +526,19 @@ export function ThreadPage() {
               Restart agent
             </Button>
           ) : null}
-          <button
-            type="button"
-            aria-label={thread.status === "archived" ? "Unarchive thread" : "Archive thread"}
-            className="rounded p-1 text-faint hover:bg-hover hover:text-fg disabled:opacity-40"
-            title={thread.status === "archived" ? "Unarchive thread" : "Archive thread"}
+          <IconButton
+            label={thread.status === "archived" ? "Unarchive thread" : "Archive thread"}
+            size="sm"
             disabled={!canWrite || archive.isPending}
             onClick={() => archive.mutate(thread.status !== "archived")}
           >
-            <Archive className="size-3.5" aria-hidden />
-          </button>
+            <Archive />
+          </IconButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="Thread actions"
-                className="rounded p-1 text-faint hover:bg-hover hover:text-fg"
-              >
-                <MoreHorizontal className="size-3.5" aria-hidden />
-              </button>
+              <IconButton label="Thread actions" size="sm">
+                <MoreHorizontal />
+              </IconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
                 <DropdownMenuItem
@@ -688,21 +683,23 @@ export function ThreadPage() {
       {thread.diverged && !divergedDismissed ? (
         <div className="flex flex-wrap items-center gap-2 border-t border-warning/30 bg-warning/5 px-4 py-2 text-[13px] text-warning">
           <span>This thread has diverged from the project branch.</span>
-          <button
-            type="button"
-            className="font-medium text-fg underline decoration-warning/50 underline-offset-2 hover:decoration-fg"
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-auto px-0 font-medium text-foreground underline decoration-warning/50 underline-offset-2 hover:decoration-foreground"
             onClick={() => fork.mutate()}
           >
             Keep local changes in a new thread
-          </button>
-          <button
-            type="button"
-            className="text-faint hover:text-danger"
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-auto px-0 text-faint hover:text-danger"
             disabled={discardDiverged.isPending}
             onClick={() => discardDiverged.mutate()}
           >
             Discard
-          </button>
+          </Button>
         </div>
       ) : null}
       {selectedSubagent ? null : (

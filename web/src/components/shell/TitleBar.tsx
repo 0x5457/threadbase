@@ -6,9 +6,8 @@ import {
   Share2,
 } from "lucide-react";
 import type { Participant } from "@/api/types/Participant";
-import { AvatarStack, IconButton, Kbd, Tooltip } from "@/components/ui";
+import { AvatarStack, Button, IconButton, Kbd, Tooltip } from "@/components/ui";
 import { modKeyLabel } from "@/lib/platform";
-import { cn } from "@/lib/utils";
 
 export interface TitleBarProps {
   title: string;
@@ -64,15 +63,17 @@ export function TitleBar({
             <PanelLeft />
           </IconButton>
         </Tooltip>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={onOpenSearch}
-          className="no-drag flex h-8 items-center gap-2 rounded-md bg-muted/50 px-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="no-drag h-8 gap-2 bg-muted/50 px-2 text-muted-foreground"
           aria-label="Search workspace"
         >
           <Search className="size-3.5" aria-hidden />
           <Kbd className="hidden md:inline-flex">{modKeyLabel()}K</Kbd>
-        </button>
+        </Button>
       </div>
 
       <div className="flex min-w-0 flex-1 items-center justify-center gap-2 px-2">
@@ -99,13 +100,15 @@ export function TitleBar({
           />
         ) : null}
         {followingName ? (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onStopFollowing}
-            className="no-drag hidden items-center gap-1 rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[9.5px] text-info sm:flex"
+            className="no-drag hidden h-auto rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[10px] text-info sm:flex"
           >
             Following {followingName} · stop
-          </button>
+          </Button>
         ) : null}
       </div>
 
@@ -117,17 +120,17 @@ export function TitleBar({
               : "Copy link to this thread"
           }
         >
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             disabled={shareDisabled || !onShare}
             onClick={onShare}
-            className={cn(
-              "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-            )}
+            className="gap-1.5 px-2 text-[12px] text-muted-foreground"
           >
             <Share2 className="size-3.5" aria-hidden />
             <span className="hidden sm:inline">Share</span>
-          </button>
+          </Button>
         </Tooltip>
         <Tooltip content="Approvals">
           <span className="relative">

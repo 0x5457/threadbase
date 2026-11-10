@@ -15,6 +15,7 @@ import {
   Button,
   EmptyState,
   ErrorState,
+  IconButton,
   Skeleton,
   Textarea,
 } from "@/components/ui";
@@ -227,14 +228,14 @@ export function CommentsPanel({
                 >
                   Reply
                 </Button>
-                <button
-                  type="button"
+                <IconButton
+                  label="Delete comment"
+                  size="sm"
                   className="ml-auto text-faint hover:text-danger"
-                  aria-label="Delete comment"
                   onClick={() => remove.mutate(comment)}
                 >
-                  <Trash2 className="size-3" aria-hidden />
-                </button>
+                  <Trash2 />
+                </IconButton>
               </div>
               {repliesFor(comment.id).map((replyComment) => (
                 <div

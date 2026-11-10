@@ -506,6 +506,7 @@ async fn request_access_route(
             .bind(&thread_id)
             .fetch_all(&state.pool)
             .await?;
+    let actor = brief(&user.user);
     for (user_id, role) in members {
         if user_id == user.user.id.as_str() || role == "viewer" {
             continue;
@@ -518,7 +519,7 @@ async fn request_access_route(
         .bind(&user_id)
         .bind(&thread_id)
         .bind(user.user.id.as_str())
-        .bind("requested edit access")
+        .bind(format!("{} requested edit access", actor.display_name))
         .bind(now_ms())
         .execute(&state.pool)
         .await?;

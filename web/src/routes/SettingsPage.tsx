@@ -23,7 +23,6 @@ import {
 import { setTheme, useTheme, type Theme } from "@/lib/theme";
 import { describeError } from "@/lib/errors";
 import { ApprovalRulesSection } from "@/components/workspace/ApprovalRulesSection";
-import { cn } from "@/lib/utils";
 
 const baselines: Array<{ value: BaselineKind; label: string }> = [
   { value: "base_branch", label: "Base branch" },
@@ -72,21 +71,18 @@ function ThemePicker() {
       <p className="text-[13px] font-medium text-muted-foreground">Theme</p>
       <div className="flex gap-1.5">
         {options.map((option) => (
-          <button
+          <Button
             key={option.value}
             type="button"
+            size="sm"
+            variant={theme === option.value ? "secondary" : "ghost"}
             onClick={() => setTheme(option.value)}
             aria-pressed={theme === option.value}
-            className={cn(
-              "flex h-8 min-w-20 items-center justify-center gap-1.5 rounded-md border px-3 text-[13px] transition-colors",
-              theme === option.value
-                ? "border-primary/50 bg-primary/10 text-fg"
-                : "border-border bg-canvas text-muted-foreground hover:border-border-strong hover:text-fg",
-            )}
+            className="min-w-20 gap-1.5"
           >
             {theme === option.value ? <Check className="size-3" /> : null}
             {option.label}
-          </button>
+          </Button>
         ))}
       </div>
       <p className="text-[13px] text-faint">

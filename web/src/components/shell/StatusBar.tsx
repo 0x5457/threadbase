@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import type { ProjectDto } from "@/api/types/ProjectDto";
 import type { ThreadDto } from "@/api/types/ThreadDto";
-import { Tooltip } from "@/components/ui";
+import { Button, Tooltip } from "@/components/ui";
 import { basename } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -95,10 +95,12 @@ export function StatusBar({
           </span>
         ) : null}
         {thread ? (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onOpenChanges}
-            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="h-auto gap-1.5 px-1 py-0.5 text-muted-foreground"
             title="Open changes"
           >
             <FileDiff className="size-3 text-faint" aria-hidden />
@@ -111,7 +113,7 @@ export function StatusBar({
                 {thread.changes.seen}/{thread.changes.total} seen
               </span>
             ) : null}
-          </button>
+          </Button>
         ) : null}
         <span className="flex items-center gap-1" title="Running threads">
           {runningCount > 0 ? (

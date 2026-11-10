@@ -126,17 +126,18 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                   ["workspace", "Whole workspace"],
                 ] as const
               ).map(([value, label]) => (
-                <button
+                <Button
                   key={value}
                   type="button"
+                  variant="ghost"
                   disabled={!owner}
                   aria-pressed={thread.shareLevel === value}
                   onClick={() => level.mutate(value)}
                   className={cn(
-                    "rounded-lg px-3 py-2 text-left text-[12px] transition-colors",
+                    "h-auto justify-start rounded-lg px-3 py-2 text-left text-[12px]",
                     thread.shareLevel === value
                       ? "bg-primary/10 text-foreground"
-                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      : "text-muted-foreground",
                   )}
                 >
                   <span className="flex items-center gap-1.5">
@@ -145,7 +146,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                     ) : null}
                     {label}
                   </span>
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -176,13 +177,15 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                   {owner &&
                   entry.user.id !== me.data?.user.id &&
                   entry.role !== "owner" ? (
-                    <button
+                    <Button
                       type="button"
-                      className="text-[13px] text-faint hover:text-danger"
+                      size="sm"
+                      variant="ghost"
+                      className="h-auto px-1 py-0 text-[12px] text-faint hover:text-danger"
                       onClick={() => remove.mutate(entry.user.id)}
                     >
                       remove
-                    </button>
+                    </Button>
                   ) : null}
                 </li>
               ))}
@@ -202,13 +205,15 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                       {invite.email ?? "invite link"} · {invite.role}
                     </span>
                     {owner ? (
-                      <button
+                      <Button
                         type="button"
-                        className="text-faint hover:text-danger"
+                        size="sm"
+                        variant="ghost"
+                        className="h-auto px-1 py-0 text-[12px] text-faint hover:text-danger"
                         onClick={() => revoke.mutate(invite.id)}
                       >
                         revoke
-                      </button>
+                      </Button>
                     ) : null}
                   </li>
                 ))}
@@ -250,25 +255,29 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                   Add
                 </Button>
               </div>
-              <button
+              <Button
                 type="button"
-                className="text-[13px] text-primary hover:underline"
+                size="sm"
+                variant="link"
+                className="h-auto justify-start px-0 text-[12px]"
                 onClick={() => invite.mutate()}
               >
                 Create a 14-day invite link instead
-              </button>
+              </Button>
               {inviteLink ? (
                 <div className="flex items-center gap-1.5 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-2">
                   <code className="min-w-0 flex-1 truncate text-[13px] text-fg">
                     {inviteLink}
                   </code>
-                  <button
+                  <Button
                     type="button"
-                    className="text-faint hover:text-fg"
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Copy invite link"
                     onClick={() => void navigator.clipboard.writeText(inviteLink)}
                   >
-                    <Copy className="size-3" aria-hidden />
-                  </button>
+                    <Copy />
+                  </Button>
                 </div>
               ) : null}
             </div>

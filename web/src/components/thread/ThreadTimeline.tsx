@@ -37,6 +37,7 @@ import {
   Button,
   EmptyState,
   ErrorState,
+  IconButton,
   Skeleton,
   Textarea,
 } from "@/components/ui";
@@ -516,14 +517,16 @@ export function ThreadTimeline({
               {call.title}
             </span>
             {onComment ? (
-              <button
-                type="button"
-                className="ml-auto rounded p-0.5 text-faint hover:text-fg"
-                aria-label="Comment on tool call"
-                onClick={() => onComment({ kind: "tool_call", toolCallId: call.id })}
+              <IconButton
+                label="Comment on tool call"
+                size="sm"
+                className="ml-auto size-6 text-faint"
+                onClick={() =>
+                  onComment({ kind: "tool_call", toolCallId: call.id })
+                }
               >
-                <MessageSquare className="size-3" aria-hidden />
-              </button>
+                <MessageSquare />
+              </IconButton>
             ) : null}
             <Badge
               variant={toolStatusVariant(call.status)}
@@ -669,23 +672,23 @@ export function ThreadTimeline({
                         {formatTimestamp(item.createdAt)}
                       </span>
                     ) : null}
-                    <button
-                      type="button"
-                      className="ml-auto rounded p-0.5 text-faint hover:text-fg"
-                      aria-label="View comments"
+                    <IconButton
+                      label="View comments"
+                      size="sm"
+                      className="ml-auto size-6 text-faint"
                       onClick={() =>
                         window.dispatchEvent(
                           new CustomEvent("threadbase:open-comments"),
                         )
                       }
                     >
-                      <MessageSquareText className="size-3" aria-hidden />
-                    </button>
+                      <MessageSquareText />
+                    </IconButton>
                     {onComment ? (
-                      <button
-                        type="button"
-                        className="rounded p-0.5 text-faint hover:text-fg"
-                        aria-label="Comment on message"
+                      <IconButton
+                        label="Comment on message"
+                        size="sm"
+                        className="size-6 text-faint"
                         onClick={() =>
                           onComment({
                             kind: "message",
@@ -693,8 +696,8 @@ export function ThreadTimeline({
                           })
                         }
                       >
-                        <MessageSquare className="size-3" aria-hidden />
-                      </button>
+                        <MessageSquare />
+                      </IconButton>
                     ) : null}
                   </div>
                   <div

@@ -235,13 +235,15 @@ export function Composer({
         <Users className="mr-1.5 inline size-3.5" aria-hidden />
         Read-only.
         {onRequestAccess ? (
-          <button
+          <Button
             type="button"
-            className="ml-2 text-primary hover:underline"
+            size="sm"
+            variant="link"
+            className="ml-2 h-auto px-0 align-baseline"
             onClick={onRequestAccess}
           >
             Request access
-          </button>
+          </Button>
         ) : null}
       </div>
     );
@@ -273,21 +275,25 @@ export function Composer({
                   </p>
                 </div>
                 {item.superseded ? (
-                  <button
+                  <Button
                     type="button"
-                    className="text-[9.5px] text-primary hover:underline"
+                    size="sm"
+                    variant="ghost"
+                    className="h-auto px-1 py-0 text-[11px] text-primary"
                     onClick={() => retry.mutate(item)}
                   >
                     continue
-                  </button>
+                  </Button>
                 ) : null}
-                <button
+                <Button
                   type="button"
-                  className="text-[9.5px] text-faint hover:text-danger"
+                  size="sm"
+                  variant="ghost"
+                  className="h-auto px-1 py-0 text-[11px] text-faint hover:text-danger"
                   onClick={() => withdraw.mutate(item)}
                 >
                   withdraw
-                </button>
+                </Button>
               </div>
             ))}
           </div>
@@ -416,10 +422,11 @@ export function Composer({
                   </p>
                 ) : (
                   participants.map((participant) => (
-                    <button
+                    <Button
                       key={participant.user.id}
                       type="button"
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-foreground hover:bg-accent"
+                      variant="ghost"
+                      className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-[12px]"
                       onClick={() => {
                         const own = blocks
                           .toArray()
@@ -446,7 +453,7 @@ export function Composer({
                       <span className="ml-auto text-[10px] text-muted-foreground">
                         @{participant.user.username}
                       </span>
-                    </button>
+                    </Button>
                   ))
                 )}
               </PopoverContent>

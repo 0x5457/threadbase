@@ -7,6 +7,7 @@ import {
   Badge,
   Button,
   Checkbox,
+  IconButton,
   Input,
   Select,
   SelectContent,
@@ -75,10 +76,10 @@ export function ElicitationCard({
             Agent needs input
           </span>
           {onComment ? (
-            <button
-              type="button"
-              className="rounded p-0.5 text-faint hover:text-fg"
-              aria-label="Comment on question"
+            <IconButton
+              label="Comment on question"
+              size="sm"
+              className="size-6 text-faint"
               onClick={() =>
                 onComment({
                   kind: "elicitation",
@@ -86,8 +87,8 @@ export function ElicitationCard({
                 })
               }
             >
-              <HelpCircle className="size-3" aria-hidden />
-            </button>
+              <HelpCircle />
+            </IconButton>
           ) : null}
           <Badge
             variant={pending ? "info" : "neutral"}

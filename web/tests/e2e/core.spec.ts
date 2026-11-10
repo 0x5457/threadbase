@@ -1,5 +1,6 @@
 import { expect, test, type BrowserContext, type APIRequestContext } from "@playwright/test";
 import fs from "node:fs";
+import { execSync } from "node:child_process";
 import path from "node:path";
 
 const BASE = "http://127.0.0.1:7790";
@@ -480,6 +481,187 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
     fullPage: true,
   });
   await narrowContext.close();
+
+  // Narrow-window visual matrix for the remaining review surfaces.
+  await admin.setViewportSize({ width: 768, height: 900 });
+  await admin.evaluate(() => localStorage.setItem("threadbase.theme", "dark"));
+  await admin.goto(`/p/${project.id}`);
+  await expect(admin.getByRole("heading", { name: "repo" })).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/project-768-dark.png",
+    fullPage: true,
+  });
+  await admin.goto(`/p/${project.id}/t/${thread.id}`);
+  await expect(admin.getByPlaceholder("Message")).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/composer-768-dark.png",
+    fullPage: true,
+  });
+  await admin.getByLabel("Show right drawer").click();
+  const narrowDrawer = admin.getByRole("complementary", { name: "Right drawer" });
+  await narrowDrawer.getByRole("tab", { name: "Files" }).click();
+  await expect(narrowDrawer.getByText("README.md")).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/files-768-dark.png",
+    fullPage: true,
+  });
+  await narrowDrawer.getByRole("tab", { name: "Output" }).click();
+  await expect(narrowDrawer.getByText("Run tests").first()).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/output-768-dark.png",
+    fullPage: true,
+  });
+  await narrowDrawer.getByRole("tab", { name: "Changes" }).click();
+  await expect(narrowDrawer.getByText("README.md")).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/changes-768-dark.png",
+    fullPage: true,
+  });
+  await admin.keyboard.press("Shift+Escape");
+  await admin.getByRole("button", { name: "Share", exact: true }).click();
+  await expect(admin.getByText("Share thread", { exact: true })).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/share-768-dark.png",
+    fullPage: true,
+  });
+  await admin.keyboard.press("Escape");
+
+  await admin.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
+  await admin.goto(`/p/${project.id}`);
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/project-768-light.png",
+    fullPage: true,
+  });
+  await admin.goto(`/p/${project.id}/t/${thread.id}`);
+  await admin.getByLabel("Show right drawer").click();
+  const lightDrawer = admin.getByRole("complementary", { name: "Right drawer" });
+  await lightDrawer.getByRole("tab", { name: "Changes" }).click();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/changes-768-light.png",
+    fullPage: true,
+  });
+  await admin.keyboard.press("Shift+Escape");
+  await admin.goto("/inbox");
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/inbox-768-light.png",
+    fullPage: true,
+  });
+
+  await admin.setViewportSize({ width: 1440, height: 900 });
+  await admin.evaluate(() => localStorage.setItem("threadbase.theme", "dark"));
+  await admin.goto(`/p/${project.id}/compare`);
+  await expect(admin.getByRole("heading", { name: "Compare threads" })).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/compare-1440-dark.png",
+    fullPage: true,
+  });
+  await admin.goto(`/p/${project.id}/t/${thread.id}/subagents/compare`);
+  await expect(admin.getByRole("heading", { name: "Compare subagents" })).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/subagent-compare-1440-dark.png",
+    fullPage: true,
+  });
+
+  // 768/light coverage for the comparison and share surfaces.
+  await admin.setViewportSize({ width: 768, height: 900 });
+  await admin.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
+  await admin.goto(`/p/${project.id}/compare`);
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/compare-768-light.png",
+    fullPage: true,
+  });
+  await admin.goto(`/p/${project.id}/t/${thread.id}/subagents/compare`);
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/subagent-compare-768-light.png",
+    fullPage: true,
+  });
+  await admin.goto(`/p/${project.id}/t/${thread.id}`);
+  await admin.getByRole("button", { name: "Share", exact: true }).click();
+  await expect(admin.getByText("Share thread", { exact: true })).toBeVisible();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/share-768-light.png",
+    fullPage: true,
+  });
+  await admin.keyboard.press("Escape");
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/composer-768-light.png",
+    fullPage: true,
+  });
+  await admin.evaluate(() => localStorage.setItem("threadbase.theme", "dark"));
+  await admin.goto(`/p/${project.id}/t/${thread.id}`);
+  const compactSubagent = admin
+    .locator("main")
+    .getByText("Test investigator", { exact: true })
+    .first();
+  await compactSubagent.scrollIntoViewIfNeeded();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/subagents-768-dark.png",
+    fullPage: true,
+  });
+  await admin.goto("/inbox");
+  await admin.reload();
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/inbox-768-dark.png",
+    fullPage: true,
+  });
+
+  // Live reconnect state and a real divergence caused by rewriting the project branch.
+  await admin.setViewportSize({ width: 1440, height: 900 });
+  await admin.goto(`/p/${project.id}/t/${thread.id}`);
+
+  const offlineContext = await browser.newContext({
+    storageState: storage,
+    viewport: { width: 1440, height: 900 },
+  });
+  const offline = await offlineContext.newPage();
+  await offline.goto(`/p/${project.id}/t/${thread.id}`);
+  await expect(offline.getByPlaceholder("Message")).toBeVisible();
+  await offlineContext.setOffline(true);
+  await expect(offline.getByText("Reconnecting…").first()).toBeVisible({ timeout: 10_000 });
+  await offline.waitForTimeout(300);
+  await offline.screenshot({
+    path: "test-results/screenshots/reconnecting-1440-dark.png",
+    fullPage: true,
+  });
+  await offlineContext.setOffline(false);
+  await offlineContext.close();
+
+  execSync(`git -C ${REPO} checkout --orphan diverged`, { stdio: "ignore" });
+  execSync(`git -C ${REPO} rm -rf .`, { stdio: "ignore" });
+  fs.writeFileSync(`${REPO}/README.md`, "diverged\n");
+  execSync(`git -C ${REPO} add -A && git -C ${REPO} commit -m diverged`, { stdio: "ignore" });
+  execSync(`git -C ${REPO} branch -M main`, { stdio: "ignore" });
+  await admin.reload();
+  await expect(
+    admin.getByText("This thread has diverged from the project branch."),
+  ).toBeVisible({ timeout: 10_000 });
+  await admin.waitForTimeout(300);
+  await admin.screenshot({
+    path: "test-results/screenshots/diverged-1440-dark.png",
+    fullPage: true,
+  });
+
+  // Archive is a real thread action, not only a code path.
+  await admin.goto(`/p/${project.id}/t/${thread.id}`);
+  await admin.getByRole("button", { name: "Archive thread" }).click();
+  await expect(admin).toHaveURL(new RegExp(`/p/${project.id}$`), { timeout: 15_000 });
 
   const loginContext = await browser.newContext({
     viewport: { width: 1440, height: 900 },
