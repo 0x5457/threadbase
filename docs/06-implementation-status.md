@@ -1,6 +1,6 @@
 # 实现状态与决策记录
 
-配套文档：[01-requirements.md](01-requirements.md)、[02-open-decisions.md](02-open-decisions.md)、[03-tech-stack.md](03-tech-stack.md)、[04-subagents-and-questions.md](04-subagents-and-questions.md)、[05-ui-spec.md](05-ui-spec.md)。
+配套文档：[01-requirements.md](01-requirements.md)、[02-open-decisions.md](02-open-decisions.md)、[03-tech-stack.md](03-tech-stack.md)、[04-subagents-and-questions.md](04-subagents-and-questions.md)、[05-ui-spec.md](05-ui-spec.md)、[07-state-machines.md](07-state-machines.md)、[08-state-model-decision.md](08-state-model-decision.md)。
 
 本文件记录实现阶段的事实：实际版本、与规格的偏差、需求覆盖和验证证据。规格冲突在这里给出裁决，不再散落到代码里。
 
@@ -177,6 +177,7 @@ MBX_BLAZE=false cargo test -p threadbase --test real_codex -- --ignored --nocapt
 - 生成 42 张关键页面截图，覆盖 1440 与 768、深色与浅色；键盘打开 Thread actions 菜单并用 Escape 关闭；浏览器 console error 断言为空。
 - 抽屉四个面板均实际打开：Changes、Files、Output、Comments；Compare 与 Subagent Compare 实际路由打开；Thread actions 的 Archive 真正执行并跳回 project。
 - 断线：`context.setOffline(true)` 后显示 `Reconnecting…` 并保留输入；恢复网络后重新连接。
+- 队列闭环：慢 turn 运行时把 “stream” 入队（Queued at position 1），Stop 取消后条目标记为 previous turn cancelled，点击 continue 触发 queue worker 发送，新的 “Hello” 消息出现且队列清空。
 - 分叉：重写临时 project 的 main 分支后打开 thread，footer 出现 `This thread has diverged…`、Keep Local Changes in a New Thread 与 Discard。
 - 真实 Codex 的 UI 截图 `composer-real-codex.png` 显示 shadcn Select 的 Model/Reasoning effort 下拉（适配器显示名 `6.1 Sol` / `Max`）。
 
@@ -297,3 +298,56 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - 后端 API/数据库/事件模型未改动；Inbox 中 “Bob Stone Bob Stone requested edit access” 一类的摘要去重只改 `InboxPage.tsx` 的视图层显示，`request_access` 的原有后端摘要保持不变。
 - 仍保留的手写 `<button>` 仅用于 diff 行、文件树、侧栏 treeitem/chevron 等语义化列表控件；所有命令动作使用 `Button`/`IconButton`。
 - 验证：`pnpm typecheck`、`pnpm lint`、`pnpm build`、Playwright 1 passed（双浏览器、键盘菜单、1440/768、深/浅色截图）；`cargo nextest` 作为前端改动后的 API 回归。
+
+---
+
+## 12. 统一显式状态模型（2026-11-10）
+
+### 12.1 背景与决策
+
+- 审计：[07-state-machines.md](07-state-machines.md) 登记了 20 个隐式状态机（SM-01..SM-20），指出双真相、重复 parse、死状态、无迁移守卫等问题。
+- 决策：[08-state-model-decision.md](08-state-model-decision.md) 选定模型 B（单一写入入口 + 显式迁移表 + UI/agent 共用投影），并给出各实体迁移表、迁移路径与回滚点。
+
+### 12.2 代码落地
+
+- `crates/core/src/state.rs`（纯逻辑，无 IO）：
+  - `ThreadMachine`、`ApprovalMachine`、`ElicitationMachine`、`SubagentMachine`、`QueueMachine`、`AgentSessionMachine`、`DeliveryMachine`、`CommentMachine`、`ReadRules`、`PresenceMachine`、`DraftMachine`。
+  - 全部状态字符串映射（thread/subagent/queue/approval/elicitation/comment/delivery）集中于此。
+- `crates/server/src/state.rs`：`StateStore` 是**所有**生命周期状态列（thread / approval / elicitation / queue / comment / subagent / agent_binding）的唯一写入入口（机器校验 → 落库 → 广播投影）。subagent 的创建与迁移由 `create_subagent` 统一处理；queue retry 经 `QueueMachine::Retry`。
+- 创建态写入（thread/approval/elicitation/comment/queue 的 INSERT）也经机器的 `Create`/`Enqueue` 动作校验初始状态，消除了死代码。
+- `ThreadState` 投影（`crates/shared/src/api.rs`）：`thread_id / status / current_turn / pending_approvals / pending_elicitations / queued_inputs / active_subagents / diverged`；REST `GET /api/threads/{id}/state`、WS `thread_state`、agent 摘要三者共用同一投影。
+- `AppState` 新增 `state_tx` / `state_store`；`ws.rs` 订阅状态广播。
+- 后端调用点收敛：`threads.rs`、`ws.rs`、`agents.rs`、`approvals.rs`、`queue.rs`、`routes_agent.rs`、`comments.rs`、`events.rs` 不再各自 parse/status_str；rg 证据见 §12.5。
+- `core::reducer` 不再推导 thread status（`TimelineState` 无 status 字段），消除 DB 与事件投影的双真相。
+- 前端：新增 `SubagentStatusBadge`，`ThreadPage`/`ThreadTimeline`/`SidebarTree`/`WorkspaceLayout` 不再把 `SubagentStatus` 映射为 `ThreadStatus`；新增 `useThreadState`（REST + WS 投影），`ThreadPage` 用投影的 `status`/`pendingApprovals`/`queuedInputs`/`pendingElicitations`/`currentTurn`/`diverged` 渲染，`ThreadTimeline` 用 `activeSubagentCount` 驱动运行中提示；`live.ts` 的 `thread_state` 校验 threadId 并失效 workspace threads 查询。
+- DB：`0003_state_indexes.sql` 为 pending/queue/read 查询补索引；`0001/0002/0003` 均提供 `.down.sql`（已用 sqlite3 验证 up→down 序列）。
+
+### 12.3 修复的不一致
+
+- cancel 取消 elicitation 后 thread 立即回到 idle（原来停留 requires_action）。
+- decide/elicitation 后按剩余 pending 数决定 running/requires_action（原来无条件 running）。
+- archive 同时写 `archived_at`（原来只写 status）。
+- `auto_allow` 对并发决定幂等（原来冲突会使 agent pump 事件循环终止）。
+- Pump 事件循环不再因单次状态错误而终止。
+- `QueueStatus::Superseded` 真正写入 status；retry 路由接受 `queued/superseded` 并触发 queue worker。
+- PromptDone 开始时先清 `session.turn`，消除“完成事件已发布但内存 turn 未清”的竞态（原来并发 send 会误入 steering，导致 subagent 场景不执行）。
+
+### 12.4 AX：agent 语义状态摘要
+
+- 服务端在 prompt 起始从 `ThreadState` 投影生成 `[Thread state] status=…; current_turn=…; pending_approvals=…; pending_elicitations=…; queued_inputs=…; active_subagents=…`，作为附加文本块注入。
+- 仅当 pending/queued/active_subagents 非零时注入，避免正常 prompt 噪音。
+- 摘要与 UI 共用同一投影，不依赖 adapter 能力；能力缺失时仍准确（降级路径：只报告服务端事实，不伪造能力）。
+- 测试：`state::tests::summary_reports_pending_state`（投影内容）、`agent_flow::agent_prompt_includes_state_summary_when_pending`（注入到真实 prompt，读 fake agent journal）。
+
+### 12.5 验证证据
+
+- 质量门：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`MBX_BLAZE=false cargo nextest run --workspace`（301 passed, 1 skipped）、`pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm exec playwright test`（1 passed）全绿。
+- 端到端闭环：同一条 thread 完成 流式 → 审批 → 队列（入队/取消/continue/发送）→ subagent → 断线重连；断线恢复后断言 `Reconnecting…` 消失、消息与工具卡仍在（事件重放）；UI 与后端 bundle 的 pendingApprovals 一致；后端测试断言 agent journal 摘要与 DB pending 计数一致。
+- rg 证据：
+  - 后端 `fn parse_status|parse_subagent_status|parse_queue_status|parse_approval_status|parse_elicitation_status|parse_comment_status|delivery_str|parse_delivery|status_str|subagent_status_str|comment_status_str` 仅剩 `diff.rs` 的 `FileStatus` parse（与生命周期无关）。
+  - `UPDATE … SET status` 在 `crates/server/src` 中只存在于 `state.rs`（StateStore 唯一写入入口）；其他模块无直接状态写入。
+  - 前端 `subagentStatus` 映射已删除，仅保留 `SubagentStatusBadge` 与 `ThreadTimeline` 的 `ToolStatus` 单一映射。
+- 状态矩阵（空/加载/错误/等待审批/断线/准备中/分叉/只读）保持；e2e 重新生成 40 张关键页面截图并同步到 `docs/screenshots/`（另有 2 张手动/真实 agent 截图，共 42 张）。
+- 幂等测试：thread/approval/elicitation/delivery/read/presence/draft/session/subagent/queue/comment 均有同态动作或终态重复拒绝测试。
+- 守卫落地：`SubagentMachine::can_cancel` 用于 `cancel_subagent` 拒绝终态子 agent；`QueueMachine::is_terminal` 用于 `retry_queue_item` 拒绝终态队列项。
+- 状态矩阵（空/加载/错误/等待审批/断线/准备中/分叉/只读）保持；e2e 重新生成了关键页面截图。
