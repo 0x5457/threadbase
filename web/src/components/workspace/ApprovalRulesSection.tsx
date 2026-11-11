@@ -98,6 +98,7 @@ export function ApprovalRulesSection() {
               variant="subtle"
               color="gray"
               size="sm"
+              className="tb-hit-40"
               aria-label="Revoke allow rule"
               loading={remove.isPending}
               onClick={() => remove.mutate(rule.id)}

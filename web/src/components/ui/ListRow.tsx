@@ -1,6 +1,6 @@
 import { Box, Group, Text, UnstyledButton } from "@mantine/core";
 import type { ReactNode } from "react";
-import { layout, transitions } from "@/lib/design";
+import { layout } from "@/lib/design";
 
 export interface ListRowProps {
   /** Leading icon, avatar, or visual marker. */
@@ -39,7 +39,7 @@ const rowStyle: React.CSSProperties = {
  * Unified list row used across Workspace, Project, Inbox, and Settings.
  *
  * Specifications (from design tokens + audit §3):
- * – height: 36px minimum (content may expand slightly)
+ * – height: 40px minimum (content may expand slightly)
  * – horizontal padding: 12px
  * – icon gap: 8px
  * – bottom border: 1px hairline
@@ -82,7 +82,8 @@ export function ListRow({
           cursor: "pointer",
           borderBottom: borderStyle,
           background: bgStyle,
-          transition: `background-color ${transitions.fast}`,
+          transition:
+            "background-color var(--tb-duration-fast) var(--tb-ease-standard)",
         }}
         onMouseEnter={(e: React.MouseEvent<HTMLElement>) => {
           if (!selected) {
@@ -114,7 +115,8 @@ export function ListRow({
           ...rowStyle,
           borderBottom: borderStyle,
           background: bgStyle,
-          transition: `background-color ${transitions.fast}`,
+          transition:
+            "background-color var(--tb-duration-fast) var(--tb-ease-standard)",
         }}
         onMouseEnter={(e: React.MouseEvent<HTMLElement>) => {
           if (!selected) {

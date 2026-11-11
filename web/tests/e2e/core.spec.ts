@@ -168,16 +168,33 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
 
   await composer.fill("permission");
   await admin.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(admin.getByText("Allow once", { exact: true })).toBeVisible({ timeout: 15_000 });
+  const allowOnce = admin.getByRole("button", { name: "Allow once", exact: true });
+  await expect(allowOnce).toBeVisible({ timeout: 15_000 });
+  // The allow path is primary; rejecting must not look like the default action.
+  await expect(allowOnce).toHaveAttribute("data-variant", "filled");
+  const reject = admin.getByRole("button", { name: /^(Reject|Deny)$/ });
+  if (await reject.count()) {
+    await expect(reject.first()).not.toHaveAttribute("data-variant", "filled");
+  }
   await expect(admin.getByText("Full parameters")).toBeVisible();
   // UI and backend projection must agree on the pending approval count.
   const bundleResponse = await api.get(`/api/threads/${thread.id}/bundle`);
   const bundleBody = await bundleResponse.json();
   expect(bundleBody.bundle.thread.pendingApprovals).toBe(1);
   await expect(admin.getByText("1 waiting").first()).toBeVisible();
-  await admin.getByRole("button", { name: "Allow once" }).click();
+
+  // Hold the decision response open long enough to observe the pending state;
+  // every decision surface must disable while the request is in flight.
+  await admin.route("**/approvals/*/decision", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await route.continue();
+  });
+  const allowOnceButton = admin.getByRole("button", { name: "Allow once" });
+  await allowOnceButton.click();
+  await expect(allowOnceButton).toBeDisabled();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible();
   await expect(admin.getByText("Allow once", { exact: true })).toBeHidden({ timeout: 10_000 });
+  await admin.unroute("**/approvals/*/decision");
   await composer.fill("permission");
   await admin.getByRole("button", { name: "Send", exact: true }).click();
   await expect(admin.getByText("Allow once", { exact: true }).first()).toBeVisible({
@@ -186,11 +203,16 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.getByLabel("Approvals").click();
   const drawer = admin.getByRole("complementary", { name: "Right drawer" });
   await expect(drawer).toBeVisible();
+  // Opening the drawer moves focus to its active tab instead of leaving it
+  // behind in the transcript.
+  await expect(drawer.getByRole("tab", { name: "Approvals" })).toBeFocused();
   await drawer.getByRole("button", { name: "Allow once" }).click();
   await expect(drawer.getByText("No approvals waiting")).toBeVisible({
     timeout: 10_000,
   });
   await admin.keyboard.press("Shift+Escape");
+  // Closing the drawer returns focus to the button that opened it.
+  await expect(admin.getByLabel("Approvals")).toBeFocused();
 
   await admin.reload();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible({ timeout: 10_000 });
@@ -278,6 +300,18 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
     timeout: 10_000,
   });
   await shot(admin, "changes-1440-dark");
+
+  // Keyboard path: one tabbable line per hunk, C/Enter/Space open comments.
+  const diffLines = drawerAgain.locator("[data-diff-line]");
+  await expect(drawerAgain.locator('[data-diff-line][tabindex="0"]')).toHaveCount(1);
+  const firstDiffLine = diffLines.first();
+  for (const key of ["c", "Enter", " "]) {
+    await firstDiffLine.focus();
+    await admin.keyboard.press(key);
+    await expect(drawerAgain.getByText(/Comment on README\.md:/)).toBeVisible();
+    await drawerAgain.getByRole("button", { name: "Cancel" }).click();
+  }
+
   await drawerAgain.getByText("three", { exact: false }).first().click();
   await expect(drawerAgain.getByText("Comment on README.md:2")).toBeVisible();
   await drawerAgain
@@ -364,7 +398,11 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.getByRole("button", { name: "Cancel" }).click();
 
   // New thread is direct: no title dialog, no extra step.
-  await admin.getByRole("button", { name: "New Thread" }).click();
+  await admin
+    .getByLabel("Workspace sidebar")
+    .getByRole("button", { name: "New Thread" })
+    .first()
+    .click();
   await expect(admin).toHaveURL(/\/t\/[^/]+$/, { timeout: 15_000 });
   await expect(admin.getByPlaceholder("Message")).toBeVisible({
     timeout: 10_000,
@@ -402,6 +440,25 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   });
   await admin.getByRole("button", { name: /^(Deny|Reject)$/ }).click();
   await admin.getByPlaceholder("Why deny?").fill("This command modifies the wrong worktree");
+  // A failed decision must keep the typed reason so it can be retried.
+  // The deliberate 500 below is the only console error we allow in this flow.
+  const consoleErrorsBeforeFailure = adminErrors.length;
+  await admin.route("**/approvals/*/decision", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "boom" }),
+    }),
+  );
+  await admin.getByRole("button", { name: "Deny with reason" }).click();
+  await expect(admin.getByPlaceholder("Why deny?")).toHaveValue(
+    "This command modifies the wrong worktree",
+  );
+  await expect(
+    admin.getByRole("alert").filter({ hasText: /boom|approval|failed/i }).first(),
+  ).toBeVisible({ timeout: 10_000 });
+  adminErrors.splice(consoleErrorsBeforeFailure);
+  await admin.unroute("**/approvals/*/decision");
   await admin.getByRole("button", { name: "Deny with reason" }).click();
   await expect(admin.getByText("This command modifies the wrong worktree")).toBeHidden({
     timeout: 10_000,

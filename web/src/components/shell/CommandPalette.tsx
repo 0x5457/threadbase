@@ -157,6 +157,15 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         size="md"
         placeholder="Search projects, threads and files…"
       />
+      <VisuallyHidden role="status" aria-live="polite">
+        {searching || search.isLoading
+          ? "Searching…"
+          : search.isError
+            ? "Search failed"
+            : trimmed.length === 0
+              ? "Type to search"
+              : `${results.length} result${results.length === 1 ? "" : "s"}`}
+      </VisuallyHidden>
       {results.length > 0 ? (
         <Spotlight.ActionsList>
           {results.map((result) => {

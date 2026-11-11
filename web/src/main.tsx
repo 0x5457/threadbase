@@ -6,8 +6,8 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
-import App from "./App";
+import { RouterProvider } from "react-router-dom";
+import router from "./App";
 import { AppNotifications } from "./components/app";
 import { ThemeBridge, THEME_STORAGE_KEY } from "./lib/theme";
 import { installVisualViewportSync } from "./lib/viewport";
@@ -230,9 +230,7 @@ createRoot(root).render(
       <ThemeBridge />
       <AppNotifications />
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <RouterProvider router={router} />
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,

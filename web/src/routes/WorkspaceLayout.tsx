@@ -35,6 +35,11 @@ import { SubagentStatusBadge } from "@/components/thread/SubagentStatusBadge";
 import { NewProjectDialog } from "@/components/workspace/NewProjectDialog";
 import { ShareDialog } from "@/components/workspace/ShareDialog";
 import { useOnlineStatus } from "@/lib/hooks";
+import {
+  isInsideOverlay,
+  isTypingTarget,
+  modKeyPressed,
+} from "@/lib/shortcuts";
 import { browserNotify } from "@/lib/live";
 import { usePresence, usePresenceStore } from "@/lib/presence";
 import type {
@@ -381,8 +386,20 @@ export function WorkspaceLayout() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const modifier = event.metaKey || event.ctrlKey;
+      if (
+        event.defaultPrevented ||
+        isTypingTarget(event.target) ||
+        isInsideOverlay(event.target)
+      ) {
+        return;
+      }
+      const modifier = modKeyPressed(event);
       const key = event.key.toLowerCase();
+      if (modifier && event.shiftKey && !event.altKey && key === "a") {
+        event.preventDefault();
+        setNewProjectOpen(true);
+        return;
+      }
       if (modifier && event.shiftKey && !event.altKey && key === "s" && activeThread) {
         event.preventDefault();
         setShareOpen(true);
@@ -613,6 +630,7 @@ export function WorkspaceLayout() {
           <Button
             variant="default"
             size="sm"
+            className="tb-action-40"
             onClick={() => {
               setLocateProjectId(null);
               setLocatePath("");
@@ -623,6 +641,7 @@ export function WorkspaceLayout() {
           <Button
             variant="filled"
             size="sm"
+            className="tb-action-40"
             loading={locateMutation.isPending}
             disabled={!locatePath.trim()}
             onClick={() => locateMutation.mutate()}
@@ -703,6 +722,7 @@ export function WorkspaceLayout() {
           <Button
             variant="default"
             size="xs"
+            className="tb-action-40"
             onClick={() => setSubthreadPickerOpen(false)}
           >
             Close

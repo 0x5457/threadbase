@@ -143,7 +143,11 @@ export function InboxPage() {
                   <Group gap={4}>
                     Unread
                     {inbox.data ? (
-                      <Text size="xs" c="dimmed">
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        style={{ fontVariantNumeric: "tabular-nums" }}
+                      >
                         ({inbox.data.unread})
                       </Text>
                     ) : null}
@@ -193,6 +197,7 @@ export function InboxPage() {
                     variant="subtle"
                     color="gray"
                     size="xs"
+                    className="tb-action-40"
                     onClick={() => setFilter("all")}
                   >
                     View all items
@@ -202,6 +207,7 @@ export function InboxPage() {
                     variant="subtle"
                     color="gray"
                     size="xs"
+                    className="tb-action-40"
                     onClick={() => navigate("/")}
                   >
                     Back to projects

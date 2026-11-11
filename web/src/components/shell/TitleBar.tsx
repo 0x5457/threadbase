@@ -38,6 +38,7 @@ export interface TitleBarProps {
 
 export function TitleBar({
   title,
+  subtitle,
   participants = [],
   approvalsCount = 0,
   drawerOpen,
@@ -81,12 +82,13 @@ export function TitleBar({
     >
       <div
         className="no-drag"
-        style={{ display: "flex", alignItems: "center", gap: 4 }}
+        style={{ display: "flex", alignItems: "center", gap: 12 }}
       >
         <Tooltip label={sidebarLabel}>
           <ActionIcon
             variant="default"
             size="sm"
+            className="tb-hit-40"
             aria-label={sidebarLabel}
             aria-expanded={sidebarOpen}
             onClick={onToggleSidebar}
@@ -99,12 +101,16 @@ export function TitleBar({
           variant="light"
           color="gray"
           size="sm"
+          className="tb-action-40"
           onClick={onOpenSearch}
           aria-label="Search workspace"
           leftSection={<Search size={14} aria-hidden />}
           style={{ fontWeight: 400 }}
           visibleFrom="sm"
         >
+          <Box component="span" visibleFrom="md">
+            Search
+          </Box>
           <Kbd visibleFrom="md">{modKeyCombo("K")}</Kbd>
         </Button>
         {/* Phones get the same action as a square icon button so the centred
@@ -138,6 +144,11 @@ export function TitleBar({
           <Text size="sm" fw={500} truncate>
             {title}
           </Text>
+          {subtitle ? (
+            <Text size="xs" c="dimmed" truncate visibleFrom="sm">
+              {subtitle}
+            </Text>
+          ) : null}
         </div>
         {people.length > 0 ? (
           <Box visibleFrom="sm">
@@ -174,18 +185,19 @@ export function TitleBar({
 
       <div
         className="no-drag"
-        style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}
+        style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 16 }}
       >
         {/* One primary action per page: pages without a thread (Projects,
             Inbox, Settings) do not render a dead Share button. */}
         {onShare ? (
-          <Tooltip label="Copy link to this thread">
+          <Tooltip label="Share thread">
             <Button
               type="button"
               variant="subtle"
               size="sm"
               disabled={shareDisabled}
               onClick={onShare}
+              className="tb-hit-40"
               leftSection={<Share2 size={14} aria-hidden />}
               style={{ fontWeight: 400 }}
             >
@@ -214,6 +226,7 @@ export function TitleBar({
                   color: "var(--mantine-color-black)",
                   fontSize: "var(--mantine-font-size-xs)",
                   fontWeight: 600,
+                  fontVariantNumeric: "tabular-nums",
                   paddingInline: 2,
                 },
               }}
@@ -222,7 +235,9 @@ export function TitleBar({
                 variant={approvalsCount > 0 ? "light" : "default"}
                 color={approvalsCount > 0 ? "yellow" : undefined}
                 size="md"
+                className="tb-hit-40"
                 aria-label="Approvals"
+                aria-haspopup="dialog"
                 onClick={onOpenApprovals}
               >
                 <ShieldCheck size={16} aria-hidden />
@@ -235,6 +250,7 @@ export function TitleBar({
             variant={drawerOpen ? "light" : "default"}
             color={drawerOpen ? "blue" : undefined}
             size="sm"
+            className="tb-hit-40"
             aria-label={drawerLabel}
             aria-expanded={drawerOpen}
             aria-pressed={drawerOpen}

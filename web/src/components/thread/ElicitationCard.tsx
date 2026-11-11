@@ -1,4 +1,4 @@
-import { HelpCircle, ShieldAlert } from "lucide-react";
+import { HelpCircle, MessageSquare, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import {
   ActionIcon,
@@ -37,11 +37,13 @@ const SECRET_MARKERS = ["password", "token", "secret", "api_key", "apikey"];
 export function ElicitationCard({
   elicitation,
   resolvedAction,
+  responding = false,
   onRespond,
   onComment,
 }: {
   elicitation: ElicitationDto;
   resolvedAction: ElicitationAction | null;
+  responding?: boolean;
   onRespond?: (
     id: string,
     action: ElicitationAction,
@@ -68,6 +70,10 @@ export function ElicitationCard({
     SECRET_MARKERS.some((marker) => key.toLowerCase().includes(marker)),
   );
   const pending = elicitation.status === "pending" && resolvedAction === null;
+  const missingRequired = (schema.required ?? []).filter((key) => {
+    const value = values[key];
+    return value === undefined || value === null || value === "";
+  });
 
   return (
     <Flex gap="md">
@@ -93,6 +99,7 @@ export function ElicitationCard({
                 variant="subtle"
                 color="gray"
                 size="xs"
+                className="tb-hit-40"
                 aria-label="Comment on question"
                 onClick={() =>
                   onComment({
@@ -101,7 +108,7 @@ export function ElicitationCard({
                   })
                 }
               >
-                <HelpCircle size={14} aria-hidden />
+                <MessageSquare size={14} aria-hidden />
               </ActionIcon>
             ) : null}
             <Badge
@@ -120,9 +127,9 @@ export function ElicitationCard({
           <Stack gap="xs">
             <Text size="sm">{elicitation.message}</Text>
             {authorizationUrl ? (
-              <Paper withBorder p="xs" radius="md">
+              <Paper withBorder p="xs" radius="sm">
                 <Text
-                  fz={11}
+                  fz="xs"
                   ff="monospace"
                   c="dimmed"
                   display="block"
@@ -149,7 +156,7 @@ export function ElicitationCard({
               <Paper
                 withBorder
                 p="xs"
-                radius="md"
+                radius="sm"
                 bg="var(--mantine-color-yellow-light)"
               >
                 <Flex align="flex-start" gap="xs">
@@ -212,7 +219,9 @@ export function ElicitationCard({
                             ...current,
                             [key]:
                               property.type === "number"
-                                ? Number(event.target.value)
+                                ? event.target.value === ""
+                                  ? undefined
+                                  : Number(event.target.value)
                                 : event.target.value,
                           }))
                         }
@@ -238,7 +247,10 @@ export function ElicitationCard({
                 >
                   <Button
                     size="xs"
-                    disabled={secret || !onRespond}
+                    disabled={
+                      secret || !onRespond || responding || missingRequired.length > 0
+                    }
+                    loading={responding}
                     onClick={() =>
                       onRespond?.(elicitation.id, "accept", values)
                     }
@@ -248,6 +260,7 @@ export function ElicitationCard({
                   <Button
                     size="xs"
                     variant="outline"
+                    disabled={responding}
                     onClick={() =>
                       onRespond?.(elicitation.id, "decline", {})
                     }
@@ -258,10 +271,20 @@ export function ElicitationCard({
                     size="xs"
                     variant="subtle"
                     color="dark"
+                    disabled={responding}
                     onClick={() => onRespond?.(elicitation.id, "cancel", {})}
                   >
                     Cancel
                   </Button>
+                  {missingRequired.length > 0 && !secret ? (
+                    <Text size="xs" c="dimmed" role="status">
+                      Fill in{" "}
+                      {missingRequired
+                        .map((key) => schema.properties?.[key]?.title ?? key)
+                        .join(", ")}{" "}
+                      to submit.
+                    </Text>
+                  ) : null}
                 </Flex>
               </>
             ) : elicitation.respondedBy ? (

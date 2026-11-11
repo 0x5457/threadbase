@@ -59,6 +59,7 @@ export function InvitePage() {
             <Button
               size="xs"
               variant="default"
+              className="tb-action-40"
               onClick={() => navigate("/")}
             >
               Back to workspace

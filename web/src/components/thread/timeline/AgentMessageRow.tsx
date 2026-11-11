@@ -48,6 +48,7 @@ export function AgentMessageRow({ item }: { item: AgentMessageItem }) {
             </Text>
             <ChevronRight
               size={12}
+              data-disclosure-chevron
               aria-hidden
               style={{
                 color: "var(--mantine-color-dimmed)",

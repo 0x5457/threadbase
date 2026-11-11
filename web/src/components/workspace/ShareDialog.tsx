@@ -25,6 +25,10 @@ import {
 import { queryKeys, useMe } from "@/api/queries";
 import type { Role } from "@/api/types/Role";
 import type { ThreadBundleDto } from "@/api/types/ThreadBundleDto";
+import {
+  ConfirmDialog,
+  type ConfirmRequest,
+} from "@/components/app";
 
 interface ShareDialogProps {
   open: boolean;
@@ -49,6 +53,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<Role>("editor");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const thread = bundle.thread;
   const owner =
     bundle.members.find((member) => member.user.id === me.data?.user.id)
@@ -118,7 +123,10 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
   });
   const revoke = useMutation({
     mutationFn: (inviteId: string) => revokeInvite(thread.id, inviteId),
-    onSuccess: refresh,
+    onSuccess: () => {
+      refresh();
+      notifications.show({ message: "Invite revoked", color: "green" });
+    },
     onError: (error) =>
       notifications.show({
         message: String(error),
@@ -127,7 +135,10 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
   });
   const remove = useMutation({
     mutationFn: (userId: string) => removeMember(thread.id, userId),
-    onSuccess: refresh,
+    onSuccess: () => {
+      refresh();
+      notifications.show({ message: "Member removed", color: "green" });
+    },
     onError: (error) =>
       notifications.show({
         message: String(error),
@@ -168,7 +179,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                 type="button"
                 variant="subtle"
                 color={thread.shareLevel === value ? "blue" : "gray"}
-                disabled={!owner}
+                disabled={!owner || level.isPending}
                 aria-pressed={thread.shareLevel === value}
                 onClick={() => level.mutate(value)}
                 justify="flex-start"
@@ -233,7 +244,16 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                       color="red"
                       size="xs"
                       px="xs"
-                      onClick={() => remove.mutate(entry.user.id)}
+                      loading={remove.isPending}
+                      onClick={() =>
+                        setConfirm({
+                          title: `Remove ${entry.user.displayName}?`,
+                          description:
+                            "They lose access to this thread immediately. You can invite them again later.",
+                          confirmLabel: "Remove",
+                          onConfirm: () => remove.mutate(entry.user.id),
+                        })
+                      }
                     >
                       remove
                     </Button>
@@ -273,7 +293,16 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                         color="red"
                         size="xs"
                         px="xs"
-                        onClick={() => revoke.mutate(invite.id)}
+                        loading={revoke.isPending}
+                        onClick={() =>
+                          setConfirm({
+                            title: "Revoke invite link?",
+                            description:
+                              "The link stops working immediately. A new link can be created at any time.",
+                            confirmLabel: "Revoke",
+                            onConfirm: () => revoke.mutate(invite.id),
+                          })
+                        }
                       >
                         revoke
                       </Button>
@@ -341,6 +370,7 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                     variant="subtle"
                     color="gray"
                     size="sm"
+                    className="tb-hit-40"
                     aria-label="Copy invite link"
                     onClick={() =>
                       void navigator.clipboard.writeText(inviteLink)
@@ -359,13 +389,21 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
         )}
       </Stack>
 
+      <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
+
       <Group justify="flex-end" gap="xs" mt="sm">
-        <Button variant="default" size="sm" onClick={() => onOpenChange(false)}>
+        <Button
+          variant="default"
+          size="sm"
+          className="tb-action-40"
+          onClick={() => onOpenChange(false)}
+        >
           Done
         </Button>
         <Button
           variant="default"
           size="sm"
+          className="tb-action-40"
           leftSection={<Link2 size={14} aria-hidden />}
           onClick={() => void copyLink()}
         >

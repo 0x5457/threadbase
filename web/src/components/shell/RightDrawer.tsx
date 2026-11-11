@@ -15,6 +15,7 @@ import {
 } from "@mantine/core";
 import {
   AlertCircle,
+  ChevronRight,
   FileCode2,
   GitCompareArrows,
   MessageSquareText,
@@ -23,7 +24,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
 import type { ThreadBundleDto } from "@/api/types/ThreadBundleDto";
@@ -95,17 +96,31 @@ function ReviewPanel({
 }: Omit<RightDrawerProps, "open" | "desktop" | "phone">) {
   const [denyApproval, setDenyApproval] = useState<ApprovalDto | null>(null);
   const [denyNote, setDenyNote] = useState("");
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // The drawer mounts when it opens; land keyboard focus on the active tab so
+  // the panel is operable without walking the transcript first.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      panelRef.current
+        ?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+        ?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   const changes = bundle?.changes;
   const approvals = bundle?.approvals ?? [];
   const pendingApprovals = approvals.filter(
     (approval) => approval.status === "pending",
   );
+
   const totalAdditions = changes?.stats.additions ?? 0;
   const totalDeletions = changes?.stats.deletions ?? 0;
 
   return (
     <div
+      ref={panelRef}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -133,7 +148,7 @@ function ReviewPanel({
             marginLeft: "auto",
             display: "flex",
             alignItems: "center",
-            gap: 4,
+            gap: 8,
           }}
         >
           {onRetry ? (
@@ -141,6 +156,7 @@ function ReviewPanel({
               <ActionIcon
                 variant="default"
                 size="lg"
+                className="tb-hit-40"
                 aria-label="Refresh thread data"
                 onClick={onRetry}
               >
@@ -151,6 +167,7 @@ function ReviewPanel({
           <ActionIcon
             variant="default"
             size="lg"
+            className="tb-hit-40"
             aria-label="Close right drawer"
             onClick={onClose}
           >
@@ -394,11 +411,20 @@ function ReviewPanel({
                             <details>
                               <summary
                                 style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.5rem",
                                   cursor: "pointer",
                                   fontSize: "var(--mantine-font-size-md)",
                                   color: "var(--mantine-color-dimmed)",
                                 }}
                               >
+                                <ChevronRight
+                                  size={12}
+                                  data-disclosure-chevron
+                                  aria-hidden
+                                  style={{ flexShrink: 0 }}
+                                />
                                 Full parameters
                               </summary>
                               <pre
@@ -435,7 +461,10 @@ function ReviewPanel({
                             marginTop: 10,
                           }}
                         >
-                          {denyApproval?.id === approval.id ? (
+                          {denyApproval?.id === approval.id &&
+                          pendingApprovals.some(
+                            (entry) => entry.id === denyApproval.id,
+                          ) ? (
                             <>
                               <Textarea
                                 autoFocus
@@ -456,6 +485,8 @@ function ReviewPanel({
                                 <Button
                                   size="sm"
                                   variant="subtle"
+                                  className="tb-action-40"
+                                  disabled={deciding}
                                   onClick={() => {
                                     setDenyApproval(null);
                                     setDenyNote("");
@@ -466,17 +497,16 @@ function ReviewPanel({
                                 <Button
                                   size="sm"
                                   color="red"
+                                  className="tb-action-40"
                                   loading={deciding}
-                                  disabled={!denyNote.trim()}
-                                  onClick={() => {
+                                  disabled={deciding || !denyNote.trim()}
+                                  onClick={() =>
                                     onDecideApproval?.(
                                       approval,
                                       "deny",
                                       denyNote.trim(),
-                                    );
-                                    setDenyApproval(null);
-                                    setDenyNote("");
-                                  }}
+                                    )
+                                  }
                                 >
                                   Deny with reason
                                 </Button>
@@ -494,14 +524,19 @@ function ReviewPanel({
                                 <Button
                                   key={option.id}
                                   size="sm"
+                                  className="tb-action-40"
                                   color={
                                     option.kind === "deny" ? "red" : "gray"
                                   }
                                   variant={
-                                    option.kind === "deny" ? "filled" : "light"
+                                    option.kind === "deny"
+                                      ? "outline"
+                                      : option.kind === "allow_once"
+                                        ? "filled"
+                                        : "light"
                                   }
                                   loading={deciding}
-                                  disabled={!onDecideApproval}
+                                  disabled={!onDecideApproval || deciding}
                                   onClick={() => {
                                     if (option.kind === "deny") {
                                       setDenyApproval(approval);
@@ -590,6 +625,7 @@ export function RightDrawer({
       <Box
         component="aside"
         aria-label="Right drawer"
+        data-drawer
         h="100%"
         w={360}
         style={{
@@ -630,7 +666,7 @@ export function RightDrawer({
         },
       }}
     >
-      <Box component="aside" aria-label="Right drawer" h="100%">
+      <Box component="aside" aria-label="Right drawer" data-drawer h="100%">
         {panel}
       </Box>
     </Drawer>

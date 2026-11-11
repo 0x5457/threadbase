@@ -49,13 +49,13 @@ export function SidebarFooter({
       <UnstyledButton
         type="button"
         onClick={onOpenInbox}
-        h={{ base: 40, md: 32 }}
+        h={{ base: 44, md: 40 }}
         style={{
           marginBottom: 4,
           display: "flex",
           width: "100%",
           alignItems: "center",
-          gap: 8,
+          gap: 12,
           borderRadius: "var(--mantine-radius-md)",
           padding: "0 8px",
           textAlign: "left",
@@ -77,7 +77,7 @@ export function SidebarFooter({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: 12,
           borderRadius: "var(--mantine-radius-md)",
           padding: "4px 6px",
         }}
@@ -144,12 +144,13 @@ export function SidebarFooter({
             {user ? `@${user.username}` : "No active session"}
           </p>
         </div>
-        <ThemeToggle />
+        <ThemeToggle size="md" hitArea="40" />
         <Menu position="top-end" width={200}>
           <Menu.Target>
             <ActionIcon
               variant="default"
-              size="sm"
+              size="md"
+              className="tb-hit-40"
               aria-label="Account menu"
             >
               <Settings size={14} />

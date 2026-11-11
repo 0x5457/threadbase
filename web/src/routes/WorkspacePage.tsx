@@ -100,6 +100,7 @@ export function WorkspacePage() {
           </Group>
           <Button
             variant="filled"
+            className="tb-action-40"
             leftSection={<FolderPlus size={layout.icon.sm} aria-hidden />}
             onClick={openNewProject}
           >

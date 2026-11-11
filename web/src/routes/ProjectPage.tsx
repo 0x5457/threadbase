@@ -15,7 +15,7 @@ import {
   Box,
   Button,
   Group,
-  Menu,
+  Modal,
   ScrollArea,
   Select,
   Skeleton,
@@ -286,6 +286,7 @@ export function ProjectPage() {
           <Group gap="xs" wrap="wrap" style={{ flexShrink: 0 }}>
             <Button
               variant="default"
+              className="tb-action-40"
               leftSection={<Columns2 size={layout.icon.sm} aria-hidden />}
               onClick={() =>
                 navigate(`/p/${encodeURIComponent(projectId)}/compare`)
@@ -295,6 +296,7 @@ export function ProjectPage() {
             </Button>
             <Button
               variant="default"
+              className="tb-action-40"
               leftSection={<Archive size={layout.icon.sm} aria-hidden />}
               onClick={() => setShowArchived((value) => !value)}
             >
@@ -303,70 +305,23 @@ export function ProjectPage() {
             <Button.Group>
               <Button
                 variant="filled"
+                className="tb-action-40"
                 leftSection={<Plus size={layout.icon.sm} aria-hidden />}
                 onClick={() => openNewThread(data.id)}
               >
                 New thread
               </Button>
-              <Menu
-                opened={newThreadOpen}
-                onChange={setNewThreadOpen}
-                position="bottom-end"
-                // The dropdown hosts a form (agent/model/branch). A nested
-                // Select portals its options outside this dropdown, which
-                // Mantine treats as an outside click and would unmount the
-                // form mid-edit.
-                closeOnClickOutside={false}
-                closeOnItemClick={false}
+              <Button
+                variant="filled"
+                className="tb-action-40"
+                miw={40}
+                px={0}
+                aria-label="New thread options"
+                aria-haspopup="dialog"
+                onClick={() => setNewThreadOpen(true)}
               >
-                <Menu.Target>
-                  <Button
-                    variant="filled"
-                    aria-label="New thread options"
-                    px="xs"
-                  >
-                    <ChevronDown size={layout.icon.sm} aria-hidden />
-                  </Button>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <Stack gap="sm" p="xs" w={256}>
-                    <Select
-                      label="Agent"
-                      value={newAgent || "default"}
-                      onChange={(value) =>
-                        setNewAgent(value === "default" ? "" : (value ?? ""))
-                      }
-                      data={agentOptions}
-                    />
-                    <TextInput
-                      label="Model"
-                      value={newModel}
-                      onChange={(event) => setNewModel(event.target.value)}
-                      placeholder="Agent default"
-                    />
-                    <TextInput
-                      label="Base branch"
-                      value={newBranch}
-                      onChange={(event) => setNewBranch(event.target.value)}
-                      placeholder={data.defaultBranch}
-                      className="tb-mono"
-                    />
-                    <Button
-                      onClick={() => {
-                        const options: NewThreadOptions = {
-                          agent: newAgent || null,
-                          model: newModel || null,
-                          baseBranch: newBranch || null,
-                        };
-                        openNewThread(data.id, options);
-                        setNewThreadOpen(false);
-                      }}
-                    >
-                      Create
-                    </Button>
-                  </Stack>
-                </Menu.Dropdown>
-              </Menu>
+                <ChevronDown size={layout.icon.sm} aria-hidden />
+              </Button>
             </Button.Group>
           </Group>
         </Group>
@@ -410,7 +365,28 @@ export function ProjectPage() {
               onRetry={() => void threads.refetch()}
             />
           ) : rootThreads.length === 0 ? (
-            <EmptyState icon={MessageSquareText} title="No threads" compact />
+            <EmptyState
+              icon={MessageSquareText}
+              title={showArchived ? "No archived threads" : "No threads yet"}
+              description={
+                showArchived
+                  ? "Archived threads keep their transcript and can be restored."
+                  : "Start a thread to give an agent a task in this repository."
+              }
+              compact
+              action={
+                showArchived ? undefined : (
+                  <Button
+                    size="xs"
+                    className="tb-action-40"
+                    leftSection={<Plus size={layout.icon.sm} aria-hidden />}
+                    onClick={() => openNewThread(data.id)}
+                  >
+                    New thread
+                  </Button>
+                )
+              }
+            />
           ) : (
             <Stack gap={0}>
               {rootThreads.map((thread) => (
@@ -424,6 +400,60 @@ export function ProjectPage() {
           )}
         </Box>
       </PageContainer>
+
+      <Modal
+        opened={newThreadOpen}
+        onClose={() => setNewThreadOpen(false)}
+        title="New thread options"
+        size="sm"
+      >
+        <Stack gap="sm">
+          <Select
+            label="Agent"
+            value={newAgent || "default"}
+            onChange={(value) =>
+              setNewAgent(value === "default" ? "" : (value ?? ""))
+            }
+            data={agentOptions}
+          />
+          <TextInput
+            label="Model"
+            value={newModel}
+            onChange={(event) => setNewModel(event.target.value)}
+            placeholder="Agent default"
+          />
+          <TextInput
+            label="Base branch"
+            value={newBranch}
+            onChange={(event) => setNewBranch(event.target.value)}
+            placeholder={data.defaultBranch}
+            className="tb-mono"
+          />
+          <Group justify="flex-end" gap="xs" mt="xs">
+            <Button
+              variant="default"
+              className="tb-action-40"
+              onClick={() => setNewThreadOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="tb-action-40"
+              onClick={() => {
+                const options: NewThreadOptions = {
+                  agent: newAgent || null,
+                  model: newModel || null,
+                  baseBranch: newBranch || null,
+                };
+                openNewThread(data.id, options);
+                setNewThreadOpen(false);
+              }}
+            >
+              Create
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </ScrollArea>
   );
 }

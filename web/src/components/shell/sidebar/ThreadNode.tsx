@@ -213,7 +213,7 @@ export function ThreadNode({
                 event.stopPropagation();
                 setShowAll(true);
               }}
-              h={{ base: 36, md: 28 }}
+              h={{ base: 44, md: 40 }}
               style={{
                 display: "flex",
                 width: "100%",

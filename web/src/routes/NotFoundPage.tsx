@@ -16,6 +16,7 @@ export function NotFoundPage() {
             to="/"
             variant="default"
             size="xs"
+            className="tb-action-40"
             leftSection={<ArrowLeft aria-hidden />}
           >
             Back to projects

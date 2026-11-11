@@ -206,7 +206,7 @@ export const layout = {
   /** Global gutter. */
   gutter: 16,
   /** List row height. */
-  rowHeight: 36,
+  rowHeight: 40,
   /** List row horizontal padding. */
   rowPaddingX: 12,
   /** Avatar sizes. */

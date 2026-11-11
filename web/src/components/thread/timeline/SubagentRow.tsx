@@ -45,6 +45,7 @@ export function SubagentRow({ subagent, onOpen }: SubagentRowProps) {
             <SubagentStatusBadge status={subagent.status} />
             <ChevronRight
               size={12}
+              data-disclosure-chevron
               aria-hidden
               style={{
                 color: "var(--mantine-color-dimmed)",
@@ -77,7 +78,7 @@ export function SubagentRow({ subagent, onOpen }: SubagentRowProps) {
               ) : null}
               {subagent.cwd ? (
                 <Text
-                  fz={12}
+                  fz="sm"
                   ff="monospace"
                   c="dimmed"
                   style={{ wordBreak: "break-all" }}

@@ -27,7 +27,6 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
         radius="md"
         flex={1}
         miw={0}
-        style={{ overflow: "hidden" }}
       >
         <Flex align="center" gap="xs" px="sm" py="xs">
           <Icon
@@ -46,6 +45,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
               variant="subtle"
               color="gray"
               size="xs"
+              className="tb-hit-40"
               aria-label="Comment on tool call"
               style={{ marginLeft: "auto" }}
               onClick={() =>
@@ -137,6 +137,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
               </Text>
               <ChevronRight
                 size={12}
+                data-disclosure-chevron
                 aria-hidden
                 style={{
                   color: "var(--mantine-color-dimmed)",
@@ -156,6 +157,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
                   fontSize: "var(--mantine-font-size-md)",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-all",
+                  borderRadius: "var(--mantine-radius-sm)",
                   borderTop:
                     "1px solid var(--mantine-color-default-border)",
                 }}
@@ -177,12 +179,20 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
             <summary
               style={{
                 display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
                 padding: "var(--mantine-spacing-xs) var(--mantine-spacing-sm)",
                 listStyle: "none",
                 cursor: "pointer",
                 color: "var(--mantine-color-dimmed)",
               }}
             >
+              <ChevronRight
+                size={12}
+                data-disclosure-chevron
+                aria-hidden
+                style={{ flexShrink: 0 }}
+              />
               Details
             </summary>
             {call.input ? (
@@ -198,7 +208,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-all",
                   background: "var(--mantine-color-default)",
-                  borderRadius: "var(--mantine-radius-md)",
+                  borderRadius: "var(--mantine-radius-sm)",
                 }}
               >
                 {call.input}
@@ -217,7 +227,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-all",
                   background: "var(--mantine-color-default)",
-                  borderRadius: "var(--mantine-radius-md)",
+                  borderRadius: "var(--mantine-radius-sm)",
                 }}
               >
                 {call.output}

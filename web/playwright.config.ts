@@ -1,12 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * Concurrency ceiling. Each worker boots its own browser context, so raising
- * this only costs memory. Note that specs which mutate the shared server
- * instance (core.spec.ts creates the admin identity, a project and threads)
- * must keep their state isolated per file — see the note on `fullyParallel`.
+ * One worker by default: every spec shares one hermetic server and one fixture
+ * agent process, so parallel files race on project lists and on the agent's
+ * prompt queue (a slow turn in one file starves an approval in another).
+ * E2E_WORKERS remains available for throwaway parallel experiments.
  */
-const WORKERS = Number(process.env.E2E_WORKERS ?? 32);
+const WORKERS = Number(process.env.E2E_WORKERS ?? 1);
 
 export default defineConfig({
   testDir: "./tests/e2e",

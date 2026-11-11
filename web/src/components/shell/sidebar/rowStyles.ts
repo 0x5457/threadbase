@@ -1,5 +1,6 @@
 /** Shared hover/transition styling for every sidebar row button. */
-export const rowTransition = "background-color 120ms ease, color 120ms ease";
+export const rowTransition =
+  "background-color var(--tb-duration-fast) var(--tb-ease-standard), color var(--tb-duration-fast) var(--tb-ease-standard)";
 
 export const rowHover = {
   ":hover": {

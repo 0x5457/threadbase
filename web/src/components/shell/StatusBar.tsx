@@ -42,7 +42,7 @@ export function StatusBar({
       style={{
         zIndex: 20,
         display: "flex",
-        height: 32,
+        height: 40,
         flexShrink: 0,
         alignItems: "center",
         gap: 12,
@@ -194,6 +194,8 @@ export function StatusBar({
       >
         {offline ? (
           <span
+            role="status"
+            aria-live="polite"
             style={{
               display: "flex",
               alignItems: "center",
@@ -212,12 +214,12 @@ export function StatusBar({
             size="sm"
             onClick={onOpenChanges}
             title="Open changes"
+            className="tb-hit-40"
             leftSection={<FileDiff size={14} aria-hidden />}
             style={{
               height: "auto",
               // The bar is only 32px tall on desktop; keep the touch-sized
               // minimum used elsewhere on phones from stretching it.
-              minHeight: 28,
               gap: 6,
               padding: "2px 4px",
               fontWeight: 400,

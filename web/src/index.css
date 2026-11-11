@@ -46,6 +46,93 @@ html {
   text-size-adjust: 100%;
 }
 
+/* Short headings balance their lines; body copy avoids a lone last word. */
+h1,
+h2,
+h3,
+h4 {
+  text-wrap: balance;
+}
+
+.mantine-Text-root {
+  text-wrap: pretty;
+}
+
+/* Lucide defaults to a 2px stroke, which is too heavy beside 13px regular
+   UI text. Badges use 600+ text, so they keep the heavier stroke. */
+svg.lucide {
+  stroke-width: 1.5;
+}
+
+.mantine-Badge-root {
+  font-variant-numeric: tabular-nums;
+}
+
+.mantine-Badge-root svg.lucide {
+  stroke-width: 2;
+}
+
+/* Remote avatars need a neutral separator from the surface underneath. */
+.mantine-Avatar-image {
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+}
+
+[data-mantine-color-scheme="dark"] .mantine-Avatar-image {
+  outline-color: oklch(1 0 0 / 0.1);
+}
+
+/* ─── Motion & focus ──────────────────────────────────────────────
+ * One motion scale for the whole app. Components read these variables
+ * instead of hardcoding milliseconds, so `prefers-reduced-motion` can
+ * collapse them in a single place. The focus ring is deliberately
+ * text-coloured: the brand palette is neutral, and a monochrome ring
+ * keeps focus visible in both themes.
+ */
+
+:root {
+  --tb-duration-fast: 120ms;
+  --tb-duration-base: 200ms;
+  --tb-duration-slow: 300ms;
+  --tb-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --tb-focus-ring-color: var(--mantine-color-text);
+}
+
+:focus-visible,
+.mantine-focus-auto:focus-visible,
+.mantine-focus-always:focus {
+  outline: 2px solid var(--tb-focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* Rows inside scroll containers keep the ring inside their bounds so the
+   scrollbar and neighbours do not clip it. */
+[data-tree-row]:focus-visible,
+[data-diff-line]:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --tb-duration-fast: 0ms;
+    --tb-duration-base: 0ms;
+    --tb-duration-slow: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+
+  .mantine-Button-root[data-variant="filled"]:active:not(:disabled) {
+    scale: 1;
+  }
+}
+
 /* Router <Link> elements are plain anchors; without this they inherit
    the browser's default link colour (blue in light, lavender in dark)
    and turn list rows into links.  Mantine's <Anchor> keeps its own
@@ -91,70 +178,6 @@ a {
 
 /* ─── Animations ──────────────────────────────────────────────── */
 
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes fade-in-down {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes slide-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes slide-in-left {
-  from {
-    opacity: 0;
-    transform: translateX(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
 @keyframes sidebar-pulse {
   0%,
   100% {
@@ -165,76 +188,102 @@ a {
   }
 }
 
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+/* Disclosure rows are native <details>; the chevron carries the open state
+   so the control still reads correctly when motion is reduced. */
+summary [data-disclosure-chevron] {
+  transform-origin: center;
+  transition: transform var(--tb-duration-fast) var(--tb-ease-standard);
 }
 
-/* ─── Utility classes ───────────────────────────────────────────
- *  Use these for one-off layout needs instead of inline styles.
- */
-
-.tb-animate-fade-in {
-  animation: fade-in 150ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+details[open] > summary [data-disclosure-chevron] {
+  transform: rotate(90deg);
 }
 
-.tb-animate-fade-in-up {
-  animation: fade-in-up 200ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+/* Contextual icon swap: both icons are mounted, so the outgoing icon also
+   animates instead of unmounting. */
+.tb-theme-icon {
+  opacity: 0;
+  scale: 0.25;
+  filter: blur(4px);
+  transition-property: opacity, scale, filter;
+  transition-duration: 300ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
 
-.tb-animate-scale-in {
-  animation: scale-in 300ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+.tb-theme-icon[data-active="true"] {
+  opacity: 1;
+  scale: 1;
+  filter: blur(0);
 }
 
-.tb-animate-slide-in-right {
-  animation: slide-in-right 200ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+/* Primary filled buttons get tactile press feedback. List rows and icon
+   buttons stay still because those interactions repeat at high frequency. */
+.mantine-Button-root[data-variant="filled"] {
+  transition: scale 150ms ease-out;
 }
 
-/* Focus ring helper — applied to custom interactive elements that
-   don't use Mantine's built-in focus styles. */
-.tb-focus-ring:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--mantine-color-primary-light-hover);
-  border-radius: 6px;
+.mantine-Button-root[data-variant="filled"]:active:not(:disabled) {
+  scale: 0.96;
 }
 
-/* Transition helper for opacity/colour changes. */
-.tb-transition {
-  transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1),
-    color 150ms cubic-bezier(0.4, 0, 0.2, 1),
-    background-color 150ms cubic-bezier(0.4, 0, 0.2, 1),
-    border-color 150ms cubic-bezier(0.4, 0, 0.2, 1),
-    transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+/* Expand isolated icon controls to the desktop minimum without changing
+   their visual size. Every adjacent cluster gets enough gap that the 40px
+   targets do not overlap. */
+.tb-hit-40 {
+  position: relative;
 }
 
-/* Prevent text selection on UI chrome. */
-.tb-no-select {
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-/* Truncate with ellipsis. */
-.tb-truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Hide content visually but keep it accessible to screen readers. */
-.tb-sr-only {
+.tb-hit-40::after {
+  content: "";
   position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border-width: 0;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  transform: translate(-50%, -50%);
+}
+
+.tb-action-40 {
+  min-height: 40px;
+}
+
+.mantine-Spotlight-action {
+  min-height: 40px;
+}
+
+/* Desktop hit-area floor for every Mantine action surface. Tree/list rows
+   that cannot grow without colliding keep their full-row target. */
+.mantine-Button-root {
+  min-height: 40px;
+}
+
+.mantine-Menu-item,
+.mantine-Tabs-tab {
+  min-height: 40px;
+}
+
+.mantine-Input-input {
+  min-height: 40px;
+}
+
+.mantine-Checkbox-root {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+/* Close buttons keep their compact glyph but get the same 40px target. */
+.mantine-CloseButton-root {
+  position: relative;
+}
+
+.mantine-CloseButton-root::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  transform: translate(-50%, -50%);
 }
 
 /* ─── Touch / mobile ────────────────────────────────────────────
@@ -259,30 +308,49 @@ a {
   input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
   textarea,
   select {
-    min-height: 42px;
+    min-height: 44px;
   }
 
-  /* Desktop-sized icon buttons (22–28px) are hard to hit with a thumb. */
+  /* Desktop-sized icon buttons (18–34px) are hard to hit with a thumb. */
   .mantine-ActionIcon-root,
   .mantine-CloseButton-root {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .mantine-Button-root {
-    min-height: 40px;
+    min-height: 44px;
   }
 
   .mantine-Tabs-tab,
   .mantine-Menu-item,
   .mantine-Combobox-option {
-    min-height: 42px;
+    min-height: 44px;
   }
 
-  /* Tree expand chevrons are 28px by design; keep them thumb-friendly. */
+  /* Tree rows are 44px on phones, so the chevron can use the full 44px
+     target without overlapping the next row. */
   [data-tree-chevron] {
-    min-width: 36px;
-    min-height: 36px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .tb-hit-40::after {
+    width: 44px;
+    height: 44px;
+  }
+
+  .mantine-CloseButton-root::after {
+    width: 44px;
+    height: 44px;
+  }
+
+  .tb-action-40 {
+    min-height: 44px;
+  }
+
+  .mantine-Spotlight-action {
+    min-height: 44px;
   }
 
   /* The status bar already drops the project name on phones; drop the

@@ -16,6 +16,7 @@ docs/research/_raw/images/
 
 # Agent tooling artifacts (not part of the product)
 .agents/
+.claude/
 skills-lock.json
 
 # Agent goal/session state

@@ -1,4 +1,4 @@
-import { ShieldAlert } from "lucide-react";
+import { ChevronRight, ShieldAlert } from "lucide-react";
 import {
   Badge,
   Box,
@@ -27,6 +27,7 @@ export interface ApprovalRowProps {
   item: ApprovalItem;
   /** Latest server copy, so the row reflects decisions made elsewhere. */
   approval: ApprovalDto;
+  deciding?: boolean;
   onDecide?: (
     approvalId: string,
     decision: ApprovalDecision,
@@ -38,7 +39,12 @@ export interface ApprovalRowProps {
  * Approval request card. Owns the deny-with-reason state so the timeline
  * component stays stateless apart from the presence target.
  */
-export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
+export function ApprovalRow({
+  item,
+  approval,
+  deciding = false,
+  onDecide,
+}: ApprovalRowProps) {
   const [denyOpen, setDenyOpen] = useState(false);
   const [denyNote, setDenyNote] = useState("");
   const resolved = item.resolved || approval.status !== "pending";
@@ -101,7 +107,7 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
                   fontFamily: "var(--mantine-font-family-monospace)",
                   fontSize: "var(--mantine-font-size-md)",
                   background: "var(--mantine-color-default)",
-                  borderRadius: "var(--mantine-radius-md)",
+                  borderRadius: "var(--mantine-radius-sm)",
                 }}
               >
                 {approval.command}
@@ -131,11 +137,20 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
               <details style={{ fontSize: "var(--mantine-font-size-md)" }}>
                 <summary
                   style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
                     cursor: "pointer",
                     listStyle: "none",
                     color: "var(--mantine-color-dimmed)",
                   }}
                 >
+                  <ChevronRight
+                    size={12}
+                    data-disclosure-chevron
+                    aria-hidden
+                    style={{ flexShrink: 0 }}
+                  />
                   Full parameters
                 </summary>
                 <Box
@@ -151,7 +166,7 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
                     whiteSpace: "pre-wrap",
                     wordBreak: "break-all",
                     background: "var(--mantine-color-default)",
-                    borderRadius: "var(--mantine-radius-md)",
+                    borderRadius: "var(--mantine-radius-sm)",
                   }}
                 >
                   {approval.input}
@@ -178,7 +193,9 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
                     <Button
                       variant="subtle"
                       color="dark"
-                      size="xs"
+                      size="sm"
+                      className="tb-action-40"
+                      disabled={deciding}
                       onClick={() => {
                         setDenyOpen(false);
                         setDenyNote("");
@@ -188,13 +205,13 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
                     </Button>
                     <Button
                       color="red"
-                      size="xs"
-                      disabled={!denyNote.trim()}
-                      onClick={() => {
-                        onDecide(approval.id, "deny", denyNote.trim());
-                        setDenyOpen(false);
-                        setDenyNote("");
-                      }}
+                      size="sm"
+                      className="tb-action-40"
+                      loading={deciding}
+                      disabled={deciding || !denyNote.trim()}
+                      onClick={() =>
+                        onDecide(approval.id, "deny", denyNote.trim())
+                      }
                     >
                       Deny with reason
                     </Button>
@@ -214,8 +231,11 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
                     option.kind === "deny" ? (
                       <Button
                         key={option.id}
-                        size="xs"
+                        size="sm"
+                        className="tb-action-40"
+                        variant="subtle"
                         color="red"
+                        disabled={deciding}
                         onClick={() => {
                           setDenyOpen(true);
                           setDenyNote("");
@@ -226,8 +246,16 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
                     ) : (
                       <Button
                         key={option.id}
-                        size="xs"
-                        variant="outline"
+                        size="sm"
+                        className="tb-action-40"
+                        // Allow-once is the common path; standing rules stay
+                        // quieter so a click does not silently widen access.
+                        variant={
+                          option.kind === "allow_once" ? "filled" : "light"
+                        }
+                        color={option.kind === "allow_once" ? undefined : "gray"}
+                        loading={deciding}
+                        disabled={deciding}
                         onClick={() => onDecide(approval.id, option.kind)}
                       >
                         {option.label}

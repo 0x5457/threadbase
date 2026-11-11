@@ -35,6 +35,8 @@ export interface ThreadTimelineProps {
   loading?: boolean;
   error?: unknown;
   onRetry?: () => void;
+  decidingApprovalId?: string | null;
+  respondingElicitationId?: string | null;
   onDecide?: (
     approvalId: string,
     decision: ApprovalDecision,
@@ -56,6 +58,8 @@ export function ThreadTimeline({
   loading = false,
   error,
   onRetry,
+  decidingApprovalId,
+  respondingElicitationId,
   onDecide,
   onRespondElicitation,
   onComment,
@@ -205,6 +209,7 @@ export function ThreadTimeline({
                     >
                       <ChevronRight
                         size={14}
+                        data-disclosure-chevron
                         aria-hidden
                         style={{
                           color: "var(--mantine-color-dimmed)",
@@ -264,6 +269,7 @@ export function ThreadTimeline({
                 key={item.key}
                 elicitation={item.elicitation}
                 resolvedAction={item.resolvedAction}
+                responding={respondingElicitationId === item.elicitation.id}
                 onRespond={onRespondElicitation}
                 onComment={onComment}
               />
@@ -294,6 +300,7 @@ export function ThreadTimeline({
                 key={item.key}
                 item={item}
                 approval={approvalById.get(item.approval.id) ?? item.approval}
+                deciding={decidingApprovalId === item.approval.id}
                 onDecide={onDecide}
               />
             );

@@ -1,9 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CornerDownLeft } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Flex, Kbd, Paper, Textarea } from "@mantine/core";
 import { createComment } from "@/api/endpoints";
 import { queryKeys } from "@/api/queries";
+import { modKeyLabel } from "@/lib/platform";
+import { notifyError } from "@/lib/notify";
 
 export interface SelectionTarget {
   messageId: string;
@@ -22,7 +24,9 @@ export function SelectionComment({
 }) {
   const queryClient = useQueryClient();
   const [body, setBody] = useState("");
+  const paperRef = useRef<HTMLDivElement>(null);
   const create = useMutation({
+    onError: (error) => notifyError(error, "Cannot save comment"),
     mutationFn: () =>
       createComment(threadId, {
         body: body.trim(),
@@ -40,8 +44,26 @@ export function SelectionComment({
       onClose();
     },
   });
+  // Clicking outside dismisses the popover; without this it lingered over the
+  // transcript until the next selection.
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        paperRef.current &&
+        event.target instanceof Node &&
+        !paperRef.current.contains(event.target)
+      ) {
+        onClose();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [onClose]);
+
   return (
     <Paper
+      ref={paperRef}
       withBorder
       p="xs"
       shadow="xl"
@@ -71,6 +93,7 @@ export function SelectionComment({
           }
         }}
         placeholder="Comment on selection…"
+        radius="sm"
         rows={3}
       />
       <Flex
@@ -81,13 +104,16 @@ export function SelectionComment({
         style={{ fontSize: "var(--mantine-font-size-xs)", color: "var(--mantine-color-dimmed)" }}
       >
         <span>
-          <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> pending comment
+          <Kbd>{modKeyLabel()}</Kbd> <Kbd>Enter</Kbd> pending comment
         </span>
         <Button
           type="button"
           variant="subtle"
           color="blue"
           size="compact-xs"
+          radius="sm"
+          className="tb-action-40"
+          loading={create.isPending}
           disabled={!body.trim() || create.isPending}
           onClick={() => create.mutate()}
         >

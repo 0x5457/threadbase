@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import { Box, Skeleton, Stack, UnstyledButton } from "@mantine/core";
 import {
+  useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -86,6 +88,35 @@ export function SidebarTree({
   const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(
     new Set(),
   );
+
+  /**
+   * Roving tabindex: the tree is one Tab stop, arrows move between rows.
+   * Arrows already focus the next row; this keeps exactly one row tabbable
+   * and promotes whichever row currently owns focus after a re-render.
+   */
+  const syncRovingRow = useCallback(() => {
+    const container = treeRef.current;
+    if (!container) {
+      return;
+    }
+    const rows = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-tree-row]"),
+    ).filter((element) => element.offsetParent !== null);
+    if (rows.length === 0) {
+      return;
+    }
+    const active =
+      rows.find((row) => row === document.activeElement) ??
+      rows.find((row) => row.tabIndex === 0) ??
+      rows[0];
+    for (const row of rows) {
+      row.tabIndex = row === active ? 0 : -1;
+    }
+  }, []);
+
+  useEffect(() => {
+    syncRovingRow();
+  }, [syncRovingRow, projects, threads, subagents, collapsedProjects, collapsedThreads]);
 
   const projectById = useMemo(
     () => new Map(projects.map((project) => [project.id, project])),
@@ -239,6 +270,7 @@ export function SidebarTree({
         ref={treeRef}
         role="tree"
         aria-label="Projects and threads"
+        onFocusCapture={syncRovingRow}
         style={{
           minHeight: 0,
           flex: 1,

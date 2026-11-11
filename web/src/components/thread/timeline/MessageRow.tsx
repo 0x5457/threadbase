@@ -49,54 +49,57 @@ export function MessageRow({ message, onSelect, onComment }: MessageRowProps) {
         </Flex>
         <Box flex={1} miw={0}>
           <Flex align="center" gap="xs" mb="xs">
-            <Text fz={12} fw={500} c="dimmed">
+            <Text size="sm" fw={500} c="dimmed">
               {author?.displayName ??
                 (message.role === "agent" ? "Agent" : "User")}
             </Text>
             {message.authors.length > 1 ? (
-              <Text fz={12} c="dimmed">
+              <Text size="sm" c="dimmed">
                 +{message.authors.length - 1}
               </Text>
             ) : null}
             {message.createdAt ? (
               <Text
-                fz={12}
+                size="sm"
                 c="dimmed"
                 title={formatTimestamp(message.createdAt)}
               >
                 {formatTimestamp(message.createdAt)}
               </Text>
             ) : null}
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              size={24}
-              aria-label="View comments"
-              style={{ marginLeft: "auto" }}
-              onClick={() =>
-                window.dispatchEvent(
-                  new CustomEvent("threadbase:open-comments"),
-                )
-              }
-            >
-              <MessageSquareText size={12} aria-hidden />
-            </ActionIcon>
-            {onComment ? (
+            <Flex align="center" gap={16} ml="auto">
               <ActionIcon
                 variant="subtle"
                 color="gray"
                 size={24}
-                aria-label="Comment on message"
+                className="tb-hit-40"
+                aria-label="View comments"
                 onClick={() =>
-                  onComment({
-                    kind: "message",
-                    messageId: message.messageId,
-                  })
+                  window.dispatchEvent(
+                    new CustomEvent("threadbase:open-comments"),
+                  )
                 }
               >
-                <MessageSquare size={12} aria-hidden />
+                <MessageSquareText size={12} aria-hidden />
               </ActionIcon>
-            ) : null}
+              {onComment ? (
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size={24}
+                  className="tb-hit-40"
+                  aria-label="Comment on message"
+                  onClick={() =>
+                    onComment({
+                      kind: "message",
+                      messageId: message.messageId,
+                    })
+                  }
+                >
+                  <MessageSquare size={12} aria-hidden />
+                </ActionIcon>
+              ) : null}
+            </Flex>
           </Flex>
           <Box
             px="sm"

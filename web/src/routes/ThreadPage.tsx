@@ -27,7 +27,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   cancelSubagent,
@@ -63,6 +63,9 @@ import { SubagentView } from "@/components/thread/SubagentView";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
 import { ErrorState } from "@/components/app";
 import { useOnlineStatus } from "@/lib/hooks";
+import { notifyError } from "@/lib/notify";
+import { ConfirmDialog, type ConfirmRequest } from "@/components/app";
+import { isInsideOverlay, isTypingTarget, modKeyPressed } from "@/lib/shortcuts";
 import { useLiveStore, useThreadLiveEvents } from "@/lib/live";
 
 export function ThreadPage() {
@@ -77,6 +80,7 @@ export function ThreadPage() {
   useThreadLiveEvents(threadId);
   const liveConnected = useLiveStore((state) => state.connected);
   const elicitation = useMutation({
+    onError: (error) => notifyError(error, "Cannot answer the agent"),
     mutationFn: ({
       elicitationId,
       action,
@@ -103,6 +107,13 @@ export function ThreadPage() {
   });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        isTypingTarget(event.target) ||
+        isInsideOverlay(event.target)
+      ) {
+        return;
+      }
       const modifier = event.metaKey || event.ctrlKey;
       if (
         modifier &&
@@ -122,6 +133,7 @@ export function ThreadPage() {
 
   const [commentAnchor, setCommentAnchor] = useState<CommentAnchor | null>(null);
   const cancelSubagentMutation = useMutation({
+    onError: (error) => notifyError(error, "Cannot cancel subagent"),
     mutationFn: (subagentId: string) =>
       cancelSubagent(threadId ?? "", subagentId),
     onSuccess: () => {
@@ -136,11 +148,12 @@ export function ThreadPage() {
     },
   });
   const [commentOpen, setCommentOpen] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [selectionTarget, setSelectionTarget] = useState<SelectionTarget | null>(
     null,
   );
   useEffect(() => {
-    const onMouseUp = () => {
+    const captureSelection = () => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) {
         return;
@@ -160,7 +173,17 @@ export function ThreadPage() {
       const rect = selection.getRangeAt(0).getBoundingClientRect();
       setSelectionTarget({ messageId, x: rect.left, y: rect.bottom });
     };
+    // Pointer-up covers mouse and pen. Touch fires `pointerup` before the
+    // selection settles, so run once more after the OS selection UI commits.
+    const onTouchEnd = () => window.setTimeout(captureSelection, 250);
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        isTypingTarget(event.target) ||
+        isInsideOverlay(event.target)
+      ) {
+        return;
+      }
       const modifier = event.metaKey || event.ctrlKey;
       if (modifier && event.altKey && event.key.toLowerCase() === "m") {
         event.preventDefault();
@@ -181,10 +204,12 @@ export function ThreadPage() {
         }
       }
     };
-    document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("pointerup", captureSelection);
+    document.addEventListener("touchend", onTouchEnd);
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("pointerup", captureSelection);
+      document.removeEventListener("touchend", onTouchEnd);
       document.removeEventListener("keydown", onKeyDown);
     };
   }, []);
@@ -204,6 +229,7 @@ export function ThreadPage() {
   }, [threadId, queryClient]);
 
   const archive = useMutation({
+    onError: (error) => notifyError(error, "Cannot archive thread"),
     mutationFn: (archived: boolean) =>
       updateThread(threadId ?? "", {
         title: null,
@@ -238,24 +264,35 @@ export function ThreadPage() {
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      const modifier = event.metaKey || event.ctrlKey;
-      const status =
-        threadState.data?.status ?? bundle.data?.bundle.thread.status ?? "idle";
-      const members = bundle.data?.bundle.members ?? [];
-      const role = members.find(
-        (member) => member.user.id === me.data?.user.id,
-      )?.role;
-      const canWrite =
-        Boolean(me.data?.user.isAdmin) ||
-        role === "owner" ||
-        role === "editor";
+      if (
+        event.defaultPrevented ||
+        isTypingTarget(event.target) ||
+        isInsideOverlay(event.target)
+      ) {
+        return;
+      }
+      const modifier = modKeyPressed(event);
+      // Archive shortcut: Cmd/Ctrl+W is reserved by browsers, so the menu and
+      // this combo are the supported paths. Keep it in the guarded handler so
+      // it never fires from the composer.
       if (
         modifier &&
-        !event.shiftKey &&
+        event.shiftKey &&
         !event.altKey &&
-        event.key.toLowerCase() === "w"
+        event.key.toLowerCase() === "e"
       ) {
         event.preventDefault();
+        const role = bundle.data?.bundle.members.find(
+          (member) => member.user.id === me.data?.user.id,
+        )?.role;
+        const canWrite =
+          Boolean(me.data?.user.isAdmin) ||
+          role === "owner" ||
+          role === "editor";
+        const status =
+          threadState.data?.status ??
+          bundle.data?.bundle.thread.status ??
+          "idle";
         if (canWrite && !archive.isPending) {
           archive.mutate(status !== "archived");
         }
@@ -282,18 +319,95 @@ export function ThreadPage() {
               queryKey: queryKeys.threadBundle(threadId),
             });
           })
-          .catch(() => undefined);
+          .catch((error) => notifyError(error, "Cannot update read state"));
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [threadId, archive, bundle.data, threadState.data, me.data, queryClient]);
+  }, [
+    archive,
+    bundle.data,
+    me.data,
+    queryClient,
+    threadId,
+    threadState.data,
+  ]);
+
+  const transcriptViewportRef = useRef<HTMLDivElement | null>(null);
+  const [viewportReady, setViewportReady] = useState(false);
+  const setTranscriptViewport = useCallback((node: HTMLDivElement | null) => {
+    transcriptViewportRef.current = node;
+    setViewportReady(Boolean(node));
+  }, []);
+  const stickToBottom = useRef(true);
+  // Tie the "at bottom" flag to the thread it was measured in, so navigation
+  // starts at bottom without a setState-in-effect reset.
+  const [bottomState, setBottomState] = useState<{
+    threadId: string | undefined;
+    atBottom: boolean;
+  }>({ threadId, atBottom: true });
+  const atBottom =
+    bottomState.threadId === threadId ? bottomState.atBottom : true;
+
+  useEffect(() => {
+    const viewport = transcriptViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    const onScroll = () => {
+      const nearBottom =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80;
+      stickToBottom.current = nearBottom;
+      setBottomState({ threadId, atBottom: nearBottom });
+    };
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, [threadId, viewportReady]);
+
+  // A transcript that does not follow new events is broken as a chat. Only
+  // auto-scroll while the reader is already at the bottom; otherwise offer the
+  // explicit jump so reading history is never yanked away. The first load always
+  // lands at the latest event, even when the seed transcript is already tall.
+  const didInitialScroll = useRef(false);
+  const lastThreadId = useRef(threadId);
+
+  useEffect(() => {
+    const viewport = transcriptViewportRef.current;
+    if (!viewport || !events.data) {
+      return;
+    }
+    if (lastThreadId.current !== threadId) {
+      lastThreadId.current = threadId;
+      didInitialScroll.current = false;
+      stickToBottom.current = true;
+    }
+    if (!didInitialScroll.current) {
+      didInitialScroll.current = true;
+      stickToBottom.current = true;
+      viewport.scrollTop = viewport.scrollHeight;
+      return;
+    }
+    if (!stickToBottom.current) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [events.data, threadId, viewportReady]);
+
+  const jumpToLatest = () => {
+    const viewport = transcriptViewportRef.current;
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight;
+      stickToBottom.current = true;
+      setBottomState({ threadId, atBottom: true });
+    }
+  };
 
   const [divergedDismissed, setDivergedDismissed] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const rename = useMutation({
+    onError: (error) => notifyError(error, "Cannot rename thread"),
     mutationFn: () =>
       updateThread(threadId ?? "", {
         title: renameValue.trim(),
@@ -341,6 +455,7 @@ export function ThreadPage() {
       }),
   });
   const fork = useMutation({
+    onError: (error) => notifyError(error, "Cannot fork thread"),
     mutationFn: () => forkThread(threadId ?? "", null),
     onSuccess: (response) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
@@ -361,6 +476,7 @@ export function ThreadPage() {
     },
   });
   const remove = useMutation({
+    onError: (error) => notifyError(error, "Cannot delete thread"),
     mutationFn: () => deleteThread(threadId ?? "", true),
     onSuccess: () => {
       if (projectId) {
@@ -379,6 +495,7 @@ export function ThreadPage() {
     },
   });
   const restart = useMutation({
+    onError: (error) => notifyError(error, "Cannot restart agent"),
     mutationFn: () => restartAgent(threadId ?? ""),
     onSuccess: () => {
       if (threadId) {
@@ -392,6 +509,7 @@ export function ThreadPage() {
     },
   });
   const configure = useMutation({
+    onError: (error) => notifyError(error, "Cannot update thread config"),
     mutationFn: ({ model, effort }: { model: string; effort: string }) =>
       updateThread(threadId ?? "", {
         title: null,
@@ -424,6 +542,7 @@ export function ThreadPage() {
       }),
   });
   const decision = useMutation({
+    onError: (error) => notifyError(error, "Cannot update approval"),
     mutationFn: ({
       approvalId,
       value,
@@ -549,6 +668,8 @@ export function ThreadPage() {
     <Stack h="100%" gap={0}>
       {!online || !liveConnected ? (
         <Group
+          role="status"
+          aria-live="polite"
           gap="xs"
           px="sm"
           py={4}
@@ -566,6 +687,8 @@ export function ThreadPage() {
       ) : null}
       {events.data?.resync ? (
         <Group
+          role="status"
+          aria-live="polite"
           gap="xs"
           px="sm"
           py={4}
@@ -639,12 +762,13 @@ export function ThreadPage() {
           </Text>
         )}
         <ThreadStatusBadge status={liveStatus} />
-        <Group gap={4} style={{ marginLeft: "auto", flexShrink: 0 }} wrap="nowrap">
+        <Group gap={12} style={{ marginLeft: "auto", flexShrink: 0 }} wrap="nowrap">
           {liveStatus === "error" || liveStatus === "interrupted" ? (
             <Button
               variant="light"
               color="red"
               size="xs"
+              className="tb-action-40"
               visibleFrom="sm"
               loading={restart.isPending}
               disabled={!canWrite}
@@ -657,6 +781,7 @@ export function ThreadPage() {
             variant="subtle"
             color="gray"
             size="md"
+            className="tb-hit-40"
             visibleFrom="sm"
             aria-label={
               liveStatus === "archived" ? "Unarchive thread" : "Archive thread"
@@ -672,6 +797,7 @@ export function ThreadPage() {
                 variant="subtle"
                 color="gray"
                 size="md"
+                className="tb-hit-40"
                 aria-label="Thread actions"
               >
                 <MoreHorizontal size={14} />
@@ -760,7 +886,7 @@ export function ThreadPage() {
                     height: 6,
                     borderRadius: "50%",
                     background: "currentColor",
-                    animation: "pulse 2s infinite",
+                    animation: "sidebar-pulse 2s infinite",
                   }}
                 />
               }
@@ -771,7 +897,12 @@ export function ThreadPage() {
         </Group>
       </Group>
 
-      <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+      <Box style={{ position: "relative", flex: 1, minHeight: 0 }}>
+      <ScrollArea
+        id="timeline-scroll"
+        style={{ height: "100%" }}
+        viewportRef={setTranscriptViewport}
+      >
         {selectedSubagent ? (
           <SubagentView
             subagent={selectedSubagent}
@@ -793,6 +924,16 @@ export function ThreadPage() {
             loading={events.isLoading}
             error={events.error}
             onRetry={() => void events.refetch()}
+            decidingApprovalId={
+              decision.isPending
+                ? (decision.variables?.approvalId ?? null)
+                : null
+            }
+            respondingElicitationId={
+              elicitation.isPending
+                ? (elicitation.variables?.elicitationId ?? null)
+                : null
+            }
             onDecide={onDecide}
             onRespondElicitation={(elicitationId, action, values) =>
               elicitation.mutate({ elicitationId, action, values })
@@ -814,6 +955,23 @@ export function ThreadPage() {
           />
         )}
       </ScrollArea>
+        {!atBottom ? (
+          <Button
+            size="xs"
+            variant="default"
+            onClick={jumpToLatest}
+            style={{
+              position: "absolute",
+              bottom: 12,
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 5,
+            }}
+          >
+            Jump to latest
+          </Button>
+        ) : null}
+      </Box>
 
       <Modal
         opened={renameOpen}
@@ -826,6 +984,12 @@ export function ThreadPage() {
           aria-label="Thread title"
           value={renameValue}
           onChange={(event) => setRenameValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && renameValue.trim()) {
+              event.preventDefault();
+              rename.mutate();
+            }
+          }}
         />
         <Group justify="flex-end" gap="xs" mt="sm">
           <Button variant="default" size="sm" onClick={() => setRenameOpen(false)}>
@@ -879,6 +1043,7 @@ export function ThreadPage() {
           onClose={() => setSelectionTarget(null)}
         />
       ) : null}
+      <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
       {threadId ? (
         <CommentDialog
           open={commentOpen}
@@ -889,6 +1054,8 @@ export function ThreadPage() {
       ) : null}
       {liveDiverged && !divergedDismissed ? (
         <Group
+          role="status"
+          aria-live="polite"
           gap="xs"
           px="sm"
           py="xs"
@@ -916,7 +1083,15 @@ export function ThreadPage() {
             size="xs"
             px="xs"
             disabled={discardDiverged.isPending}
-            onClick={() => discardDiverged.mutate()}
+            onClick={() =>
+              setConfirm({
+                title: "Discard the diverged worktree?",
+                description:
+                  "Local changes that are not in the project branch will be lost. This cannot be undone.",
+                confirmLabel: "Discard",
+                onConfirm: () => discardDiverged.mutate(),
+              })
+            }
           >
             Discard
           </Button>

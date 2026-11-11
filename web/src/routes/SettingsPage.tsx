@@ -20,12 +20,17 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useBlocker } from "react-router-dom";
 import { updateSettings } from "@/api/endpoints";
 import { queryKeys, useMe, useWorkspaceState } from "@/api/queries";
 import type { BaselineKind } from "@/api/types/BaselineKind";
 import type { SettingsDto } from "@/api/types/SettingsDto";
-import { ErrorState, PageContainer } from "@/components/app";
+import {
+  ConfirmDialog,
+  ErrorState,
+  PageContainer,
+} from "@/components/app";
 import { ApprovalRulesSection } from "@/components/workspace/ApprovalRulesSection";
 import { setTheme, useTheme, type Theme } from "@/lib/theme";
 import { describeError } from "@/lib/errors";
@@ -137,6 +142,31 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
     initial.browserNotifications,
   );
   const [webhookUrl, setWebhookUrl] = useState(initial.webhookUrl ?? "");
+  const dirty =
+    textWidth !== initial.textWidth ||
+    subthreadsPerThread !== String(initial.subthreadsPerThread) ||
+    sendWithModifier !== initial.sendWithModifier ||
+    defaultAgent !== initial.defaultAgent ||
+    defaultModel !== (initial.defaultModel ?? "") ||
+    defaultBaseline !== initial.defaultBaseline ||
+    hiddenPresence !== initial.hiddenPresence ||
+    browserNotifications !== initial.browserNotifications ||
+    webhookUrl !== (initial.webhookUrl ?? "");
+
+  // Reload/close guard plus in-app navigation guard (data router `useBlocker`).
+  useEffect(() => {
+    if (!dirty) {
+      return;
+    }
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
+
+
   const mutation = useMutation({
     mutationFn: () =>
       updateSettings({
@@ -166,6 +196,8 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
       });
     },
   });
+
+  const blocker = useBlocker(dirty && !mutation.isPending);
 
   return (
     <Stack gap="sm">
@@ -253,16 +285,35 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
           {describeError(mutation.error, "Cannot save settings").description}
         </Text>
       ) : null}
-      <Group justify="flex-end">
+      <Group justify="flex-end" align="center" gap="sm">
+        <Text size="xs" c={dirty ? "yellow" : "dimmed"} role="status">
+          {dirty ? "Unsaved changes" : "All changes saved"}
+        </Text>
         <Button
           variant="filled"
           size="sm"
+          className="tb-action-40"
           loading={mutation.isPending}
+          disabled={!dirty}
           onClick={() => mutation.mutate()}
         >
           Save settings
         </Button>
       </Group>
+      <ConfirmDialog
+        request={
+          blocker.state === "blocked"
+            ? {
+                title: "Discard unsaved settings?",
+                description:
+                  "You have changes that have not been saved. Leaving now loses them.",
+                confirmLabel: "Discard changes",
+                onConfirm: () => blocker.proceed?.(),
+              }
+            : null
+        }
+        onClose={() => blocker.reset?.()}
+      />
     </Stack>
   );
 }

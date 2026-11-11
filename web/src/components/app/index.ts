@@ -1,6 +1,8 @@
 export { AppNotifications } from "./AppNotifications";
 export { AvatarStack } from "./AvatarStack";
 export type { AvatarPerson, AvatarStackProps } from "./AvatarStack";
+export { ConfirmDialog } from "./ConfirmDialog";
+export type { ConfirmRequest } from "./ConfirmDialog";
 export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps } from "./EmptyState";
 export { ErrorState } from "./ErrorState";

@@ -27,13 +27,13 @@ export function TreeRow({
       aria-level={level}
       aria-selected={selected}
       aria-expanded={expanded}
-      tabIndex={0}
+      tabIndex={-1}
       data-tree-row
       data-depth={depth}
       data-expanded={expanded}
       onClick={onSelect}
       onKeyDown={(event) => activateRow(event, onSelect)}
-      h={{ base: 40, md: 34 }}
+      h={{ base: 44, md: 40 }}
       style={{
         display: "flex",
         alignItems: "center",
@@ -43,7 +43,6 @@ export function TreeRow({
         paddingLeft: 4 + depth * 16,
         fontSize: "var(--mantine-font-size-md)",
         cursor: "default",
-        outline: "none",
         transition: rowTransition,
         backgroundColor: selected
           ? "var(--mantine-color-default-hover)"
@@ -72,10 +71,11 @@ export function RowChevron({
     <UnstyledButton
       type="button"
       aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
+      tabIndex={-1}
       data-tree-chevron
       onClick={onClick}
-      w={{ base: 28, md: 16 }}
-      h={{ base: 28, md: 16 }}
+      w={{ base: 44, md: 40 }}
+      h={{ base: 44, md: 40 }}
       style={{
         display: "flex",
         flexShrink: 0,
@@ -91,7 +91,8 @@ export function RowChevron({
         aria-hidden
         style={{
           transform: expanded ? "rotate(90deg)" : "none",
-          transition: "transform 120ms ease",
+          transition:
+            "transform var(--tb-duration-fast) var(--tb-ease-standard)",
         }}
       />
     </UnstyledButton>

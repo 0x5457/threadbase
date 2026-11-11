@@ -400,7 +400,7 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 ### 13.7 交互键位与设置补全
 
 - Composer 读取 `sendWithModifier` 设置：关闭时 Enter 直接发送，开启时保持 `⌘/Ctrl+Enter`。
-- ThreadPage 实现 `⌘W`（归档/取消归档切换）与 `⌘⇧U`（已读/未读切换）；新增 `POST /api/threads/{id}/unread` 端点。
+- ThreadPage 实现 `⌘⇧E`（归档/取消归档切换）与 `⌘⇧U`（已读/未读切换）；`⌘W` 因浏览器占用已移除；新增 `POST /api/threads/{id}/unread` 端点。
 - `⌘/Ctrl+Enter` 也走 `sendWithRetention`，本地草稿保留覆盖全部发送路径（按钮、快捷键、菜单）。
 
 ### 13.8 明确不修 / 可接受风险

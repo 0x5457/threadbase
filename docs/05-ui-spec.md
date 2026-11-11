@@ -314,8 +314,6 @@ Delta 的 UI 模型是 per-author 草稿块；底层文本同步是 CRDT（Delta
 | 发送 | `⌘Enter` | `Ctrl+Enter` |
 | 命令面板 | `⌘⇧P` | `Ctrl+Shift+P` |
 | 命令 + thread 搜索 | `⌘K` | `Ctrl+K` |
-| 找 thread（含归档） | `⌘T` | `Ctrl+T` |
-| 文件查找 | `⌘P` | `Ctrl+P` |
 | 上一个/下一个 thread | `Ctrl+Tab` / `Ctrl+⇧+Tab` | 同 |
 | 关右栏 | `⇧Escape` | `⇧Escape` |
 | Review Changes | `⌥⇧D` | `Alt+Shift+D` |
@@ -326,7 +324,9 @@ Delta 的 UI 模型是 per-author 草稿块；底层文本同步是 CRDT（Delta
 | 复制选区链接 | `⌘⌥L` | `Ctrl+Alt+L` |
 | 评论选区 | `⌘⌥M` | `Ctrl+Alt+M` |
 | 打开 Comments 抽屉 | `⌘⇧M` | `Ctrl+Shift+M` |
-| 归档 thread | `⌘W` | `Ctrl+W` |
+| 新项目 | `⌘⇧A` | `Ctrl+Shift+A` |
+| 快捷键帮助 | `?` | `?` |
+| 归档 thread | `⌘⇧E` | `Ctrl+Shift+E` |
 | 标为已读/未读 | `⌘⇧U` | `Ctrl+Shift+U` |
 | 跟随下一位 | `Ctrl+⌥⌘F` | `Ctrl+Alt+Shift+F` |
 | Inbox | `⌘⇧J` | `Ctrl+Shift+J` |

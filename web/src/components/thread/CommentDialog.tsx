@@ -61,17 +61,27 @@ export function CommentDialog({
         onChange={(event) => setBody(event.target.value)}
         placeholder="What should the agent know about this?"
         rows={4}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            if (body.trim() && !create.isPending) {
+              create.mutate(false);
+            }
+          }
+        }}
       />
       <Group justify="flex-end" gap="xs" mt="sm">
         <Button
           variant="subtle"
           color="dark"
+          className="tb-action-40"
           onClick={() => onOpenChange(false)}
         >
           Cancel
         </Button>
         <Button
           variant="outline"
+          className="tb-action-40"
           disabled={!body.trim()}
           loading={create.isPending}
           onClick={() => create.mutate(false)}
@@ -79,6 +89,7 @@ export function CommentDialog({
           Save pending
         </Button>
         <Button
+          className="tb-action-40"
           disabled={!body.trim()}
           loading={create.isPending}
           onClick={() => create.mutate(true)}

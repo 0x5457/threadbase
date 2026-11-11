@@ -40,7 +40,7 @@ export function LoginPage() {
   return (
     <Page>
       <Stack gap={6} mb="lg">
-        <Title order={1} fz={22} fw={600} style={{ letterSpacing: "-0.02em" }}>
+        <Title order={1} fw={600} style={{ letterSpacing: "-0.02em" }}>
           Sign in with Tailscale
         </Title>
         <Text size="xs" c="dimmed">
@@ -134,6 +134,7 @@ export function LoginPage() {
       <Button
         fullWidth
         variant="filled"
+        className="tb-action-40"
         leftSection={<RotateCw size={14} />}
         loading={status.isFetching || me.isFetching}
         onClick={() => {
@@ -172,7 +173,7 @@ function Page({ children }: { children: ReactNode }) {
           zIndex: 10,
         }}
       >
-        <ThemeToggle />
+        <ThemeToggle size="lg" hitArea="40" />
       </div>
       <div
         style={{

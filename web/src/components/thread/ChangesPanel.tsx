@@ -29,8 +29,14 @@ import type { CommentDto } from "@/api/types/CommentDto";
 import type { DiffLineDto } from "@/api/types/DiffLineDto";
 import type { FileChangeDto } from "@/api/types/FileChangeDto";
 import type { FileStatus } from "@/api/types/FileStatus";
-import { EmptyState, ErrorState } from "@/components/app";
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  type ConfirmRequest,
+} from "@/components/app";
 import { usePresenceStore } from "@/lib/presence";
+import { isInsideOverlay, isTypingTarget } from "@/lib/shortcuts";
 
 const BASELINES: { value: BaselineKind; label: string }[] = [
   { value: "base_branch", label: "Base branch" },
@@ -95,6 +101,7 @@ export function ChangesPanel({
   const [baseline, setBaseline] = useState<BaselineKind>("base_branch");
   const [commit, setCommit] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [commentTarget, setCommentTarget] = useState<{
     hunkId: string;
     line: number;
@@ -208,6 +215,13 @@ export function ChangesPanel({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        isTypingTarget(event.target) ||
+        isInsideOverlay(event.target)
+      ) {
+        return;
+      }
       const modifier = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
       if (modifier && event.shiftKey && key === "y") {
@@ -319,16 +333,17 @@ export function ChangesPanel({
               variant="subtle"
               color="dark"
               flex={1}
+              className="tb-action-40"
               loading={revert.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Revert the worktree to the base commit? Every agent change, including untracked files, will be discarded.",
-                  )
-                ) {
-                  revert.mutate();
-                }
-              }}
+              onClick={() =>
+                setConfirm({
+                  title: "Revert the worktree?",
+                  description:
+                    "Every agent change, including untracked files, will be discarded. This cannot be undone.",
+                  confirmLabel: "Revert",
+                  onConfirm: () => revert.mutate(),
+                })
+              }
             >
               <Undo2 size={12} aria-hidden />
               Revert
@@ -337,16 +352,18 @@ export function ChangesPanel({
               size="xs"
               variant="outline"
               flex={1}
+              className="tb-action-40"
               loading={merge.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Apply these changes to the project working tree? Nothing is committed.",
-                  )
-                ) {
-                  merge.mutate();
-                }
-              }}
+              onClick={() =>
+                setConfirm({
+                  title: "Apply changes?",
+                  description:
+                    "The worktree changes are copied into the project working tree. Nothing is committed.",
+                  confirmLabel: "Apply",
+                  confirmColor: "gray",
+                  onConfirm: () => merge.mutate(),
+                })
+              }
             >
               <RotateCcw size={12} aria-hidden />
               Apply
@@ -392,7 +409,7 @@ export function ChangesPanel({
                 }
                 rightSection={
                   <Text
-                    fz={11}
+                    fz="xs"
                     ff="monospace"
                     c="dimmed"
                     style={{ whiteSpace: "nowrap" }}
@@ -436,6 +453,7 @@ export function ChangesPanel({
             </Box>
           ) : (
             <Box
+              data-diff-body
               style={{
                 fontFamily: "var(--mantine-font-family-monospace)",
                 fontSize: "var(--mantine-font-size-md)",
@@ -460,7 +478,7 @@ export function ChangesPanel({
                       color: "var(--mantine-color-dimmed)",
                     }}
                   >
-                    <Text fz={11} ff="monospace" truncate="end">
+                    <Text fz="xs" ff="monospace" truncate="end">
                       {hunk.header}
                     </Text>
                     {fileComments.some(
@@ -470,6 +488,7 @@ export function ChangesPanel({
                         variant="subtle"
                         color="blue"
                         size="compact-xs"
+                        className="tb-action-40"
                         ml="auto"
                         onClick={() => setShowComments((value) => !value)}
                       >
@@ -487,6 +506,8 @@ export function ChangesPanel({
                       <UnstyledButton
                         type="button"
                         key={`${hunk.id}-${index}`}
+                        data-diff-line
+                        tabIndex={index === 0 ? 0 : -1}
                         onClick={() => {
                           setCommentTarget({
                             hunkId: hunk.id,
@@ -502,6 +523,44 @@ export function ChangesPanel({
                               line: lineNumber,
                             },
                           });
+                        }}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key === "Enter" ||
+                            event.key === " " ||
+                            event.key.toLowerCase() === "c"
+                          ) {
+                            event.preventDefault();
+                            event.currentTarget.click();
+                            return;
+                          }
+                          if (
+                            event.key !== "ArrowDown" &&
+                            event.key !== "ArrowUp"
+                          ) {
+                            return;
+                          }
+                          event.preventDefault();
+                          const body = event.currentTarget.closest(
+                            "[data-diff-body]",
+                          );
+                          const lines = Array.from(
+                            body?.querySelectorAll<HTMLElement>(
+                              "[data-diff-line]",
+                            ) ?? [],
+                          );
+                          const current = lines.indexOf(event.currentTarget);
+                          const next =
+                            lines[
+                              current + (event.key === "ArrowDown" ? 1 : -1)
+                            ];
+                          if (next) {
+                            for (const line of lines) {
+                              line.tabIndex = -1;
+                            }
+                            next.tabIndex = 0;
+                            next.focus();
+                          }
                         }}
                         bg={tone.bg}
                         c={tone.c}
@@ -563,7 +622,7 @@ export function ChangesPanel({
                               background: "var(--mantine-color-blue-light)",
                             }}
                           >
-                            <Text fz={11} c="blue.6">
+                            <Text fz="xs" c="blue.6">
                               line {comment.anchor.line} ·{" "}
                               {comment.author.displayName}
                               {comment.status === "pending"
@@ -604,12 +663,14 @@ export function ChangesPanel({
                       size="xs"
                       variant="subtle"
                       color="dark"
+                      className="tb-action-40"
                       onClick={() => setCommentTarget(null)}
                     >
                       Cancel
                     </Button>
                     <Button
                       size="xs"
+                      className="tb-action-40"
                       disabled={!commentBody.trim()}
                       loading={addComment.isPending}
                       onClick={() => addComment.mutate()}
@@ -630,6 +691,7 @@ export function ChangesPanel({
           </Text>
         </Flex>
       )}
+      <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
     </Stack>
   );
 }

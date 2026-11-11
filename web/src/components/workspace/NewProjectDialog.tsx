@@ -95,6 +95,7 @@ export function NewProjectDialog({
             <ActionIcon
               variant="default"
               size="md"
+              className="tb-hit-40"
               aria-label="Parent directory"
               onClick={() => go(listing.data?.parent ?? "")}
             >
@@ -118,12 +119,19 @@ export function NewProjectDialog({
               } else if (event.key === "ArrowUp") {
                 event.preventDefault();
                 setActive((value) => Math.max(value - 1, 0));
-              } else if (event.key === "Enter") {
+              } else if (event.key === "ArrowRight") {
                 event.preventDefault();
                 if (selected) {
                   go(selected.path);
-                } else {
+                }
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                // An explicit repository path wins over the hovered entry:
+                // Enter should add the repo the user typed, not walk to `..`.
+                if (isRepository) {
                   submit();
+                } else if (selected) {
+                  go(selected.path);
                 }
               }
             }}
@@ -175,6 +183,7 @@ export function NewProjectDialog({
                   size="sm"
                   justify="flex-start"
                   fullWidth
+                  data-dir-active={index === active}
                   bg={
                     index === active
                       ? "var(--mantine-color-default-hover)"

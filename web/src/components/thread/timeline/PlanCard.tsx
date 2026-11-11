@@ -39,7 +39,7 @@ export function PlanCard({ entries }: { entries: PlanEntry[] }) {
               key={entry.content}
               align="flex-start"
               gap="xs"
-              fz={13}
+              fz="md"
               c="dimmed"
             >
               <span
@@ -55,7 +55,7 @@ export function PlanCard({ entries }: { entries: PlanEntry[] }) {
               />
               <Text
                 component="span"
-                fz={13}
+                size="md"
                 c={entry.status === "completed" ? "dimmed" : undefined}
                 style={
                   entry.status === "completed"

@@ -55,6 +55,19 @@ export function moveTreeFocus(
     rows[next]?.focus();
     return true;
   }
+  if (event.key === "*") {
+    event.preventDefault();
+    const depth = Number(target.dataset.depth ?? 0);
+    for (const row of rows) {
+      if (
+        Number(row.dataset.depth ?? 0) === depth &&
+        row.dataset.expanded === "false"
+      ) {
+        row.querySelector<HTMLElement>("[data-tree-chevron]")?.click();
+      }
+    }
+    return true;
+  }
   if (event.key === "Home" || event.key === "End") {
     event.preventDefault();
     rows[event.key === "Home" ? 0 : rows.length - 1]?.focus();
@@ -67,6 +80,14 @@ export function moveTreeFocus(
       if (chevron) {
         event.preventDefault();
         chevron.click();
+        return true;
+      }
+    }
+    if (expanded === "true") {
+      const next = rows[index + 1];
+      if (next && Number(next.dataset.depth ?? 0) > Number(target.dataset.depth ?? 0)) {
+        event.preventDefault();
+        next.focus();
         return true;
       }
     }

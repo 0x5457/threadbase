@@ -24,7 +24,12 @@ import {
 } from "@/api/endpoints";
 import { queryKeys, useComments } from "@/api/queries";
 import type { CommentDto } from "@/api/types/CommentDto";
-import { EmptyState, ErrorState } from "@/components/app";
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  type ConfirmRequest,
+} from "@/components/app";
 
 export function CommentsPanel({
   threadId,
@@ -38,6 +43,7 @@ export function CommentsPanel({
   const [body, setBody] = useState("");
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const refresh = () => {
     void queryClient.invalidateQueries({
       queryKey: queryKeys.comments(threadId),
@@ -133,12 +139,21 @@ export function CommentsPanel({
               onChange={(event) => setBody(event.target.value)}
               placeholder="Leave a comment for the thread…"
               rows={2}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  if (body.trim() && !create.isPending) {
+                    create.mutate(false);
+                  }
+                }
+              }}
             />
             <Flex justify="flex-end" gap="xs">
               <Button
                 variant="subtle"
                 color="dark"
                 size="xs"
+                className="tb-action-40"
                 disabled={!body.trim()}
                 loading={create.isPending}
                 onClick={() => create.mutate(false)}
@@ -147,6 +162,7 @@ export function CommentsPanel({
               </Button>
               <Button
                 size="xs"
+                className="tb-action-40"
                 disabled={!body.trim()}
                 loading={create.isPending}
                 onClick={() => create.mutate(true)}
@@ -224,7 +240,7 @@ export function CommentsPanel({
                 ) : null}
                 <Flex
                   align="center"
-                  gap="xs"
+                  gap={12}
                   mt="xs"
                   pt="xs"
                   style={{
@@ -239,6 +255,7 @@ export function CommentsPanel({
                       variant="subtle"
                       color="dark"
                       size="xs"
+                      className="tb-action-40"
                       loading={send.isPending}
                       onClick={() => send.mutate(comment)}
                     >
@@ -250,6 +267,7 @@ export function CommentsPanel({
                       variant="subtle"
                       color="dark"
                       size="xs"
+                      className="tb-action-40"
                       onClick={() => resolve.mutate(comment)}
                     >
                       Resolve
@@ -259,6 +277,7 @@ export function CommentsPanel({
                     variant="subtle"
                     color="dark"
                     size="xs"
+                    className="tb-action-40"
                     onClick={() => setReplyTo(comment.id)}
                   >
                     Reply
@@ -267,9 +286,18 @@ export function CommentsPanel({
                     variant="subtle"
                     color="gray"
                     size="xs"
+                    className="tb-hit-40"
                     aria-label="Delete comment"
                     style={{ marginLeft: "auto" }}
-                    onClick={() => remove.mutate(comment)}
+                    onClick={() =>
+                      setConfirm({
+                        title: "Delete comment?",
+                        description:
+                          "The comment and its replies disappear for everyone in this thread.",
+                        confirmLabel: "Delete",
+                        onConfirm: () => remove.mutate(comment),
+                      })
+                    }
                   >
                     <Trash2 size={12} aria-hidden />
                   </ActionIcon>
@@ -300,18 +328,31 @@ export function CommentsPanel({
                     onChange={(event) => setReplyBody(event.target.value)}
                     placeholder="Reply to this comment…"
                     rows={2}
+                    onKeyDown={(event) => {
+                      if (
+                        (event.metaKey || event.ctrlKey) &&
+                        event.key === "Enter"
+                      ) {
+                        event.preventDefault();
+                        if (replyBody.trim() && !reply.isPending) {
+                          reply.mutate(comment);
+                        }
+                      }
+                    }}
                   />
                   <Flex justify="flex-end" gap="xs">
                     <Button
                       variant="subtle"
                       color="dark"
                       size="xs"
+                      className="tb-action-40"
                       onClick={() => setReplyTo(null)}
                     >
                       Cancel
                     </Button>
                     <Button
                       size="xs"
+                      className="tb-action-40"
                       disabled={!replyBody.trim()}
                       loading={reply.isPending}
                       onClick={() => reply.mutate(comment)}
@@ -325,6 +366,7 @@ export function CommentsPanel({
           ))}
         </Stack>
       )}
+      <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
     </Stack>
   );
 }

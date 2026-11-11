@@ -293,7 +293,7 @@ export function Composer({
         }}
       >
         <Users size={14} aria-hidden />
-        <Text component="span" fz={12} c="dimmed">
+        <Text component="span" fz="sm" c="dimmed">
           Read-only.
         </Text>
         {onRequestAccess ? (
@@ -375,7 +375,7 @@ export function Composer({
                   p="xs"
                   style={{
                     background: "var(--mantine-color-default-hover)",
-                    borderRadius: "var(--mantine-radius-md)",
+                    borderRadius: "var(--mantine-radius-sm)",
                   }}
                 >
                   <Text size="sm" ff="monospace" c="dimmed">
@@ -385,7 +385,7 @@ export function Composer({
                     <Text size="sm" truncate="end">
                       {item.text}
                     </Text>
-                    <Text fz={11} c="dimmed">
+                    <Text fz="xs" c="dimmed">
                       {item.author.displayName}
                       {item.superseded ? " · previous turn cancelled" : ""}
                     </Text>
@@ -396,6 +396,7 @@ export function Composer({
                       variant="subtle"
                       color="blue"
                       size="compact-xs"
+                      className="tb-action-40"
                       onClick={() => retry.mutate(item)}
                     >
                       continue
@@ -406,6 +407,7 @@ export function Composer({
                     variant="subtle"
                     color="dark"
                     size="compact-xs"
+                    className="tb-action-40"
                     onClick={() => withdraw.mutate(item)}
                   >
                     withdraw
@@ -579,7 +581,7 @@ export function Composer({
                         />
                       }
                       rightSection={
-                        <Text fz={11} c="dimmed">
+                        <Text fz="xs" c="dimmed">
                           @{participant.user.username}
                         </Text>
                       }
@@ -607,13 +609,14 @@ export function Composer({
                 )}
               </Popover.Dropdown>
             </Popover>
-            <Flex ml="auto" align="center" gap="xs">
+            <Flex ml="auto" align="center" gap={12}>
               {threadStatus === "running" ? (
                 <Button
                   type="button"
                   variant="subtle"
                   color="dark"
                   size="xs"
+                  className="tb-action-40"
                   loading={stopTurn.isPending}
                   onClick={() => stopTurn.mutate()}
                 >
@@ -626,6 +629,7 @@ export function Composer({
                   type="button"
                   variant="outline"
                   size="xs"
+                  className="tb-action-40"
                   loading={send.isPending}
                   disabled={!hasText}
                   title={
@@ -650,6 +654,7 @@ export function Composer({
                 variant="subtle"
                 color="dark"
                 size="xs"
+                className="tb-action-40"
                 loading={send.isPending}
                 disabled={!synced || !hasText}
                 onClick={() => sendWithRetention("auto")}
@@ -664,6 +669,7 @@ export function Composer({
                     variant="subtle"
                     color="dark"
                     size="sm"
+                    className="tb-hit-40"
                     aria-label="More send options"
                     disabled={!synced || !hasText || send.isPending}
                   >
@@ -791,7 +797,7 @@ function DraftBlockEditor({
         borderLeft: `2px solid ${authorColor ?? "var(--mantine-color-default-border)"}`,
       }}
     >
-      <Flex align="center" gap="xs" fz={13} c="dimmed">
+      <Flex align="center" gap="xs" fz="md" c="dimmed">
         <span
           aria-hidden
           style={{
@@ -803,11 +809,11 @@ function DraftBlockEditor({
             flexShrink: 0,
           }}
         />
-        <Text component="span" fz={13} c={isMine ? "dimmed" : undefined}>
+        <Text component="span" fz="md" c={isMine ? "dimmed" : undefined}>
           {isMine ? "You" : (authorName ?? "Member")}
         </Text>
         {remoteEditors.length > 0 ? (
-          <Text component="span" fz={13} c="blue.6">
+          <Text component="span" fz="md" c="blue.6">
             · {remoteEditors.join(", ")} editing
           </Text>
         ) : null}

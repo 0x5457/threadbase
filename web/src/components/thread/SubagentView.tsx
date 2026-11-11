@@ -122,6 +122,7 @@ export function SubagentView({
               variant="subtle"
               color="gray"
               size="xs"
+              className="tb-action-40"
               leftSection={<Columns2 size={14} aria-hidden />}
             >
               Compare
@@ -131,6 +132,7 @@ export function SubagentView({
                 variant="light"
                 color="red"
                 size="xs"
+                className="tb-action-40"
                 onClick={onCancel}
               >
                 Cancel subagent
@@ -143,6 +145,7 @@ export function SubagentView({
               )}`}
               variant="default"
               size="xs"
+              className="tb-action-40"
               leftSection={<ArrowLeft size={14} aria-hidden />}
             >
               Back to {threadTitle}

@@ -15,6 +15,7 @@ import {
 import { createComment } from "@/api/endpoints";
 import { queryKeys, useFile, useFiles } from "@/api/queries";
 import { EmptyState, ErrorState } from "@/components/app";
+import { notifyError } from "@/lib/notify";
 import { usePresenceStore } from "@/lib/presence";
 
 export function FilesPanel({ threadId }: { threadId: string }) {
@@ -26,6 +27,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
   const files = useFiles(threadId, path);
   const setLocal = usePresenceStore((state) => state.setLocal);
   const addComment = useMutation({
+    onError: (error) => notifyError(error, "Cannot save comment"),
     mutationFn: () =>
       createComment(threadId, {
         body: comment.trim(),
@@ -75,6 +77,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
             variant="subtle"
             color="gray"
             size="sm"
+            className="tb-hit-40"
             aria-label="Back to file list"
             onClick={() => setSelected(null)}
           >
@@ -149,7 +152,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
                   background: "var(--mantine-color-default)",
                 }}
               >
-                <Text fz={11} c="blue.6" mb={4}>
+                <Text fz="xs" c="blue.6" mb={4}>
                   Comment on {selected}:{line}
                 </Text>
                 <Textarea
@@ -163,12 +166,14 @@ export function FilesPanel({ threadId }: { threadId: string }) {
                     variant="subtle"
                     color="dark"
                     size="xs"
+                    className="tb-action-40"
                     onClick={() => setLine(null)}
                   >
                     Cancel
                   </Button>
                   <Button
                     size="xs"
+                    className="tb-action-40"
                     disabled={!comment.trim()}
                     loading={addComment.isPending}
                     onClick={() => addComment.mutate()}
@@ -281,7 +286,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
                 }
                 rightSection={
                   !entry.isDir ? (
-                    <Text fz={11} c="dimmed">
+                    <Text fz="xs" c="dimmed">
                       {entry.size} B
                     </Text>
                   ) : undefined

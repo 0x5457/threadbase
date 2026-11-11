@@ -30,11 +30,12 @@ export function SidebarHeader({ onNewProject, onClose }: SidebarHeaderProps) {
       >
         Threadbase
       </span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Tooltip label={`New project (${modKeyLabel()}⇧A)`}>
           <ActionIcon
             variant="default"
             size="lg"
+            className="tb-hit-40"
             aria-label="New project"
             onClick={onNewProject}
           >
@@ -46,6 +47,7 @@ export function SidebarHeader({ onNewProject, onClose }: SidebarHeaderProps) {
             variant="subtle"
             color="gray"
             size="lg"
+            className="tb-hit-40"
             aria-label="Close sidebar"
             onClick={onClose}
           >

@@ -60,7 +60,7 @@ export function ProjectNode({
         event.stopPropagation();
         onNewThread(project.id);
       }}
-      h={{ base: 36, md: 28 }}
+      h={{ base: 44, md: 40 }}
       style={{
         display: "flex",
         width: "100%",
@@ -164,7 +164,7 @@ export function ProjectNode({
             <UnstyledButton
               type="button"
               onClick={() => setShowAll(true)}
-              h={{ base: 36, md: 28 }}
+              h={{ base: 44, md: 40 }}
               style={{
                 display: "flex",
                 width: "100%",
