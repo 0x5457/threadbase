@@ -70,7 +70,7 @@ export function ProjectRow({
             flexShrink: 0,
             borderRadius: "var(--mantine-radius-md)",
             padding: "0 4px",
-            fontSize: 13,
+            fontSize: "var(--mantine-font-size-md)",
             color: "var(--mantine-color-yellow-6)",
           }}
           styles={{
@@ -88,7 +88,7 @@ export function ProjectRow({
       {project.activeThreads > 0 ? (
         <span
           style={{
-            fontSize: 13,
+            fontSize: "var(--mantine-font-size-md)",
             fontVariantNumeric: "tabular-nums",
             color: "var(--mantine-color-dimmed)",
           }}

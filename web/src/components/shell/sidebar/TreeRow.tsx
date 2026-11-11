@@ -41,7 +41,7 @@ export function TreeRow({
         borderRadius: "var(--mantine-radius-md)",
         paddingRight: 4,
         paddingLeft: 4 + depth * 16,
-        fontSize: 13,
+        fontSize: "var(--mantine-font-size-md)",
         cursor: "default",
         outline: "none",
         transition: rowTransition,

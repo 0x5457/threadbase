@@ -32,7 +32,7 @@ export function AgentMessageRow({ item }: { item: AgentMessageItem }) {
               alignItems: "center",
               gap: "0.5rem",
               padding: "var(--mantine-spacing-xs) var(--mantine-spacing-sm)",
-              fontSize: 13,
+              fontSize: "var(--mantine-font-size-md)",
               listStyle: "none",
               cursor: "pointer",
               color: "var(--mantine-color-dimmed)",

@@ -70,7 +70,7 @@ export function ProjectNode({
         paddingLeft: 24,
         paddingRight: 8,
         textAlign: "left",
-        fontSize: 13,
+        fontSize: "var(--mantine-font-size-md)",
         color: "var(--mantine-color-dimmed)",
       }}
       styles={{ root: rowHover }}
@@ -104,7 +104,7 @@ export function ProjectNode({
               style={{
                 margin: 0,
                 padding: "4px 8px",
-                fontSize: 13,
+                fontSize: "var(--mantine-font-size-md)",
                 color: "var(--mantine-color-dimmed)",
               }}
             >
@@ -173,7 +173,7 @@ export function ProjectNode({
                 paddingLeft: 24,
                 paddingRight: 8,
                 textAlign: "left",
-                fontSize: 13,
+                fontSize: "var(--mantine-font-size-md)",
                 color: "var(--mantine-color-dimmed)",
               }}
               styles={{ root: rowHover }}

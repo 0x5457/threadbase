@@ -81,7 +81,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
                 key={`${location.path}:${location.line ?? 0}`}
                 style={{
                   fontFamily: "var(--mantine-font-family-monospace)",
-                  fontSize: 13,
+                  fontSize: "var(--mantine-font-size-md)",
                   color: "var(--mantine-color-dimmed)",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -102,7 +102,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
                 alignItems: "center",
                 gap: "0.5rem",
                 padding: "var(--mantine-spacing-xs) var(--mantine-spacing-sm)",
-                fontSize: 13,
+                fontSize: "var(--mantine-font-size-md)",
                 listStyle: "none",
                 cursor: "pointer",
                 borderTop:
@@ -153,7 +153,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
                   margin: 0,
                   overflow: "auto",
                   fontFamily: "var(--mantine-font-family-monospace)",
-                  fontSize: 13,
+                  fontSize: "var(--mantine-font-size-md)",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-all",
                   borderTop:
@@ -170,7 +170,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
             style={{
               borderTop:
                 "1px solid var(--mantine-color-default-border)",
-              fontSize: 13,
+              fontSize: "var(--mantine-font-size-md)",
               color: "var(--mantine-color-dimmed)",
             }}
           >
@@ -194,7 +194,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
                   margin: 0,
                   overflow: "auto",
                   fontFamily: "var(--mantine-font-family-monospace)",
-                  fontSize: 13,
+                  fontSize: "var(--mantine-font-size-md)",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-all",
                   background: "var(--mantine-color-default)",
@@ -213,7 +213,7 @@ export function ToolCard({ call, onSelect, onComment }: ToolCardProps) {
                   margin: 0,
                   overflow: "auto",
                   fontFamily: "var(--mantine-font-family-monospace)",
-                  fontSize: 13,
+                  fontSize: "var(--mantine-font-size-md)",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-all",
                   background: "var(--mantine-color-default)",

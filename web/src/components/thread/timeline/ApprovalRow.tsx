@@ -99,7 +99,7 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
                   margin: 0,
                   overflowX: "auto",
                   fontFamily: "var(--mantine-font-family-monospace)",
-                  fontSize: 13,
+                  fontSize: "var(--mantine-font-size-md)",
                   background: "var(--mantine-color-default)",
                   borderRadius: "var(--mantine-radius-md)",
                 }}
@@ -128,7 +128,7 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
               </Text>
             ) : null}
             {approval.input ? (
-              <details style={{ fontSize: 13 }}>
+              <details style={{ fontSize: "var(--mantine-font-size-md)" }}>
                 <summary
                   style={{
                     cursor: "pointer",
@@ -147,7 +147,7 @@ export function ApprovalRow({ item, approval, onDecide }: ApprovalRowProps) {
                     margin: 0,
                     overflow: "auto",
                     fontFamily: "var(--mantine-font-family-monospace)",
-                    fontSize: 13,
+                    fontSize: "var(--mantine-font-size-md)",
                     whiteSpace: "pre-wrap",
                     wordBreak: "break-all",
                     background: "var(--mantine-color-default)",

@@ -15,7 +15,7 @@ export function SidebarGroupLabel({
         alignItems: "center",
         gap: 6,
         padding: "8px 8px 4px",
-        fontSize: 11,
+        fontSize: "var(--mantine-font-size-xs)",
         fontWeight: 500,
         textTransform: "uppercase",
         letterSpacing: "0.14em",

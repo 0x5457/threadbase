@@ -193,7 +193,7 @@ export function TitleBar({
             styles={{
               indicator: {
                 color: "var(--mantine-color-black)",
-                fontSize: 11,
+                fontSize: "var(--mantine-font-size-xs)",
                 fontWeight: 600,
                 paddingInline: 2,
               },

@@ -287,7 +287,7 @@ export function Composer({
         style={{
           borderTop: "1px solid var(--mantine-color-default-border)",
           background: "var(--mantine-color-default)",
-          fontSize: 12,
+          fontSize: "var(--mantine-font-size-sm)",
           color: "var(--mantine-color-dimmed)",
         }}
       >
@@ -350,7 +350,7 @@ export function Composer({
               gap="xs"
               mb="xs"
               style={{
-                fontSize: 13,
+                fontSize: "var(--mantine-font-size-md)",
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
                 color: "var(--mantine-color-dimmed)",
@@ -493,7 +493,7 @@ export function Composer({
                 aria-label="Model"
                 size="xs"
                 variant="unstyled"
-                style={{ maxWidth: 190, fontSize: 12 }}
+                style={{ maxWidth: 190, fontSize: "var(--mantine-font-size-sm)" }}
               />
             ) : null}
             {effortOption ? (
@@ -513,7 +513,7 @@ export function Composer({
                 aria-label="Effort"
                 size="xs"
                 variant="unstyled"
-                style={{ fontSize: 12 }}
+                style={{ fontSize: "var(--mantine-font-size-sm)" }}
               />
             ) : null}
             <Popover
@@ -809,7 +809,7 @@ function DraftBlockEditor({
         resize="none"
         style={{
           padding: "4px 0",
-          fontSize: 14,
+          fontSize: "var(--mantine-font-size-lg)",
           lineHeight: 1.65,
           minHeight: 80,
         }}

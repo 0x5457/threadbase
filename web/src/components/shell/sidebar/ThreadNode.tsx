@@ -159,7 +159,7 @@ export function ThreadNode({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            fontSize: 13,
+            fontSize: "var(--mantine-font-size-md)",
             color: "var(--mantine-color-dimmed)",
           }}
         >
@@ -222,7 +222,7 @@ export function ThreadNode({
                 paddingLeft: 24,
                 paddingRight: 8,
                 textAlign: "left",
-                fontSize: 13,
+                fontSize: "var(--mantine-font-size-md)",
                 color: "var(--mantine-color-dimmed)",
               }}
               styles={{ root: rowHover }}

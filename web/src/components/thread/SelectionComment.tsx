@@ -78,7 +78,7 @@ export function SelectionComment({
         justify="space-between"
         gap="xs"
         mt={4}
-        style={{ fontSize: 11, color: "var(--mantine-color-dimmed)" }}
+        style={{ fontSize: "var(--mantine-font-size-xs)", color: "var(--mantine-color-dimmed)" }}
       >
         <span>
           <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> pending comment

@@ -97,7 +97,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
           />
         ) : (
           <Box style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-            <Stack gap={0} style={{ fontFamily: "var(--mantine-font-family-monospace)", fontSize: 13, lineHeight: 1.6 }}>
+            <Stack gap={0} style={{ fontFamily: "var(--mantine-font-family-monospace)", fontSize: "var(--mantine-font-size-md)", lineHeight: 1.6 }}>
               {(file.data?.file.content ?? "").split("\n").map((text, index) => {
                 const number = index + 1;
                 return (

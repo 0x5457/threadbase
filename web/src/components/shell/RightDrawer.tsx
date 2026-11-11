@@ -345,7 +345,7 @@ function ReviewPanel({
                                 padding: "6px 8px",
                                 fontFamily:
                                   "var(--mantine-font-family-monospace)",
-                                fontSize: 13,
+                                fontSize: "var(--mantine-font-size-md)",
                                 lineHeight: 1.5,
                                 color: "var(--mantine-color-text)",
                               }}
@@ -380,7 +380,7 @@ function ReviewPanel({
                                   style={{
                                     fontFamily:
                                       "var(--mantine-font-family-monospace)",
-                                    fontSize: 13,
+                                    fontSize: "var(--mantine-font-size-md)",
                                     color: "var(--mantine-color-dimmed)",
                                     overflowWrap: "anywhere",
                                   }}
@@ -395,7 +395,7 @@ function ReviewPanel({
                               <summary
                                 style={{
                                   cursor: "pointer",
-                                  fontSize: 13,
+                                  fontSize: "var(--mantine-font-size-md)",
                                   color: "var(--mantine-color-dimmed)",
                                 }}
                               >
@@ -414,7 +414,7 @@ function ReviewPanel({
                                   padding: 8,
                                   fontFamily:
                                     "var(--mantine-font-family-monospace)",
-                                  fontSize: 13,
+                                  fontSize: "var(--mantine-font-size-md)",
                                   color: "var(--mantine-color-text)",
                                 }}
                               >

@@ -104,7 +104,7 @@ export function MessageRow({ message, onSelect, onComment }: MessageRowProps) {
             style={{
               whiteSpace: "pre-wrap",
               overflowWrap: "break-word",
-              fontSize: 13,
+              fontSize: "var(--mantine-font-size-md)",
               lineHeight: 1.6,
               borderRadius: "var(--mantine-radius-md)",
               ...(message.role === "user"

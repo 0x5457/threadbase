@@ -438,7 +438,7 @@ export function ChangesPanel({
             <Box
               style={{
                 fontFamily: "var(--mantine-font-family-monospace)",
-                fontSize: 13,
+                fontSize: "var(--mantine-font-size-md)",
               }}
             >
               {diff.data?.hunks.map((hunk) => (
@@ -456,7 +456,7 @@ export function ChangesPanel({
                       borderBottom:
                         "1px solid var(--mantine-color-default-border)",
                       background: "var(--mantine-color-default)",
-                      fontSize: 11,
+                      fontSize: "var(--mantine-font-size-xs)",
                       color: "var(--mantine-color-dimmed)",
                     }}
                   >

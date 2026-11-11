@@ -90,7 +90,7 @@ export function TerminalPanel({ threadId }: { threadId: string }) {
                 p="xs"
                 style={{
                   fontFamily: "var(--mantine-font-family-monospace)",
-                  fontSize: 11,
+                  fontSize: "var(--mantine-font-size-xs)",
                   color: "var(--mantine-color-dimmed)",
                   whiteSpace: "pre-wrap",
                   overflowWrap: "break-word",
@@ -105,7 +105,7 @@ export function TerminalPanel({ threadId }: { threadId: string }) {
             p="xs"
             style={{
               fontFamily: "var(--mantine-font-family-monospace)",
-              fontSize: 11,
+              fontSize: "var(--mantine-font-size-xs)",
               maxHeight: 224,
               overflow: "auto",
               whiteSpace: "pre-wrap",
