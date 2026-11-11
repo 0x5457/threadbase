@@ -20,7 +20,6 @@ threadbase-draft.workspace = true
 threadbase-shared.workspace = true
 threadbase-workspace.workspace = true
 anyhow.workspace = true
-argon2.workspace = true
 axum.workspace = true
 bytes.workspace = true
 directories = "6.0"

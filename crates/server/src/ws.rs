@@ -192,12 +192,12 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
 }
 
 async fn thread_state(state: &AppState, thread_id: &ThreadId) -> Option<ServerWsMessage> {
-    let projection = state
+    let snapshot = state
         .state_store
-        .projection(thread_id.as_str())
+        .snapshot_state(thread_id.as_str())
         .await
         .ok()?;
-    Some(ServerWsMessage::ThreadState { state: projection })
+    Some(ServerWsMessage::ThreadState { state: snapshot })
 }
 
 async fn send_json(

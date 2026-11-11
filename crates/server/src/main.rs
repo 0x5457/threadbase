@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::process::ExitCode;
 use threadbase_server::config::Config;
 use threadbase_server::state::AppState;
-use threadbase_server::{db, doctor, routes, service, upgrade};
+use threadbase_server::{db, doctor, install, routes, service, upgrade};
 use tracing_subscriber::EnvFilter;
 
 const HELP: &str = "\
@@ -12,6 +12,8 @@ Usage:
   threadbase [serve]           Start the local server (default)
   threadbase doctor [--json]   Check the environment and agent adapters
   threadbase upgrade [--check] Download and verify the latest release
+  threadbase install [options]
+                               One-command systemd deployment plus tailscale serve
   threadbase service install [--print]
                                Write a launchd/systemd user unit
   threadbase --version         Print the version
@@ -21,6 +23,9 @@ Environment:
   THREADBASE_DATA_DIR          Data directory (default: platform data dir)
   THREADBASE_BIND              Loopback address (default: 127.0.0.1:7777)
   THREADBASE_PUBLIC_ORIGIN     Public HTTPS origin used in share links
+  THREADBASE_TAILSCALE_ADMIN   Comma-separated Tailscale logins that are admins
+  THREADBASE_DEV_IDENTITY      Identity accepted from direct local connections
+                               (development only; ignored behind tailscale serve)
   THREADBASE_LOG_JSON          Set to 1 for JSON logs
   THREADBASE_ACP_COMMAND       Override the ACP adapter command (development)
   THREADBASE_RELEASE_BASE      Override the release download base URL
@@ -63,6 +68,11 @@ async fn run() -> anyhow::Result<()> {
             upgrade::run(args.any(|arg| arg == "--check")).await?;
             return Ok(());
         }
+        Some("install") => {
+            let options = install::parse_args(args)?;
+            install::run(options).await?;
+            return Ok(());
+        }
         Some("service") => {
             if args.next().as_deref() != Some("install") {
                 anyhow::bail!("usage: threadbase service install [--print]");
@@ -101,7 +111,12 @@ async fn run() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
     println!("Data directory: {}", config.data_dir.display());
-    println!("First run: open {local} to create the local admin account.");
+    println!("Access: run `tailscale serve --bg 443 {local}` and open the tailnet URL.");
+    if config.dev_identity.is_some() {
+        println!(
+            "Warning: THREADBASE_DEV_IDENTITY is set; direct local requests bypass Tailscale identity."
+        );
+    }
 
     axum::serve(
         listener,

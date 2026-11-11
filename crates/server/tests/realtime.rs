@@ -21,7 +21,6 @@ use yrs::updates::encoder::Encode;
 struct Server {
     addr: String,
     state: AppState,
-    cookie: String,
     user_id: String,
     project_id: String,
     thread_id: String,
@@ -35,6 +34,8 @@ async fn start() -> Server {
         db_path: dir.path().join("threadbase.db"),
         bind: "127.0.0.1:0".parse().unwrap(),
         public_origin: None,
+        tailscale_admins: Vec::new(),
+        dev_identity: None,
         log_json: false,
     };
     let pool = db::connect_memory().await.unwrap();
@@ -50,33 +51,16 @@ async fn start() -> Server {
         .await
         .unwrap();
     });
-    let base = format!("http://{addr}");
-    let client = reqwest::Client::new();
-    let response = client
-        .post(format!("{base}/api/auth/setup"))
-        .header("origin", base.clone())
-        .header("x-requested-with", "threadbase")
-        .json(&json!({
-            "username": "ada",
-            "password": "correct horse battery",
-            "displayName": "Ada"
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert!(response.status().is_success());
-    let cookie = response
-        .headers()
-        .get("set-cookie")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned();
-    let body: Value = response.json().await.unwrap();
-    let user_id = body["user"]["id"].as_str().unwrap().to_owned();
+    let user = threadbase_server::auth::ensure_tailscale_user(
+        &state.pool,
+        "ada@example.com",
+        Some("Ada"),
+        None,
+        &[],
+    )
+    .await
+    .unwrap();
+    let user_id = user.id.to_string();
     let project_id = ulid::Ulid::new().to_string();
     let thread_id = ulid::Ulid::new().to_string();
     let now = now_ms();
@@ -107,7 +91,6 @@ async fn start() -> Server {
     Server {
         addr: addr.to_string(),
         state,
-        cookie,
         user_id,
         project_id,
         thread_id,
@@ -124,7 +107,7 @@ async fn connect(
         .unwrap();
     request
         .headers_mut()
-        .insert("cookie", server.cookie.parse().unwrap());
+        .insert("tailscale-user-login", "ada@example.com".parse().unwrap());
     connect_async(request).await.unwrap().0
 }
 

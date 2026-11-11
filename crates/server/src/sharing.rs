@@ -543,16 +543,14 @@ mod tests {
             .unwrap();
         let actor = CurrentUser {
             user: owner,
-            method: "session",
+            method: "tailscale",
         };
-        let target = crate::auth::create_local_user(
+        let target = crate::auth::ensure_tailscale_user(
             &pool,
-            &threadbase_shared::api::CreateUserRequest {
-                username: "invitee".into(),
-                password: "correct horse battery".into(),
-                display_name: "Invitee".into(),
-                is_admin: false,
-            },
+            "invitee@example.com",
+            Some("Invitee"),
+            None,
+            &[],
         )
         .await
         .unwrap();
@@ -571,7 +569,7 @@ mod tests {
         assert!(!invite.token.is_empty());
         let invitee = CurrentUser {
             user: target.clone(),
-            method: "session",
+            method: "tailscale",
         };
         let member = accept_invite(&pool, &invite.token, &invitee).await.unwrap();
         assert_eq!(member.user.id, target.id);

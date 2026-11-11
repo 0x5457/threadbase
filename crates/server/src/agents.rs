@@ -309,6 +309,20 @@ impl AgentManager {
         text: &str,
         delivery: Option<DeliveryMode>,
     ) -> Result<SendMessageResponse, ServerError> {
+        let author = user_brief(user);
+        self.send_with_authors(thread_id, user, text, delivery, &[author])
+            .await
+    }
+
+    /// Send a message preserving the full list of draft-block authors.
+    pub async fn send_with_authors(
+        &self,
+        thread_id: &str,
+        user: &CurrentUser,
+        text: &str,
+        delivery: Option<DeliveryMode>,
+        authors: &[UserBrief],
+    ) -> Result<SendMessageResponse, ServerError> {
         self.ensure_started(thread_id).await?;
         let session = self.session(thread_id).await?;
         let row = threads::load_row(&self.inner.pool, thread_id).await?;
@@ -326,8 +340,15 @@ impl AgentManager {
         );
         match action {
             SendAction::Queue => {
-                let position =
-                    enqueue(&self.inner.pool, &self.inner.state, thread_id, user, text).await?;
+                let position = enqueue(
+                    &self.inner.pool,
+                    &self.inner.state,
+                    thread_id,
+                    user,
+                    text,
+                    authors,
+                )
+                .await?;
                 let _ =
                     crate::queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
                 Ok(SendMessageResponse {
@@ -346,7 +367,8 @@ impl AgentManager {
                     SteeringOutcome::Injected | SteeringOutcome::StartedNewTurn => {
                         let author = user_brief(user);
                         let turn_id = self.inner.current_turn(thread_id).await.unwrap_or_default();
-                        let message = user_message(thread_id, &author, text, Some(turn_id.clone()));
+                        let message =
+                            user_message(thread_id, &author, text, Some(turn_id.clone()), authors);
                         self.inner
                             .events
                             .append(
@@ -368,9 +390,15 @@ impl AgentManager {
                         })
                     }
                     SteeringOutcome::PromptRequired => {
-                        let position =
-                            enqueue(&self.inner.pool, &self.inner.state, thread_id, user, text)
-                                .await?;
+                        let position = enqueue(
+                            &self.inner.pool,
+                            &self.inner.state,
+                            thread_id,
+                            user,
+                            text,
+                            authors,
+                        )
+                        .await?;
                         Ok(SendMessageResponse {
                             delivery: Delivery::Queued,
                             queue_position: Some(position),
@@ -397,12 +425,20 @@ impl AgentManager {
                     user,
                     text,
                     Delivery::StoppedAndSent,
+                    authors,
                 )
                 .await
             }
             SendAction::Prompt => {
-                self.prompt(&mut session, thread_id, user, text, Delivery::Injected)
-                    .await
+                self.prompt(
+                    &mut session,
+                    thread_id,
+                    user,
+                    text,
+                    Delivery::Injected,
+                    authors,
+                )
+                .await
             }
         }
     }
@@ -414,6 +450,7 @@ impl AgentManager {
         user: &CurrentUser,
         text: &str,
         delivery: Delivery,
+        authors: &[UserBrief],
     ) -> Result<SendMessageResponse, ServerError> {
         auto_title(&self.inner, thread_id, text).await;
         if let Some(worktree) = threads::load_row(&self.inner.pool, thread_id)
@@ -447,6 +484,7 @@ impl AgentManager {
                     turn_id: turn_id.clone(),
                     message_id: message_id.clone(),
                     author: author.clone(),
+                    authors: authors.to_vec(),
                     prompt: text.to_owned(),
                 },
                 EventMeta {
@@ -454,6 +492,12 @@ impl AgentManager {
                     ..Default::default()
                 },
             )
+            .await?;
+        sqlx::query("UPDATE threads SET current_turn_id = ?, updated_at = ? WHERE id = ?")
+            .bind(turn_id.as_str())
+            .bind(now_ms())
+            .bind(thread_id)
+            .execute(&self.inner.pool)
             .await?;
         {
             let mut run = session.run.lock().await;
@@ -637,20 +681,14 @@ impl Inner {
     }
 
     async fn current_turn(&self, thread_id: &str) -> Option<TurnId> {
-        sqlx::query_scalar(
-            "SELECT payload_json FROM events WHERE thread_id = ? AND kind = 'turn_started'
-             ORDER BY seq DESC LIMIT 1",
-        )
-        .bind(thread_id)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|json: String| serde_json::from_str::<ThreadEvent>(&json).ok())
-        .and_then(|event| match event {
-            ThreadEvent::TurnStarted { turn_id, .. } => Some(turn_id),
-            _ => None,
-        })
+        sqlx::query_scalar::<_, Option<String>>("SELECT current_turn_id FROM threads WHERE id = ?")
+            .bind(thread_id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
+            .map(TurnId::from)
     }
 }
 
@@ -918,6 +956,13 @@ impl Pump {
                     )
                     .await?;
                 }
+                sqlx::query(
+                    "UPDATE threads SET current_turn_id = NULL, updated_at = ? WHERE id = ?",
+                )
+                .bind(now_ms())
+                .bind(&self.thread_id)
+                .execute(&self.inner.pool)
+                .await?;
                 self.set_thread_status(ThreadAction::TurnEnded).await?;
                 let _ = self.queue_tx.send(self.thread_id.clone());
                 let _ = author;
@@ -931,6 +976,13 @@ impl Pump {
                     EventMeta::default(),
                 )
                 .await?;
+                sqlx::query(
+                    "UPDATE threads SET current_turn_id = NULL, updated_at = ? WHERE id = ?",
+                )
+                .bind(now_ms())
+                .bind(&self.thread_id)
+                .execute(&self.inner.pool)
+                .await?;
                 self.set_thread_status(ThreadAction::TurnError).await?;
             }
             RawAgentEvent::ProcessExited { code, signal } => {
@@ -942,6 +994,13 @@ impl Pump {
                     },
                     EventMeta::default(),
                 )
+                .await?;
+                sqlx::query(
+                    "UPDATE threads SET current_turn_id = NULL, updated_at = ? WHERE id = ?",
+                )
+                .bind(now_ms())
+                .bind(&self.thread_id)
+                .execute(&self.inner.pool)
                 .await?;
                 self.set_thread_status(ThreadAction::ProcessExited).await?;
             }
@@ -1064,14 +1123,14 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
     if thread_status != "running" {
         session.turn = None;
     }
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT id, author_id, text FROM queued_inputs WHERE thread_id = ? AND status = 'queued'
+    let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, author_id, text, authors_json FROM queued_inputs WHERE thread_id = ? AND status = 'queued'
          AND superseded = 0 ORDER BY position ASC LIMIT 1",
     )
     .bind(thread_id)
     .fetch_optional(&inner.pool)
     .await?;
-    let Some((id, author_id, text)) = row else {
+    let Some((id, author_id, text, authors_json)) = row else {
         return Ok(());
     };
     inner.state.dispatch_queue_item(thread_id, &id).await?;
@@ -1085,6 +1144,10 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
             avatar_url: None,
             color: user_color(&author_id).to_owned(),
         });
+    let stored_authors: Vec<UserBrief> = authors_json
+        .and_then(|json| serde_json::from_str::<Vec<UserBrief>>(&json).ok())
+        .filter(|authors| !authors.is_empty())
+        .unwrap_or_else(|| vec![author.clone()]);
     auto_title(inner, thread_id, &text).await;
     let turn_id = TurnId::new();
     let message_id = MessageId::new();
@@ -1097,6 +1160,7 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
                 turn_id: turn_id.clone(),
                 message_id,
                 author: author.clone(),
+                authors: stored_authors,
                 prompt: text.clone(),
             },
             EventMeta {
@@ -1104,6 +1168,12 @@ async fn process_queue(inner: &Arc<Inner>, thread_id: &str) -> Result<(), Server
                 ..Default::default()
             },
         )
+        .await?;
+    sqlx::query("UPDATE threads SET current_turn_id = ?, updated_at = ? WHERE id = ?")
+        .bind(turn_id.as_str())
+        .bind(now_ms())
+        .bind(thread_id)
+        .execute(&inner.pool)
         .await?;
     {
         let mut run = session.run.lock().await;
@@ -1147,6 +1217,7 @@ async fn enqueue(
     thread_id: &str,
     user: &CurrentUser,
     text: &str,
+    authors: &[UserBrief],
 ) -> Result<u32, ServerError> {
     let position: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_inputs WHERE thread_id = ?",
@@ -1155,15 +1226,17 @@ async fn enqueue(
     .fetch_one(pool)
     .await?;
     let id = Ulid::new().to_string();
+    let authors_json = serde_json::to_string(authors).unwrap_or_else(|_| "[]".to_owned());
     state
-        .enqueue(
-            &id,
+        .enqueue(crate::state::EnqueueInput {
+            id: &id,
             thread_id,
-            user.user.id.as_str(),
+            author_id: user.user.id.as_str(),
             text,
+            authors_json: Some(authors_json.as_str()),
             position,
-            now_ms(),
-        )
+            created_at: now_ms(),
+        })
         .await?;
     Ok(u32::try_from(position).unwrap_or(0))
 }
@@ -1231,7 +1304,7 @@ async fn auto_title(inner: &Arc<Inner>, thread_id: &str, text: &str) {
         .await;
 }
 
-fn user_brief(user: &CurrentUser) -> UserBrief {
+pub(crate) fn user_brief(user: &CurrentUser) -> UserBrief {
     user_dto_brief(&user.user)
 }
 
@@ -1245,11 +1318,36 @@ fn user_dto_brief(user: &threadbase_shared::UserDto) -> UserBrief {
     }
 }
 
+/// Resolve draft-block author ids to display briefs, preserving order and
+/// de-duplicating by user id.
+pub(crate) async fn briefs_by_ids(pool: &SqlitePool, ids: &[String]) -> Vec<UserBrief> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for id in ids {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let brief = match crate::auth::load_user_by_id(pool, id).await {
+            Ok(Some(user)) => user_dto_brief(&user),
+            _ => UserBrief {
+                id: id.clone().into(),
+                username: "member".into(),
+                display_name: "Member".into(),
+                avatar_url: None,
+                color: user_color(id).to_owned(),
+            },
+        };
+        out.push(brief);
+    }
+    out
+}
+
 fn user_message(
     thread_id: &str,
     author: &UserBrief,
     text: &str,
     turn_id: Option<TurnId>,
+    authors: &[UserBrief],
 ) -> MessageDto {
     MessageDto {
         id: MessageId::new(),
@@ -1257,7 +1355,7 @@ fn user_message(
         turn_id,
         role: MessageRole::User,
         author: Some(author.clone()),
-        authors: vec![author.clone()],
+        authors: authors.to_vec(),
         text: text.to_owned(),
         model: None,
         streaming: false,

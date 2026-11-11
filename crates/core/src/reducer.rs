@@ -61,6 +61,7 @@ impl TimelineState {
                 turn_id,
                 message_id,
                 author,
+                authors,
                 prompt,
             } => {
                 self.current_turn = Some(turn_id.clone());
@@ -75,7 +76,11 @@ impl TimelineState {
                         turn_id: Some(turn_id.clone()),
                         role: MessageRole::User,
                         author: Some(author.clone()),
-                        authors: vec![author.clone()],
+                        authors: if authors.is_empty() {
+                            vec![author.clone()]
+                        } else {
+                            authors.clone()
+                        },
                         text: prompt.clone(),
                         model: None,
                         streaming: false,
@@ -374,6 +379,48 @@ mod tests {
     }
 
     #[test]
+    fn turn_started_keeps_multiple_authors() {
+        let mut state = TimelineState::default();
+        let bob = UserBrief {
+            id: UserId::from("u2"),
+            username: "bob".to_owned(),
+            display_name: "Bob".to_owned(),
+            avatar_url: None,
+            color: "#0f0".to_owned(),
+        };
+        state.apply(&envelope(
+            1,
+            ThreadEvent::TurnStarted {
+                turn_id: TurnId::from("turn1"),
+                message_id: MessageId::from("m0"),
+                author: user(),
+                authors: vec![user(), bob],
+                prompt: "shared draft".to_owned(),
+            },
+        ));
+        assert_eq!(state.messages.len(), 1);
+        assert_eq!(state.messages[0].authors.len(), 2);
+        assert_eq!(state.messages[0].authors[1].display_name, "Bob");
+    }
+
+    #[test]
+    fn turn_started_falls_back_to_primary_author() {
+        let mut state = TimelineState::default();
+        state.apply(&envelope(
+            1,
+            ThreadEvent::TurnStarted {
+                turn_id: TurnId::from("turn1"),
+                message_id: MessageId::from("m0"),
+                author: user(),
+                authors: vec![],
+                prompt: "hello".to_owned(),
+            },
+        ));
+        assert_eq!(state.messages[0].authors.len(), 1);
+        assert_eq!(state.messages[0].authors[0].display_name, "Ada");
+    }
+
+    #[test]
     fn deltas_accumulate_and_complete() {
         let mut state = TimelineState::default();
         state.apply(&envelope(
@@ -382,6 +429,7 @@ mod tests {
                 turn_id: TurnId::from("turn1"),
                 message_id: MessageId::from("m0"),
                 author: user(),
+                authors: vec![user()],
                 prompt: "fix it".to_owned(),
             },
         ));

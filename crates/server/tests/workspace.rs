@@ -9,7 +9,7 @@ use threadbase_server::events::EventStore;
 use threadbase_server::{auth, comments, db, diff, projects, threads};
 use threadbase_shared::api::{
     CreateCommentRequest, CreateProjectRequest, CreateThreadRequest, ForkThreadRequest,
-    SetupRequest, UpdateThreadRequest,
+    UpdateThreadRequest,
 };
 use threadbase_shared::{
     now_ms, BaselineDto, BaselineKind, CommentAnchor, ErrorCode, Role, ThreadStatus,
@@ -33,19 +33,12 @@ async fn fixture() -> Fixture {
     init_repo(repo.path()).await;
     let data = TempDir::new().unwrap();
     let pool = db::connect_memory().await.unwrap();
-    let user = auth::setup_admin(
-        &pool,
-        &SetupRequest {
-            username: "ada".into(),
-            password: "correct horse battery".into(),
-            display_name: "Ada".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let user = auth::ensure_tailscale_user(&pool, "ada@example.com", Some("Ada"), None, &[])
+        .await
+        .unwrap();
     let current = CurrentUser {
         user: user.clone(),
-        method: "session",
+        method: "tailscale",
     };
     Fixture {
         repo,
@@ -292,6 +285,7 @@ async fn diff_baselines_seen_and_merge_back() {
         &fixture.current,
         &["README.md".into()],
         true,
+        &base,
     )
     .await
     .unwrap();
@@ -380,6 +374,70 @@ async fn diff_baselines_seen_and_merge_back() {
     if let Ok(result) = result {
         assert!(result.committed);
     }
+}
+
+#[tokio::test]
+async fn seen_state_is_scoped_to_baseline() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    let worktree = thread.worktree_path.as_deref().unwrap();
+    tokio::fs::write(Path::new(worktree).join("README.md"), "one\nTWO\n")
+        .await
+        .unwrap();
+
+    let row = threads::load_row(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let base = BaselineDto {
+        kind: BaselineKind::BaseBranch,
+        commit: None,
+    };
+    let last_commit = BaselineDto {
+        kind: BaselineKind::LastCommit,
+        commit: None,
+    };
+
+    diff::mark_seen(
+        &fixture.pool,
+        &row,
+        &fixture.current,
+        &["README.md".into()],
+        true,
+        &base,
+    )
+    .await
+    .unwrap();
+    let base_stats = diff::stats(&fixture.pool, &row, &fixture.current)
+        .await
+        .unwrap();
+    assert_eq!(base_stats.seen, 1);
+
+    // Switching baseline must not inherit the base-branch Seen mark.
+    let last_commit_changes = diff::list(&fixture.pool, &row, &fixture.current, &last_commit)
+        .await
+        .unwrap();
+    assert_eq!(last_commit_changes.stats.seen, 0);
+
+    // Seen on Last Commit is independent from the base branch.
+    diff::mark_seen(
+        &fixture.pool,
+        &row,
+        &fixture.current,
+        &["README.md".into()],
+        true,
+        &last_commit,
+    )
+    .await
+    .unwrap();
+    let last_commit_changes = diff::list(&fixture.pool, &row, &fixture.current, &last_commit)
+        .await
+        .unwrap();
+    assert_eq!(last_commit_changes.stats.seen, 1);
+    let base_changes = diff::list(&fixture.pool, &row, &fixture.current, &base)
+        .await
+        .unwrap();
+    assert_eq!(base_changes.stats.seen, 1, "base-branch Seen remains");
 }
 
 #[tokio::test]

@@ -32,9 +32,9 @@ impl DeliveryContext {
 
 /// Resolve a requested delivery mode against the current agent capabilities.
 ///
-/// The default when a turn is running mirrors the documented priority:
-/// steering, then stop-and-send, then an explicit queue. `Queue` is never
-/// selected implicitly; it is only used when the caller asks for it.
+/// The default priority is steering, then queue. Stopping a running turn is
+/// destructive (it cancels pending approvals/elicitations), so it is only used
+/// when the caller explicitly asks for it.
 #[must_use]
 pub fn resolve_delivery(mode: DeliveryMode, ctx: DeliveryContext) -> SendAction {
     match mode {
@@ -43,7 +43,7 @@ pub fn resolve_delivery(mode: DeliveryMode, ctx: DeliveryContext) -> SendAction 
             if ctx.turn_running && ctx.steering_supported {
                 SendAction::Inject
             } else if ctx.turn_running {
-                SendAction::StopAndSend
+                SendAction::Queue
             } else {
                 SendAction::Prompt
             }
@@ -61,7 +61,7 @@ pub fn resolve_delivery(mode: DeliveryMode, ctx: DeliveryContext) -> SendAction 
             } else if ctx.steering_supported {
                 SendAction::Inject
             } else {
-                SendAction::StopAndSend
+                SendAction::Queue
             }
         }
     }
@@ -92,14 +92,23 @@ mod tests {
     }
 
     #[test]
-    fn running_auto_without_steering_stops_and_sends() {
+    fn running_auto_without_steering_queues() {
+        let ctx = DeliveryContext {
+            turn_running: true,
+            steering_supported: false,
+        };
+        assert_eq!(resolve_delivery(DeliveryMode::Auto, ctx), SendAction::Queue);
+    }
+
+    #[test]
+    fn explicit_inject_without_steering_falls_back_to_queue() {
         let ctx = DeliveryContext {
             turn_running: true,
             steering_supported: false,
         };
         assert_eq!(
-            resolve_delivery(DeliveryMode::Auto, ctx),
-            SendAction::StopAndSend
+            resolve_delivery(DeliveryMode::Inject, ctx),
+            SendAction::Queue
         );
     }
 

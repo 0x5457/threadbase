@@ -117,7 +117,7 @@ pub async fn list(
             seen: false,
         });
     }
-    let seen_map = seen_hashes(pool, row, user).await?;
+    let seen_map = seen_hashes(pool, row, user, &resolved.reference).await?;
     let mut seen_count = 0;
     for file in files.values_mut() {
         let current = current_hash(&worktree, &file.path).await;
@@ -128,11 +128,12 @@ pub async fn list(
             }
             Some(_) => {
                 sqlx::query(
-                    "DELETE FROM seen_files WHERE thread_id = ? AND user_id = ? AND path = ?",
+                    "DELETE FROM seen_files WHERE thread_id = ? AND user_id = ? AND path = ? AND baseline = ?",
                 )
                 .bind(&row.id)
                 .bind(user.user.id.as_str())
                 .bind(&file.path)
+                .bind(&resolved.reference)
                 .execute(pool)
                 .await?;
             }
@@ -296,8 +297,10 @@ pub async fn mark_seen(
     user: &CurrentUser,
     paths: &[String],
     seen: bool,
+    baseline: &BaselineDto,
 ) -> Result<(), ServerError> {
     let worktree = worktree(row)?;
+    let resolved = resolve_baseline(&worktree, row, baseline).await?;
     for path in paths {
         ensure_within(&worktree, Path::new(path)).map_err(|_| {
             ServerError(ApiError::new(
@@ -308,23 +311,25 @@ pub async fn mark_seen(
         if seen {
             let hash = current_hash(&worktree, path).await;
             sqlx::query(
-                "INSERT INTO seen_files(thread_id, user_id, path, content_hash, seen_at)
-                 VALUES(?, ?, ?, ?, ?)
-                 ON CONFLICT(thread_id, user_id, path) DO UPDATE SET
+                "INSERT INTO seen_files(thread_id, user_id, path, content_hash, baseline, seen_at)
+                 VALUES(?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(thread_id, user_id, path, baseline) DO UPDATE SET
                     content_hash = excluded.content_hash, seen_at = excluded.seen_at",
             )
             .bind(&row.id)
             .bind(user.user.id.as_str())
             .bind(path)
             .bind(hash)
+            .bind(&resolved.reference)
             .bind(now_ms())
             .execute(pool)
             .await?;
         } else {
-            sqlx::query("DELETE FROM seen_files WHERE thread_id = ? AND user_id = ? AND path = ?")
+            sqlx::query("DELETE FROM seen_files WHERE thread_id = ? AND user_id = ? AND path = ? AND baseline = ?")
                 .bind(&row.id)
                 .bind(user.user.id.as_str())
                 .bind(path)
+                .bind(&resolved.reference)
                 .execute(pool)
                 .await?;
         }
@@ -452,12 +457,14 @@ async fn seen_hashes(
     pool: &SqlitePool,
     row: &ThreadRow,
     user: &CurrentUser,
+    baseline: &str,
 ) -> Result<BTreeMap<String, String>, ServerError> {
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT path, content_hash FROM seen_files WHERE thread_id = ? AND user_id = ?",
+        "SELECT path, content_hash FROM seen_files WHERE thread_id = ? AND user_id = ? AND baseline = ?",
     )
     .bind(&row.id)
     .bind(user.user.id.as_str())
+    .bind(baseline)
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().collect())

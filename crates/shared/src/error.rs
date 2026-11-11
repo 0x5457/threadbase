@@ -14,7 +14,6 @@ pub enum ErrorCode {
     Validation,
     Conflict,
     AlreadySent,
-    SetupRequired,
     RateLimited,
     Csrf,
     PathOutsideWorkspace,
@@ -27,7 +26,7 @@ impl ErrorCode {
     #[must_use]
     pub fn http_status(self) -> u16 {
         match self {
-            Self::Unauthorized | Self::SetupRequired => 401,
+            Self::Unauthorized => 401,
             Self::Forbidden | Self::Csrf => 403,
             Self::NotFound => 404,
             Self::Conflict | Self::AlreadySent => 409,
@@ -46,7 +45,6 @@ impl ErrorCode {
             Self::Validation => "validation",
             Self::Conflict => "conflict",
             Self::AlreadySent => "already_sent",
-            Self::SetupRequired => "setup_required",
             Self::RateLimited => "rate_limited",
             Self::Csrf => "csrf",
             Self::PathOutsideWorkspace => "path_outside_workspace",

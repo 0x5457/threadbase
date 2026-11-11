@@ -1,24 +1,22 @@
-//! Local password auth, opaque database-backed sessions and Tailscale identity.
+//! Tailscale identity authentication.
+//!
+//! Every request must carry a Tailscale identity forwarded by
+//! `tailscale serve` from a loopback peer. The service never binds a public
+//! interface and never stores passwords.
 
 use crate::error::ServerError;
 use crate::state::AppState;
-use argon2::password_hash::phc::PasswordHash;
-use argon2::password_hash::{PasswordHasher, PasswordVerifier};
-use argon2::Argon2;
 use axum::extract::{ConnectInfo, FromRequestParts};
-use axum::http::header::COOKIE;
 use axum::http::request::Parts;
-use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 use std::net::SocketAddr;
-use threadbase_shared::api::{LoginRequest, SetupRequest, UpdateUserRequest};
-use threadbase_shared::{
-    now_ms, ApiError, AuthMeDto, AuthStatusDto, AuthStatusResponse, ErrorCode, UserDto,
-};
+use threadbase_shared::api::UpdateUserRequest;
+use threadbase_shared::{now_ms, ApiError, AuthMeDto, AuthStatusDto, AuthStatusResponse, UserDto};
 use ulid::Ulid;
 
-pub const SESSION_COOKIE: &str = "threadbase_session";
-const SESSION_DAYS: i64 = 30;
+/// Methods reported by `/api/auth/me`.
+pub const METHOD_TAILSCALE: &str = "tailscale";
+pub const METHOD_DEV: &str = "dev";
 
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
@@ -51,30 +49,49 @@ impl FromRequestParts<AppState> for CurrentUser {
         if let Some(user) = parts.extensions.get::<CurrentUser>() {
             return Ok(user.clone());
         }
-        if let Some(token) = cookie_value(&parts.headers, SESSION_COOKIE) {
-            if let Some(user) = session_user(&state.pool, &token).await? {
-                return Ok(CurrentUser {
-                    user,
-                    method: "session",
-                });
-            }
-        }
-        if let Some(identity) = tailscale_identity(parts) {
-            if is_loopback_peer(parts) {
-                let user = provision_tailscale_user(
+
+        let loopback = is_loopback_peer(parts);
+
+        if loopback {
+            if let Some(identity) = tailscale_identity(parts) {
+                let user = ensure_tailscale_user(
                     &state.pool,
                     &identity.login,
                     identity.display_name.as_deref(),
                     identity.avatar_url.as_deref(),
+                    &state.config.tailscale_admins,
                 )
                 .await?;
                 return Ok(CurrentUser {
                     user,
-                    method: "tailscale",
+                    method: METHOD_TAILSCALE,
                 });
             }
         }
-        Err(ServerError(ApiError::unauthorized("sign in to continue")))
+
+        // Local development escape hatch: an explicitly configured identity is
+        // accepted only from a direct loopback connection with no proxy
+        // markers, so `tailscale serve` traffic can never reach this branch.
+        if let Some(dev_login) = state.config.dev_identity.as_deref() {
+            if loopback && is_direct_local_request(parts) {
+                let user = ensure_tailscale_user(
+                    &state.pool,
+                    dev_login,
+                    Some(dev_login),
+                    None,
+                    &state.config.tailscale_admins,
+                )
+                .await?;
+                return Ok(CurrentUser {
+                    user,
+                    method: METHOD_DEV,
+                });
+            }
+        }
+
+        Err(ServerError(ApiError::unauthorized(
+            "open this workspace through Tailscale",
+        )))
     }
 }
 
@@ -125,6 +142,21 @@ fn is_loopback_peer(parts: &Parts) -> bool {
         .is_some_and(|info| info.0.ip().is_loopback())
 }
 
+/// True when the connection bypassed any local reverse proxy.
+fn is_direct_local_request(parts: &Parts) -> bool {
+    const PROXY_HEADERS: [&str; 5] = [
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "forwarded",
+        "tailscale-headers-info",
+    ];
+    !has_tailscale_identity(&parts.headers)
+        && !PROXY_HEADERS
+            .iter()
+            .any(|name| parts.headers.contains_key(*name))
+}
+
 pub fn client_ip(parts: &Parts) -> String {
     parts
         .extensions
@@ -163,211 +195,122 @@ impl UserRow {
 const USER_COLUMNS: &str =
     "u.id, u.username, u.display_name, u.avatar_url, u.is_admin, u.tailscale_login, u.hidden_presence, u.created_at";
 
-pub async fn needs_setup(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE password_hash IS NOT NULL")
-            .fetch_one(pool)
-            .await?;
-    Ok(count == 0)
-}
-
 pub async fn auth_status(
     pool: &SqlitePool,
     tailscale_header: bool,
+    dev_identity: bool,
 ) -> Result<AuthStatusResponse, ServerError> {
     Ok(AuthStatusResponse {
         status: AuthStatusDto {
-            needs_setup: needs_setup(pool).await?,
             tailscale_header,
-            local_login: true,
+            dev_identity,
+            needs_admin: needs_admin(pool).await?,
         },
     })
+}
+
+/// True when no Tailscale identity has been promoted to administrator yet.
+pub async fn needs_admin(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let admins: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users WHERE is_admin = 1 AND tailscale_login IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(admins == 0)
 }
 
 pub async fn me(pool: &SqlitePool, user: &CurrentUser) -> Result<AuthMeDto, ServerError> {
     Ok(AuthMeDto {
         user: user.user.clone(),
         auth_method: user.method.to_owned(),
-        tailscale_available: user.method == "tailscale",
-        needs_setup: needs_setup(pool).await?,
+        needs_admin: needs_admin(pool).await?,
     })
 }
 
-pub async fn setup_admin(
+/// Creates or refreshes the user for a Tailscale login and applies the admin
+/// bootstrap rule.
+pub async fn ensure_tailscale_user(
     pool: &SqlitePool,
-    request: &SetupRequest,
+    login: &str,
+    display_name: Option<&str>,
+    avatar_url: Option<&str>,
+    configured_admins: &[String],
 ) -> Result<UserDto, ServerError> {
-    if !needs_setup(pool).await? {
-        return Err(ServerError(ApiError::conflict("setup already completed")));
-    }
-    validate_username(&request.username)?;
-    validate_password(&request.password)?;
-    let display_name = request.display_name.trim();
-    if display_name.is_empty() || display_name.len() > 80 {
-        return Err(ServerError(ApiError::validation(
-            "display name must be between 1 and 80 characters",
-        )));
-    }
-    let id = Ulid::new().to_string();
-    let hash = hash_password(&request.password)?;
-    let now = now_ms();
-    let inserted = sqlx::query(
-        "INSERT INTO users(id, username, display_name, password_hash, is_admin, created_at)
-         SELECT ?, ?, ?, ?, 1, ?
-         WHERE NOT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL)",
-    )
-    .bind(&id)
-    .bind(request.username.trim())
-    .bind(display_name)
-    .bind(hash)
-    .bind(now)
-    .execute(pool)
-    .await?;
-    if inserted.rows_affected() == 0 {
-        return Err(ServerError(ApiError::conflict("setup already completed")));
-    }
-    load_user_by_id(pool, &id)
-        .await?
-        .ok_or_else(|| ServerError::internal("created admin could not be loaded"))
-}
-
-pub async fn create_local_user(
-    pool: &SqlitePool,
-    request: &threadbase_shared::api::CreateUserRequest,
-) -> Result<UserDto, ServerError> {
-    validate_username(&request.username)?;
-    validate_password(&request.password)?;
-    let display_name = request.display_name.trim();
-    if display_name.is_empty() || display_name.len() > 80 {
-        return Err(ServerError(ApiError::validation(
-            "display name must be between 1 and 80 characters",
-        )));
-    }
-    let id = Ulid::new().to_string();
-    let hash = hash_password(&request.password)?;
-    let result = sqlx::query(
-        "INSERT OR IGNORE INTO users(id, username, display_name, password_hash, is_admin, created_at)
-         VALUES(?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(request.username.trim())
-    .bind(display_name)
-    .bind(hash)
-    .bind(i64::from(request.is_admin))
-    .bind(now_ms())
-    .execute(pool)
-    .await?;
-    if result.rows_affected() == 0 {
-        return Err(ServerError(ApiError::conflict("username already exists")));
-    }
-    load_user_by_id(pool, &id)
-        .await?
-        .ok_or_else(|| ServerError::internal("created user could not be loaded"))
-}
-
-pub async fn login(pool: &SqlitePool, request: &LoginRequest) -> Result<UserDto, ServerError> {
-    let row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT id, password_hash FROM users WHERE username = ? COLLATE NOCASE")
-            .bind(request.username.trim())
-            .fetch_optional(pool)
-            .await?;
-    let Some((id, Some(hash))) = row else {
-        return Err(ServerError(ApiError::unauthorized(
-            "invalid username or password",
-        )));
-    };
-    if !verify_password(&request.password, &hash) {
-        return Err(ServerError(ApiError::unauthorized(
-            "invalid username or password",
-        )));
-    }
-    load_user_by_id(pool, &id)
-        .await?
-        .ok_or_else(|| ServerError::internal("user disappeared during login"))
-}
-
-pub async fn issue_session(
-    pool: &SqlitePool,
-    user_id: &str,
-    ip: &str,
-    user_agent: Option<&str>,
-) -> Result<String, ServerError> {
-    let token = format!("{}{}", Ulid::new(), Ulid::new());
-    let token_hash = token_hash(&token);
-    let now = now_ms();
-    let expires = now + SESSION_DAYS * 24 * 60 * 60 * 1000;
-    sqlx::query(
-        "INSERT INTO auth_sessions(token_hash, user_id, created_at, expires_at, last_seen_at, user_agent, ip)
-         VALUES(?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&token_hash)
-    .bind(user_id)
-    .bind(now)
-    .bind(expires)
-    .bind(now)
-    .bind(user_agent)
-    .bind(ip)
-    .execute(pool)
-    .await?;
-    Ok(token)
-}
-
-pub async fn revoke_session(pool: &SqlitePool, token: &str) -> Result<(), ServerError> {
-    sqlx::query(
-        "UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
-    )
-    .bind(now_ms())
-    .bind(token_hash(token))
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub async fn revoke_all_sessions(pool: &SqlitePool, user_id: &str) -> Result<(), ServerError> {
-    sqlx::query("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
-        .bind(now_ms())
-        .bind(user_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-async fn session_user(pool: &SqlitePool, token: &str) -> Result<Option<UserDto>, ServerError> {
-    let hash = token_hash(token);
-    let row: Option<UserRow> = sqlx::query_as(&format!(
-        "SELECT {USER_COLUMNS} FROM users u
-         JOIN auth_sessions s ON s.user_id = u.id
-         WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?"
+    let existing = sqlx::query_as::<_, UserRow>(&format!(
+        "SELECT {USER_COLUMNS} FROM users u WHERE tailscale_login = ?"
     ))
-    .bind(hash)
-    .bind(now_ms())
+    .bind(login)
     .fetch_optional(pool)
     .await?;
-    if row.is_some() {
-        sqlx::query("UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?")
-            .bind(now_ms())
-            .bind(token_hash(token))
-            .execute(pool)
-            .await?;
+
+    let user = match existing {
+        Some(row) => {
+            if let Some(url) = avatar_url {
+                sqlx::query("UPDATE users SET avatar_url = ? WHERE id = ? AND (avatar_url IS NULL OR avatar_url <> ?)")
+                    .bind(url)
+                    .bind(&row.id)
+                    .bind(url)
+                    .execute(pool)
+                    .await?;
+            }
+            row.into_dto()
+        }
+        None => create_tailscale_user(pool, login, display_name, avatar_url).await?,
+    };
+
+    if user.is_admin || !should_be_admin(pool, login, configured_admins).await? {
+        return Ok(user);
     }
-    Ok(row.map(UserRow::into_dto))
+
+    sqlx::query("UPDATE users SET is_admin = 1 WHERE id = ?")
+        .bind(user.id.as_str())
+        .execute(pool)
+        .await?;
+    audit(
+        pool,
+        Some(user.id.as_str()),
+        "user.admin_bootstrapped",
+        Some("user"),
+        Some(user.id.as_str()),
+        Some("tailscale"),
+        None,
+    )
+    .await;
+    load_user_by_id(pool, user.id.as_str())
+        .await?
+        .ok_or_else(|| ServerError::internal("promoted user could not be loaded"))
 }
 
-async fn provision_tailscale_user(
+async fn should_be_admin(
+    pool: &SqlitePool,
+    login: &str,
+    configured_admins: &[String],
+) -> Result<bool, ServerError> {
+    if configured_admins
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(login))
+    {
+        return Ok(true);
+    }
+    if !configured_admins.is_empty() {
+        return Ok(false);
+    }
+    // With no configured admins, the first Tailscale identity to sign in
+    // becomes the administrator so the instance is never unmanageable.
+    let admins: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users WHERE is_admin = 1 AND tailscale_login IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(admins == 0)
+}
+
+async fn create_tailscale_user(
     pool: &SqlitePool,
     login: &str,
     display_name: Option<&str>,
     avatar_url: Option<&str>,
 ) -> Result<UserDto, ServerError> {
-    if let Some(user) = sqlx::query_as::<_, UserRow>(&format!(
-        "SELECT {USER_COLUMNS} FROM users u WHERE tailscale_login = ?"
-    ))
-    .bind(login)
-    .fetch_optional(pool)
-    .await?
-    {
-        return Ok(user.into_dto());
-    }
     let now = now_ms();
     let base = sanitize_username(login);
     let display = display_name
@@ -398,14 +341,14 @@ async fn provision_tailscale_user(
                 ServerError::internal("created tailscale user could not be loaded")
             });
         }
-        if let Some(user) = sqlx::query_as::<_, UserRow>(&format!(
+        if let Some(row) = sqlx::query_as::<_, UserRow>(&format!(
             "SELECT {USER_COLUMNS} FROM users u WHERE tailscale_login = ?"
         ))
         .bind(login)
         .fetch_optional(pool)
         .await?
         {
-            return Ok(user.into_dto());
+            return Ok(row.into_dto());
         }
     }
     Err(ServerError::internal("could not allocate a username"))
@@ -463,48 +406,6 @@ pub async fn update_user_admin(
         .ok_or_else(|| ServerError(ApiError::not_found("user not found")))
 }
 
-#[must_use]
-pub fn session_cookie(token: &str, secure: bool) -> String {
-    format!(
-        "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}",
-        SESSION_DAYS * 24 * 60 * 60,
-        if secure { "; Secure" } else { "" }
-    )
-}
-
-#[must_use]
-pub fn clear_cookie(secure: bool) -> String {
-    format!(
-        "{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
-        if secure { "; Secure" } else { "" }
-    )
-}
-
-#[must_use]
-pub fn cookies_secure(headers: &axum::http::HeaderMap, public_origin: Option<&str>) -> bool {
-    if public_origin.is_some_and(|origin| origin.starts_with("https://")) {
-        return true;
-    }
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case("https"))
-}
-
-#[must_use]
-pub fn cookie_value(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
-    let raw = headers.get(COOKIE)?.to_str().ok()?;
-    for part in raw.split(';') {
-        let part = part.trim();
-        if let Some((key, value)) = part.split_once('=') {
-            if key.trim() == name {
-                return Some(value.trim().to_owned());
-            }
-        }
-    }
-    None
-}
-
 pub async fn audit(
     pool: &SqlitePool,
     actor_id: Option<&str>,
@@ -533,52 +434,6 @@ pub async fn audit(
     }
 }
 
-fn hash_password(password: &str) -> Result<String, ServerError> {
-    let hash = Argon2::default()
-        .hash_password(password.as_bytes())
-        .map_err(|error| ServerError::internal(format!("password hashing failed: {error}")))?;
-    Ok(hash.to_string())
-}
-
-fn verify_password(password: &str, encoded: &str) -> bool {
-    let Ok(hash) = PasswordHash::new(encoded) else {
-        return false;
-    };
-    Argon2::default()
-        .verify_password(password.as_bytes(), &hash)
-        .is_ok()
-}
-
-fn validate_username(username: &str) -> Result<(), ServerError> {
-    let username = username.trim();
-    if username.len() < 3 || username.len() > 32 {
-        return Err(ServerError(ApiError::validation(
-            "username must be between 3 and 32 characters",
-        )));
-    }
-    if !username
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
-    {
-        return Err(ServerError(ApiError::validation(
-            "username may contain letters, digits, dot, dash and underscore",
-        )));
-    }
-    Ok(())
-}
-
-fn validate_password(password: &str) -> Result<(), ServerError> {
-    if password.len() < 10 {
-        return Err(ServerError(ApiError::validation(
-            "password must be at least 10 characters",
-        )));
-    }
-    if password.len() > 256 {
-        return Err(ServerError(ApiError::validation("password is too long")));
-    }
-    Ok(())
-}
-
 fn sanitize_username(login: &str) -> String {
     let base = login.split('@').next().unwrap_or(login);
     let mut output: String = base
@@ -599,42 +454,9 @@ fn sanitize_username(login: &str) -> String {
     output
 }
 
-fn token_hash(token: &str) -> String {
-    let digest = Sha256::digest(token.as_bytes());
-    hex::encode(digest)
-}
-
-#[must_use]
-pub fn error_code_for_missing_setup() -> ErrorCode {
-    ErrorCode::SetupRequired
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn hashes_and_verifies_passwords() {
-        let hash = hash_password("correct horse battery").unwrap();
-        assert!(hash.starts_with("$argon2id$"));
-        assert!(verify_password("correct horse battery", &hash));
-        assert!(!verify_password("wrong", &hash));
-    }
-
-    #[test]
-    fn cookie_parser_ignores_other_values() {
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            COOKIE,
-            format!("other=1; {SESSION_COOKIE}=abc; third=2")
-                .parse()
-                .unwrap(),
-        );
-        assert_eq!(
-            cookie_value(&headers, SESSION_COOKIE).as_deref(),
-            Some("abc")
-        );
-    }
 
     #[test]
     fn usernames_are_sanitized() {

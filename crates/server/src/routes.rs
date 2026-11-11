@@ -1,7 +1,7 @@
 //! HTTP router. Routes are grouped by domain as the implementation grows.
 
 use crate::assets;
-use crate::auth::{needs_setup, CurrentUser};
+use crate::auth::{needs_admin, CurrentUser};
 use crate::authz;
 use crate::error::ServerError;
 use crate::middleware::{csrf_guard, security_headers};
@@ -55,7 +55,7 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, S
     Ok(Json(HealthResponse {
         ok: true,
         version: env!("CARGO_PKG_VERSION").to_owned(),
-        needs_setup: needs_setup(&state.pool).await?,
+        needs_admin: needs_admin(&state.pool).await?,
         bind: state.config.bind.to_string(),
     }))
 }
@@ -85,5 +85,13 @@ async fn thread_events(
 }
 
 async fn static_asset(uri: Uri) -> impl IntoResponse {
+    // Unknown API routes must not fall through to the SPA shell: callers expect
+    // JSON, and a 200 HTML body hides broken clients.
+    if uri.path().starts_with("/api/") || uri.path() == "/ws" {
+        return crate::error::ServerError(threadbase_shared::ApiError::not_found(
+            "unknown endpoint",
+        ))
+        .into_response();
+    }
     assets::serve(&uri)
 }

@@ -57,7 +57,7 @@ async fn thread_state(
     Path(thread_id): Path<String>,
 ) -> Result<Json<ThreadState>, ServerError> {
     authz::require_read(&state.pool, &thread_id, &user).await?;
-    Ok(Json(state.state_store.projection(&thread_id).await?))
+    Ok(Json(state.state_store.snapshot_state(&thread_id).await?))
 }
 
 async fn list_projects(
@@ -340,7 +340,19 @@ async fn mark_seen(
 ) -> Result<Json<OkResponse>, ServerError> {
     authz::require_read(&state.pool, &thread_id, &user).await?;
     let row = threads::load_row(&state.pool, &thread_id).await?;
-    diff::mark_seen(&state.pool, &row, &user, &request.paths, request.seen).await?;
+    let baseline = request.baseline.unwrap_or(BaselineDto {
+        kind: BaselineKind::BaseBranch,
+        commit: None,
+    });
+    diff::mark_seen(
+        &state.pool,
+        &row,
+        &user,
+        &request.paths,
+        request.seen,
+        &baseline,
+    )
+    .await?;
     Ok(Json(OkResponse { ok: true }))
 }
 

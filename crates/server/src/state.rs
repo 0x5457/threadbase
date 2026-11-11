@@ -6,8 +6,9 @@ use crate::drafts::DraftHub;
 use crate::error::ServerError;
 use crate::events::EventStore;
 use crate::presence::PresenceHub;
-use crate::rate_limit::RateLimiter;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use threadbase_core::state::{
     approval_decision_str, approval_status_str, comment_status_str, elicitation_status_str,
@@ -32,7 +33,6 @@ pub struct AppState {
     pub state_tx: broadcast::Sender<ServerWsMessage>,
     pub state_store: StateStore,
     pub started_at: i64,
-    pub login_limiter: RateLimiter,
     pub presence: PresenceHub,
     pub drafts: DraftHub,
     pub agents: AgentManager,
@@ -53,7 +53,6 @@ impl AppState {
             state_store,
             pool,
             started_at: now_ms(),
-            login_limiter: RateLimiter::new(),
             presence: PresenceHub::new(),
         }
     }
@@ -68,11 +67,33 @@ impl AppState {
 pub struct StateStore {
     pool: SqlitePool,
     state_tx: broadcast::Sender<ServerWsMessage>,
+    /// Monotonic per-process revision, used to order projection broadcasts.
+    revision: Arc<AtomicU64>,
+    /// Per-thread serialization for projection broadcasts.
+    publish_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+/// Parameters for enqueueing a thread input. Grouped to keep the writer call
+/// readable and avoid a long argument list.
+#[derive(Debug, Clone, Copy)]
+pub struct EnqueueInput<'a> {
+    pub id: &'a str,
+    pub thread_id: &'a str,
+    pub author_id: &'a str,
+    pub text: &'a str,
+    pub authors_json: Option<&'a str>,
+    pub position: i64,
+    pub created_at: i64,
 }
 
 impl StateStore {
     pub fn new(pool: SqlitePool, state_tx: broadcast::Sender<ServerWsMessage>) -> Self {
-        Self { pool, state_tx }
+        Self {
+            pool,
+            state_tx,
+            revision: Arc::new(AtomicU64::new(0)),
+            publish_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        }
     }
 
     // ----- thread -----
@@ -111,21 +132,41 @@ impl StateStore {
     // ----- shared projection -----
 
     /// The single read model consumed by the web UI, the REST state endpoint and
-    /// the agent summary.
+    /// the agent summary. The revision is the current counter; callers that
+    /// publish a projection should use [`Self::snapshot_state`] so every
+    /// delivered state has a unique, ordered revision.
     pub async fn projection(&self, thread_id: &str) -> Result<ThreadState, ServerError> {
+        let mut state = self.projection_inner(thread_id).await?;
+        state.revision = self.revision.load(Ordering::SeqCst);
+        Ok(state)
+    }
+
+    /// Compute a projection with a fresh revision under the per-thread lock.
+    /// Used by WS subscribe/publish and the REST state endpoint so concurrent
+    /// snapshots cannot share a revision or deliver out-of-order state.
+    pub async fn snapshot_state(&self, thread_id: &str) -> Result<ThreadState, ServerError> {
+        let lock = {
+            let mut locks = self.publish_locks.lock().await;
+            locks
+                .entry(thread_id.to_owned())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        let _guard = lock.lock().await;
+        let mut state = self.projection_inner(thread_id).await?;
+        state.revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok(state)
+    }
+
+    async fn projection_inner(&self, thread_id: &str) -> Result<ThreadState, ServerError> {
         let status = self.thread_status(thread_id).await?;
-        let current_turn: Option<String> = sqlx::query_scalar(
-            "SELECT payload_json FROM events WHERE thread_id = ? AND kind = 'turn_started'
-             ORDER BY seq DESC LIMIT 1",
+        let current_turn: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT current_turn_id FROM threads WHERE id = ?",
         )
         .bind(thread_id)
         .fetch_optional(&self.pool)
         .await?
-        .and_then(|json: String| serde_json::from_str::<threadbase_shared::ThreadEvent>(&json).ok())
-        .and_then(|event| match event {
-            threadbase_shared::ThreadEvent::TurnStarted { turn_id, .. } => Some(turn_id.0),
-            _ => None,
-        });
+        .flatten();
         let pending_approvals: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM approvals WHERE thread_id = ? AND status = 'pending'",
         )
@@ -154,6 +195,7 @@ impl StateStore {
         let diverged = crate::threads::is_diverged(&self.pool, &row).await;
         Ok(ThreadState {
             thread_id: ThreadId::from(thread_id.to_owned()),
+            revision: 0,
             status,
             current_turn,
             pending_approvals: u32::try_from(pending_approvals).unwrap_or(0),
@@ -165,8 +207,12 @@ impl StateStore {
     }
 
     pub async fn publish_thread_state(&self, thread_id: &str) {
-        let Ok(state) = self.projection(thread_id).await else {
-            return;
+        let state = match self.snapshot_state(thread_id).await {
+            Ok(state) => state,
+            Err(error) => {
+                tracing::warn!(%error, thread_id, "thread state projection failed");
+                return;
+            }
         };
         let message = ServerWsMessage::ThreadState { state };
         let _ = self.state_tx.send(message);
@@ -843,29 +889,22 @@ impl StateStore {
         Ok(next)
     }
 
-    pub async fn enqueue(
-        &self,
-        id: &str,
-        thread_id: &str,
-        author_id: &str,
-        text: &str,
-        position: i64,
-        created_at: i64,
-    ) -> Result<QueueStatus, ServerError> {
+    pub async fn enqueue(&self, input: EnqueueInput<'_>) -> Result<QueueStatus, ServerError> {
         let status = QueueMachine::transition(QueueStatus::Queued, &QueueAction::Enqueue)
             .map_err(|error| ServerError::internal(error.to_string()))?;
         sqlx::query(
-            "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position, created_at, updated_at)
-             VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO queued_inputs(id, thread_id, author_id, text, authors_json, status, position, created_at, updated_at)
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(id)
-        .bind(thread_id)
-        .bind(author_id)
-        .bind(text)
+        .bind(input.id)
+        .bind(input.thread_id)
+        .bind(input.author_id)
+        .bind(input.text)
+        .bind(input.authors_json)
         .bind(queue_status_str(status))
-        .bind(position)
-        .bind(created_at)
-        .bind(created_at)
+        .bind(input.position)
+        .bind(input.created_at)
+        .bind(input.created_at)
         .execute(&self.pool)
         .await?;
         Ok(status)

@@ -756,17 +756,16 @@ pub struct ShareStateDto {
 pub struct AuthMeDto {
     pub user: UserDto,
     pub auth_method: String,
-    pub tailscale_available: bool,
-    pub needs_setup: bool,
+    pub needs_admin: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AuthStatusDto {
-    pub needs_setup: bool,
     pub tailscale_header: bool,
-    pub local_login: bool,
+    pub dev_identity: bool,
+    pub needs_admin: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

@@ -14,6 +14,10 @@ use yrs::{
 
 pub const MAX_THREAD_DRAFT_BYTES: usize = 200 * 1024;
 pub const MAX_BLOCK_BYTES: usize = 16 * 1024;
+/// Maximum binary frame accepted on the draft WebSocket.
+pub const MAX_WS_MESSAGE_BYTES: usize = 256 * 1024;
+/// Maximum single CRDT update blob accepted from a client.
+pub const MAX_UPDATE_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, Error)]
 pub enum DraftError {
@@ -126,6 +130,31 @@ impl DraftDoc {
             .collect();
         sort_blocks(&mut blocks);
         blocks
+    }
+
+    /// Non-destructive view of the pending (non-empty, unsent) blocks.
+    /// Used by the send path to read the text before committing to send.
+    #[must_use]
+    pub fn peek_blocks(&self) -> Vec<DraftBlock> {
+        let mut blocks: Vec<DraftBlock> = self
+            .snapshot()
+            .into_iter()
+            .map(|(block, _)| block)
+            .filter(|block| !block.sent && !block.text.trim().is_empty())
+            .collect();
+        sort_blocks(&mut blocks);
+        blocks
+    }
+
+    /// Check the thread-level and per-block size limits.
+    #[must_use]
+    pub fn limits_ok(&self) -> bool {
+        let snapshot = self.snapshot();
+        let total: usize = snapshot.iter().map(|(block, _)| block.text.len()).sum();
+        total <= MAX_THREAD_DRAFT_BYTES
+            && snapshot
+                .iter()
+                .all(|(block, _)| block.text.len() <= MAX_BLOCK_BYTES)
     }
 
     fn snapshot(&self) -> Vec<(DraftBlock, u32)> {
@@ -347,6 +376,22 @@ mod tests {
         doc.append_block("b1", "alice", "hello", 1).unwrap();
         doc.set_block_text("b1", "goodbye").unwrap();
         assert_eq!(doc.blocks()[0].text, "goodbye");
+    }
+
+    #[test]
+    fn peek_blocks_is_non_destructive() {
+        let mut doc = DraftDoc::new();
+        doc.append_block("b1", "alice", "one", 1).unwrap();
+        doc.append_block("b2", "bob", "", 2).unwrap();
+        let peeked = doc.peek_blocks();
+        assert_eq!(peeked.len(), 1);
+        assert_eq!(peeked[0].text, "one");
+        assert_eq!(doc.blocks().len(), 2, "peek must not consume blocks");
+        assert_eq!(
+            doc.peek_blocks().len(),
+            1,
+            "peek must remain non-destructive"
+        );
     }
 }
 

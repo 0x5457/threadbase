@@ -134,7 +134,11 @@ pub enum ThreadEvent {
     TurnStarted {
         turn_id: TurnId,
         message_id: MessageId,
+        /// Primary author (the sender). Use `authors` for the full list.
         author: UserBrief,
+        /// Every author whose draft blocks were merged into this turn.
+        #[serde(default)]
+        authors: Vec<UserBrief>,
         prompt: String,
     },
     MessageDelta {

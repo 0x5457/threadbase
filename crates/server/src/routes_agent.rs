@@ -21,6 +21,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/threads/{thread_id}/messages", post(send_message))
         .route("/api/threads/{thread_id}/cancel", post(cancel))
         .route("/api/threads/{thread_id}/read", post(mark_read))
+        .route("/api/threads/{thread_id}/unread", post(mark_unread))
         .route("/api/threads/{thread_id}/agent-config", get(agent_config))
         .route("/api/threads/{thread_id}/restart", post(restart_agent))
         .route(
@@ -45,12 +46,23 @@ async fn send_message(
     Json(request): Json<SendMessageRequest>,
 ) -> Result<Json<SendMessageResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
-    let text = if request.from_draft.unwrap_or(false) {
+    let from_draft = request.from_draft.unwrap_or(false);
+    // Serialize peek → send → take so two senders cannot consume the same
+    // blocks, and a failed send never loses the draft.
+    let _send_guard = if from_draft {
+        Some(state.drafts.send_guard(&thread_id).await)
+    } else {
+        None
+    };
+    let mut draft_authors = Vec::new();
+    let text = if from_draft {
         let blocks = state
             .drafts
-            .take_blocks(&thread_id)
+            .peek_blocks(&thread_id)
             .await
             .map_err(|error| ServerError::internal(error.to_string()))?;
+        let ids: Vec<String> = blocks.iter().map(|block| block.author.clone()).collect();
+        draft_authors = crate::agents::briefs_by_ids(&state.pool, &ids).await;
         blocks
             .iter()
             .map(|block| block.text.as_str())
@@ -62,7 +74,12 @@ async fn send_message(
         request.text.trim().to_owned()
     };
     if text.is_empty() {
-        return Err(ServerError(ApiError::validation("message cannot be empty")));
+        let message = if from_draft {
+            "draft already sent"
+        } else {
+            "message cannot be empty"
+        };
+        return Err(ServerError(ApiError::validation(message)));
     }
     if text.len() > 64 * 1024 {
         return Err(ServerError(ApiError::validation("message is too long")));
@@ -81,10 +98,22 @@ async fn send_message(
             .join("\n");
         format!("{text}\n\nReview comments to address:\n{comments}")
     };
+    let authors = if draft_authors.is_empty() {
+        vec![crate::agents::user_brief(&user)]
+    } else {
+        draft_authors
+    };
     let response = state
         .agents
-        .send(&thread_id, &user, text.as_str(), request.delivery)
+        .send_with_authors(&thread_id, &user, text.as_str(), request.delivery, &authors)
         .await?;
+    if from_draft {
+        state
+            .drafts
+            .take_blocks(&thread_id)
+            .await
+            .map_err(|error| ServerError::internal(error.to_string()))?;
+    }
     if response.delivery != threadbase_shared::Delivery::Queued {
         let last_seq = state
             .events
@@ -255,6 +284,26 @@ async fn mark_read(
     .bind(&thread_id)
     .bind(user.user.id.as_str())
     .bind(last_seq)
+    .bind(now_ms())
+    .execute(&state.pool)
+    .await?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn mark_unread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    sqlx::query(
+        "INSERT INTO thread_reads(thread_id, user_id, last_read_seq, updated_at)
+         VALUES(?, ?, 0, ?)
+         ON CONFLICT(thread_id, user_id) DO UPDATE SET
+            last_read_seq = 0, updated_at = excluded.updated_at",
+    )
+    .bind(&thread_id)
+    .bind(user.user.id.as_str())
     .bind(now_ms())
     .execute(&state.pool)
     .await?;

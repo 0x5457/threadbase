@@ -8,7 +8,7 @@ use threadbase_server::auth::CurrentUser;
 use threadbase_server::events::EventStore;
 use threadbase_server::state::AppState;
 use threadbase_server::{agents, auth, db, projects, threads};
-use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest, SetupRequest};
+use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest};
 use threadbase_shared::{ApprovalDecision, ElicitationAction, ThreadEvent};
 use tokio::time::{sleep, Duration};
 
@@ -50,19 +50,12 @@ async fn fixture() -> Option<Fixture> {
     let journal_path = data.path().join("journal.log");
     std::env::set_var("FAKE_AGENT_JOURNAL", &journal_path);
     let pool = db::connect_memory().await.unwrap();
-    let user = auth::setup_admin(
-        &pool,
-        &SetupRequest {
-            username: "ada".into(),
-            password: "correct horse battery".into(),
-            display_name: "Ada".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let user = auth::ensure_tailscale_user(&pool, "ada@example.com", Some("Ada"), None, &[])
+        .await
+        .unwrap();
     let current = CurrentUser {
         user: user.clone(),
-        method: "session",
+        method: "tailscale",
     };
     let state = AppState::new(
         threadbase_server::config::Config {
@@ -70,6 +63,8 @@ async fn fixture() -> Option<Fixture> {
             db_path: data.path().join("threadbase.db"),
             bind: "127.0.0.1:7777".parse().unwrap(),
             public_origin: None,
+            tailscale_admins: Vec::new(),
+            dev_identity: None,
             log_json: false,
         },
         pool,
@@ -432,14 +427,12 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
-    let viewer = auth::create_local_user(
+    let viewer = auth::ensure_tailscale_user(
         &fixture.state.pool,
-        &threadbase_shared::api::CreateUserRequest {
-            username: "viewer".into(),
-            password: "correct horse battery".into(),
-            display_name: "Viewer".into(),
-            is_admin: false,
-        },
+        "viewer@example.com",
+        Some("Viewer"),
+        None,
+        &[],
     )
     .await
     .unwrap();
@@ -452,9 +445,7 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
     .execute(&fixture.state.pool)
     .await
     .unwrap();
-    let token = auth::issue_session(&fixture.state.pool, viewer.id.as_str(), "127.0.0.1", None)
-        .await
-        .unwrap();
+
     fixture
         .state
         .agents
@@ -488,7 +479,7 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
         .header("origin", "http://localhost")
         .header("x-requested-with", "threadbase")
         .header("content-type", "application/json")
-        .header("cookie", format!("threadbase_session={token}"))
+        .header("tailscale-user-login", "viewer@example.com")
         .body(Body::from(r#"{"decision":"allow_once","note":null}"#))
         .unwrap();
     request
@@ -797,5 +788,452 @@ async fn agent_prompt_includes_state_summary_when_pending() {
     assert!(
         journal.contains("pending_approvals=1"),
         "agent prompt should report the same pending count; journal:\n{journal}"
+    );
+}
+
+#[tokio::test]
+async fn draft_send_preserves_multiple_authors() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let ada = threadbase_shared::UserBrief {
+        id: fixture.user.user.id.clone(),
+        username: fixture.user.user.username.clone(),
+        display_name: fixture.user.user.display_name.clone(),
+        avatar_url: fixture.user.user.avatar_url.clone(),
+        color: threadbase_shared::user_color(fixture.user.user.id.as_str()).to_owned(),
+    };
+    let bob = threadbase_shared::UserBrief {
+        id: threadbase_shared::UserId::from("bob-id"),
+        username: "bob".into(),
+        display_name: "Bob".into(),
+        avatar_url: None,
+        color: "#0f0".into(),
+    };
+    let response = fixture
+        .state
+        .agents
+        .send_with_authors(
+            fixture.thread.id.as_str(),
+            &fixture.user,
+            "shared draft",
+            None,
+            &[ada, bob],
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.delivery, threadbase_shared::Delivery::Injected);
+    let event = wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    })
+    .await;
+    match event {
+        ThreadEvent::TurnStarted { authors, .. } => {
+            assert_eq!(authors.len(), 2, "both draft authors must be preserved");
+            assert_eq!(authors[0].display_name, "Ada");
+            assert_eq!(authors[1].display_name, "Bob");
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn draft_route_preserves_multiple_authors() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let bob = auth::ensure_tailscale_user(
+        &fixture.state.pool,
+        "bob@example.com",
+        Some("Bob"),
+        None,
+        &[],
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'editor', ?)",
+    )
+    .bind(fixture.thread.id.as_str())
+    .bind(bob.id.as_str())
+    .bind(threadbase_shared::now_ms())
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+
+    // Seed the draft with two per-author blocks via the persisted snapshot.
+    let mut draft = threadbase_draft::DraftDoc::new();
+    draft
+        .append_block("b1", fixture.user.user.id.as_str(), "ada part", 1)
+        .unwrap();
+    draft
+        .append_block("b2", bob.id.as_str(), "bob part", 2)
+        .unwrap();
+    let blob = draft.encode_full();
+    sqlx::query(
+        "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
+         VALUES(?, 0, ?, ?)",
+    )
+    .bind(fixture.thread.id.as_str())
+    .bind(&blob)
+    .bind(threadbase_shared::now_ms())
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{}/messages", fixture.thread.id))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "application/json")
+        .header("tailscale-user-login", "ada@example.com")
+        .body(Body::from(
+            r#"{"text":"","delivery":"auto","fromDraft":true}"#,
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let event = wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    })
+    .await;
+    match event {
+        ThreadEvent::TurnStarted {
+            authors, prompt, ..
+        } => {
+            assert_eq!(authors.len(), 2, "route must collect both block authors");
+            assert_eq!(authors[0].display_name, "Ada");
+            assert_eq!(authors[1].display_name, "Bob");
+            assert!(prompt.contains("ada part") && prompt.contains("bob part"));
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn queued_draft_route_preserves_multiple_authors() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let bob = auth::ensure_tailscale_user(
+        &fixture.state.pool,
+        "bob@example.com",
+        Some("Bob"),
+        None,
+        &[],
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'editor', ?)",
+    )
+    .bind(fixture.thread.id.as_str())
+    .bind(bob.id.as_str())
+    .bind(threadbase_shared::now_ms())
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+
+    let mut draft = threadbase_draft::DraftDoc::new();
+    draft
+        .append_block("b1", fixture.user.user.id.as_str(), "ada part", 1)
+        .unwrap();
+    draft
+        .append_block("b2", bob.id.as_str(), "bob part", 2)
+        .unwrap();
+    let blob = draft.encode_full();
+    sqlx::query(
+        "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
+         VALUES(?, 0, ?, ?)",
+    )
+    .bind(fixture.thread.id.as_str())
+    .bind(&blob)
+    .bind(threadbase_shared::now_ms())
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{}/messages", fixture.thread.id))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "application/json")
+        .header("tailscale-user-login", "ada@example.com")
+        .body(Body::from(
+            r#"{"text":"","delivery":"queue","fromDraft":true}"#,
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // The queue worker restores the stored author list when it sends.
+    fixture.state.agents.kick_queue(fixture.thread.id.as_str());
+    let event = wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    })
+    .await;
+    match event {
+        ThreadEvent::TurnStarted {
+            authors, prompt, ..
+        } => {
+            assert_eq!(authors.len(), 2, "queue must restore both block authors");
+            assert_eq!(authors[0].display_name, "Ada");
+            assert_eq!(authors[1].display_name, "Bob");
+            assert!(prompt.contains("ada part") && prompt.contains("bob part"));
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn empty_draft_send_returns_already_sent() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{}/messages", fixture.thread.id))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "application/json")
+        .header("tailscale-user-login", "ada@example.com")
+        .body(Body::from(
+            r#"{"text":"","delivery":"auto","fromDraft":true}"#,
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("draft already sent"), "body: {text}");
+}
+
+#[tokio::test]
+async fn failed_send_retains_draft() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    // Force agent startup to fail: the route must not consume the draft.
+    std::env::set_var(
+        "THREADBASE_ACP_COMMAND",
+        "/nonexistent/threadbase_acp_fixture",
+    );
+
+    let mut draft = threadbase_draft::DraftDoc::new();
+    draft
+        .append_block("b1", fixture.user.user.id.as_str(), "keep me", 1)
+        .unwrap();
+    let blob = draft.encode_full();
+    sqlx::query(
+        "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
+         VALUES(?, 0, ?, ?)",
+    )
+    .bind(fixture.thread.id.as_str())
+    .bind(&blob)
+    .bind(threadbase_shared::now_ms())
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{}/messages", fixture.thread.id))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "application/json")
+        .header("tailscale-user-login", "ada@example.com")
+        .body(Body::from(
+            r#"{"text":"","delivery":"auto","fromDraft":true}"#,
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let blocks = fixture
+        .state
+        .drafts
+        .peek_blocks(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    assert_eq!(blocks.len(), 1, "failed send must retain the draft");
+    assert_eq!(blocks[0].text, "keep me");
+}
+
+#[tokio::test]
+async fn queued_turn_writes_current_turn() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let ada = threadbase_shared::UserBrief {
+        id: fixture.user.user.id.clone(),
+        username: fixture.user.user.username.clone(),
+        display_name: fixture.user.user.display_name.clone(),
+        avatar_url: fixture.user.user.avatar_url.clone(),
+        color: threadbase_shared::user_color(fixture.user.user.id.as_str()).to_owned(),
+    };
+    let response = fixture
+        .state
+        .agents
+        .send_with_authors(
+            fixture.thread.id.as_str(),
+            &fixture.user,
+            "permission",
+            Some(threadbase_shared::DeliveryMode::Queue),
+            &[ada],
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.delivery, threadbase_shared::Delivery::Queued);
+
+    fixture.state.agents.kick_queue(fixture.thread.id.as_str());
+    let event = wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    })
+    .await;
+    let ThreadEvent::TurnStarted { turn_id, .. } = event else {
+        unreachable!();
+    };
+    // The queue worker writes current_turn_id after appending TurnStarted;
+    // poll briefly to avoid a read-before-write race.
+    let mut stored: Option<String> = None;
+    for _ in 0..40 {
+        stored = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT current_turn_id FROM threads WHERE id = ?",
+        )
+        .bind(fixture.thread.id.as_str())
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+        if stored.as_deref() == Some(turn_id.as_str()) {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        stored.as_deref(),
+        Some(turn_id.as_str()),
+        "queued turn must persist current_turn_id"
+    );
+}
+
+#[tokio::test]
+async fn snapshot_revisions_are_monotonic() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let first = fixture
+        .state
+        .state_store
+        .snapshot_state(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let second = fixture
+        .state
+        .state_store
+        .snapshot_state(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    assert!(
+        second.revision > first.revision,
+        "snapshot revisions must be strictly increasing ({} -> {})",
+        first.revision,
+        second.revision
     );
 }

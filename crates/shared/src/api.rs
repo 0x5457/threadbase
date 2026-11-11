@@ -16,34 +16,7 @@ use ts_rs::TS;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct LoginRequest {
-    pub username: String,
-    pub password: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct SetupRequest {
-    pub username: String,
-    pub password: String,
-    pub display_name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct UpdateUserRequest {
-    pub is_admin: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct CreateUserRequest {
-    pub username: String,
-    pub password: String,
-    pub display_name: String,
     pub is_admin: bool,
 }
 
@@ -60,14 +33,6 @@ pub struct InboxReadRequest {
 #[ts(export)]
 pub struct AuthStatusResponse {
     pub status: AuthStatusDto,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct LoginResponse {
-    pub user: UserDto,
-    pub needs_setup: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -228,6 +193,8 @@ pub struct InviteResponse {
 pub struct SeenRequest {
     pub paths: Vec<String>,
     pub seen: bool,
+    /// Baseline the Seen marks apply to. Defaults to the base branch.
+    pub baseline: Option<BaselineDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -306,6 +273,8 @@ pub struct ThreadBundleDto {
 #[ts(export)]
 pub struct ThreadState {
     pub thread_id: ThreadId,
+    /// Monotonic revision for this thread; consumers must discard older values.
+    pub revision: u64,
     pub status: crate::model::ThreadStatus,
     pub current_turn: Option<String>,
     pub pending_approvals: u32,
@@ -511,7 +480,7 @@ pub struct ApprovalRulesResponse {
 pub struct HealthResponse {
     pub ok: bool,
     pub version: String,
-    pub needs_setup: bool,
+    pub needs_admin: bool,
     pub bind: String,
 }
 

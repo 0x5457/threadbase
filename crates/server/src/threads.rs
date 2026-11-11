@@ -192,7 +192,15 @@ pub async fn create(
     {
         let id = Ulid::new().to_string();
         state_store
-            .enqueue(&id, &thread_id, user.user.id.as_str(), prompt, 1, now)
+            .enqueue(crate::state::EnqueueInput {
+                id: &id,
+                thread_id: &thread_id,
+                author_id: user.user.id.as_str(),
+                text: prompt,
+                authors_json: None,
+                position: 1,
+                created_at: now,
+            })
             .await?;
     }
     audit(

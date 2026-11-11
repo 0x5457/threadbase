@@ -4,7 +4,6 @@ use sqlx::SqlitePool;
 use threadbase_server::auth::CurrentUser;
 use threadbase_server::events::{EventMeta, EventStore};
 use threadbase_server::{approvals, auth, db};
-use threadbase_shared::api::SetupRequest;
 use threadbase_shared::{
     now_ms, Actor, ApprovalDecision, ApprovalOption, ApprovalScope, ApprovalStatus,
     ElicitationAction, ElicitationDto, ElicitationMode, ElicitationStatus, ErrorCode, ProjectId,
@@ -28,16 +27,9 @@ struct Fixture {
 
 async fn fixture() -> Fixture {
     let pool = db::connect_memory().await.unwrap();
-    let owner_user = auth::setup_admin(
-        &pool,
-        &SetupRequest {
-            username: "ada".into(),
-            password: "correct horse battery".into(),
-            display_name: "Ada".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let owner_user = auth::ensure_tailscale_user(&pool, "ada@example.com", Some("Ada"), None, &[])
+        .await
+        .unwrap();
     let viewer_user = make_user(&pool, "bob", false).await;
     let project = ProjectId::new();
     let thread = ThreadId::new();
@@ -82,11 +74,11 @@ async fn fixture() -> Fixture {
         pool,
         owner: CurrentUser {
             user: owner_user,
-            method: "session",
+            method: "tailscale",
         },
         viewer: CurrentUser {
             user: viewer_user,
-            method: "session",
+            method: "tailscale",
         },
         project,
         thread,

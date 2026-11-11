@@ -8,6 +8,10 @@ pub struct Config {
     pub bind: SocketAddr,
     /// Public origin used in share links, for example https://machine.tailnet.ts.net
     pub public_origin: Option<String>,
+    /// Tailscale logins that are always administrators.
+    pub tailscale_admins: Vec<String>,
+    /// Optional identity accepted from direct local connections (development).
+    pub dev_identity: Option<String>,
     pub log_json: bool,
 }
 
@@ -44,11 +48,24 @@ impl Config {
         let log_json = std::env::var("THREADBASE_LOG_JSON")
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+        let tailscale_admins = std::env::var("THREADBASE_TAILSCALE_ADMIN")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        let dev_identity = std::env::var("THREADBASE_DEV_IDENTITY")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         Ok(Self {
             data_dir,
             db_path,
             bind,
             public_origin,
+            tailscale_admins,
+            dev_identity,
             log_json,
         })
     }

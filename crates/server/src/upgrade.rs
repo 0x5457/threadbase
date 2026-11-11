@@ -7,7 +7,8 @@ use std::path::Path;
 
 const DEFAULT_BASE: &str = "https://github.com/threadbase/threadbase/releases/latest/download";
 
-pub async fn run(check_only: bool) -> anyhow::Result<()> {
+/// Downloads and verifies the published release binary for this platform.
+pub async fn download_release_binary() -> anyhow::Result<(String, Vec<u8>)> {
     let target = target_triple()?;
     let base = std::env::var("THREADBASE_RELEASE_BASE").unwrap_or_else(|_| DEFAULT_BASE.into());
     let base = base.trim_end_matches('/');
@@ -29,11 +30,6 @@ pub async fn run(check_only: bool) -> anyhow::Result<()> {
         .next()
         .context("checksum file is empty")?
         .to_lowercase();
-    println!("Latest target: {target}");
-    println!("SHA256: {expected}");
-    if check_only {
-        return Ok(());
-    }
     let bytes = client
         .get(&binary_url)
         .send()
@@ -46,6 +42,35 @@ pub async fn run(check_only: bool) -> anyhow::Result<()> {
     if actual != expected {
         anyhow::bail!("checksum mismatch: expected {expected}, got {actual}");
     }
+    Ok((target, bytes.to_vec()))
+}
+
+pub async fn run(check_only: bool) -> anyhow::Result<()> {
+    if check_only {
+        let target = target_triple()?;
+        let base = std::env::var("THREADBASE_RELEASE_BASE").unwrap_or_else(|_| DEFAULT_BASE.into());
+        let checksum_url = format!("{}/threadbase-{target}.sha256", base.trim_end_matches('/'));
+        let checksum_text = reqwest::Client::builder()
+            .user_agent("threadbase-upgrade")
+            .build()?
+            .get(&checksum_url)
+            .send()
+            .await?
+            .error_for_status()
+            .context("download checksum")?
+            .text()
+            .await?;
+        let expected = checksum_text
+            .split_whitespace()
+            .next()
+            .context("checksum file is empty")?
+            .to_lowercase();
+        println!("Latest target: {target}");
+        println!("SHA256: {expected}");
+        return Ok(());
+    }
+    let (target, bytes) = download_release_binary().await?;
+    println!("Latest target: {target}");
     let current = std::env::current_exe().context("resolve current binary")?;
     let temp = current.with_extension("upgrade");
     {

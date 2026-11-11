@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use threadbase_server::auth::CurrentUser;
 use threadbase_server::state::AppState;
 use threadbase_server::{auth, db, projects, threads};
-use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest, SetupRequest};
+use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest};
 use threadbase_shared::ThreadEvent;
 use tokio::time::{sleep, Duration};
 
@@ -76,19 +76,12 @@ async fn real_codex_streams_a_reply() {
     init_repo(repo.path());
     let data = TempDir::new().unwrap();
     let pool = db::connect_memory().await.unwrap();
-    let user = auth::setup_admin(
-        &pool,
-        &SetupRequest {
-            username: "contract".into(),
-            password: "correct horse battery".into(),
-            display_name: "Contract".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let user = auth::ensure_tailscale_user(&pool, "ada@example.com", Some("Ada"), None, &[])
+        .await
+        .unwrap();
     let current = CurrentUser {
         user: user.clone(),
-        method: "session",
+        method: "tailscale",
     };
     let state = AppState::new(
         threadbase_server::config::Config {
@@ -96,6 +89,8 @@ async fn real_codex_streams_a_reply() {
             db_path: data.path().join("threadbase.db"),
             bind: "127.0.0.1:7777".parse().unwrap(),
             public_origin: None,
+            tailscale_admins: Vec::new(),
+            dev_identity: None,
             log_json: false,
         },
         pool,

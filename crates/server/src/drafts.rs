@@ -8,9 +8,10 @@ use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use threadbase_draft::{DraftBlock, DraftDoc};
+use threadbase_draft::{DraftBlock, DraftDoc, MAX_UPDATE_BYTES, MAX_WS_MESSAGE_BYTES};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use y_sync::sync::{DefaultProtocol, Message as SyncMessageEnvelope, Protocol, SyncMessage};
 use yrs::encoding::read::Cursor;
@@ -21,12 +22,15 @@ use yrs::Update;
 #[derive(Clone)]
 pub struct DraftHub {
     pool: SqlitePool,
+    send_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     rooms: Arc<RwLock<HashMap<String, Arc<Mutex<DraftRoom>>>>>,
 }
 
 pub(crate) struct DraftRoom {
     draft: DraftDoc,
     tx: broadcast::Sender<Vec<u8>>,
+    /// Pause doc-update broadcasting while an inbound update is validated.
+    broadcast_paused: Arc<AtomicBool>,
     _doc_sub: yrs::UpdateSubscription,
     _awareness_sub: y_sync::awareness::UpdateSubscription,
 }
@@ -37,6 +41,7 @@ impl DraftHub {
         Self {
             pool,
             rooms: Arc::new(RwLock::new(HashMap::new())),
+            send_locks: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -124,6 +129,44 @@ impl DraftHub {
         Ok(())
     }
 
+    /// Serialize the peek → send → take sequence for one thread so two
+    /// senders cannot consume the same draft blocks.
+    pub async fn send_guard(&self, thread_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self.send_locks.write().await;
+            locks
+                .entry(thread_id.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        lock.lock_owned().await
+    }
+
+    /// Non-destructive read of pending draft blocks.
+    pub async fn peek_blocks(&self, thread_id: &str) -> Result<Vec<DraftBlock>, anyhow::Error> {
+        let room = self.room(thread_id).await?;
+        let room = room.lock().await;
+        Ok(room.draft.peek_blocks())
+    }
+
+    /// Enforce thread/block size limits. On failure the room is dropped so the
+    /// next access reloads from persisted state (the offending update is not
+    /// persisted).
+    /// Drop a room so the next access reloads from persisted state.
+    pub async fn drop_room(&self, thread_id: &str) {
+        let mut rooms = self.rooms.write().await;
+        rooms.remove(thread_id);
+    }
+
+    /// Whether `room` is still the canonical room for the thread. Orphaned
+    /// rooms (dropped after a limit violation) must not persist updates.
+    pub(crate) async fn is_canonical(&self, thread_id: &str, room: &Arc<Mutex<DraftRoom>>) -> bool {
+        let rooms = self.rooms.read().await;
+        rooms
+            .get(thread_id)
+            .is_some_and(|current| Arc::ptr_eq(current, room))
+    }
+
     pub async fn take_blocks(&self, thread_id: &str) -> Result<Vec<DraftBlock>, anyhow::Error> {
         let room = self.room(thread_id).await?;
         let blocks = {
@@ -159,9 +202,14 @@ impl DraftRoom {
     fn new(mut draft: DraftDoc) -> Self {
         let (tx, _) = broadcast::channel(512);
         let sink = tx.clone();
+        let broadcast_paused = Arc::new(AtomicBool::new(false));
+        let paused = broadcast_paused.clone();
         let doc_sub = draft
             .doc()
             .observe_update_v1(move |_, event| {
+                if paused.load(Ordering::SeqCst) {
+                    return;
+                }
                 let message = SyncMessageEnvelope::Sync(SyncMessage::Update(event.update.clone()));
                 let _ = sink.send(message.encode_v1());
             })
@@ -179,6 +227,7 @@ impl DraftRoom {
         Self {
             draft,
             tx,
+            broadcast_paused,
             _doc_sub: doc_sub,
             _awareness_sub: awareness_sub,
         }
@@ -198,7 +247,28 @@ impl DraftRoom {
         encoder.to_vec()
     }
 
-    fn apply(&mut self, bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+    /// Apply an inbound sync frame. Doc updates are validated before they are
+    /// broadcast to peers; on limit violation nothing is broadcast or returned
+    /// for persistence, and `ok` is false so the caller can drop the room.
+    fn apply(&mut self, bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, bool) {
+        self.broadcast_paused.store(true, Ordering::SeqCst);
+        let (direct, persisted) = self.apply_inner(bytes);
+        let ok = self.draft.limits_ok();
+        if ok {
+            for update in &persisted {
+                let message = SyncMessageEnvelope::Sync(SyncMessage::Update(update.clone()));
+                let _ = self.tx.send(message.encode_v1());
+            }
+        }
+        self.broadcast_paused.store(false, Ordering::SeqCst);
+        if ok {
+            (direct, persisted, true)
+        } else {
+            (Vec::new(), Vec::new(), false)
+        }
+    }
+
+    fn apply_inner(&mut self, bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         let mut direct = Vec::new();
         let mut persisted = Vec::new();
         let mut decoder = DecoderV1::new(Cursor::new(bytes));
@@ -253,7 +323,10 @@ pub async fn handler(
         .room(&thread_id)
         .await
         .map_err(|error| crate::error::ServerError::internal(error.to_string()))?;
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state, room, thread_id, can_write)))
+    Ok(ws
+        .max_message_size(MAX_WS_MESSAGE_BYTES)
+        .max_frame_size(MAX_WS_MESSAGE_BYTES)
+        .on_upgrade(move |socket| handle_socket(socket, state, room, thread_id, can_write)))
 }
 
 async fn handle_socket(
@@ -287,16 +360,41 @@ async fn handle_socket(
                         if !can_write {
                             continue;
                         }
-                        let (direct, persisted) = {
+                        if bytes.len() > MAX_WS_MESSAGE_BYTES {
+                            tracing::warn!(
+                                thread_id,
+                                len = bytes.len(),
+                                "draft frame exceeds limit; closing"
+                            );
+                            return;
+                        }
+                        let (direct, persisted, limits_ok) = {
                             let mut room = room.lock().await;
                             room.apply(&bytes)
                         };
+                        if !limits_ok {
+                            tracing::warn!(thread_id, "draft limits exceeded; dropping room");
+                            state.drafts.drop_room(&thread_id).await;
+                            return;
+                        }
                         for reply in direct {
                             if sender.send(Message::Binary(reply.into())).await.is_err() {
                                 return;
                             }
                         }
+                        if !state.drafts.is_canonical(&thread_id, &room).await {
+                            tracing::warn!(thread_id, "draft room no longer canonical; closing");
+                            return;
+                        }
                         for update in persisted {
+                            if update.len() > MAX_UPDATE_BYTES {
+                                tracing::warn!(
+                                    thread_id,
+                                    len = update.len(),
+                                    "draft update exceeds limit; skipping"
+                                );
+                                continue;
+                            }
                             if let Err(error) = state.drafts.persist_update(&thread_id, &update).await {
                                 tracing::warn!(%error, thread_id, "failed to persist draft update");
                             }
@@ -364,10 +462,11 @@ mod tests {
         let mut other = DraftDoc::new();
         other.append_block("b2", "u2", "world", 2).unwrap();
         let update = other.encode_full();
-        let (direct, persisted) = {
+        let (direct, persisted, ok) = {
             let mut room = room.lock().await;
             room.apply(&update_message(update.clone()))
         };
+        assert!(ok);
         assert!(direct.is_empty());
         assert_eq!(persisted.len(), 1);
         for update in persisted {
@@ -380,6 +479,56 @@ mod tests {
         let blocks = room.lock().await.draft.blocks();
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[1].text, "world");
+    }
+
+    fn oversized_block_update(text_len: usize) -> Vec<u8> {
+        use yrs::{Array, Map, MapPrelim, ReadTxn, Text, TextPrelim, TextRef, Transact};
+        let doc = yrs::Doc::new();
+        let blocks = doc.get_or_insert_array("blocks");
+        let mut txn = doc.transact_mut();
+        let map = blocks.insert(
+            &mut txn,
+            0,
+            MapPrelim::<i32>::from(std::collections::HashMap::new()),
+        );
+        map.insert(&mut txn, "id", "big".to_owned());
+        map.insert(&mut txn, "author", "u1".to_owned());
+        map.insert(&mut txn, "createdAt", 1_i64);
+        let body: TextRef = map.insert(&mut txn, "text", TextPrelim::new(""));
+        body.push(&mut txn, &"x".repeat(text_len));
+        drop(txn);
+        let read = doc.transact();
+        read.encode_state_as_update_v1(&yrs::StateVector::default())
+    }
+
+    #[tokio::test]
+    async fn oversized_update_is_not_broadcast_or_persisted() {
+        let pool = db::connect_memory().await.unwrap();
+        let (_, _, thread) = seed_thread(&pool).await;
+        let hub = DraftHub::new(pool.clone());
+        let room = hub.room(thread.as_str()).await.unwrap();
+        let mut rx = {
+            let room = room.lock().await;
+            room.subscribe()
+        };
+
+        let update = oversized_block_update(threadbase_draft::MAX_BLOCK_BYTES + 1);
+        let (direct, persisted, ok) = {
+            let mut room = room.lock().await;
+            room.apply(&update_message(update))
+        };
+        assert!(!ok, "oversized update must be rejected");
+        assert!(direct.is_empty());
+        assert!(
+            persisted.is_empty(),
+            "rejected update must not be persisted"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), rx.recv())
+                .await
+                .is_err(),
+            "rejected update must not be broadcast"
+        );
     }
 
     #[tokio::test]
