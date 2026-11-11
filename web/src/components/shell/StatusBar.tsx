@@ -59,32 +59,39 @@ export function StatusBar({
           gap: 10,
         }}
       >
-        <Tooltip label={project?.path ?? "No project selected"} inline>
-          <span
-            style={{
-              display: "flex",
-              minWidth: 0,
-              alignItems: "center",
-              gap: 4,
-            }}
-          >
-            <Folder
-              size={12}
-              aria-hidden
-              style={{ flexShrink: 0, color: "var(--mantine-color-dimmed)" }}
-            />
+        {/* Inside a thread the project name is already in the thread
+            breadcrumb; phones spend that width on the branch instead. */}
+        <Box
+          visibleFrom={thread ? "sm" : undefined}
+          style={{ display: "flex", minWidth: 0 }}
+        >
+          <Tooltip label={project?.path ?? "No project selected"} inline>
             <span
               style={{
-                maxWidth: 160,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                display: "flex",
+                minWidth: 0,
+                alignItems: "center",
+                gap: 4,
               }}
             >
-              {project?.name ?? "Threadbase"}
+              <Folder
+                size={12}
+                aria-hidden
+                style={{ flexShrink: 0, color: "var(--mantine-color-dimmed)" }}
+              />
+              <span
+                style={{
+                  maxWidth: 160,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {project?.name ?? "Threadbase"}
+              </span>
             </span>
-          </span>
-        </Tooltip>
+          </Tooltip>
+        </Box>
         {thread ? (
           <>
             <span
@@ -94,6 +101,7 @@ export function StatusBar({
                 height: 12,
                 background: "var(--mantine-color-default-border)",
               }}
+              className="tb-status-separator"
             />
             <span
               style={{
@@ -207,6 +215,9 @@ export function StatusBar({
             leftSection={<FileDiff size={14} aria-hidden />}
             style={{
               height: "auto",
+              // The bar is only 32px tall on desktop; keep the touch-sized
+              // minimum used elsewhere on phones from stretching it.
+              minHeight: 28,
               gap: 6,
               padding: "2px 4px",
               fontWeight: 400,
@@ -266,6 +277,7 @@ function CountIndicator({
   return (
     <span
       title={`${count} ${label}`}
+      className={active ? undefined : "tb-status-idle"}
       style={{ display: "flex", alignItems: "center", gap: 4 }}
     >
       <span

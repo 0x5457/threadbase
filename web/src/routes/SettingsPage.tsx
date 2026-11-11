@@ -156,7 +156,6 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
       notifications.show({
         message: "Settings saved",
         color: "green",
-        position: "bottom-right",
       });
     },
     onError: (error) => {
@@ -164,7 +163,6 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
         message:
           error instanceof Error ? error.message : "Could not save settings.",
         color: "red",
-        position: "bottom-right",
       });
     },
   });

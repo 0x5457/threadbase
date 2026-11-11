@@ -2,7 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `interactive-widget=resizes-content` makes Chrome/Android shrink the
+         layout viewport when the keyboard opens, so the composer stays visible.
+         iOS ignores it; the visual-viewport sync in `lib/viewport.ts` covers it. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"
+    />
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#101214" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

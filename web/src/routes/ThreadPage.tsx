@@ -338,7 +338,6 @@ export function ThreadPage() {
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
   const fork = useMutation({
@@ -417,13 +416,11 @@ export function ThreadPage() {
       notifications.show({
         message: "Access request sent",
         color: "green",
-        position: "bottom-right",
       }),
     onError: (error) =>
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
   const decision = useMutation({
@@ -592,12 +589,15 @@ export function ThreadPage() {
         wrap="nowrap"
         style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
       >
+        {/* On phones this row is the breadcrumb back to the project; the
+            thread title itself already sits in the title bar. */}
         <Anchor
           component={Link}
           to={`/p/${encodeURIComponent(project.id)}`}
           size="sm"
           c="dimmed"
-          visibleFrom="sm"
+          maw={180}
+          truncate
         >
           {project.name}
         </Anchor>
@@ -629,7 +629,12 @@ export function ThreadPage() {
             </Group>
           </>
         ) : (
-          <Text size="sm" truncate="end" style={{ minWidth: 0, flex: 1 }}>
+          <Text
+            size="sm"
+            truncate="end"
+            visibleFrom="sm"
+            style={{ minWidth: 0, flex: 1 }}
+          >
             {thread.title}
           </Text>
         )}

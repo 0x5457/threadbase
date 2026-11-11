@@ -103,9 +103,24 @@ export function TitleBar({
           aria-label="Search workspace"
           leftSection={<Search size={14} aria-hidden />}
           style={{ fontWeight: 400 }}
+          visibleFrom="sm"
         >
           <Kbd visibleFrom="md">{modKeyCombo("K")}</Kbd>
         </Button>
+        {/* Phones get the same action as a square icon button so the centred
+            title keeps enough room to show the whole thread name. */}
+        <Tooltip label="Search workspace">
+          <ActionIcon
+            variant="light"
+            color="gray"
+            size="md"
+            aria-label="Search workspace"
+            onClick={onOpenSearch}
+            hiddenFrom="sm"
+          >
+            <Search size={16} aria-hidden />
+          </ActionIcon>
+        </Tooltip>
       </div>
 
       <div
@@ -180,34 +195,41 @@ export function TitleBar({
             </Button>
           </Tooltip>
         ) : null}
-        <Tooltip label="Approvals">
-          <Indicator
-            disabled={approvalsCount <= 0}
-            label={approvalsCount > 99 ? "99+" : approvalsCount}
-            size={18}
-            color="yellow"
-            position="top-end"
-            offset={2}
-            styles={{
-              indicator: {
-                color: "var(--mantine-color-black)",
-                fontSize: "var(--mantine-font-size-xs)",
-                fontWeight: 600,
-                paddingInline: 2,
-              },
-            }}
-          >
-            <ActionIcon
-              variant={approvalsCount > 0 ? "light" : "default"}
-              color={approvalsCount > 0 ? "yellow" : undefined}
-              size="md"
-              aria-label="Approvals"
-              onClick={onOpenApprovals}
+        {/* On phones the drawer already exposes approvals; the badge only
+            earns its place when there is something waiting. */}
+        <Box
+          visibleFrom={approvalsCount > 0 ? undefined : "sm"}
+          style={{ display: "flex" }}
+        >
+          <Tooltip label="Approvals">
+            <Indicator
+              disabled={approvalsCount <= 0}
+              label={approvalsCount > 99 ? "99+" : approvalsCount}
+              size={18}
+              color="yellow"
+              position="top-end"
+              offset={2}
+              styles={{
+                indicator: {
+                  color: "var(--mantine-color-black)",
+                  fontSize: "var(--mantine-font-size-xs)",
+                  fontWeight: 600,
+                  paddingInline: 2,
+                },
+              }}
             >
-              <ShieldCheck size={16} aria-hidden />
-            </ActionIcon>
-          </Indicator>
-        </Tooltip>
+              <ActionIcon
+                variant={approvalsCount > 0 ? "light" : "default"}
+                color={approvalsCount > 0 ? "yellow" : undefined}
+                size="md"
+                aria-label="Approvals"
+                onClick={onOpenApprovals}
+              >
+                <ShieldCheck size={16} aria-hidden />
+              </ActionIcon>
+            </Indicator>
+          </Tooltip>
+        </Box>
         <Tooltip label={drawerLabel}>
           <ActionIcon
             variant={drawerOpen ? "light" : "default"}

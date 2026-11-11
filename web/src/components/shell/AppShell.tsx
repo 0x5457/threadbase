@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { UnstyledButton, useMantineTheme } from "@mantine/core";
-import { useMediaQuery } from "@mantine/hooks";
 import { useNavigate } from "react-router-dom";
+import { useMediaQuery } from "@/lib/hooks";
 import { CommandPalette } from "./CommandPalette";
 import { RightDrawer, type DrawerTab, type RightDrawerProps } from "./RightDrawer";
 import { StatusBar, type StatusBarProps } from "./StatusBar";
@@ -48,13 +48,17 @@ export function AppShell({
   // 1280+ shows both columns.
   const isOverlayNav = useMediaQuery(
     `(max-width: calc(${theme.breakpoints.md} - 0.0625em))`,
-    false,
   );
   const isOverlayDrawer = useMediaQuery(
     `(max-width: calc(${theme.breakpoints.lg} - 0.0625em))`,
-    false,
   );
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Phones get a full-width drawer sheet instead of a 420px side panel.
+  const isPhone = useMediaQuery(
+    `(max-width: calc(${theme.breakpoints.sm} - 0.0625em))`,
+  );
+  // Start closed on phones/tablets, open on desktop, so the first paint is
+  // already the right layout instead of toggling after mount.
+  const [sidebarOpen, setSidebarOpen] = useState(!isOverlayNav);
   const [wasOverlayNav, setWasOverlayNav] = useState(isOverlayNav);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("changes");
@@ -254,11 +258,12 @@ export function AppShell({
             onTabChange={setDrawerTab}
             onClose={() => setDrawerOpen(false)}
             desktop={!isOverlayDrawer}
+            phone={isPhone}
           />
         ) : null}
       </div>
 
-      <div style={{ height: 30, flexShrink: 0 }}>
+      <div style={{ height: 32, flexShrink: 0 }}>
         <StatusBar
           {...statusBar}
           offline={statusBar.offline ?? false}

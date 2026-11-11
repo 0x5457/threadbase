@@ -33,6 +33,7 @@ import {
 import type { DeliveryMode } from "@/api/types/DeliveryMode";
 import type { QueueItemDto } from "@/api/types/QueueItemDto";
 import type { Participant } from "@/api/types/Participant";
+import { useMediaQuery } from "@/lib/hooks";
 import { usePresenceStore } from "@/lib/presence";
 
 interface ComposerProps {
@@ -414,12 +415,20 @@ export function Composer({
             </Stack>
           </Paper>
         ) : null}
-        <Paper withBorder radius="md" style={{ overflow: "hidden" }}>
+        {/* On phones the card padding is provided by the inner Box alone, so
+            the composer does not eat a third of the visible height. */}
+        <Paper
+          withBorder
+          radius="md"
+          p={{ base: 0, sm: "md" }}
+          style={{ overflow: "hidden" }}
+        >
           <Box
             px="sm"
             py="sm"
             style={{
-              maxHeight: "46vh",
+              maxHeight:
+                "min(46vh, calc(var(--tb-app-height, 100vh) * 0.46))",
               minHeight: 96,
               overflowY: "auto",
             }}
@@ -445,6 +454,7 @@ export function Composer({
           </Box>
           <Flex
             align="center"
+            wrap="wrap"
             gap="xs"
             px="xs"
             py="xs"
@@ -497,7 +507,11 @@ export function Composer({
                 aria-label="Model"
                 size="xs"
                 variant="unstyled"
-                style={{ maxWidth: 190, fontSize: "var(--mantine-font-size-sm)" }}
+                w={{ base: 84, sm: "auto" }}
+                style={{
+                  maxWidth: 190,
+                  fontSize: "var(--mantine-font-size-sm)",
+                }}
               />
             ) : null}
             {effortOption ? (
@@ -517,6 +531,7 @@ export function Composer({
                 aria-label="Effort"
                 size="xs"
                 variant="unstyled"
+                w={{ base: 72, sm: "auto" }}
                 style={{ fontSize: "var(--mantine-font-size-sm)" }}
               />
             ) : null}
@@ -689,6 +704,9 @@ function DraftBlockEditor({
   const textRef = text instanceof Y.Text ? text : null;
   const [value, setValue] = useState(textRef?.toString() ?? "");
   const area = useRef<HTMLTextAreaElement>(null);
+  // A phone keyboard leaves very little room; two lines are enough to start
+  // and the textarea still grows with the draft.
+  const compact = useMediaQuery("(max-width: 48em)");
 
   useEffect(() => {
     if (!textRef) {
@@ -797,7 +815,7 @@ function DraftBlockEditor({
       <Textarea
         ref={area}
         value={value}
-        rows={Math.max(4, Math.min(12, value.split("\n").length))}
+        rows={Math.max(compact ? 2 : 4, Math.min(12, value.split("\n").length))}
         onChange={(event) => update(event.target.value)}
         onFocus={() => {
           awareness.setLocalStateField("blockId", block.get("id"));
@@ -815,7 +833,7 @@ function DraftBlockEditor({
           padding: "4px 0",
           fontSize: "var(--mantine-font-size-lg)",
           lineHeight: 1.65,
-          minHeight: 80,
+          minHeight: compact ? 64 : 80,
         }}
       />
     </Box>

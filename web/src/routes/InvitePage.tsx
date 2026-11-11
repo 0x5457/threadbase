@@ -36,7 +36,6 @@ export function InvitePage() {
       notifications.show({
         message: "Invite accepted",
         color: "green",
-        position: "bottom-right",
       });
       navigate("/", { replace: true });
     },

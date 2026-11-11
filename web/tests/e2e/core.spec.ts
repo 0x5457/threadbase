@@ -572,6 +572,53 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.reload();
   await shot(admin, "inbox-768-dark");
 
+  // Phone layout: form fields stay at 16px (iOS Safari zooms the page when a
+  // smaller field is focused), nothing overflows horizontally, and the review
+  // drawer uses the full width instead of the desktop 420px panel.
+  const phoneContext = await browser.newContext({
+    extraHTTPHeaders: identityHeaders(ADMIN),
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const phone = await phoneContext.newPage();
+  await phone.goto(`/p/${project.id}/t/${thread.id}`);
+  const phoneComposer = phone.getByPlaceholder("Message");
+  await expect(phoneComposer).toBeVisible();
+  await phoneComposer.focus();
+  const phoneMetrics = await phone.evaluate(() => {
+    const field = document.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder="Message"]',
+    );
+    return {
+      width: window.innerWidth,
+      scrollWidth: Math.max(
+        document.documentElement.scrollWidth,
+        document.body.scrollWidth,
+      ),
+      fieldFontSize: field ? getComputedStyle(field).fontSize : "",
+    };
+  });
+  expect(phoneMetrics.scrollWidth).toBe(phoneMetrics.width);
+  expect(phoneMetrics.fieldFontSize).toBe("16px");
+  // The shell follows the visual viewport, so the software keyboard cannot
+  // cover the composer.
+  await phone.setViewportSize({ width: 390, height: 500 });
+  await expect
+    .poll(() =>
+      phone.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--tb-app-height")
+          .trim(),
+      ),
+    )
+    .toBe("500px");
+  await phone.setViewportSize({ width: 390, height: 844 });
+  await phone.getByRole("button", { name: "Show right drawer" }).click();
+  await expect(phone.getByRole("dialog")).toHaveCSS("width", "390px");
+  await shot(phone, "thread-390-dark");
+  await phoneContext.close();
+
   // Live reconnect state and a real divergence caused by rewriting the project branch.
   await admin.setViewportSize({ width: 1440, height: 900 });
   await admin.goto(`/p/${project.id}/t/${thread.id}`);

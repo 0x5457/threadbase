@@ -3,13 +3,14 @@ import {
   createTheme,
   localStorageColorSchemeManager,
 } from "@mantine/core";
-import { Notifications } from "@mantine/notifications";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import { AppNotifications } from "./components/app";
 import { ThemeBridge, THEME_STORAGE_KEY } from "./lib/theme";
+import { installVisualViewportSync } from "./lib/viewport";
 import {
   breakpoints,
   colors,
@@ -21,6 +22,9 @@ import {
   spacing,
 } from "./lib/design";
 import "./index.css";
+
+// Keep the shell above the mobile keyboard (see lib/viewport.ts).
+installVisualViewportSync();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -224,7 +228,7 @@ createRoot(root).render(
       theme={theme}
     >
       <ThemeBridge />
-      <Notifications position="bottom-right" />
+      <AppNotifications />
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <App />

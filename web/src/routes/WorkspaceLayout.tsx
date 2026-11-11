@@ -204,7 +204,6 @@ export function WorkspaceLayout() {
       notifications.show({
         message: "Approval updated",
         color: "green",
-        position: "bottom-right",
       });
     },
     onError: (error) => {
@@ -212,7 +211,6 @@ export function WorkspaceLayout() {
         message:
           error instanceof Error ? error.message : "Could not update approval.",
         color: "red",
-        position: "bottom-right",
       });
     },
   });
@@ -248,7 +246,6 @@ export function WorkspaceLayout() {
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
 
@@ -287,7 +284,6 @@ export function WorkspaceLayout() {
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
 
@@ -320,7 +316,6 @@ export function WorkspaceLayout() {
       setFollowUserName(null);
       notifications.show({
         message: "The followed member went offline",
-        position: "bottom-right",
       });
     }, 30_000);
     return () => window.clearTimeout(timer);
@@ -403,7 +398,6 @@ export function WorkspaceLayout() {
         notifications.show({
           message: selection ? "Link to selection copied" : "Link copied",
           color: "green",
-          position: "bottom-right",
         });
       }
       if (modifier && !event.altKey && !event.shiftKey && key === "j") {

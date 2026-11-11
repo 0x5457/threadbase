@@ -21,12 +21,29 @@ html,
 body,
 #root {
   height: 100%;
+  /* The shell owns every scroll container; never let the page bounce or
+     pull-to-refresh out from under it on touch devices. Full-page routes
+     (login, invite) can still scroll when their content overflows. */
+  overscroll-behavior: none;
+}
+
+/* `100dvh` follows the browser chrome; `--tb-app-height` (lib/viewport.ts)
+   narrows it further while the software keyboard is open. */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: var(--tb-app-height, 100dvh);
+  }
 }
 
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  /* Stop iOS from inflating text when the phone rotates. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* Router <Link> elements are plain anchors; without this they inherit
@@ -218,6 +235,95 @@ a {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border-width: 0;
+}
+
+/* ─── Touch / mobile ────────────────────────────────────────────
+ *  Phones get a readable type scale and thumb-sized controls. This whole
+ *  block is gated on a coarse pointer, so a narrow desktop window keeps the
+ *  dense desktop metrics.
+ */
+
+@media (pointer: coarse) {
+  /* iOS Safari zooms the page whenever a form field smaller than 16px gets
+     focus. The theme's desktop scale is 11–14px, so every tap on a field used
+     to scale the whole UI. 16px is the smallest size that never triggers it.
+     `!important` is required: Mantine sets field sizes through CSS variables
+     and some editors set them inline. */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
+  /* 16px fields need room; the desktop inputs are 36px tall. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  textarea,
+  select {
+    min-height: 42px;
+  }
+
+  /* Desktop-sized icon buttons (22–28px) are hard to hit with a thumb. */
+  .mantine-ActionIcon-root,
+  .mantine-CloseButton-root {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .mantine-Button-root {
+    min-height: 40px;
+  }
+
+  .mantine-Tabs-tab,
+  .mantine-Menu-item,
+  .mantine-Combobox-option {
+    min-height: 42px;
+  }
+
+  /* Tree expand chevrons are 28px by design; keep them thumb-friendly. */
+  [data-tree-chevron] {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* The status bar already drops the project name on phones; drop the
+     separator that went with it, and hide idle zero counters. */
+  .tb-status-separator,
+  .tb-status-idle {
+    /* Counters carry an inline display; !important keeps the idle ones out. */
+    display: none !important;
+  }
+
+  /* Phone toasts start below the 44px title bar (main.tsx picks top-center).
+     Only the top container is offset: setting `top` inline would stretch the
+     bottom containers across the screen and block the composer. */
+  .tb-notifications[data-position="top-center"] {
+    top: 52px;
+  }
+
+  /* Remove double-tap-to-zoom and the 300ms tap delay on controls while
+     keeping pinch zoom available. */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="button"],
+  [role="treeitem"] {
+    touch-action: manipulation;
+  }
+
+  /* Larger type on phones. `html:root` outranks the `:root` block Mantine
+     injects at runtime, which would otherwise win on cascade order. */
+  html:root {
+    --mantine-font-size-xs: 12px;
+    --mantine-font-size-sm: 13px;
+    --mantine-font-size-md: 15px;
+    --mantine-font-size-lg: 16px;
+    --mantine-font-size-xl: 18px;
+    --mantine-font-size-2xl: 22px;
+    --mantine-font-size-3xl: 26px;
+  }
 }
 
 /* Mono font stack for code / paths / diffs. */

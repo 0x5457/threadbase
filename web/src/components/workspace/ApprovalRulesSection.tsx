@@ -26,14 +26,12 @@ export function ApprovalRulesSection() {
       notifications.show({
         message: "Allow rule revoked",
         color: "green",
-        position: "bottom-right",
       });
     },
     onError: (error) =>
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
   if (rules.isLoading) {

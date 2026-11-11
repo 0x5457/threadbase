@@ -67,7 +67,6 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
   const member = useMutation({
@@ -78,14 +77,12 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
       notifications.show({
         message: "Member added",
         color: "green",
-        position: "bottom-right",
       });
     },
     onError: (error) =>
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
   const invite = useMutation({
@@ -105,13 +102,11 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
         notifications.show({
           message: "Invite link copied",
           color: "green",
-          position: "bottom-right",
         });
       } else {
         notifications.show({
           message: "Member added",
           color: "green",
-          position: "bottom-right",
         });
       }
     },
@@ -119,7 +114,6 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
   const revoke = useMutation({
@@ -129,7 +123,6 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
   const remove = useMutation({
@@ -139,7 +132,6 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
       notifications.show({
         message: String(error),
         color: "red",
-        position: "bottom-right",
       }),
   });
 
@@ -148,7 +140,6 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
     notifications.show({
       message: "Thread link copied",
       color: "green",
-      position: "bottom-right",
     });
   };
 

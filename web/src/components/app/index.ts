@@ -1,3 +1,4 @@
+export { AppNotifications } from "./AppNotifications";
 export { AvatarStack } from "./AvatarStack";
 export type { AvatarPerson, AvatarStackProps } from "./AvatarStack";
 export { EmptyState } from "./EmptyState";

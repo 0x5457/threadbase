@@ -104,12 +104,19 @@ export function LoginPage() {
               This service only accepts requests proxied by Tailscale on the
               host machine. Open the tailnet address instead of a local port.
             </Text>
-            <Code block>
+            <Code
+              block
+              styles={{
+                root: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
+              }}
+            >
               tailscale serve --bg 443 http://127.0.0.1:7777
             </Code>
             <Text size="xs" c="dimmed">
               Then browse to{" "}
-              <Code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</Code>.
+              <Code style={{ overflowWrap: "anywhere" }}>
+                https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net
+              </Code>.
             </Text>
           </Stack>
         </Alert>
