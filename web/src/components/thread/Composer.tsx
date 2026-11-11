@@ -313,8 +313,6 @@ export function Composer({
 
   return (
     <Box
-      px="md"
-      py="sm"
       style={{
         background: "var(--mantine-color-default)",
         borderTop: "1px solid var(--mantine-color-default-border)",
@@ -342,7 +340,13 @@ export function Composer({
         }
       }}
     >
-      <Box style={{ maxWidth: 768, margin: "0 auto", width: "100%" }}>
+      {/* Same 768/16 column as the timeline, so the composer card and the
+          message column share one left edge at every width. */}
+      <Box
+        px="md"
+        py="sm"
+        style={{ maxWidth: 768, margin: "0 auto", width: "100%" }}
+      >
         {(queue.data?.items.length ?? 0) > 0 ? (
           <Paper withBorder p="sm" radius="md" mb="xs" data-testid="queue-panel">
             <Flex

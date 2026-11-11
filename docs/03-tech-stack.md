@@ -1,8 +1,8 @@
-# 技术栈 v0.2
+# 技术栈 v0.5
 
-配套文档：[01-requirements.md](01-requirements.md)、[02-open-decisions.md](02-open-decisions.md)。
+配套文档：[01-requirements.md](01-requirements.md)、[02-open-decisions.md](02-open-decisions.md)、[06-implementation-status.md](06-implementation-status.md)。
 
-v0.4 相对 v0.3 的变化：确认 DeltaDB 基于 CRDT，草稿层改回 CRDT（块内字符级合并），事件层保持定序日志；补充发送事务与确认边界。
+v0.5 变化：按实现校准版本、依赖与工程描述；版本与依赖的权威来源为 06 §1。CRDT 仅用于草稿层，事件层保持定序日志。
 
 ---
 
@@ -25,7 +25,7 @@ v0.4 相对 v0.3 的变化：确认 DeltaDB 基于 CRDT，草稿层改回 CRDT�
 
 | 项 | Rust | Go | Node / TS |
 | --- | --- | --- | --- |
-| ACP 官方 SDK | `agent-client-protocol` 5.0，**Zed 的外部 agent 集成就用它** | 无官方 SDK | `@agentclientprotocol/sdk` 2.4，官方参考实现 |
+| ACP 官方 SDK | `agent-client-protocol` 5.1，**Zed 的外部 agent 集成就用它** | 无官方 SDK | `@agentclientprotocol/sdk`，官方参考实现 |
 | 远程传输 | 官方 `agent-client-protocol-http`（HTTP/SSE + WebSocket） | 无 | 无，需自建 |
 | 单二进制分发 | 原生 | 原生 | 需要 Node 运行时 + 原生模块 |
 | SQLite | `sqlx` / `rusqlite` | `modernc.org/sqlite`（纯 Go）或 cgo | `better-sqlite3` |
@@ -48,7 +48,7 @@ v0.4 相对 v0.3 的变化：确认 DeltaDB 基于 CRDT，草稿层改回 CRDT�
 
 | 代价 | 对策 |
 | --- | --- |
-| 开发速度慢于 TS | 领域逻辑集中在 `core` crate，用 `insta` 快照和 `proptest` 固定行为；前端独立迭代，不阻塞 |
+| 开发速度慢于 TS | 领域逻辑集中在 `core` crate，用内联单元测试与 fake agent 契约测试固定行为；前端独立迭代，不阻塞 |
 | 编译时间长 | `cargo-nextest`、`sccache`、CI 里拆 debug/release；日常开发用 `cargo check` |
 | Rust 人力少 | 核心 crate 保持小而清晰；对外贡献面放在 adapter 配置和前端 |
 | ACP crate 版本跳得快 | 锁定 minor 版本；自有 `Harness` trait 隔离；升级必须通过契约测试 |
@@ -65,7 +65,7 @@ Go 只在一种情况下会反超：团队完全不会 Rust 且要快速招人�
   ▼
 threadbase（单个 Rust 进程，axum）
   ├─ REST            /api/*
-  ├─ WS              /ws（事件订阅、presence、draft）
+  ├─ WS              /ws（事件订阅、presence）+ /ws/drafts/{threadId}（草稿）
   ├─ EventLog        SQLite append-only + 内存环形缓冲 + 快照
   ├─ Drafts          Y.Doc（per-author 块 + Y.Text），CRDT
   ├─ Workspace       git worktree、diff、受限路径访问（notify 监听外部改动）
@@ -83,12 +83,12 @@ threadbase（单个 Rust 进程，axum）
 
 ### 4.1 用官方 Rust SDK
 
-`agent-client-protocol` 5.0 提供四种角色：Client、Agent、Proxy、Conductor，以及连接构建器和 handler。我们只用 **Client**：
+`agent-client-protocol` 5.1 提供四种角色：Client、Agent、Proxy、Conductor。我们只用 **Client**，通过 `Client.v1().connect_with(...)` 的回调模型接入：
 
-- 启动子进程，接 stdin/stdout，用 v1 连接构建器注册 handler；
-- 实现 `Client` trait 的 `session/request_permission`、`fs/read_text_file`、`fs/write_text_file`；
+- 启动子进程，接 stdin/stdout，在回调中处理 `session/request_permission`、`fs/read_text_file`、`fs/write_text_file`；
 - 声明 `terminal: false`，让 agent 用自己的 shell，v1 不引入 PTY；
-- 所有回调都转发到 `core` crate，不让 SDK 类型泄漏到事件模型。
+- 所有回调都转发到 `core` crate，不让 SDK 类型泄漏到事件模型；
+- 能力按 adapter 开关：`unstable_subagents`、`unstable_end_turn_token_usage`；未协商时子 agent 退化为工具卡片。
 
 ### 4.2 不采用的官方能力，以及原因
 
@@ -110,6 +110,12 @@ pub trait Harness: Send + Sync {
     async fn prompt(&mut self, parts: Vec<Content>) -> Result<TurnHandle>;
     async fn cancel(&mut self, turn: TurnId) -> Result<()>;
     async fn decide(&mut self, req: PermissionId, d: Decision) -> Result<()>;
+    async fn steer(&mut self, turn: TurnId, parts: Vec<Content>) -> Result<SteerOutcome>;
+    async fn respond_elicitation(&mut self, id: ElicitationId, action: ElicitationAction, content: serde_json::Value) -> Result<()>;
+    async fn cancel_subagent(&mut self, id: SubagentId) -> Result<()>;
+    async fn config_options(&self) -> Vec<ConfigOption>;
+    async fn set_config(&mut self, option: &ConfigOption, value: &str) -> Result<()>;
+    async fn shutdown(&mut self) -> Result<()>;
     fn events(&self) -> broadcast::Receiver<RawAgentEvent>;
 }
 ```
@@ -120,28 +126,28 @@ pub trait Harness: Send + Sync {
 
 ### 4.4 进程与运行时依赖
 
-- 一条 thread 一个子进程；并发上限默认 3；空闲 15 分钟回收。
+- 一条 thread 一个子进程；v1 未实现并发上限与空闲回收（单团队规模下可接受，见 06 §10）。
 - `codex-acp`、`claude-agent-acp`、`pi-acp` 是 npm 包，需要 Node。产品不隐藏这一点：
   - `threadbase doctor` 检查 Node、agent 二进制、登录状态；
-  - 安装流程显式展示「将下载 codex-acp 0.16.x」；
-  - Claude 的 adapter 提供独立可执行文件，可以不依赖 Node。
+  - adapter 版本锁定（codex-acp 2.6.0、claude-agent-acp 0.101.0）；Codex 通过本机 `CODEX_PATH` 启动，不在运行时下载；
+  - Claude 的 adapter 同样是 npm 包，通过本地命令或 npx 解析。
 - 崩溃重启带退避，最多 3 次；重启不自动续跑上一个 turn，thread 标记为中断。
 
 ### 4.5 队列与 steering
 
-投递优先级：**插话 → 停止并发送 → 排队**。前两种是默认路径，排队是显式选择。
+投递优先级：**插话 → 排队 → 显式停止并发送**。不支持 steering 时默认排队；停止并发送只由用户显式选择。
 
 - 支持 steering 且 turn 运行中 → 调 `_session/steering`，始终带 `_meta: { steering: { idleBehavior: "promptRequired" } }`：
   - `injected` → 事件 `delivery: injected`；
-  - `promptRequired` → 保留输入，交给用户选择「停止并发送」或「排队」；
+  - `promptRequired` → 默认转入队列（不自动取消 turn），用户可显式改为「停止并发送」；
   - `startedNewTurn` → 视为异常（我们已带 `promptRequired`），记录告警并按新 turn 处理；
   - `failed` → 保留输入并提示。
-- 不支持 steering 且 turn 运行中 → 默认 **停止并发送**：`session/cancel` 后立即 `session/prompt`，事件 `delivery: stopped_and_sent`。这是 Delta 的行为。
-- 用户显式选「排队」→ 进入 thread FIFO（`VecDeque<PendingInput>`），持久化到 `queued_inputs`，turn 结束后按序发送。
+- 不支持 steering 且 turn 运行中 → 默认 **排队**；用户显式选择时才 **停止并发送**：`session/cancel` 后立即 `session/prompt`，事件 `delivery: stopped_and_sent`，并提示会取消当前 turn 与未处理审批。
+- 排队 → 进入 thread FIFO（服务端 `queued_inputs` 表），turn 结束后按序发送。
 - 队列在 `core`，不在客户端：刷新、换设备、服务重启都不丢。
 - 同一会话的 steering 按到达顺序串行，不同会话并行。
-- 取消 turn 不清空队列；每条标记 `superseded`，由任一 editor 逐条继续或清空。
-- 限制：单 thread 队列上限 50 条，超出拒绝并提示。
+- 取消 turn 不清空队列；每条标记 `superseded`，由任一 editor 逐条继续或撤回。
+- 限制：v1 未实现队列条数上限；如需可后续补充。
 
 ---
 
@@ -156,7 +162,7 @@ pub trait Harness: Send + Sync {
 | 层 | 内容 | 一致性 |
 | --- | --- | --- |
 | 事件层 | 消息、工具调用、审批、评论、子 agent 状态 | append-only、服务端 `seq`、可重放 |
-| 草稿层 | composer 里的 per-author 草稿块 | CRDT、字符级合并、发送后收敛删除 |
+| 草稿层 | composer 里的 per-author 草稿块 | CRDT、字符级合并；发送后写 `sentAt` 墓碑，不删除块 |
 
 草稿结构：
 
@@ -174,22 +180,22 @@ DraftBlock {
 
 - 块列表本身也放进 CRDT：并发新建块、删除块、编辑他人块都能合并，不需要额外的 position 服务或 `409` 重试。
 - 每个块有自己的 `Y.Text`；两人同时改同一个块时按字符合并，和 DeltaDB 的行为一致。
-- 服务端用 `yrs` 读同一份文档，生成消息时直接取末尾连续块。
+- 服务端用 `yrs` 读同一份文档，生成消息时合并所有非空草稿块，保留作者列表。
 
 ### 5.2 发送
 
-1. 发送是服务端串行事务：读 Y.Doc → 取末尾连续块 → 生成一条消息事件（`submittedBy` + `authors[]`）→ 从 Y.Doc 删除这些块 → 广播。
-2. 两人同时发送：第一个成功，第二个返回 `already_sent`，客户端保留一份本地副本可重新贴回。
-3. 删除块是 CRDT 操作，所有客户端自动收敛；不需要额外的「清空」广播。
+1. 服务端合并所有非空草稿块，保留作者列表，生成一条消息事件（`submittedBy` + `authors[]`）；发送失败不得丢失草稿（先创建消息或失败回滚 Y.Doc）。
+2. 两人同时发送：服务端只接受第一个；第二个得到可区分的空草稿响应，客户端保留本地副本可重新贴回。
+3. 发送成功后在块上写 `sentAt` 墓碑，不删除块（直接删除父级 map 时 yrs 0.17 并发编码会 panic）；Composer 过滤已发送块。
 4. 用量记在发送者头上；agent 看到每条消息的作者。
 
 ### 5.3 同步与持久化
 
 - 客户端：`yjs` + `y-codemirror.next`；块内光标与选区用 `y-protocols/awareness`（相对位置，不传像素）。
 - 传输：WS 的 `/ws/drafts/:threadId` 二进制通道，承载 y-sync 与 awareness；事件通道保持 JSON，互不干扰。
-- 持久化：`draft_updates(thread_id, seq, update BLOB)` 追加；每 2 秒或每 200 次更新写一次 `draft_snapshots`。
-- 发送成功后清空该 thread 的 updates 并写空快照。
-- 上限：单 thread 草稿总量 200 KB，单块 16 KB；超限告警并拒绝继续增长。
+- 持久化：`draft_updates(thread_id, seq, update BLOB)` 追加；每 200 次更新写一次 `draft_snapshots`。
+- 发送成功后写含 `sentAt` 墓碑的完整快照，不删除块。
+- 上限：服务端主动写路径限制单 thread 草稿总量 200 KB、单块 16 KB；入站 CRDT update 的资源治理见 06 §10 与审计清单 P0-6。
 - 重连：客户端带 `state_vector`，服务端回缺失 updates。
 
 ### 5.4 边界：不对什么用 CRDT
@@ -227,7 +233,7 @@ pub enum Anchor {
 
 - 通道：`/ws` 上的 `presence`，JSON，无 `seq`，不重放。
 - 订阅粒度是 **project**，不是 thread。否则对方切走 thread 时你收不到事件，跟随就断了。事件通道仍是 thread 粒度。
-- 节流：客户端有变化时发送，上限 10 Hz，带尾沿发送；服务端按 `(thread, user)` 只保留最新值，以 20 Hz 合并广播。
+- 节流：客户端有变化时发送，上限 10 Hz，带尾沿发送；服务端按 `(project, user)` 只保留最新值，以 50 ms（20 Hz）合并广播。
 - 锚点必须是语义的：绝不传像素坐标和滚动偏移。
 - 跟随是纯客户端状态；本地输入、滚动或点击即退出；目标 30 秒无心跳则结束并提示。
 - 颜色：`hash(user_id) % palette.len()`，与草稿内 awareness 光标共用同一映射。
@@ -250,7 +256,7 @@ pub struct EventEnvelope {
     pub subagent_id: Option<SubagentId>,   // 产生该事件的子会话
     pub parent_subagent_id: Option<SubagentId>,
     pub tool_call_id: Option<ToolCallId>,
-    pub delivery: Option<Delivery>,        // injected | queued | superseded | dropped
+    pub delivery: Option<Delivery>,        // injected | stopped_and_sent | queued | dropped
     pub payload: ThreadEvent,
 }
 ```
@@ -259,7 +265,7 @@ pub struct EventEnvelope {
 
 - `seq` 在 SQLite 事务内分配，客户端只消费。
 - 重连带 `afterSeq`；落后于环形缓冲则 `resync`。
-- 流式 `message_delta` 落库时合并（200 ms 或 4 KB），避免单条回复写出上千行。
+- 流式 `message_delta` 当前按 chunk 落库，未实现 200 ms / 4 KB 合并；事件量增长见审计清单 P1-9。
 - 每 500 条或 turn 结束写快照，首屏只读快照 + 增量。
 
 前端 reducer 用 `seq` 幂等；同一 `toolCallId` 做 upsert；`messageId` 做追加。
@@ -272,7 +278,7 @@ SQLite（WAL），`~/.local/share/threadbase/threadbase.db`，`sqlx` + `sqlx::mi
 
 | 表 | 说明 |
 | --- | --- |
-| `users` / `auth_sessions` | 账号与可撤销会话（`argon2id`） |
+| `users` | tailnet 身份、显示名、管理员标记；无密码列 |
 | `projects` | 路径唯一，含 remote 与默认分支 |
 | `threads` | 状态、worktree、base_sha、创建者 |
 | `thread_members` | owner / editor / viewer |
@@ -284,7 +290,11 @@ SQLite（WAL），`~/.local/share/threadbase/threadbase.db`，`sqlx` + `sqlx::mi
 | `draft_updates` | 草稿 Y.Doc 的增量更新（BLOB） |
 | `draft_snapshots` | 草稿快照，控制重放开销 |
 | `approvals` | 审批审计；不设超时，不自动拒绝 |
+| `approval_rules` | 一律允许的匹配条件与撤销 |
+| `elicitations` | 提问表单/URL 请求与响应 |
 | `comments` | 锚点：message / tool_call / elicitation / file / diff_line |
+| `seen_files` / `thread_reads` / `inbox` | Changes Seen、已读位置、收件箱未读 |
+| `invites` / `audit_log` / `user_settings` / `webhooks` | 邀请、审计、设置与 Webhook |
 | `attachments` | 元数据入库，文件落盘 |
 
 选择 `sqlx` 而不是 `rusqlite`：编译期 SQL 校验、内置迁移、异步查询。代价是构建需要 `DATABASE_URL`，用 `cargo sqlx prepare` 提交离线缓存。
@@ -293,19 +303,20 @@ SQLite（WAL），`~/.local/share/threadbase/threadbase.db`，`sqlx` + `sqlx::mi
 
 ## 8. 实时层
 
-- `axum` 原生 WebSocket，路径 `/ws`，握手时校验会话与 thread 权限。
-- 三条逻辑通道共用一个 TCP 连接：
+- `axum` 原生 WebSocket；两条独立连接：`/ws`（事件 + presence，JSON）与 `/ws/drafts/{threadId}`（草稿，二进制）。握手时校验会话与 thread 权限。
+- 逻辑通道与传输：
 
 | 通道 | 编码 | 持久化 | 语义 |
 | --- | --- | --- | --- |
 | `events` | JSON | 是（SQLite） | 有 `seq`，可重放、可 `resync` |
 | `presence` | JSON | 否 | 无 `seq`，只保留最新值，可丢 |
-| `drafts` | 二进制（y-sync） | 是（updates + 快照） | CRDT，按 `state_vector` 补差量 |
+| `drafts` | 二进制（y-sync） | 是（updates + 快照） | CRDT，按 `state_vector` 补差量；独立 WS 连接 |
 
 - 客户端发订阅消息 `{subscribe, threadId, afterSeq}`；服务端按订阅推送。
-- 背压：单连接待发缓冲超过 1 MB，丢弃 `message_delta` 并下发 `resync`。
-- 心跳 30 秒，两次未响应断开；presence 只存内存，不落库、不重放。
+- 背压：broadcast channel 容量（events 4096、presence 512、state 256）；慢消费者触发 `RecvError::Lagged` 后按订阅下发 `resync` 页面。
+- 心跳：服务端每 30 秒发 Ping；不追踪 Pong，半开连接依赖下次 Ping 失败或 TCP 断开。presence 只存内存，不落库、不重放。
 - 所有写操作走 REST，WS 只负责下行与 presence/草稿。避免「WS 里再实现一套 RPC」。
+- 两条独立连接的重连语义：事件连接断线后按 `afterSeq` 重放；草稿连接断线后携带 `state_vector` 重新同步。两者独立重连，互不阻塞。
 
 ---
 
@@ -313,19 +324,21 @@ SQLite（WAL），`~/.local/share/threadbase/threadbase.db`，`sqlx` + `sqlx::mi
 
 单机多用户是本产品最容易被低估的攻击面：服务一旦监听非回环地址，访问它就等于能操作这台机器上的代码与 shell。
 
-- 身份优先用 Tailscale：请求经 `tailscale serve` 转发到回环端口，读取其透传的身份头（名称以实测为准）自动建档。
-- 本地账号兜底：用户名 + 密码（`argon2id`），用于首次启动、离线、身份头缺失；首个用户为管理员。
-- tailnet 用户首次登录默认 `viewer`，管理员提升为 `editor` / `owner`；角色存本地库。
-- 会话：`tower-sessions`（DB 存储），Cookie `httpOnly` + `SameSite=Lax` + 生产 `Secure`；支持「登出所有设备」。
-- CSRF：写操作校验 `Origin` 与 `Host` 一致，并要求自定义头 `X-Requested-With: threadbase`。
-- 限流：登录每分钟 5 次；写接口按 IP 限流（`tower-governor`）。
+- 身份只有 Tailscale：请求经 `tailscale serve` 转发到回环端口，读取其透传的身份头（`Tailscale-User-Login` / `-Name` / `-Profile-Pic`）自动建档。服务不存密码、不签会话 Cookie。
+- `tailscale serve` 实测会转发 `X-Forwarded-For` / `-Host` / `-Proto` 与 `Tailscale-Headers-Info`，身份头只在「回环 peer」时读取；服务不绑定非回环地址，避免伪造头。
+- 管理员引导：`THREADBASE_TAILSCALE_ADMIN`（逗号分隔登录名）显式指定；未配置时首个出现的 tailnet 身份自动成为管理员，之后出现的身份都是普通成员。
+- 开发兜底：`THREADBASE_DEV_IDENTITY` 仅在「回环 peer 且无任何代理头/身份头」时生效，经 `tailscale serve` 的请求永远不会命中它。
+- CSRF：写操作校验 `Origin` 与 `Host` 一致（或等于 `THREADBASE_PUBLIC_ORIGIN`），并要求自定义头 `X-Requested-With: threadbase`。
+- 限流：身份不再有「登录」动作，密码限流器随之移除；v1 未实现写接口限流，见审计清单 P2-6。
 - 远程访问只走 Tailscale：
   - 服务固定绑 `127.0.0.1:7777`，不提供 `--host 0.0.0.0`。
-  - 远程用 `tailscale serve --bg 443 http://127.0.0.1:7777`，由 Tailscale 提供 MagicDNS 域名与证书；前端始终是 HTTPS，Cookie 可稳定使用 `Secure`。
+  - 远程用 `tailscale serve --bg 443 http://127.0.0.1:7777`，由 Tailscale 提供 MagicDNS 域名与证书；前端始终是 HTTPS。
   - 网络层由 Tailscale ACL 控制；应用层仍用账号与 thread 角色，两层都要过。
   - 不实现端口转发、frp、ngrok、内置 TLS；文档明确「不要把端口开到公网」。
   - 身份头只在请求来自回环时读取；服务不绑定非回环地址，避免伪造头。头名称与行为先做最小探针验证，再写进配置。
+  - `THREADBASE_PUBLIC_ORIGIN`：`tailscale serve` 会保留浏览器 Host，通常无需设置；当前面还有反代改写 Host 时必须设为公开 HTTPS origin，否则 CSRF 校验会拒绝写操作。
 - 审计：审批、合并、删除 thread、账号变更写审计表，带操作者与来源 IP。
+- HSTS 与其他响应头：`nosniff` / `X-Frame-Options: DENY` 等安全头由 `middleware.rs` 统一添加；未启用 HSTS（Tailscale 已终结 TLS，风险可控）。应用不再设置任何 Cookie。
 
 ---
 
@@ -335,8 +348,8 @@ SQLite（WAL），`~/.local/share/threadbase/threadbase.db`，`sqlx` + `sqlx::mi
 | --- | --- |
 | 构建 | Vite 8 |
 | 框架 | React 19 + TypeScript（`strict`） |
-| 样式 | Tailwind v4 + shadcn/ui，深色优先 |
-| 路由 | React Router 8（data router），深链接 `/p/:projectId/t/:threadId` |
+| 样式 | Mantine 9（@mantine/core + @mantine/hooks + @mantine/notifications + @mantine/spotlight）；深色默认 + 完整浅色主题 |
+| 路由 | React Router 7（data router），深链接 `/p/:projectId/t/:threadId` |
 | 服务端状态 | TanStack Query 5 |
 | 实时状态 | Zustand 5 + 自建 reducer（按 `seq` 幂等） |
 | 列表 | `@tanstack/react-virtual` 3 |
@@ -352,7 +365,7 @@ SQLite（WAL），`~/.local/share/threadbase/threadbase.db`，`sqlx` + `sqlx::mi
 
 渲染约定：流式增量用 `requestAnimationFrame` 批量提交；工具卡片按 id upsert；危险操作二次确认并说明后果。
 
-布局：左栏本身就是树（Pinned / Projects → Thread → Subthread，带 chevron 与 `Show N more`），中间时间线，右侧 Changes / Approvals / Members，顶栏固定上下文与在场成员。不设右侧子 agent 面板。具体像素与间距以 `docs/research/delta-ui.md` 的调研结果为准。
+布局：左栏本身就是树（Pinned / Projects → Thread → Subthread，带 chevron 与 `Show N more`），中间时间线，右侧抽屉（Changes / Approvals / Output / Comments / Files），顶栏固定上下文与在场成员。不设右侧子 agent 面板。视觉以 Linear/Apple Notes 与 Mantine 为准（见 05 §10）。
 
 ---
 
@@ -392,9 +405,8 @@ threadbase/
 
 | 层 | 工具 | 覆盖 |
 | --- | --- | --- |
-| 单元 | `cargo-nextest` + `insta` 快照 | 事件归约、审批状态机、角色判断 |
-| 属性 | `proptest` | 并发事件乱序、重放幂等 |
-| 协议 | `agent-client-protocol-test` + 自写 fake agent | 流式、权限、取消、崩溃、非法消息 |
+| 单元/集成 | `cargo-nextest` + 内联测试 | 事件归约、状态机、角色判断、REST/WS |
+| 协议 | 自写 fake agent + ACP 契约测试 | 流式、权限、取消、崩溃、非法消息 |
 | 集成 | 临时 SQLite + 真实 axum | REST + WS + 重连 |
 | e2e | Playwright | 两个浏览器上下文共享 thread、接管、审批 |
 | 契约 | 真实 `codex-acp`，标记 `@contract` | CI 不跑，发版前手动跑 |
@@ -405,28 +417,27 @@ CI 顺序：`fmt → clippy → nextest → build web → playwright → cargo-d
 
 ---
 
-## 14. 依赖清单（采样于 2026-02）
+## 14. 依赖清单（校准于 2026-11-10）
 
 | crate | 版本 | 用途 |
 | --- | --- | --- |
-| `agent-client-protocol` | 5.0 | ACP Client 角色 |
+| `agent-client-protocol` | 5.1 | ACP Client 角色（`unstable_subagents`、`unstable_end_turn_token_usage`） |
 | `axum` | 0.8 | HTTP + WS |
 | `tokio` | 1.54 | 异步运行时 |
-| `sqlx` | 0.9 | SQLite、迁移 |
+| `sqlx` | 0.8 | SQLite、迁移 |
 | `serde` / `serde_json` | 1 | 序列化 |
 | `ts-rs` | 12 | 生成前端类型 |
 | `rust-embed` | 8.13 | 内嵌 web 资源 |
-| `tower-http` / `tower-sessions` | — | 静态资源、压缩、超时、会话 |
-| `tower-governor` | — | 限流 |
-| `argon2` | 0.6 | 密码哈希 |
+| `tower-http` | 0.6 | 静态资源、压缩、超时 |
 | `tracing` / `tracing-subscriber` | 0.1 | 结构化日志 |
 | `notify` | 8.2 | 文件监听 |
 | `similar` | 3.2 | diff 计算 |
-| `yrs` / `y-sync` | 0.28 / 0.4 | 草稿 CRDT 与同步协议 |
-| `axum-extra` | — | typed header、cookie |
-| `ulid` | — | 主键 |
+| `yrs` / `y-sync` | 0.17 / 0.4 | 草稿 CRDT 与同步协议 |
+| `ulid` | 1.2 | 主键 |
 | `thiserror` / `anyhow` | — | 错误 |
-| `insta` / `proptest` / `cargo-nextest` | — | 测试 |
+| `cargo-nextest` | — | 测试 |
+
+未使用：`tower-sessions`、`tower-governor`、`axum-extra`、`insta`、`proptest`（版本审计见 06 §1）。
 
 前端依赖见第 10 节。
 
@@ -455,7 +466,7 @@ CI 顺序：`fmt → clippy → nextest → build web → playwright → cargo-d
 | 风险 | 对策 |
 | --- | --- |
 | ACP Rust crate 小版本频繁变动 | 锁 minor；`Harness` trait 隔离；升级跑契约测试 |
-| adapter 依赖 Node | `doctor` 检测；Claude 用独立二进制；安装流程显式 |
+| adapter 依赖 Node | `doctor` 检测；Claude 用 npm adapter；安装流程显式 |
 | Codex `app-server` 标注 experimental | 锁定 adapter 与 codex 版本；异常时提示而非崩溃 |
 | 多用户共用一个 agent 登录 | 界面固定展示 agent 身份；审批审计到人 |
 | 远程访问变成远程 shell | 默认回环、强制账号、Origin/CSRF、危险操作二次确认 |
@@ -465,7 +476,9 @@ CI 顺序：`fmt → clippy → nextest → build web → playwright → cargo-d
 
 ---
 
-## 17. 落地顺序（M1）
+## 17. 落地顺序（M1，历史记录）
+
+> 本节是 M1 阶段计划，仅作历史记录；实际实现与验证见 [06-implementation-status.md](06-implementation-status.md)。
 
 1. `cargo` workspace、`core` 事件模型、SQLite 迁移、`ts-rs` 导出。
 2. `agent`：`Harness` trait + fake agent fixture，跑通事件归约。

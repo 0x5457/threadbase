@@ -63,7 +63,7 @@ pub struct EventEnvelope {
 
 ## 3. 展示：Delta 风格的树（就是左栏）
 
-树不是第三列，也不是右侧面板。Delta 的左栏本身就是树：Project → Thread → Subthread。我们照抄这个层级，右栏只保留 Changes、Terminal、Approvals。
+树不是第三列，也不是右侧面板。Delta 的左栏本身就是树：Project → Thread → Subthread。我们照抄这个层级；右栏只保留 Changes、Approvals、Output、Comments、Files 五个标签（v1 无 Terminal/PTY）。
 
 ### 3.1 树的位置与结构
 
@@ -113,6 +113,7 @@ Delta 自建 harness，子 thread 可以发消息、可以 steer。ACP v1 的子
 - **阻塞范围**：只阻塞发起的子 agent。界面必须明示「其余 2 个子 agent 仍在运行」。
 - **不自动拒绝**：无人处理就一直等待。thread 顶栏显示「等待审批」，收件箱计数持续可见；审批项不会超时消失。
 - **一律允许的作用域**：`本 thread + 该 agent + 该工具/命令前缀`，对根会话与该 thread 下所有子会话生效。
+- **协议边界**：协议层 `allow_always` 的记忆范围由 agent 决定；产品的 thread/session 粒度由 `approval_rules` 强制约束，两者不一致时以产品规则为准。
 - **例外**：子会话 `cwd` 与 thread 根目录不同时不继承，必须单独确认，并显示工作目录。
 - **派遣本身**：父会话「允许创建子 agent」属于父会话的审批，出现在根层级，不标子来源。
 - **取消 turn**：该 turn 下所有未处理审批自动失效，并留一条「随 turn 取消」的记录。
@@ -144,7 +145,7 @@ Delta 自建 harness，子 thread 可以发消息、可以 steer。ACP v1 的子
 
 ### 5.3 URL 模式
 
-推迟到 M4。届时要求：显示完整 URL 与主机名、显式点击才打开、新标签页、禁止 iframe 与预取、收到 `elicitation/complete` 才收敛。
+v1 未启用协议能力（`elicitation_url: false`），渲染路径已实现；启用后要求：显示完整 URL 与主机名、显式点击才打开、新标签页、禁止 iframe 与预取、收到 `elicitation/complete` 才收敛。
 
 ### 5.4 多人同时在线
 
@@ -169,23 +170,23 @@ Codex 的非阻塞提问在协议上仍是 `elicitation/create`，adapter 立即
 | 方式 | 触发 | 行为 | 默认 |
 | --- | --- | --- | --- |
 | 插话（steering） | agent 声明 `_meta.steering.supported` 且 turn 运行中 | 并入当前 turn，不打断 | 能插话时默认 |
-| 停止并发送 | 不能插话且 turn 运行中 | `session/cancel` 后立即 `session/prompt` | Delta 的行为，不能插话时默认 |
-| 排队 | 用户显式选择 | 进入 thread FIFO，turn 结束后发送 | 非默认 |
+| 停止并发送 | 用户显式选择 | `session/cancel` 后立即 `session/prompt` | 非默认；选择时提示会取消当前 turn 与未处理审批 |
+| 排队 | 不能插话且 turn 运行中（默认）；或用户显式选择 | 进入 thread FIFO，turn 结束后发送 | 不能插话时默认 |
 
 发送按钮右键菜单按能力显示这三项；界面文案：`插话` / `停止并发送` / `排队`。
 
 ### 6.2 队列在服务端
 
 - 每 thread 一个 FIFO，由服务端持有；持久化到 `queued_inputs`，刷新、换设备、服务重启都不丢。
-- 界面显示「排队 2 条」，可撤回、可置顶（editor 及以上）。
-- turn 被取消时队列保留，每条标注「上一轮已取消」，由用户决定继续或清空。
+- 界面显示「排队 2 条」，可撤回（editor 及以上）。
+- turn 被取消时队列保留，每条标注「上一轮已取消」，由用户逐条决定继续或撤回。
 - 队列中的消息计入事件日志（`delivery: queued`），发送后再落一条 `injected`。
 
 ### 6.3 steering 是扩展，但两家都实现了
 
 - 方法：`_session/steering`，能力从 `initialize` 的 `_meta.steering.supported` 读取。
 - 结果四种：`injected`（并入当前 turn）、`startedNewTurn`（无 turn 时自己起一轮）、`promptRequired`（无 turn 可接收，内容留给客户端）、`failed`。
-- 我们**始终**带 `_meta: { steering: { idleBehavior: "promptRequired" } }`，保证没有 running turn 时 adapter 不会自己起一轮；拿回 `promptRequired` 就提示用户选择「停止并发送」或「排队」，不自动替他决定。
+- 我们**始终**带 `_meta: { steering: { idleBehavior: "promptRequired" } }`，保证没有 running turn 时 adapter 不会自己起一轮；拿回 `promptRequired` 就默认转入队列（不自动取消 turn），用户可显式改为「停止并发送」。
 - 同一会话的 steering 按到达顺序串行，不同会话并行。
 
 ### 6.4 反馈
@@ -224,17 +225,17 @@ ACP v2 草案把「prompt 可在任意状态发送、agent 插入或暂存」写
 
 Delta 的做法是批处理，不是单条手动推送：
 
-- 评论默认处于 pending 状态，**随下一条消息一起提交**，agent 在同一次回复里处理；也可以**单独提交**一条评论链，不带消息。
+- 评论默认处于 pending 状态，**随下一条消息一起提交**，agent 在同一次回复里处理；也可以**单独提交**一条评论链，不带消息；单独提交会作为一条独立消息注入 agent。
 - agent 的回复与评论**双向链接**：从评论跳到回答，也能从回答跳回评论；流式输出期间评论回复就显示在回答旁边。
 - 文件与 diff 评论：选中代码直接输入即建评论（评论模式默认开启）；可切换为编辑模式；提交后折叠成 gutter 标记，`⌘/Ctrl+⇧+M` 重新打开讨论。
 - 单条评论链可以「发给新 fork」（Delta 的 Send Comment to Fork，`⌘/Ctrl+⇧+Enter`），我们对应为新建 thread 并把该评论链作为初始上下文。
 - 锚点漂移时降级为文件级并提示，不静默错位。
 
-与之前 v0.1「必须显式让 agent 看」的差别：**不要求逐条授权，但也不在 turn 运行中实时注入**。评论跟着下一次提交进入上下文，这是批处理，不是实时流。
+与之前 v0.1「必须显式让 agent 看」的差别：**不要求逐条授权，但也不在 turn 运行中实时注入**。评论跟着下一次提交或单独提交进入上下文，这是批处理，不是实时流。
 
 ### 7.5 多人
 
-- 评论不触发 agent，也不改变 thread 状态；pending 评论对同 thread 成员可见。
+- 随消息提交或单独提交的评论链都会进入 agent 上下文；评论不改变 thread 状态；pending 评论对同 thread 成员可见。
 - @提及产生通知；被提及的 agent 等价于「随下次提交处理」。
 - 评论的处理状态（未处理 / 已处理 / 已解决）由人维护，agent 的回复不会自动标记解决。
 
@@ -259,12 +260,12 @@ Delta 的做法是批处理，不是单条手动推送：
 1. 同时 3 个子 agent：树显示 3 个节点与状态；批准其中一个不阻塞另外两个，界面明示。
 2. 嵌套两层：缩进与面包屑正确，事件不在父层重复。
 3. 子 agent 崩溃：节点显示错误与停止原因，主 thread 可继续。
-4. 断线重连：树与状态从快照恢复，子会话 transcript 按需加载。
+4. 断线重连：树与状态从快照恢复；子会话 transcript 是否可加载取决于 adapter 是否上报子会话事件。
 5. 未声明子会话能力：树只有根节点，退化卡片可展开。
 6. 队列：turn 中发 3 条，按序执行，界面显示位置；撤回一条后不再发送。
-7. steering：中途插话显示「已并入」；不能插话时默认「停止并发送」；返回 `promptRequired` 时提示选择，不自动转队列。
+7. steering：中途插话显示「已并入」；不能插话时默认「排队」；返回 `promptRequired` 时默认转入队列，用户可显式改为「停止并发送」。
 8. 提问：表单校验、可修改、三动作语义正确、多人首个响应生效。
-9. 评论：行内锚点、漂移降级、「让 agent 看这条」组装出的 prompt 能被 agent 正确理解。
+9. 评论：行内锚点、漂移降级、单独提交的评论链能被 agent 正确理解。
 10. 审批：来源链、工作目录、作用域与例外正确；无人处理时一直等待，不自动消失。
 
 ---
@@ -273,4 +274,4 @@ Delta 的做法是批处理，不是单条手动推送：
 
 1. 不做右侧花名册，用 Delta 风格树形展示。
 2. 审批不自动拒绝，无人处理就一直等待。
-3. URL 模式推迟到 M4。
+3. URL 模式 v1 未启用协议能力，待后续启用。

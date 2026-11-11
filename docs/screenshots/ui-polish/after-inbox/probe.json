@@ -1,0 +1,221 @@
+{
+  "definition": "rows measured on the All tab; firstRowPadding is the inner Group padding; unreadDot marginTop is relative to the 24px avatar row",
+  "entries": [
+    {
+      "width": 768,
+      "theme": "dark",
+      "rowCount": 4,
+      "firstRow": {
+        "x": 0,
+        "y": 145,
+        "w": 768,
+        "h": 63
+      },
+      "firstRowPadding": "12px 16px",
+      "badge": {
+        "text": "approval",
+        "bg": "rgb(17, 19, 21)",
+        "color": "rgb(248, 249, 250)"
+      },
+      "unreadDot": {
+        "x": 746,
+        "y": 166,
+        "w": 6,
+        "h": 6,
+        "marginTop": "9px"
+      },
+      "scrollWidth": 768,
+      "innerWidth": 768,
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 768,
+      "theme": "light",
+      "rowCount": 4,
+      "firstRow": {
+        "x": 0,
+        "y": 145,
+        "w": 768,
+        "h": 63
+      },
+      "firstRowPadding": "12px 16px",
+      "badge": {
+        "text": "approval",
+        "bg": "rgb(241, 243, 245)",
+        "color": "rgb(33, 37, 41)"
+      },
+      "unreadDot": {
+        "x": 746,
+        "y": 166,
+        "w": 6,
+        "h": 6,
+        "marginTop": "9px"
+      },
+      "scrollWidth": 768,
+      "innerWidth": 768,
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1024,
+      "theme": "dark",
+      "rowCount": 4,
+      "firstRow": {
+        "x": 280,
+        "y": 145,
+        "w": 744,
+        "h": 63
+      },
+      "firstRowPadding": "12px 16px",
+      "badge": {
+        "text": "approval",
+        "bg": "rgb(17, 19, 21)",
+        "color": "rgb(248, 249, 250)"
+      },
+      "unreadDot": {
+        "x": 1002,
+        "y": 166,
+        "w": 6,
+        "h": 6,
+        "marginTop": "9px"
+      },
+      "scrollWidth": 1024,
+      "innerWidth": 1024,
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1024,
+      "theme": "light",
+      "rowCount": 4,
+      "firstRow": {
+        "x": 280,
+        "y": 145,
+        "w": 744,
+        "h": 63
+      },
+      "firstRowPadding": "12px 16px",
+      "badge": {
+        "text": "approval",
+        "bg": "rgb(241, 243, 245)",
+        "color": "rgb(33, 37, 41)"
+      },
+      "unreadDot": {
+        "x": 1002,
+        "y": 166,
+        "w": 6,
+        "h": 6,
+        "marginTop": "9px"
+      },
+      "scrollWidth": 1024,
+      "innerWidth": 1024,
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1280,
+      "theme": "dark",
+      "rowCount": 4,
+      "firstRow": {
+        "x": 396,
+        "y": 145,
+        "w": 768,
+        "h": 63
+      },
+      "firstRowPadding": "12px 16px",
+      "badge": {
+        "text": "approval",
+        "bg": "rgb(17, 19, 21)",
+        "color": "rgb(248, 249, 250)"
+      },
+      "unreadDot": {
+        "x": 1142,
+        "y": 166,
+        "w": 6,
+        "h": 6,
+        "marginTop": "9px"
+      },
+      "scrollWidth": 1280,
+      "innerWidth": 1280,
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1280,
+      "theme": "light",
+      "rowCount": 4,
+      "firstRow": {
+        "x": 396,
+        "y": 145,
+        "w": 768,
+        "h": 63
+      },
+      "firstRowPadding": "12px 16px",
+      "badge": {
+        "text": "approval",
+        "bg": "rgb(241, 243, 245)",
+        "color": "rgb(33, 37, 41)"
+      },
+      "unreadDot": {
+        "x": 1142,
+        "y": 166,
+        "w": 6,
+        "h": 6,
+        "marginTop": "9px"
+      },
+      "scrollWidth": 1280,
+      "innerWidth": 1280,
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1440,
+      "theme": "dark",
+      "rowCount": 4,
+      "firstRow": {
+        "x": 476,
+        "y": 145,
+        "w": 768,
+        "h": 63
+      },
+      "firstRowPadding": "12px 16px",
+      "badge": {
+        "text": "approval",
+        "bg": "rgb(17, 19, 21)",
+        "color": "rgb(248, 249, 250)"
+      },
+      "unreadDot": {
+        "x": 1222,
+        "y": 166,
+        "w": 6,
+        "h": 6,
+        "marginTop": "9px"
+      },
+      "scrollWidth": 1440,
+      "innerWidth": 1440,
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "rowCount": 4,
+      "firstRow": {
+        "x": 476,
+        "y": 145,
+        "w": 768,
+        "h": 63
+      },
+      "firstRowPadding": "12px 16px",
+      "badge": {
+        "text": "approval",
+        "bg": "rgb(241, 243, 245)",
+        "color": "rgb(33, 37, 41)"
+      },
+      "unreadDot": {
+        "x": 1222,
+        "y": 166,
+        "w": 6,
+        "h": 6,
+        "marginTop": "9px"
+      },
+      "scrollWidth": 1440,
+      "innerWidth": 1440,
+      "noHorizontalOverflow": true
+    }
+  ]
+}

@@ -1,0 +1,261 @@
+{
+  "definition": "noHorizontalOverflow = documentElement.scrollWidth <= innerWidth; true means no horizontal overflow",
+  "entries": [
+    {
+      "width": 768,
+      "timelineCol": {
+        "x": 0,
+        "y": 85,
+        "w": 768,
+        "h": 506
+      },
+      "timelineContentX": 16,
+      "timelineContentW": 736,
+      "composerCard": {
+        "x": 16,
+        "y": 709,
+        "w": 736,
+        "h": 149
+      },
+      "aligned": true,
+      "noticeRow": {
+        "h": 22,
+        "bg": "rgba(0, 0, 0, 0)"
+      },
+      "diff": {
+        "gap": 4,
+        "texts": [
+          null,
+          null
+        ]
+      },
+      "counts": [
+        {
+          "title": "running",
+          "dot": {
+            "x": 620,
+            "y": 882,
+            "w": 6,
+            "h": 6
+          },
+          "box": {
+            "x": 620,
+            "y": 877,
+            "w": 63,
+            "h": 17
+          }
+        },
+        {
+          "title": "waiting",
+          "dot": {
+            "x": 691,
+            "y": 882,
+            "w": 6,
+            "h": 6
+          },
+          "box": {
+            "x": 691,
+            "y": 877,
+            "w": 61,
+            "h": 17
+          }
+        }
+      ],
+      "kbd": "Ctrl+K",
+      "approvalIcon": "lucide lucide-shield-check",
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1024,
+      "timelineCol": {
+        "x": 280,
+        "y": 85,
+        "w": 744,
+        "h": 506
+      },
+      "timelineContentX": 296,
+      "timelineContentW": 712,
+      "composerCard": {
+        "x": 296,
+        "y": 709,
+        "w": 712,
+        "h": 149
+      },
+      "aligned": true,
+      "noticeRow": {
+        "h": 22,
+        "bg": "rgba(0, 0, 0, 0)"
+      },
+      "diff": {
+        "gap": 4,
+        "texts": [
+          null,
+          null
+        ]
+      },
+      "counts": [
+        {
+          "title": "running",
+          "dot": {
+            "x": 876,
+            "y": 882,
+            "w": 6,
+            "h": 6
+          },
+          "box": {
+            "x": 876,
+            "y": 877,
+            "w": 63,
+            "h": 17
+          }
+        },
+        {
+          "title": "waiting",
+          "dot": {
+            "x": 947,
+            "y": 882,
+            "w": 6,
+            "h": 6
+          },
+          "box": {
+            "x": 947,
+            "y": 877,
+            "w": 61,
+            "h": 17
+          }
+        }
+      ],
+      "kbd": "Ctrl+K",
+      "approvalIcon": "lucide lucide-shield-check",
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1280,
+      "timelineCol": {
+        "x": 396,
+        "y": 85,
+        "w": 768,
+        "h": 506
+      },
+      "timelineContentX": 412,
+      "timelineContentW": 736,
+      "composerCard": {
+        "x": 412,
+        "y": 709,
+        "w": 736,
+        "h": 149
+      },
+      "aligned": true,
+      "noticeRow": {
+        "h": 22,
+        "bg": "rgba(0, 0, 0, 0)"
+      },
+      "diff": {
+        "gap": 4,
+        "texts": [
+          null,
+          null
+        ]
+      },
+      "counts": [
+        {
+          "title": "running",
+          "dot": {
+            "x": 1132,
+            "y": 882,
+            "w": 6,
+            "h": 6
+          },
+          "box": {
+            "x": 1132,
+            "y": 877,
+            "w": 63,
+            "h": 17
+          }
+        },
+        {
+          "title": "waiting",
+          "dot": {
+            "x": 1203,
+            "y": 882,
+            "w": 6,
+            "h": 6
+          },
+          "box": {
+            "x": 1203,
+            "y": 877,
+            "w": 61,
+            "h": 17
+          }
+        }
+      ],
+      "kbd": "Ctrl+K",
+      "approvalIcon": "lucide lucide-shield-check",
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 1440,
+      "timelineCol": {
+        "x": 476,
+        "y": 85,
+        "w": 768,
+        "h": 506
+      },
+      "timelineContentX": 492,
+      "timelineContentW": 736,
+      "composerCard": {
+        "x": 492,
+        "y": 709,
+        "w": 736,
+        "h": 149
+      },
+      "aligned": true,
+      "noticeRow": {
+        "h": 22,
+        "bg": "rgba(0, 0, 0, 0)"
+      },
+      "diff": {
+        "gap": 4,
+        "texts": [
+          null,
+          null
+        ]
+      },
+      "counts": [
+        {
+          "title": "running",
+          "dot": {
+            "x": 1292,
+            "y": 882,
+            "w": 6,
+            "h": 6
+          },
+          "box": {
+            "x": 1292,
+            "y": 877,
+            "w": 63,
+            "h": 17
+          }
+        },
+        {
+          "title": "waiting",
+          "dot": {
+            "x": 1363,
+            "y": 882,
+            "w": 6,
+            "h": 6
+          },
+          "box": {
+            "x": 1363,
+            "y": 877,
+            "w": 61,
+            "h": 17
+          }
+        }
+      ],
+      "kbd": "Ctrl+K",
+      "approvalIcon": "lucide lucide-shield-check",
+      "noHorizontalOverflow": true
+    }
+  ]
+}

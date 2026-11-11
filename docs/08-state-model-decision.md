@@ -6,7 +6,7 @@
 
 - **权威持久源**：每个实体仍由自己的 SQLite 表承载状态（`threads.status`、`approvals.status`、`elicitations.status`、`subagents.status`、`queued_inputs.status`、`comments.status`、`seen_files`、`inbox.read_at`、`thread_reads`）。
 - **权威迁移逻辑**：新增纯逻辑模块 `crates/core/src/state/`，每个实体一张显式迁移表（transition table）与守卫（guard），不依赖 IO。
-- **唯一写入入口**：新增 `crates/server/src/state.rs`（`StateStore`），所有状态变更必须先过机器校验，再落库；删除散落的裸 SQL 与重复 parse。
+- **唯一写入入口**：新增 `crates/server/src/state.rs`（`StateStore`），生命周期状态变更必须先过机器校验，再落库；删除散落的裸 SQL 与重复 parse。`seen_files`/`thread_reads`/`inbox.read_at` 是读模型派生，暂不纳入（见 §10.3）。
 - **共享读模型**：新增 `ThreadState` 投影（REST `GET /api/threads/{id}/state` + WS `thread_state` 扩充），UI 与 agent 共用；UI 不再各自映射 status，agent 通过语义摘要读取状态。
 - **事件日志**：保持 append-only，作为时间线与审计；不再作为 DB 状态的第二写入源。`core::reducer` 改为只折叠时间线，不再推导 thread status。
 
@@ -29,7 +29,7 @@
 DB 表是权威持久源，`core::state` 是权威迁移逻辑，`ThreadState` 是 UI/agent 的唯一读模型。
 
 - 优点：消除双真相与重复 parse；写入收敛到一处；迁移可测试；UI/agent 共用投影；对事件日志与线协议改动最小；可分阶段落地、逐阶段回滚。
-- 缺点：DB 仍是「状态」而事件是「时间线」，需要在文档中明确边界；投影要与 DB 保持同步（同事务写入）。
+- 缺点：DB 仍是「状态」而事件是「时间线」，需要在文档中明确边界；投影要与 DB 保持同步（当前为最终一致，见 §10.3）。
 - 结论：**采用**。在 v1 稳定址上同时改善 UX/DX/AX，风险最低。
 
 ### 模型 C：混合（核心簇事件溯源，次要机器 DB）
@@ -100,7 +100,7 @@ ThreadState 投影（REST + WS）
 - 事件保持 append-only；时间线事件（消息、工具、plan、评论、成员、队列更新）不变。
 - 生命周期事件（`permission_requested/resolved`、`elicitation_requested/resolved`、`subagent_updated`、`turn_*`、`thread_updated`）保留，用于时间线展示与审计。
 - **不再**用 reducer 从事件推导 thread status；reducer 只负责消息/工具/plan/评论等时间线折叠。
-- 状态迁移与事件追加在同一事务内完成（状态落库 + 事件 append），保证投影与时间线一致。
+- 状态迁移与事件追加在当前实现中是两个独立事务，通过投影修订与顺序广播保证最终一致（见 §10.3）；不假设同事务。
 
 ---
 
@@ -218,7 +218,7 @@ ThreadState 投影（REST + WS）
 ### 4.9 PresenceMachine / DraftMachine
 
 - presence：`disconnected → connecting → connected → disconnected`；`typing/hidden` 为属性；following 为客户端派生。
-- draft：块 `editing → sent(tombstone) | deleted`；provider `connecting → connected → synced`；发送竞争由服务端 `take_blocks` 串行保证。
+- draft：块 `editing → sent(tombstone) | deleted`；provider `connecting → connected → synced`；发送竞争由服务端 `send_guard`（peek → send → take）串行保证。
 - 这两台机器以规则文档 + 测试形式落地，不引入新的运行时状态存储。
 
 ---
@@ -316,7 +316,7 @@ ThreadState 投影（REST + WS）
 
 ## 9. 风险
 
-- 投影与 DB 同步：必须同事务写入 + 推送，否则 UI 会读到旧状态。
+- 投影与 DB 同步：当前为最终一致 + 投影修订；不假设同事务（见 §10.3）。
 - 事件量：不新增事件类型，避免膨胀。
 - 迁移兼容：旧 DB 的 status 值可能包含死状态；migration 需要清洗或映射。
 - 前端切换：投影字段要覆盖现有 UI 全部状态，否则会出现回归；用 playwright 状态矩阵兜底。
@@ -328,7 +328,7 @@ ThreadState 投影（REST + WS）
 ### 10.1 已实现
 
 - `crates/core/src/state.rs`：ThreadMachine、ApprovalMachine、ElicitationMachine、SubagentMachine、QueueMachine、AgentSessionMachine、DeliveryMachine、CommentMachine、ReadRules、PresenceMachine、DraftMachine，以及全部状态字符串映射；测试覆盖合法/非法/守卫/幂等。
-- `crates/server/src/state.rs`：`StateStore` 是**所有**生命周期状态列的唯一写入入口——thread / approval / elicitation / queue / comment / subagent / agent_binding 的状态迁移都经对应机器校验后在此落库，并广播 `ThreadState` 投影。subagent 的创建与迁移由 `create_subagent` 统一处理；queue retry 经 `QueueMachine::Retry`。
+- `crates/server/src/state.rs`：`StateStore` 是 thread / approval / elicitation / queue / comment / subagent / agent_binding 生命周期状态列的唯一写入入口——这些状态迁移都经对应机器校验后在此落库，并广播 `ThreadState` 投影。`seen_files`/`thread_reads`/`inbox.read_at` 是读模型派生，仍由各自模块写入（见 §10.3）。subagent 的创建与迁移由 `create_subagent` 统一处理；queue retry 经 `QueueMachine::Retry`。
 - 创建态写入（thread/approval/elicitation/comment/queue 的 INSERT）也经机器的 `Create`/`Enqueue` 动作校验初始状态，消除了死代码。
 - 死状态已落地：`ElicitationStatus::Expired`、`CommentStatus::Draft` 已移除；`ApprovalStatus::Cancelled`（turn 取消时取消 pending approval）、`Delivery::Dropped`（steering 失败）已启用；新增 `permission_cancelled` 事件。
 - `ThreadState` 投影（`crates/shared/src/api.rs`）：`thread_id / status / current_turn / pending_approvals / pending_elicitations / queued_inputs / active_subagents / diverged`。REST `GET /api/threads/{id}/state`、WS `thread_state`、agent 摘要三者共用同一投影。
@@ -351,6 +351,9 @@ ThreadState 投影（REST + WS）
 - DB `CHECK` 约束未加：SQLite 需要重建表，风险高于收益；改由 `core::state` 机器在应用层强制，并补索引。
 - `agent_bindings.status` 保留为诊断字段，但文档明确它不是权威状态。
 - `QueueStatus::Superseded` 现在真正写入 status；`superseded` 布尔保留为冗余。
+- 状态落库与事件 append 是两个独立事务，不是同事务；投影通过 revision/顺序广播保证最终一致。
+- `ThreadState.current_turn` 已落到 `threads.current_turn_id`（migration 0005，见 docs/06 §13.5），不再从事件派生；`AgentManager::current_turn` 同步读列。
+- `seen_files`/`thread_reads`/`inbox.read_at` 仍由 `diff.rs`/`routes_agent.rs`/`approvals.rs` 直接写入，未纳入 `StateStore`；它们是读模型派生，后续可收敛。
 
 ---
 

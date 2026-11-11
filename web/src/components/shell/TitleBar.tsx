@@ -161,27 +161,25 @@ export function TitleBar({
         className="no-drag"
         style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}
       >
-        <Tooltip
-          label={
-            shareDisabled
-              ? "Open a thread to copy its share link"
-              : "Copy link to this thread"
-          }
-        >
-          <Button
-            type="button"
-            variant="subtle"
-            size="sm"
-            disabled={shareDisabled || !onShare}
-            onClick={onShare}
-            leftSection={<Share2 size={14} aria-hidden />}
-            style={{ fontWeight: 400 }}
-          >
-            <Box visibleFrom="sm" component="span">
-              Share
-            </Box>
-          </Button>
-        </Tooltip>
+        {/* One primary action per page: pages without a thread (Projects,
+            Inbox, Settings) do not render a dead Share button. */}
+        {onShare ? (
+          <Tooltip label="Copy link to this thread">
+            <Button
+              type="button"
+              variant="subtle"
+              size="sm"
+              disabled={shareDisabled}
+              onClick={onShare}
+              leftSection={<Share2 size={14} aria-hidden />}
+              style={{ fontWeight: 400 }}
+            >
+              <Box visibleFrom="sm" component="span">
+                Share
+              </Box>
+            </Button>
+          </Tooltip>
+        ) : null}
         <Tooltip label="Approvals">
           <Indicator
             disabled={approvalsCount <= 0}

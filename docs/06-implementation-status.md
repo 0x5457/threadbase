@@ -23,15 +23,13 @@
 | `React` | 19 | **19.3.1** | 当前稳定 |
 | `TypeScript` | strict | **5.9.3** | TS 7 是新的原生工具链，生态兼容性未验证；5.9 为稳定选择 |
 | `React Router` | 8 | **7.18.5** | 7 是当前稳定大版本；data router 能力满足深链接需求 |
-| `Tailwind` | v4 | **4.3.5** | 当前稳定 |
+| `Mantine` | 9 | **9.8.0** | `@mantine/core` + `@mantine/hooks` + `@mantine/notifications` + `@mantine/spotlight`；React 19 兼容 |
 | `shiki` | 4 | **4.6.0** | 当前稳定 |
 | `y-websocket` | 未指定 | **3.1.0** | 客户端 Yjs sync/awareness 传输 |
 | `Playwright` | 未指定 | **1.65.0** | 浏览器 e2e；使用本机 Chrome/Chromium |
 | `pnpm` | 未指定 | **10.34.9** | 通过 `packageManager` 固定 |
 | `cargo-nextest` | 未指定 | **0.9.151** | 测试运行器 |
 | `tower-sessions` | 0.15 | **未使用** | 会话写入自建 `auth_sessions` 表，才能按用户批量撤销并保留审计；tower-sessions 的 store 表不提供该语义 |
-| `shadcn` | 未指定 | **4.23.0** | 官方 CLI/registry；`radix-nova` preset、Geist、Tailwind v4 |
-| `radix-ui` | 未指定 | **1.8.1** | shadcn 生成的统一 Radix 入口；不再逐个引入 `@radix-ui/react-*` |
 
 本机验证环境：Rust 1.99.1、Node 26.8.1、npm 12.0.2、Tailscale 已运行；Codex CLI 0.167.0（ChatGPT 登录）、Claude Code 2.1.304、opencode、pi 均已安装。`node_modules` 与 `target` 不提交。
 
@@ -79,8 +77,8 @@
 | F10 project 概览 | 已验证 | `projects.rs`、`ProjectPage.tsx`、`WorkspacePage.tsx` | 线程数、运行中、等待审批、增删行数、最近活动；概览计数测试 |
 | F11 焦点共享与跟随 | 已验证 | `presence.rs`、`presence.ts`、`TitleBar.tsx`、`Avatar.tsx` | 50ms 合并广播、隐身过滤、在线点、跨 thread 跟随；e2e 跟随 Bob 跳转到第二个 thread 并退出 |
 | F12 子 agent 展示 | 已验证 | `SidebarTree.tsx`、`ThreadTimeline.tsx`、`ThreadPage.tsx`、`agents.rs`、`acp.rs`、`WorkspaceLayout.tsx` | 主时间线可展开派遣卡片（状态/cwd/usage/错误原因/无独立会话/打开子会话）、运行中总数提示；ACP `SessionMessage` 生产 `Sent/Received Agent Message` 并持久化；左栏树、嵌套、Show N more、`⌘/Ctrl+J` 全量选择器、面包屑、子视图无 composer；fake `subagents` 与 `agent-message` 测试/截图 |
-| F13 提问与回答 | 已验证 | `approvals.rs`、`ElicitationCard.tsx`、`routes_actions.rs`、`agents.rs` | 表单/URL 两种模式；三种动作；首个响应获胜；secret 字段拒绝；取消 turn 时 pending elicitation 置 cancelled 并写 `ElicitationResolved`；审计/回归测试 |
-| F14 队列与中途插话 | 已验证 | `core/delivery.rs`、`agents.rs`、`routes_agent.rs`、`Composer.tsx` | steering 四种结果、停止并发送、Stop 取消、队列 tray 显示位置/作者/撤回；取消后 superseded 标记；队列顺序/持久化测试 |
+| F13 提问与回答 | 已验证 | `approvals.rs`、`ElicitationCard.tsx`、`routes_actions.rs`、`agents.rs` | 表单模式；URL 渲染路径已实现但协议能力未启用（`elicitation_url: false`）；三种动作；首个响应获胜；secret 字段拒绝；取消 turn 时 pending elicitation 置 cancelled 并写 `ElicitationResolved`；审计/回归测试 |
+| F14 队列与中途插话 | 已验证 | `core/delivery.rs`、`agents.rs`、`routes_agent.rs`、`Composer.tsx` | steering 四种结果；不支持 steering 时默认排队，显式「停止并发送」需二次确认；Stop 取消、队列 tray 显示位置/作者/撤回；取消后 superseded 标记；队列顺序/持久化测试 |
 | F15 评论与标注 | 已验证 | `comments.rs`、`ChangesPanel.tsx`、`CommentsPanel.tsx`、`CommentDialog.tsx`、`SelectionComment.tsx`、`ThreadTimeline.tsx` | thread/message/tool/file/diff/elicitation 锚点；选中文本直接评论；文件行评论；回复链；`#message-*` 与 `#event-*` 双向跳转、消息头打开评论区；diff hunk 评论可按 hunk 折叠并保留行 gutter 标记；pending→下一条消息投递及 delivered_seq 跳转；漂移写回 DB 并降级为 File |
 
 ### 3.2 功能清单 P0 / P1 / P2
@@ -100,14 +98,14 @@
 | P1 | 多人草稿块 | 已验证 | per-author blocks、块内 Y.Text、他人可编辑、awareness 编辑标记、服务端串行发送 |
 | P1 | 焦点共享 | 已验证 | 见 F11 |
 | P1 | 子 agent 树 | 已验证 | 左栏嵌套 + tab + 面包屑 + 状态点 |
-| P1 | 队列与 steering | 已验证 | FIFO 持久化、四种 steering、停止并发送、Stop 取消、队列条目撤回与 superseded |
+| P1 | 队列与 steering | 已验证 | FIFO 持久化、四种 steering；不支持 steering 时默认排队、显式停止并发送；Stop 取消、队列条目撤回与 superseded |
 | P1 | 评论与标注 | 已验证 | thread/message/tool/file/diff/elicitation 锚点、选区即评论、回复链、pending 批处理、投递跳转、漂移降级 |
 | P1 | 提问表单 | 已验证 | accept/decline/cancel、secret 拒绝、第一个回答生效 |
 | P2 | project 概览 / 收件箱 | 已验证 | 概览、全局 inbox、未读计数、@提及 |
 | P2 | 多 agent 并行对比 | 已验证 | `/p/:projectId/compare` 选择任意两条 thread，并排显示状态、消息数、增删行、审批和最近消息 |
 | P2 | 只读文件浏览 / agent 输出 | 已验证 | Files 面板只读树 + 文件内容；Output 面板只读命令输出，无 shell |
 | P2 | 子 agent 聚焦 / 对比 | 已验证 | 子 thread 页面 + 面包屑 + 树中节点；`/p/:projectId/t/:threadId/subagents/compare` 并排对照两个子会话；子会话无 composer |
-| P2 | URL 模式提问 | 已验证 | 显示完整 URL 与主机名，显式点击后新标签页打开，无 iframe/预取 |
+| P2 | URL 模式提问 | 部分实现 | 渲染路径已实现；协议能力未启用（`elicitation_url: false`），显示完整 URL 与主机名、显式点击后新标签页打开、无 iframe/预取的验收待启用后执行 |
 | P2 | 通知 | 已验证 | 审批/提问/@提及浏览器通知受 `settings.browserNotifications` 控制；收件箱 5s 轮询覆盖任意页面；请求编辑权限写入 owner/editor 收件箱；最小 Webhook POST（设置项优先） |
 | P2 | 终端面板 | 已验证（只读） | 见冲突裁决；不是 PTY |
 
@@ -123,7 +121,7 @@ crates/
   agent/      Harness trait、AcpHarness、adapter profile、fake agent
   workspace/  路径约束、git worktree、diff、只读文件浏览
   server/     axum、SQLite、REST、WS、CLI、doctor、upgrade、静态资源
-web/          React 19 + Vite + Tailwind v4 + Yjs/CodeMirror/Radix 风格组件
+web/          React 19 + Vite + Mantine 9 + Yjs/CodeMirror
 docs/         规格、实现状态、调研、截图
 scripts/      install.sh、e2e-server.sh
 ```
@@ -141,12 +139,12 @@ scripts/      install.sh、e2e-server.sh
 ```
 cargo fmt --all --check                                  pass
 cargo clippy --workspace --all-targets -- -D warnings    pass
-cargo nextest run --workspace                            255 passed, 1 skipped
+cargo nextest run --workspace                            314 passed, 1 skipped（审计修复后）
 cargo test --workspace                                   pass（含 ignored 的真实 Codex smoke 之外的全部测试）
 pnpm --dir web typecheck                                 pass
 pnpm --dir web lint                                      pass
 pnpm --dir web build                                     pass
-pnpm --dir web exec playwright test                      pass（单一 worker，双浏览器）
+pnpm --dir web exec playwright test                      pass（单一 worker，Chromium，43.8s）
 ```
 
 `cargo nextest` 跳过的 1 个是 `real_codex_streams_a_reply`（标记 `#[ignore]`，需要 Codex 登录）。单独执行：
@@ -273,7 +271,7 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - `ts-rs` 生成的 TS 类型是提交物；修改 Rust DTO 后必须运行 `cargo test -p threadbase-shared --lib` 重新导出。
 - 事件与草稿是两套存储：`events` 是权威序列，`draft_updates`/`draft_snapshots` 只服务 Y.Doc。不要跨层写。
 - WebSocket 事件通道有 4096 条缓冲；滞后时发送 `resync` 页面。presence 每 50ms 合并一次，不落库。
-- 服务端发送草稿时由 `DraftHub::take_blocks` 串行取块；两人同时发送只有第一个拿到内容，第二个返回空消息校验错误。
+- 服务端发送草稿时先 `peek_blocks` 非破坏性读取，发送成功后再 `take_blocks` 消费；`send_guard` 按 thread 序列化，两人同时发送只有第一个拿到内容，第二个得到可区分的 `draft already sent` 响应。发送失败不丢草稿。
 - 审批规则在 ACP 权限回调到达时匹配 `approval_rules`，命中后自动 `permission_resolved` 并只向 agent 发送 AllowOnce；管理员的 role/scope 校验仍由 HTTP 层先执行。viewer 绕过路由的回归测试在 `crates/server/tests/agent_flow.rs::viewer_cannot_unblock_a_tool_through_the_http_route`。
 - 新建 thread 若带 `initialPrompt`，路由在 agent 启动后调用 `kick_queue`，让服务端队列 worker 立即发送，而不是等用户再发一条消息。
 - 审批规则在 ACP 权限回调到达时匹配 `approval_rules`，命中后自动 `permission_resolved` 并只向 agent 发送 AllowOnce；HTTP 层先做角色/状态校验。
@@ -351,3 +349,136 @@ native-proc-macros = ["dprint-core-macros", "sqlx-macros"]
 - 幂等测试：thread/approval/elicitation/delivery/read/presence/draft/session/subagent/queue/comment 均有同态动作或终态重复拒绝测试。
 - 守卫落地：`SubagentMachine::can_cancel` 用于 `cancel_subagent` 拒绝终态子 agent；`QueueMachine::is_terminal` 用于 `retry_queue_item` 拒绝终态队列项。
 - 状态矩阵（空/加载/错误/等待审批/断线/准备中/分叉/只读）保持；e2e 重新生成了关键页面截图。
+
+---
+
+## 13. 审计修复（2026-11-10）
+
+依据 [09-audit-findings.md](09-audit-findings.md) 的 P0/P1 清单，本轮落地以下修复。
+
+### 13.1 默认投递改为排队（P0-3）
+
+- `core::delivery::resolve_delivery`：`Auto` 且 turn 运行中、agent 不支持 steering 时返回 `Queue`；显式 `Inject` 但能力缺失时也回退到 `Queue`。`StopAndSend` 仅在调用方显式选择时执行。
+- UI：Composer 的「Stop & send」改为两步确认（首次点击显示 `Confirm stop & send`，title 说明会取消当前 turn 与未处理审批）。
+- 测试：`running_auto_without_steering_queues`、`explicit_inject_without_steering_falls_back_to_queue`。
+
+### 13.2 草稿发送可恢复且保留多作者（P0-5）
+
+- `DraftDoc::peek_blocks` 提供非破坏性读取；发送流程改为「peek → agents.send → take」，发送失败不消费草稿。
+- `DraftHub::send_guard` 按 thread 序列化 peek/send/take，两个发送者不会消费同一批块。
+- 空草稿返回可区分的 `draft already sent`（而非 `message cannot be empty`）。
+- 多作者保留：`TurnStarted` 事件增加 `authors: Vec<UserBrief>`（`#[serde(default)]` 兼容旧事件）；`AgentManager::send_with_authors` 收集全部草稿块作者；`user_message`、`core::reducer` 与前端 `ThreadTimeline` 同步渲染多作者。
+- 排队路径：migration `0006_queue_authors` 给 `queued_inputs` 增加 `authors_json`；`agents::enqueue` 序列化作者列表；`process_queue` 发送时恢复 `authors`（缺省回退到 `[author]`）。
+- 本地保留：Composer 在发送前捕获草稿文本，收到 `draft already sent` 时重新写入新块，保证第二个发送者可以重新编辑/重发。
+- 测试：`peek_blocks_is_non_destructive`、`turn_started_keeps_multiple_authors`、`turn_started_falls_back_to_primary_author`、`draft_send_preserves_multiple_authors`（Manager 层）、`draft_route_preserves_multiple_authors`（HTTP 路由 + 两份草稿块）、`queued_draft_route_preserves_multiple_authors`（HTTP 路由显式排队 + 队列 worker 恢复作者）。
+
+### 13.3 入站 CRDT 资源约束（P0-6）
+
+- `DraftDoc::limits_ok` 校验单块 16 KB 与总量 200 KB。
+- `DraftRoom::apply` 在验证前暂停文档广播：超限更新不广播、不返回持久化；调用方 `drop_room` 丢弃房间，下次从持久化状态重载。
+- `DraftHub::is_canonical` 防止被丢弃房间的孤儿连接继续持久化；WebSocket 设置 `max_message_size`/`max_frame_size` 为 256 KB；单个 update 超过 128 KB 跳过。
+- 测试：`oversized_update_is_not_broadcast_or_persisted`。
+- 未实现：墓碑 GC 与房间空闲淘汰（P2，见 §13.8）。
+
+### 13.4 Seen 与基线解耦（P0-7）
+
+- migration `0004_seen_baseline`：`seen_files` 增加 `baseline` 列，主键变为 `(thread_id, user_id, path, baseline)`；旧数据以空 baseline 迁移（相当于重置 Seen）。
+- `diff::mark_seen`/`seen_hashes`/`list` 按解析后的 baseline reference 读写；切换基线不再继承或丢失进度。
+- 前端 `SeenRequest` 携带 `baseline`，Changes 面板按当前基线标记。
+- 测试：`seen_state_is_scoped_to_baseline`。
+
+### 13.5 current_turn 落库（P1-5）
+
+- migration `0005_current_turn`：`threads.current_turn_id`。
+- `AgentManager::prompt` 在 `TurnStarted` 后写入，`TurnEnded`/`TurnError`/`ProcessExited` 清空；队列 worker `process_queue` 在 `TurnStarted` 后同样写入，保证排队 turn 的 `current_turn` 也准确。`ThreadState.current_turn` 与 `AgentManager::current_turn` 改读该列，不再从事件派生。
+
+### 13.6 ThreadState revision（P1-4）
+
+- `ThreadState` 增加单调 `revision`；`StateStore::snapshot_state` 按 thread 串行化，同时为 WS 发布、WS 订阅与 REST 投影分配唯一递增 revision，避免订阅消息与并发发布共用同一 revision。
+- 前端 `live.ts` 按 revision 丢弃乱序消息；测试 `snapshot_revisions_are_monotonic` 验证严格递增。
+
+### 13.7 交互键位与设置补全
+
+- Composer 读取 `sendWithModifier` 设置：关闭时 Enter 直接发送，开启时保持 `⌘/Ctrl+Enter`。
+- ThreadPage 实现 `⌘W`（归档/取消归档切换）与 `⌘⇧U`（已读/未读切换）；新增 `POST /api/threads/{id}/unread` 端点。
+- `⌘/Ctrl+Enter` 也走 `sendWithRetention`，本地草稿保留覆盖全部发送路径（按钮、快捷键、菜单）。
+
+### 13.8 明确不修 / 可接受风险
+
+- **状态与事件不同事务（P1-3）**：`StateStore` 落库与 `EventStore::append` 仍是两个事务；通过 revision + 按 thread 串行广播保证 UI 最终一致，不假设同事务。投影失败已记录 `tracing::warn!`（`publish_thread_state`），崩溃窗口仍需更完整的可观测告警，v1 接受该风险。
+- **墓碑 GC 与房间淘汰（P0-6 剩余）**：`sentAt` 墓碑与 `DraftHub.rooms` 未回收；单线程草稿有 200 KB 上限，长期运行需要 GC，v1 不做。
+- **热路径（P1-9）**：`projection()` 仍每次调用 `is_diverged`（两次 git 子进程）；`last_seen_at` 仍每请求写；`message_delta` 未合并。v1 接受，后续可缓存/节流。
+- **写接口限流（P2-6）**：仅登录限流，写接口未限流；tailnet 可信网络下接受。
+- **事件保留策略（P2-3）**：`message_delta` 按 chunk 落库，未做归档压缩；单 thread 10 万事件仍可打开（窗口加载），长期膨胀需保留/导出策略。
+
+---
+
+## 14. 最终验证（2026-11-10 审计修复后）
+
+审计与修复后的完整质量门：
+
+- `cargo fmt --all --check`：pass
+- `cargo clippy --workspace --all-targets -- -D warnings`：pass
+- `MBX_BLAZE=false cargo nextest run --workspace`：314 passed, 1 skipped
+- `pnpm --dir web typecheck`：pass
+- `pnpm --dir web lint`：pass
+- `pnpm --dir web build`：pass
+- `pnpm --dir web exec playwright test`：1 passed（44.0s，Chromium）
+- 迁移 `0004_seen_baseline`、`0005_current_turn` 已用 sqlite3 验证 up→down。
+
+新增验证：
+
+- `seen_state_is_scoped_to_baseline`：Seen 按基线隔离，切换基线不继承/丢失。
+- `peek_blocks_is_non_destructive`：草稿发送前读取不消费。
+- `running_auto_without_steering_queues`、`explicit_inject_without_steering_falls_back_to_queue`：默认投递不再打断 turn。
+- `oversized_update_is_not_broadcast_or_persisted`：超限 CRDT 更新不广播、不持久化。
+- `draft_send_preserves_multiple_authors`：Manager 层验证 `TurnStarted.authors` 保留多个草稿块作者。
+- `draft_route_preserves_multiple_authors`、`queued_draft_route_preserves_multiple_authors`：HTTP 路由级验证立即发送与排队路径都保留多作者。
+- `empty_draft_send_returns_already_sent`、`failed_send_retains_draft`：第二个发送者得到 `draft already sent`；发送失败保留草稿。
+- `snapshot_revisions_are_monotonic`：WS 订阅/发布与 REST 投影的 revision 严格递增。
+- `queued_turn_writes_current_turn`：排队 turn 也写入 `threads.current_turn_id`。
+- e2e 覆盖共享草稿、审批、队列、subagent、断线重连、Changes/评论、分享/presence、归档/分叉/删除与 diverged。
+- 文档一致性：README 与 docs/01–08 已按 [09-audit-findings.md](09-audit-findings.md) 修正；docs/02 已同步投递优先级、分享档位、子 agent 状态与 URL 模式决策。
+
+真实 agent 依赖：`real_codex_streams_a_reply` 仍为 `#[ignore]`（需要 Codex 登录）；Claude/opencode/pi 依赖 fake 契约与 `doctor`。部署依赖 Rust、Node、git 与 Tailscale；真实 agent 额度与登录属于环境，不属于仓库。
+
+---
+
+## 15. Mantine 迁移（2026-11-10）
+
+- 前端样式底座从内置源码的 shadcn/ui + Radix + Tailwind v4 切换为 Mantine 9（`@mantine/core`、`@mantine/hooks`、`@mantine/notifications`、`@mantine/spotlight`），并移除 `shadcn`、`radix-ui`、`cmdk`、`class-variance-authority`、`clsx`、`tailwind-merge`、`tw-animate-css`、`tailwindcss`、`@tailwindcss/vite`、`sonner`。
+- `main.tsx` 使用 `MantineProvider` + `createTheme`（Geist 字体、深色默认、浅色可切）与 `Notifications`；`index.css` 只保留 Mantine styles 与 Geist。
+- 删除 `web/src/components/ui/` 的全部 shadcn 组件与 `app-*` 封装；应用级组合（`ErrorState`、`EmptyState`、`LogoMark`、`AvatarStack`）迁移到 `web/src/components/app/`。
+- 组件映射：Button→`Button`、IconButton→`ActionIcon`、Badge→`Badge`、Input/Textarea→`TextInput`/`Textarea`/`PasswordInput`、Dialog→`Modal`、DropdownMenu→`Menu`、Select→`Select`、Popover→`Popover`、Tooltip→`Tooltip`、Sheet→`Drawer`、Tabs→`Tabs`、ScrollArea→`ScrollArea`、Skeleton→`Skeleton`、Command→`Spotlight`。
+- `toast(...)`（sonner）统一改为 `notifications.show(...)`；`lib/live.ts` 同步。
+- 后端 API/数据层/路由路径未改动；e2e 选择器按 Mantine 角色调整（`Password` 精确匹配、队列面板 `data-testid`、菜单焦点等待）。
+- 主题：`localStorageColorSchemeManager({ key: "threadbase.theme" })` 作为唯一持久化来源；`index.html` 内联脚本预置 `data-mantine-color-scheme` 避免闪烁；`ThemeBridge` 保留 `toggleTheme`/`setTheme` 兼容层。
+- 验证：`pnpm typecheck`、`pnpm lint`、`pnpm build`、Playwright e2e 1 passed；浏览器逐路由核对 10 条路由（/login、/、/p/:id、/p/:id/t/:id、/p/:id/t/:id/s/:id、/p/:id/compare、/p/:id/t/:id/subagents/compare、/inbox、/invite/:token、404）均以 Mantine 深色主题渲染，主题切换 light↔dark 与 subagent 的 `threadbase.theme` 持久化均验证通过。
+
+---
+
+## 16. Tailscale 身份登录（2026-11-10）
+
+部署目标：本机跑服务，只监听 `127.0.0.1:7777`，tailnet 内其他设备经 `tailscale serve` 访问。登录因此收敛为单一方式。
+
+- 移除密码登录：删除 `/api/auth/login`、`/api/auth/setup`、`/api/auth/logout`、`/api/auth/logout-all`、`POST /api/auth/users`，以及 `LoginRequest` / `LoginResponse` / `SetupRequest` / `CreateUserRequest` DTO。
+- 移除会话：删除 `auth_sessions` 读写、`issue_session` / `revoke_*` / 会话 Cookie、`argon2` 依赖与密码限流器。
+- 认证入口只剩 `CurrentUser` 提取器：读取 `tailscale serve` 转发的 `Tailscale-User-Login` / `-Name` / `-Profile-Pic`，仅信任回环 peer。
+- 管理员引导：`THREADBASE_TAILSCALE_ADMIN`（逗号分隔）显式指定；未配置时首个出现的 tailnet 身份自动提升为管理员并写审计 `user.admin_bootstrapped`。
+- 开发兜底：`THREADBASE_DEV_IDENTITY`，仅在「回环 + 无 `X-Forwarded-*` / `Tailscale-*` 头」时生效，经 serve 的请求不会命中。
+- 前端：登录页改为 Tailscale 身份说明页（角色/错误/引导三态），不再有表单；侧栏「Sign out」改为「Reload workspace」。
+- 未知 `/api/*` 路径现在返回 JSON 404，不再回落到 SPA 的 `index.html`。
+- 实测 `tailscale serve` 转发头：`Tailscale-User-Login`、`Tailscale-User-Name`、`Tailscale-User-Profile-Pic`、`Tailscale-Headers-Info`、`X-Forwarded-For/Host/Proto`；Host 保留为浏览器侧 host。
+- 验证：`cargo fmt --check`、`cargo clippy --workspace --all-targets -D warnings`、`cargo nextest run --workspace`（304 passed, 1 skipped）、`pnpm typecheck`、`pnpm lint`、`pnpm build`、Playwright e2e 1 passed（e2e 通过 `extraHTTPHeaders` 注入身份标头模拟 tailnet）。
+
+---
+
+## 17. 一键 systemd 部署（2026-11-10）
+
+- 新增 `threadbase install`（`crates/server/src/install.rs`）：只做配置，不搬运二进制。`ExecStart` 指向当前进程的可执行路径（`argv[0]`，规范化后），因此不拷贝、不构建、不下载。
+- 写入内容：`THREADBASE_BIND`、`THREADBASE_DATA_DIR`、`THREADBASE_PUBLIC_ORIGIN`（由 `tailscale status --json` 的 `Self.DNSName` 推导）、可选 `THREADBASE_TAILSCALE_ADMIN`，以及去重后的 `PATH`（agent CLI 常在 mise/nvm 路径下）。
+- 激活：`loginctl enable-linger` + `systemctl --user daemon-reload/enable/restart`，然后 `tailscale serve --bg --https=<port> http://127.0.0.1:<port>`，最后轮询 `/api/health`。
+- 默认 `--https-port 8443`，避免覆盖 443 上已有的 `tailscale serve` 配置。
+- `--print` 只打印改动；`--uninstall` 停用并删除 unit、关闭对应 `tailscale serve`；二进制与数据目录从不删除。
+- 修掉一个真实 bug：`serve_arguments` 漏了 `serve` 子命令，导致实际调用变成 `tailscale --bg ...`（`--print` 因字符串拼接而看不出），已加回归测试。
+- 本机实测：`systemctl --user` enabled/active、`Linger=yes`、`MainPID` 的 `/proc/PID/exe` 与 unit 的 `ExecStart` 一致、经 `https://<machine>.ts.net:8443` 自动登录；`--uninstall` 后 unit 与 serve 映射移除。

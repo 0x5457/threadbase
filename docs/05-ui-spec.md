@@ -1,8 +1,10 @@
-# UI 规格 v0.1（对齐 Delta v0.24.0）
+# UI 规格 v0.2（交互参考 Delta，视觉以 Linear/Apple Notes 为准）
 
-依据：[delta-ui.md](research/delta-ui.md)（463 行调研，含逐条证据与未验证项）、[01-requirements.md](01-requirements.md)。原始截图与文档在 [research/_raw/](research/_raw/)。
+依据：[delta-ui.md](research/delta-ui.md)（463 行调研，含逐条证据与未验证项）、[01-requirements.md](01-requirements.md)、[02-open-decisions.md](02-open-decisions.md) 已定 13、[06-implementation-status.md](06-implementation-status.md) §9/§11。原始截图与文档在 [research/_raw/](research/_raw/)。
 
-标注：**照抄** = 与 Delta 一致；**偏离** = 有理由的不同；**未验证** = Delta 也无证据，先不做承诺。
+标注：**参考** = 与 Delta 交互语义一致；**偏离** = 有理由的不同；**未采用** = Delta 有但 v1 不实现；**未验证** = 证据不足，不做承诺。
+
+视觉方向已收敛为 Linear/Apple Notes：单色 primary、hairline 分隔、Mantine 组件、Geist 字体、8px 圆角、11–14px 信息层级、深色默认 + 完整浅色主题。Delta 深色像素值仅作历史参考，不再作为实现基准。
 
 ---
 
@@ -12,7 +14,8 @@
 2. **身份放标题栏，分支放状态栏**。thread 标题与参与者头像在顶部；project、分支、worktree 在底部状态栏的 Project Settings 里。
 3. **树是唯一导航**。project → thread → subthread 在左栏缩进，没有第二套子 agent 面板，也没有卡片网格。
 4. **评论是选中即打字**，不是一个模式切换按钮。
-5. **四处刻意偏离**（第 12 节）：审批 UI、project 一级维度、子 thread 的 composer、Reviews/Merge 两种 thread 类型。
+5. **五处刻意偏离**（第 12 节）：审批 UI、project 一级维度、子 thread 的 composer、Reviews/Merge 两种 thread 类型、分享两档。
+6. **视觉以 Linear/Apple Notes 为目标**：一个页面只保留一个主动作，列表用行而不是卡片，说明文字不承担布局职责。
 
 ---
 
@@ -37,8 +40,8 @@
 
 - 标题栏横跨整宽，左栏与主区在标题栏下才分栏。
 - 标题栏左：侧栏开关、全局搜索；中：thread 标题 + 参与者头像（重叠小圆）；右：动作簇 + 右栏开关。
-- 主区时间线单列，正文有三档宽度：`default` / `full` / `custom`（拖动 ruler）。
-- 右栏是抽屉，默认面板为 Changes；`Shift+Esc` 关闭。
+- 主区时间线单列。**未采用**：Delta 的三档正文宽度与拖动 ruler。
+- 右栏是抽屉，默认面板为 Changes；`Shift+Esc` 关闭。实现使用 Mantine Tabs 图标按钮（Changes / Approvals / Output / Comments / Files），宽度 360px。
 - 左栏可整列折叠。
 
 **偏离**
@@ -89,8 +92,8 @@ Threads（无 project 的 thread）
 ### 4.1 头部与 tab
 
 - 标题栏承载 thread 标题与参与者头像（照抄）。
-- 窄屏/移动端另有 tab 条：`Thread` / `Changes +694 −85` / `Files`（照抄截图 21）。
-- 桌面端 Changes 在右栏；打开文件或子 thread 时出现 tab 条（照抄）。
+- **未采用**：Delta 的移动端 tab 条与正文宽度 ruler。v1 只做响应式适配：窄屏优先保证时间线与 Composer 可用，Changes / Files 通过右栏抽屉访问，不做专门移动端布局。
+- 桌面端 Changes 在右栏；右栏标签为 Mantine Tabs 图标按钮。
 
 ### 4.2 时间线元素顺序
 
@@ -100,7 +103,7 @@ Threads（无 project 的 thread）
 4. **折叠摘要行**（见 4.3）。
 5. 特殊折叠行：`Thinking ›`、`Context Compacted ›`、`2 comments ›`。
 6. 工具卡：`Apply patch` / `Read File` / `Edit File` + 文件路径 + chevron + 语法高亮 diff。
-7. 终端块：`zsh ⌄` + 圆角描边内容 + 头像。
+7. **未采用**：终端块。v1 不做 PTY 与内联终端；agent 命令输出在只读 Output 面板展示（见 06 §2/§8）。
 8. 行内评论卡：正文范围高亮 + 头像 + 回复堆叠。
 9. 事件行：`Routed to Subthread`、`Sent Agent Message` / `Received Agent Message`、`Merged` / `Merge Failed`。
 10. **审批卡**（我们新增，见第 9 节）。
@@ -127,7 +130,7 @@ Threads（无 project 的 thread）
 ### 4.4 评论
 
 - 选中正文或代码直接输入即建 draft 评论，不切模式；`⌘/Ctrl + ⌥/Alt + M` 同效。
-- draft → pending（随下一条消息提交）→ delivered（收进 gutter，`⌘/Ctrl + ⇧ + M` 重开）。
+- draft → pending（随下一条消息提交或单独提交）→ delivered（收进 gutter，`⌘/Ctrl + ⇧ + M` 打开讨论）→ resolved（人工标记解决）。
 - 多人草稿可见；发送时连同他人 pending 评论一起送出（照抄）。
 - 评论卡左侧有作者色竖线；agent 回复与评论双向链接。
 - 范围高亮用多色（按作者），`⌘/Ctrl + ⌥/Alt + V` 显隐评论。
@@ -161,8 +164,8 @@ Delta 的 UI 模型是 per-author 草稿块；底层文本同步是 CRDT（Delta
 - **块列表**：`Y.Array`，块是 `Y.Map { author, text: Y.Text, createdAt }`。并发新建、删除、编辑他人块都由 CRDT 收敛。
 - **块内文本**：`Y.Text`，字符级合并；两人同时改同一块不会互相覆盖。
 - **光标**：`y-protocols/awareness` 提供块内相对位置，颜色与全局 presence 共用映射。
-- **发送**：服务端串行事务，读 Y.Doc → 取末尾连续块 → 生成消息（`submittedBy` + `authors[]`）→ 删除块 → 广播。两人同时发送，第一个成功，第二个收到 `already_sent` 并保留本地副本。
-- **持久化**：`draft_updates` 增量 + `draft_snapshots` 快照；发送成功后清空。
+- **发送**：服务端合并所有非空草稿块，保留作者列表，生成一条消息（`submittedBy` + `authors[]`）；发送失败不得丢失草稿。两人同时发送时服务端只接受第一个，第二个得到可区分的空草稿响应并保留本地副本。
+- **持久化**：`draft_updates` 增量 + `draft_snapshots` 快照；发送成功后写 `sentAt` 墓碑，不删除块（避免 yrs 并发编码 panic）。
 
 不需要 `409`、不需要服务端 position、不需要块级锁。文本之外的东西（消息顺序、审批、评论）仍然由服务端 `seq` 定序，不进 CRDT。
 
@@ -172,17 +175,17 @@ Delta 的 UI 模型是 per-author 草稿块；底层文本同步是 CRDT（Delta
 | --- | --- | --- |
 | 无 turn 运行 | 发送 | 照抄 |
 | 有 turn 运行，agent 支持 steering | 默认「插话」：并入当前 turn | 偏离：Delta 没有 steering 概念 |
-| 有 turn 运行，不支持 steering | 默认「停止并发送」：cancel 当前 turn 后立即发送 | 照抄 Delta |
+| 有 turn 运行，不支持 steering | 默认「排队」；用户显式选择时才「停止并发送」：cancel 当前 turn 后立即发送，并提示会取消当前 turn 与未处理审批 | 偏离：Delta 没有 steering/队列概念 |
 | 用户显式选择「排队」 | 进入 thread 队列，turn 结束后发送 | 偏离：Delta 没有队列 |
 
 - `⌘/Ctrl + Enter` 发送，`Enter` 换行；关闭 Send With Modifier 后 `Enter` 发送。
 - 发送按钮右键菜单：`插话` / `停止并发送` / `排队`（按能力显示）。
 - 发送后草稿块清空，事件记录 `submittedBy` 与 `authors[]`。
 
-### 5.4 @ 与终端
+### 5.4 @ 提及
 
-- `@` picker 四类：Files & Directories / Threads / Users / Terminals，支持 `@file:` `@thread:` `@user:` `@terminal:`。
-- `!` 行首开内联终端；`@!` 打开 Terminals picker（`New Terminal in <project>` / 已有会话）。
+- `@` picker：Files & Directories / Threads / Users，支持 `@file:` `@thread:` `@user:`。
+- **未采用**：Terminals picker 与 `!` 内联终端（v1 无 PTY，见第 14 节）。
 - 图片可直接粘贴进消息与评论。
 
 ---
@@ -255,6 +258,12 @@ Delta 的 UI 模型是 per-author 草稿块；底层文本同步是 CRDT（Delta
 
 - 选中任意 span/行，`⌘/Ctrl + ⌥/Alt + L`；打开后目标高亮、周边变暗，`Escape` 退出。
 
+**通知设置**
+
+- 设置页可开启浏览器通知；仅在页面隐藏且已授权时发送。
+- 触发事件：审批 pending、提问 pending、@提及。
+- Webhook：设置页 `webhook_url`，`THREADBASE_WEBHOOK_URL` 环境变量覆盖；`POST { event, threadId, summary, createdAt }`，超时 5 秒，失败只记日志、不重试。契约见 06 §7。
+
 ---
 
 ## 9. 审批（唯一必须自研的主结构）
@@ -278,32 +287,23 @@ Delta 的 UI 模型是 per-author 草稿块；底层文本同步是 CRDT（Delta
 - 结果写一行事件：`Allowed for this session` / `Denied`。
 - 来自子 agent 的请求显示来源链；`cwd` 不同时不继承「一律允许」。
 - 多个待审批在收件箱按 thread 分组，thread 顶栏显示 `1 等待审批`。
+- 审批规则（一律允许的匹配条件与撤销）在设置页 `ApprovalRulesSection` 管理。
 
 ---
 
 ## 10. 视觉规范
 
-**可用证据**（Delta 深色截图，像素目测）：
+**实现基准**（2026-11-10 收敛，见 06 §9/§11）：
 
-| 角色 | 值 |
-| --- | --- |
-| 窗口底 | `#1B1D1F` |
-| 面板/输入底 | `#222527` |
-| 选中行 | `#2B2F32` |
-| 主文字 | `#E4E4E4` |
-| 次文字 | `#8B8F94` |
-| 强调 | 蓝紫（链接、提及） |
-| diff 新增/删除 | 低饱和绿底/红底 |
-| 在线点 / 未读点 | 绿 / 蓝 |
-| thread 色板 | 8 个圆点：orange / pink / lime / purple / yellow / coral / blue / gray |
+- 语义 token 映射到 Threadbase 的 canvas / panel / surface / raised / border / foreground / muted / primary / accent；深色为默认，`[data-theme="light"]` 完整覆盖。
+- 一个页面只保留一个主动作；列表用行而不是卡片；说明文字不承担布局职责。
+- 基础组件使用 Mantine 9（`@mantine/core` 等）；业务组件只做组合。
+- 单色 primary 按钮、hairline 分隔、减少卡片边框与阴影、统一 8px 圆角、更松的页面留白。
+- 字体 Geist（`@fontsource-variable/geist`），信息层级 11–14px；图标单色线性。
+- agent 头像用品牌图形或字母；人类头像圆形，标题栏重叠排列。
+- 右栏抽屉 360px，内容用 ScrollArea；标签为 Mantine Tabs 图标按钮。
 
-- 字体三套独立：UI、Prose、Code；各自字号；ligatures 开关。
-- 图标单色线性，1.5 px；kind 靠 glyph 区分。
-- agent 头像用品牌图形或字母；人类头像圆形，标题栏重叠排列 20–24 px。
-- 行高：列表 34–36 px，标题栏 44–52 px（目测）。
-- 动效、圆角、间距 token：**没有证据，不出规格**，交给视觉稿。
-
-**未验证**：浅色主题的产品截图、流式光标、协作者光标色板、面板像素宽度。
+**历史参考**：Delta v0.24.0 深色像素值不再作为实现基准，仅保留在 `docs/research/delta-ui.md`。
 
 ---
 
@@ -325,7 +325,7 @@ Delta 的 UI 模型是 per-author 草稿块；底层文本同步是 CRDT（Delta
 | Share | `⌘⇧S` | `Ctrl+Shift+S` |
 | 复制选区链接 | `⌘⌥L` | `Ctrl+Alt+L` |
 | 评论选区 | `⌘⌥M` | `Ctrl+Alt+M` |
-| 重开已投递评论 | `⌘⇧M` | `Ctrl+Shift+M` |
+| 打开 Comments 抽屉 | `⌘⇧M` | `Ctrl+Shift+M` |
 | 归档 thread | `⌘W` | `Ctrl+W` |
 | 标为已读/未读 | `⌘⇧U` | `Ctrl+Shift+U` |
 | 跟随下一位 | `Ctrl+⌥⌘F` | `Ctrl+Alt+Shift+F` |
@@ -346,6 +346,9 @@ Delta 自身存在键位冲突（`⌘⇧Enter` 是 fork 还是 subthread、`⌘�
 | 2 | project 为一级维度 | 产品定义要求「以 project 为维度」 | 左栏分组改为 Projects 常驻 |
 | 3 | 子 thread 无 composer | ACP v1 RFD 禁止向子会话发 prompt | 提供「让父 agent 转达」模板 |
 | 4 | 无 Reviews / Merge 两类 thread | 不自建 harness，review/merge 流程放到 P2 | 标题栏少两个动作 |
+| 5 | 分享只有两档 | 不暴露公网，`Anyone with the link` 没有意义 | Share 弹层仅「仅邀请 / 整个工作区」 |
+
+**视觉偏离**：交互语义参考 Delta，视觉以 Linear/Apple Notes 与 Mantine 为准（见第 10 节）。
 
 ---
 
@@ -369,11 +372,12 @@ Delta 自身存在键位冲突（`⌘⇧Enter` 是 fork 还是 subthread、`⌘�
 
 ## 14. 不做承诺的项
 
-以下 Delta 行为没有可靠证据，v1 不实现、不写进验收：
+以下项 v1 不实现、不写进验收（含 Delta 行为与明确非目标）：
 
 - 工具卡上的单次耗时与 token。
 - 流式光标与逐字动画的具体样式。
 - 协作者光标的色板与头像边框色。
 - 面板像素宽度、间距 token、圆角、动效时长。
-- 浅色主题的具体配色（只保证可切换）。
+- 内联终端与 PTY（v1 明确不做）。
+- 导航轨（4.5 节）与正文宽度 ruler。
 - Reviews / Merge thread 的完整流程。

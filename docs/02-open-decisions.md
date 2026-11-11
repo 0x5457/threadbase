@@ -32,7 +32,7 @@
 
 理由、代价与依赖清单见 [03-tech-stack.md](03-tech-stack.md) 第 2 节。关键三点：
 
-1. `agent-client-protocol` 5.0 是上游作者维护、Zed 生产使用的 ACP 实现。
+1. `agent-client-protocol` 5.1 是上游作者维护、Zed 生产使用的 ACP 实现。
 2. 单二进制分发，用户不需要为服务端装 Node。
 3. 草稿层要 CRDT，权威实现在 Rust（`yrs`、`loro`）；Node 方案只能靠 WASM 或另一个进程。
 
@@ -42,7 +42,7 @@
 
 **结论**：Codex。
 
-- adapter：`@agentclientprotocol/codex-acp`，锁定版本。
+- adapter：`@agentclientprotocol/codex-acp`，锁定版本（当前 2.6.0，通过本机 `CODEX_PATH` 启动）。
 - 模式映射：`read-only` / `workspace-write` / `agent` / `agent-full-access` / `permission-profile:<id>`。
 - 第二个接 Claude Code，用来验证「接新 agent 不需要改核心」。
 
@@ -76,9 +76,9 @@
 
 - 每条 thread 一个 `Y.Doc`；块列表是 `Y.Array`，块是 `Y.Map { author, text: Y.Text, createdAt }`。
 - 块内字符级合并；块的新建、删除、编辑他人块都由 CRDT 收敛，不需要 `409` 或服务端 position。
-- 发送是服务端串行事务：读 Y.Doc → 取末尾连续块 → 生成消息事件（`submittedBy` + `authors[]`）→ 删除块 → 广播。
+- 发送时服务端合并所有非空草稿块，保留作者列表，生成一条消息事件（`submittedBy` + `authors[]`）；发送失败不得丢失草稿（先创建消息或失败回滚 Y.Doc）。
 - 客户端 `yjs` + `y-codemirror.next`，块内光标用 awareness；服务端 `yrs` + `y-sync`。
-- 持久化：`draft_updates` 增量 + `draft_snapshots` 定期快照；发送成功后清空。
+- 持久化：`draft_updates` 增量 + `draft_snapshots` 定期快照；发送成功后写 `sentAt` 墓碑，不删除块（避免 yrs 并发编码 panic）。
 
 边界：
 
@@ -104,7 +104,7 @@
 **结论**：做。成员共享语义焦点（project、thread、面板、文件、行、hunk、消息 id），可被他人跟随；颜色按用户 id 稳定映射，与 Delta 的多人光标一致。
 
 - 通道：WS 上的 `presence`，JSON、无 `seq`、不落库、不重放。
-- 节流：客户端 10 Hz，服务端按 `(thread, user)` 合并到 20 Hz 广播。
+- 节流：客户端 10 Hz，服务端按 `(project, user)` 合并到 20 Hz 广播；thread 是语义锚点的一部分。
 - 锚点必须是语义的，不传像素坐标，保证不同窗口尺寸下跟随不错位。
 - 跟随是纯客户端状态，本地输入或点击即退出。
 - 隐身开关只影响焦点，不影响在线状态。
@@ -120,9 +120,9 @@
 - 左栏结构照 Delta：`Pinned` / `Projects` 分组，Project 下直接挂 thread，带 chevron 的子 thread 缩进嵌套；默认展开最新 10 个，底部 `Show N more`。
 - 选择器 `View All Subthreads`（`⌘/Ctrl + J`）；`⌘/Ctrl + 单击` 在标签页打开。
 - 派遣时刻仍在父时间线渲染内联卡片，卡片是入口，不是第二套导航。
-- 状态四态：`running` / `requires_action` / `idle` / `error`。
+- 状态五态：`running` / `requires_action` / `idle` / `error` / `cancelled`。
 - **与 Delta 的已知差异**：Delta 的子 thread 可以发消息、可以 steer；ACP v1 RFD 禁止向子会话发 prompt。我们的子会话视图不提供输入框，只能取消（若声明 `cancel`）或回父 thread，并在界面给出「让父 agent 转达」的模板。
-- 「一律允许」作用域：本 thread + 该 agent + 该工具/命令前缀；子会话 `cwd` 与 thread 根目录不同时**不继承**，需单独确认。
+- 「一律允许」作用域：本 thread + 该 agent + 该工具/命令前缀；子会话 `cwd` 与 thread 根目录不同时**不继承**，需单独确认。协议层 `allow_always` 的记忆范围由 agent 决定，产品层用 `approval_rules` 强制约束 thread/session 粒度。
 - 退化渲染：不声明 `subagents` 能力时，树只有根节点，子过程包成工具卡片，M1 就走这条路径。
 - 能力声明按阶段开启：M1 不声明，M3 声明 `subagents: {}`；可按 adapter 单独关闭。
 
@@ -146,21 +146,19 @@
 
 ## 已定 11：队列与 steering
 
-**结论**：三种投递方式，按能力与用户选择决定；默认优先「插话」，其次「停止并发送」，最后才是「排队」。
+**结论**：三种投递方式，按能力与用户选择决定；默认优先「插话」，不支持 steering 时默认「排队」，只有用户显式选择才会「停止并发送」。
 
 - ACP v1 **没有**标准队列与 steering；v2 草案才规定 prompt 可在任意状态发送。
 - `_session/steering` 是预标准扩展，`codex-acp` 与 `claude-agent-acp` 都已实现，能力从 `_meta.steering.supported` 读取。
 - 顺序：
   1. 支持 steering 且 turn 运行中 → **插话**（并入当前 turn）；
-  2. 不支持 steering 且 turn 运行中 → **停止并发送**（cancel 后立即发送），这是 Delta 的行为；
+  2. 不支持 steering 且 turn 运行中 → 默认 **排队**；用户显式选择时才 **停止并发送**（cancel 后立即发送），并提示会取消当前 turn 与未处理审批；
   3. 用户显式选「排队」→ 进入 thread 队列。
 - 我们始终带 `idleBehavior: "promptRequired"`，避免 adapter 在没有 running turn 时自己起一轮；拿回 `promptRequired` 就转入队列走正常 `session/prompt`。
-- 队列非默认，但完整：可撤回、可置顶（editor 及以上）；刷新或换设备不丢；turn 取消后保留并标记「上一轮已取消」。
+- 队列非默认，但完整：可撤回（editor 及以上）；刷新或换设备不丢；turn 取消后保留并标记「上一轮已取消」。
 - 每条输入都记录投递结果：`injected` / `stopped_and_sent` / `queued` / `dropped`。
 
 详细设计见 [04-subagents-and-questions.md](04-subagents-and-questions.md) 第 6 节、[05-ui-spec.md](05-ui-spec.md) 第 5.3 节。
-
-详细设计见 [04-subagents-and-questions.md](04-subagents-and-questions.md) 第 6 节。
 
 ---
 
@@ -174,15 +172,15 @@
 - agent 回复与评论双向链接；流式期间评论回复跟随回答展示。
 - 文件/diff 评论提交后折叠为 gutter 标记；单条评论链可以「发给新 fork」。
 - 不在 turn 运行中实时注入；评论跟着下一次提交进入上下文。
-- 评论不触发 agent、不改变 thread 状态；@提及产生通知。
+- 随消息提交或单独提交的评论链都会进入 agent 上下文；评论不改变 thread 状态；@提及产生通知。
 
 详细设计见 [04-subagents-and-questions.md](04-subagents-and-questions.md) 第 7 节。
 
 ---
 
-## 已定 13：UI 规格以 Delta v0.24.0 为准
+## 已定 13：UI 交互语义参考 Delta，视觉以 Linear/Apple Notes 为准
 
-**结论**：外壳、左栏树、时间线密度、Changes 审阅、Share、跟随、Inbox 照 Delta 做；逐屏规格见 [05-ui-spec.md](05-ui-spec.md)。
+**结论**：外壳、左栏树、时间线密度、Changes 审阅、Share、跟随、Inbox 的交互语义参考 Delta；视觉以 Linear/Apple Notes 与 Mantine 为准，偏离见 [05-ui-spec.md](05-ui-spec.md)。
 
 - 身份在标题栏，分支与 worktree 在底部状态栏（`Project Settings`，`⌘⌥O`）。
 - 时间线密度靠**折叠摘要行**（`Ran 3 commands, thought, read a file ›`），不是卡片样式。
@@ -201,7 +199,7 @@
 | 4 | 无 Reviews / Merge 两类 thread | 不自建 harness；先做单 thread 内审阅 |
 | 5 | 分享只有两档 | 不暴露公网，`Anyone with the link` 没有意义 |
 
-除这五处，其余交互、文案结构与视觉层级以 Delta 为准。
+除这五处，其余交互语义与文案结构参考 Delta；视觉以 Linear/Apple Notes 与 Mantine 为准（见 [05-ui-spec.md](05-ui-spec.md)）。
 
 ---
 
@@ -209,7 +207,7 @@
 
 **结论**：v1 只有「直接发送」，不做建议队列；分享级别简化为两档。
 
-- 所有 editor 都可以直接发送、插话、停止并发送；没有 driver，没有「接管」按钮。
+- 所有 editor 都可以直接发送、插话、排队；没有 driver，没有「接管」按钮。停止并发送需显式选择。
 - 不做「非 owner 消息先进待接受队列」的模式：访问范围已经限定在 tailnet 内，参与者是可信成员；再加一层审批只会拖慢协作。
 - 分享级别：`仅邀请` / `整个工作区`。Delta 的 `Anyone with the link` 依赖公网可访问，我们不暴露公网，v1 不做。
 - 若将来要对外开放，再引入「建议队列 + 链接访问」作为一个整体能力，不单独上线。
@@ -249,10 +247,8 @@
 - 服务只绑 `127.0.0.1`，请求经 `tailscale serve` 转发；只有来自回环代理的请求才读取身份头。
 - 身份头（登录名、显示名、头像）具体名称与透传行为**以实测为准**，文档不写死；实现时先用一个最小探针页面确认。
 - 首次出现的 tailnet 用户自动建档，默认 `viewer`；管理员可提升为 `editor` / `owner`。
-- 保留一个本地管理员账号，用于：首次启动引导、Tailscale 不可用时、身份头缺失时。
 - 角色与 thread 成员关系仍存在本地库；Tailscale ACL 只负责「谁能连上这台机器」，应用层再做「谁能做什么」。
-- Cookie 仍用 `HttpOnly` + `Secure`（前端始终 HTTPS）+ `SameSite=Lax`，CSRF 校验不变。
-- 如果身份头不可用，退化为本地账号密码登录，不阻塞使用。
+- 不提供密码登录：身份头缺失时直接拒绝（401），并提示通过 `tailscale serve` 访问。首个 tailnet 身份自动成为管理员。
 
 ---
 
@@ -270,11 +266,11 @@
 
 ## 下一轮要定的规划项（不写代码）
 
-1. 视觉 token 与组件清单：间距、字号、圆角、色板落地成 Tailwind theme。
+1. 视觉 token 与组件清单：间距、字号、圆角、色板落地成 Mantine 主题。
 2. M1 的验收脚本：两个浏览器、一条 thread、一次审批、一次断线重连。
 3. ACP 适配的 spike 清单：初始化、prompt、permission、cancel、steering、子会话能力探测。
 4. Tailscale 身份头的最小验证（一个本地探针页）。
 
 ---
 
-以上都是规格工作，不涉及代码。实现等明确指令后再开始。
+以上都是规格工作，不涉及代码。v1 实现状态见 [06-implementation-status.md](06-implementation-status.md)。
