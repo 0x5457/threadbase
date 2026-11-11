@@ -80,7 +80,11 @@ if [[ "$MODE" == "rollback" ]]; then
   say "Rolling back to $(basename "$latest")"
   run install -m 755 "$latest" "$BIN"
   run systemctl --user restart "$UNIT"
-  say "Rolled back. $(basename "$latest") is now installed."
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    say "Dry run: would roll back to $(basename "$latest")."
+  else
+    say "Rolled back. $(basename "$latest") is now installed."
+  fi
   exit 0
 fi
 
@@ -113,7 +117,10 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
   fi
   # The embedded asset must match what the web build produced, otherwise the
   # release profile silently shipped a stale UI.
-  if ! strings "$NEW_BIN" | grep -q "${asset:-__none__}"; then
+  # `strings | grep -q` under `pipefail` yields a false negative: grep exits
+  # early, strings gets SIGPIPE, the pipeline "fails". Count instead.
+  embedded="$(strings "$NEW_BIN" | grep -F -c -- "$asset" || true)"
+  if [[ "${embedded:-0}" -eq 0 ]]; then
     echo "deploy: release binary does not contain $asset — refusing to install." >&2
     exit 1
   fi
@@ -174,10 +181,11 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
   fi
   printf '    serving  %s\n' "${served:-unknown}"
 
-  if journalctl --user -u "$UNIT" --since "-30 seconds" --no-pager 2>/dev/null \
-    | grep -qiE "panic|ERROR"; then
+  startup_errors="$(journalctl --user -u "$UNIT" --since "-30 seconds" --no-pager 2>/dev/null \
+    | grep -c -iE "panic|ERROR" || true)"
+  if [[ "${startup_errors:-0}" -gt 0 ]]; then
     echo "deploy: service logged errors during startup:" >&2
-    journalctl --user -u "$UNIT" --since "-30 seconds" --no-pager | grep -iE "panic|ERROR" | tail -5 >&2
+    journalctl --user -u "$UNIT" --since "-30 seconds" --no-pager | grep -iE "panic|ERROR" | tail -5 >&2 || true
     exit 1
   fi
 

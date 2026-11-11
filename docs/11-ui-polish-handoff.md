@@ -19,7 +19,7 @@ pnpm --dir web exec playwright test   # 1 passed, 24s
 
 上一轮工作树被并发会话覆盖，`git HEAD` 里是更旧的 Tailwind/shadcn 版本（依赖已不在 `node_modules`，无法构建）。审计修复只存在于截图里，源码丢失。
 
-恢复来源：`/tmp/threadbase-before/web`（Mantine 基线快照，创建于审计开始前）。该快照**不含审计修复**，因此 58 条修复是在它之上重新落地的。
+恢复来源：`/tmp/threadbase-before/web`（Mantine 基线快照，创建于审计开始前）。该快照**不含审计修复**，因此 58 条修复是在它之上重新落地的。该临时快照在收尾后已删除，修复本身已全部提交（`1f25b12`…`d10da54`）。
 
 ## 本轮改动（3 个 refactor + 5 个修复提交）
 
