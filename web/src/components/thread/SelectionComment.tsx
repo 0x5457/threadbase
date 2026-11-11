@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CornerDownLeft } from "lucide-react";
 import { useState } from "react";
+import { Button, Flex, Kbd, Paper, Textarea } from "@mantine/core";
 import { createComment } from "@/api/endpoints";
 import { queryKeys } from "@/api/queries";
-import { Button, Kbd, Textarea } from "@/components/ui";
 
 export interface SelectionTarget {
   messageId: string;
@@ -41,9 +41,15 @@ export function SelectionComment({
     },
   });
   return (
-    <div
-      className="fixed z-50 w-72 rounded-lg border border-border bg-panel p-2 shadow-2xl"
+    <Paper
+      withBorder
+      p="xs"
+      shadow="xl"
+      radius="md"
       style={{
+        position: "fixed",
+        zIndex: 50,
+        width: 288,
         left: Math.min(target.x, window.innerWidth - 300),
         top: Math.min(target.y + 10, window.innerHeight - 150),
       }}
@@ -66,24 +72,29 @@ export function SelectionComment({
         }}
         placeholder="Comment on selection…"
         rows={3}
-        className="text-[13px]"
       />
-      <div className="mt-1 flex items-center justify-between text-[9.5px] text-faint">
+      <Flex
+        align="center"
+        justify="space-between"
+        gap="xs"
+        mt={4}
+        style={{ fontSize: 11, color: "var(--mantine-color-dimmed)" }}
+      >
         <span>
           <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> pending comment
         </span>
         <Button
           type="button"
-          size="sm"
-          variant="ghost"
-          className="h-auto gap-1 px-0 text-primary"
+          variant="subtle"
+          color="blue"
+          size="compact-xs"
           disabled={!body.trim() || create.isPending}
           onClick={() => create.mutate()}
         >
-          <CornerDownLeft className="size-3" aria-hidden />
+          <CornerDownLeft size={12} aria-hidden />
           Add
         </Button>
-      </div>
-    </div>
+      </Flex>
+    </Paper>
   );
 }

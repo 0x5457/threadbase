@@ -1,16 +1,22 @@
+import { ChevronLeft, Folder, FolderGit2, FolderPlus } from "lucide-react";
+import {
+  ActionIcon,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Loader,
+  Modal,
+  ScrollArea,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, Folder, FolderGit2, FolderPlus, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createProject } from "@/api/endpoints";
 import { queryKeys, useDirectoryListing } from "@/api/queries";
 import type { ProjectDto } from "@/api/types/ProjectDto";
-import {
-  Badge,
-  Button,
-  Dialog,
-  DialogContent,
-  Input,
-} from "@/components/ui";
 import { describeError } from "@/lib/errors";
 import { useDebouncedValue } from "@/lib/hooks";
 import { basename } from "@/lib/format";
@@ -77,139 +83,158 @@ export function NewProjectDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        title="Add project"
-        footer={
-          <>
-            <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              loading={mutation.isPending}
-              disabled={!path.trim()}
-              onClick={submit}
+    <Modal
+      opened={open}
+      onClose={() => onOpenChange(false)}
+      title="Add project"
+      size="sm"
+    >
+      <Stack gap="xs">
+        <Group gap="xs" align="flex-start">
+          {listing.data?.parent ? (
+            <ActionIcon
+              variant="default"
+              size="md"
+              aria-label="Parent directory"
+              onClick={() => go(listing.data?.parent ?? "")}
             >
-              Add {path.trim() ? basename(path) : "project"}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-2">
-          <div className="flex items-center gap-1.5">
-            {listing.data?.parent ? (
-              <button
-                type="button"
-                className="flex size-8 shrink-0 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-fg"
-                aria-label="Parent directory"
-                onClick={() => go(listing.data?.parent ?? "")}
-              >
-                <ChevronLeft className="size-3.5" aria-hidden />
-              </button>
-            ) : (
-              <span className="size-8 shrink-0" />
-            )}
-            <Input
-              ref={input}
-              autoFocus
-              value={path}
-              onChange={(event) => {
-                setPath(event.target.value);
-                setActive(0);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setActive((value) => Math.min(value + 1, choices.length - 1));
-                } else if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActive((value) => Math.max(value - 1, 0));
-                } else if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (selected) {
-                    go(selected.path);
-                  } else {
-                    submit();
-                  }
+              <ChevronLeft size={14} aria-hidden />
+            </ActionIcon>
+          ) : (
+            <Box w={28} h={28} style={{ flexShrink: 0 }} />
+          )}
+          <TextInput
+            ref={input}
+            autoFocus
+            value={path}
+            onChange={(event) => {
+              setPath(event.target.value);
+              setActive(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setActive((value) => Math.min(value + 1, choices.length - 1));
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setActive((value) => Math.max(value - 1, 0));
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                if (selected) {
+                  go(selected.path);
+                } else {
+                  submit();
                 }
-              }}
-              aria-label="Project path"
-              placeholder="/home/you/code"
-              spellCheck={false}
-              className="font-mono text-[13px]"
-            />
-          </div>
+              }
+            }}
+            aria-label="Project path"
+            placeholder="/home/you/code"
+            spellCheck={false}
+            size="sm"
+            ff="var(--mantine-font-family-monospace)"
+          />
+        </Group>
 
-          {isRepository ? (
-            <button
-              type="button"
-              onClick={submit}
-              className="flex w-full items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2 text-left"
-            >
-              <FolderGit2 className="size-4 shrink-0 text-primary" aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-[13px] text-fg">
+        {isRepository ? (
+          <Button
+            variant="light"
+            color="blue"
+            size="sm"
+            fullWidth
+            justify="flex-start"
+            leftSection={<FolderGit2 size={14} aria-hidden />}
+            onClick={submit}
+          >
+            <Group gap="xs" wrap="nowrap" style={{ flex: 1 }}>
+              <Text size="sm" truncate="end" style={{ flex: 1 }}>
                 Use {basename(path)}
-              </span>
-              <Badge variant="accent" size="sm">
+              </Text>
+              <Badge variant="light" color="blue" size="xs">
                 git
               </Badge>
-            </button>
-          ) : null}
+            </Group>
+          </Button>
+        ) : null}
 
-          {listing.isError ? (
-            <p className="px-1 text-[13px] text-danger">
-              {describeError(listing.error, "Cannot open directory").description}
-            </p>
-          ) : listing.isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <LoaderCircle className="size-4 animate-spin text-faint" aria-hidden />
-            </div>
-          ) : (
-            <ul className="max-h-64 overflow-y-auto py-1">
+        {listing.isError ? (
+          <Text size="sm" c="red" px="xs">
+            {describeError(listing.error, "Cannot open directory").description}
+          </Text>
+        ) : listing.isLoading ? (
+          <Box ta="center" py="xl">
+            <Loader size="sm" color="gray" />
+          </Box>
+        ) : (
+          <ScrollArea h={256} type="hover">
+            <Stack gap={2} py="xs">
               {choices.map((entry, index) => (
-                <li key={`${entry.path}:${index}`}>
-                  <button
-                    type="button"
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left ${
-                      index === active ? "bg-hover" : ""
-                    }`}
-                    onMouseEnter={() => setActive(index)}
-                    onClick={() => go(entry.path)}
-                  >
-                    {entry.isGit ? (
-                      <FolderGit2 className="size-3.5 shrink-0 text-primary" aria-hidden />
+                <Button
+                  key={`${entry.path}:${index}`}
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  justify="flex-start"
+                  fullWidth
+                  bg={
+                    index === active
+                      ? "var(--mantine-color-default-hover)"
+                      : undefined
+                  }
+                  leftSection={
+                    entry.isGit ? (
+                      <FolderGit2 size={14} aria-hidden />
                     ) : (
-                      <Folder className="size-3.5 shrink-0 text-faint" aria-hidden />
-                    )}
-                    <span className="min-w-0 flex-1 truncate text-[13px] text-fg">
-                      {entry.name}
-                    </span>
-                    {entry.isGit ? (
-                      <Badge variant="outline" size="sm">
+                      <Folder size={14} aria-hidden />
+                    )
+                  }
+                  rightSection={
+                    entry.isGit ? (
+                      <Badge variant="outline" color="gray" size="xs">
                         git
                       </Badge>
-                    ) : null}
-                  </button>
-                </li>
+                    ) : undefined
+                  }
+                  onMouseEnter={() => setActive(index)}
+                  onClick={() => go(entry.path)}
+                >
+                  <Text size="sm" truncate="end">
+                    {entry.name}
+                  </Text>
+                </Button>
               ))}
               {choices.length === 0 ? (
-                <li className="flex items-center gap-2 px-2 py-2 text-[13px] text-faint">
-                  <FolderPlus className="size-3.5" aria-hidden />
-                  No subdirectories
-                </li>
+                <Group gap="xs" px="xs" py="xs">
+                  <FolderPlus size={14} aria-hidden />
+                  <Text size="sm" c="dimmed">
+                    No subdirectories
+                  </Text>
+                </Group>
               ) : null}
-            </ul>
-          )}
+            </Stack>
+          </ScrollArea>
+        )}
 
-          {mutation.isError ? (
-            <p role="alert" className="px-1 text-[13px] text-danger">
-              {describeError(mutation.error, "Cannot add project").description}
-            </p>
-          ) : null}
-        </div>
-      </DialogContent>
-    </Dialog>
+        {mutation.isError ? (
+          <Text size="sm" c="red" role="alert" px="xs">
+            {describeError(mutation.error, "Cannot add project").description}
+          </Text>
+        ) : null}
+      </Stack>
+
+      <Group justify="flex-end" gap="xs" mt="sm">
+        <Button variant="default" size="sm" onClick={() => onOpenChange(false)}>
+          Cancel
+        </Button>
+        <Button
+          variant="filled"
+          size="sm"
+          loading={mutation.isPending}
+          disabled={!path.trim()}
+          onClick={submit}
+        >
+          Add {path.trim() ? basename(path) : "project"}
+        </Button>
+      </Group>
+    </Modal>
   );
 }

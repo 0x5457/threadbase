@@ -1,28 +1,35 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Palette, Settings2, Shield, UserRound } from "lucide-react";
-import { useState, type ComponentType, type ReactNode } from "react";
-import { toast } from "sonner";
+import type { LucideIcon } from "lucide-react";
+import {
+  Avatar,
+  Badge,
+  Box,
+  Button,
+  Checkbox,
+  Group,
+  Indicator,
+  Paper,
+  ScrollArea,
+  Select,
+  SimpleGrid,
+  Skeleton,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
 import { updateSettings } from "@/api/endpoints";
 import { queryKeys, useMe, useWorkspaceState } from "@/api/queries";
 import type { BaselineKind } from "@/api/types/BaselineKind";
 import type { SettingsDto } from "@/api/types/SettingsDto";
-import {
-  Avatar,
-  Badge,
-  Button,
-  Checkbox,
-  ErrorState,
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Skeleton,
-} from "@/components/ui";
+import { ErrorState, PageContainer } from "@/components/app";
+import { ApprovalRulesSection } from "@/components/workspace/ApprovalRulesSection";
 import { setTheme, useTheme, type Theme } from "@/lib/theme";
 import { describeError } from "@/lib/errors";
-import { ApprovalRulesSection } from "@/components/workspace/ApprovalRulesSection";
+import { layout } from "@/lib/design";
 
 const baselines: Array<{ value: BaselineKind; label: string }> = [
   { value: "base_branch", label: "Base branch" },
@@ -31,32 +38,46 @@ const baselines: Array<{ value: BaselineKind; label: string }> = [
   { value: "commit", label: "Specific commit" },
 ];
 
+const textWidths = [
+  { value: "default", label: "Default" },
+  { value: "full", label: "Full" },
+  { value: "custom", label: "Custom" },
+];
+
 function Section({
   icon: Icon,
   title,
   description,
   children,
 }: {
-  icon: ComponentType<{ className?: string }>;
+  icon: LucideIcon;
   title: string;
   description?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-border/40 bg-card/30">
-      <div className="flex items-start gap-2.5 border-b border-border/40 px-4 py-3">
-        <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
-          <Icon className="size-3.5" />
-        </span>
-        <div>
-          <h2 className="text-[13px] font-semibold text-foreground">{title}</h2>
-          {description ? (
-            <p className="mt-0.5 text-[11.5px] text-muted-foreground">{description}</p>
-          ) : null}
-        </div>
-      </div>
-      <div className="px-4 py-4">{children}</div>
-    </section>
+    <Paper withBorder>
+      <Box px="md" pt="md">
+        <Group gap="xs" align="center" wrap="nowrap">
+          <Icon
+            size={layout.icon.sm}
+            aria-hidden
+            style={{ color: "var(--mantine-color-dimmed)", flexShrink: 0 }}
+          />
+          <Text size="md" fw={600}>
+            {title}
+          </Text>
+        </Group>
+        {description ? (
+          <Text size="xs" c="dimmed" mt={2}>
+            {description}
+          </Text>
+        ) : null}
+      </Box>
+      <Box px="md" pb="md" pt="sm">
+        {children}
+      </Box>
+    </Paper>
   );
 }
 
@@ -67,28 +88,33 @@ function ThemePicker() {
     { value: "light", label: "Light" },
   ];
   return (
-    <div className="space-y-2">
-      <p className="text-[13px] font-medium text-muted-foreground">Theme</p>
-      <div className="flex gap-1.5">
+    <Stack gap="xs">
+      <Text size="xs" c="dimmed">
+        Theme
+      </Text>
+      <Group gap="xs">
         {options.map((option) => (
           <Button
             key={option.value}
             type="button"
-            size="sm"
-            variant={theme === option.value ? "secondary" : "ghost"}
+            size="xs"
+            variant={theme === option.value ? "default" : "subtle"}
+            color={theme === option.value ? undefined : "gray"}
             onClick={() => setTheme(option.value)}
             aria-pressed={theme === option.value}
-            className="min-w-20 gap-1.5"
+            leftSection={
+              theme === option.value ? <Check size={12} aria-hidden /> : undefined
+            }
+            maw={80}
           >
-            {theme === option.value ? <Check className="size-3" /> : null}
             {option.label}
           </Button>
         ))}
-      </div>
-      <p className="text-[13px] text-faint">
+      </Group>
+      <Text size="xs" c="dimmed">
         Saved on this device. The server keeps its own appearance defaults.
-      </p>
-    </div>
+      </Text>
+    </Stack>
   );
 }
 
@@ -127,108 +153,73 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
       }),
     onSuccess: (response) => {
       queryClient.setQueryData(queryKeys.state, response);
-      toast.success("Settings saved");
+      notifications.show({
+        message: "Settings saved",
+        color: "green",
+        position: "bottom-right",
+      });
     },
     onError: (error) => {
-      toast.error(
-        error instanceof Error ? error.message : "Could not save settings.",
-      );
+      notifications.show({
+        message:
+          error instanceof Error ? error.message : "Could not save settings.",
+        color: "red",
+        position: "bottom-right",
+      });
     },
   });
 
   return (
-    <div className="space-y-3">
+    <Stack gap="sm">
       <Section
         icon={Palette}
         title="Thread defaults"
         description="Defaults apply to new threads. Existing threads keep their own settings."
       >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block space-y-1.5">
-            <span className="text-[13px] font-medium text-muted-foreground">
-              Default agent
-            </span>
-            <Input
-              value={defaultAgent}
-              onChange={(event) => setDefaultAgent(event.target.value)}
-              placeholder="Agent name"
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-[13px] font-medium text-muted-foreground">
-              Default model
-            </span>
-            <Input
-              value={defaultModel}
-              onChange={(event) => setDefaultModel(event.target.value)}
-              placeholder="Agent default"
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-[13px] font-medium text-muted-foreground">
-              Default diff baseline
-            </span>
-            <Select
-              value={defaultBaseline}
-              onValueChange={(value) =>
-                setDefaultBaseline(value as BaselineKind)
-              }
-            >
-              <SelectTrigger className="h-9 w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {baselines.map((baseline) => (
-                  <SelectItem key={baseline.value} value={baseline.value}>
-                    {baseline.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-[13px] font-medium text-muted-foreground">
-              Transcript width
-            </span>
-            <Select value={textWidth} onValueChange={setTextWidth}>
-              <SelectTrigger className="h-9 w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">Default</SelectItem>
-                <SelectItem value="full">Full</SelectItem>
-                <SelectItem value="custom">Custom</SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-[13px] font-medium text-muted-foreground">
-              Subthreads per thread
-            </span>
-            <Input
-              type="number"
-              min={1}
-              max={100}
-              value={subthreadsPerThread}
-              onChange={(event) => setSubthreadsPerThread(event.target.value)}
-            />
-          </label>
-          <div className="flex items-center gap-2 self-end pb-1.5">
-            <Checkbox
-              id="send-with-modifier"
-              checked={sendWithModifier}
-              onCheckedChange={(checked) =>
-                setSendWithModifier(checked === true)
-              }
-            />
-            <label
-              htmlFor="send-with-modifier"
-              className="text-[13px] text-muted-foreground"
-            >
-              Send with modifier key
-            </label>
-          </div>
-        </div>
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" verticalSpacing="sm">
+          <TextInput
+            label="Default agent"
+            value={defaultAgent}
+            onChange={(event) => setDefaultAgent(event.target.value)}
+            placeholder="Agent name"
+          />
+          <TextInput
+            label="Default model"
+            value={defaultModel}
+            onChange={(event) => setDefaultModel(event.target.value)}
+            placeholder="Agent default"
+          />
+          <Select
+            label="Default diff baseline"
+            value={defaultBaseline}
+            onChange={(value) =>
+              setDefaultBaseline((value ?? initial.defaultBaseline) as BaselineKind)
+            }
+            data={baselines}
+          />
+          <Select
+            label="Transcript width"
+            value={textWidth}
+            onChange={(value) => setTextWidth(value ?? "default")}
+            data={textWidths}
+          />
+        </SimpleGrid>
+        <Stack gap="sm" mt="sm">
+          <TextInput
+            label="Subthreads per thread"
+            type="number"
+            min={1}
+            max={100}
+            value={subthreadsPerThread}
+            onChange={(event) => setSubthreadsPerThread(event.target.value)}
+            w={160}
+          />
+          <Checkbox
+            label="Send with modifier key"
+            checked={sendWithModifier}
+            onChange={(event) => setSendWithModifier(event.target.checked)}
+          />
+        </Stack>
       </Section>
 
       <Section
@@ -236,80 +227,45 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
         title="Presence and notifications"
         description="Controls what other workspace members can see."
       >
-        <div className="space-y-3">
-          <div className="flex items-start gap-2">
-            <Checkbox
-              id="hidden-presence"
-              checked={hiddenPresence}
-              onCheckedChange={(checked) =>
-                setHiddenPresence(checked === true)
-              }
-            />
-            <div>
-              <label
-                htmlFor="hidden-presence"
-                className="text-[13px] text-fg"
-              >
-                Hide my presence
-              </label>
-              <p className="text-[13px] text-faint">
-                Your focus and online status will not be shared.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <Checkbox
-              id="browser-notifications"
-              checked={browserNotifications}
-              onCheckedChange={(checked) =>
-                setBrowserNotifications(checked === true)
-              }
-            />
-            <div>
-              <label
-                htmlFor="browser-notifications"
-                className="text-[13px] text-fg"
-              >
-                Browser notifications
-              </label>
-              <p className="text-[13px] text-faint">
-                Ask the browser for permission when a new mention or approval
-                arrives.
-              </p>
-            </div>
-          </div>
-          <label className="block space-y-1.5">
-            <span className="text-[13px] font-medium text-muted-foreground">
-              Webhook URL
-            </span>
-            <Input
-              value={webhookUrl}
-              onChange={(event) => setWebhookUrl(event.target.value)}
-              placeholder="https://example.com/threadbase"
-            />
-            <span className="text-[13px] text-faint">
-              Optional POST endpoint for approval and mention events.
-            </span>
-          </label>
-        </div>
+        <Stack gap="sm">
+          <Checkbox
+            label="Hide my presence"
+            description="Your focus and online status will not be shared."
+            checked={hiddenPresence}
+            onChange={(event) => setHiddenPresence(event.target.checked)}
+          />
+          <Checkbox
+            label="Browser notifications"
+            description="Ask the browser for permission when a new mention or approval arrives."
+            checked={browserNotifications}
+            onChange={(event) => setBrowserNotifications(event.target.checked)}
+          />
+          <TextInput
+            label="Webhook URL"
+            value={webhookUrl}
+            onChange={(event) => setWebhookUrl(event.target.value)}
+            placeholder="https://example.com/threadbase"
+            description="Optional POST endpoint for approval and mention events."
+          />
+        </Stack>
       </Section>
 
       {mutation.isError ? (
-        <p role="alert" className="text-[13px] text-danger">
+        <Text size="sm" c="red" role="alert">
           {describeError(mutation.error, "Cannot save settings").description}
-        </p>
+        </Text>
       ) : null}
-      <div className="flex justify-end">
+      <Group justify="flex-end">
         <Button
-          variant="primary"
-          size="md"
+          variant="filled"
+          size="sm"
           loading={mutation.isPending}
           onClick={() => mutation.mutate()}
         >
           Save settings
         </Button>
-      </div>
-    </div>
+      </Group>
+    </Stack>
   );
 }
 
@@ -318,32 +274,32 @@ export function SettingsPage() {
   const state = useWorkspaceState();
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl px-6 py-10">
-        <div className="mb-6 space-y-1">
-          <h1 className="flex items-center gap-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground">
-            <Settings2 className="size-5 text-muted-foreground" aria-hidden />
-            Settings
-          </h1>
-          <p className="text-[12px] text-muted-foreground">
+    <ScrollArea h="100%">
+      <PageContainer>
+        <Stack gap={2} mb="lg">
+          <Group gap="xs">
+            <Settings2 size={layout.icon.md} aria-hidden />
+            <Title order={1}>Settings</Title>
+          </Group>
+          <Text size="xs" c="dimmed">
             Workspace defaults and your local account.
-          </p>
-        </div>
+          </Text>
+        </Stack>
 
-        <div className="space-y-3">
+        <Stack gap="sm">
           <Section
             icon={UserRound}
             title="Account"
             description="Identity used for this workspace session."
           >
             {me.isLoading ? (
-              <div className="flex items-center gap-3">
-                <Skeleton className="size-8 rounded-full" />
-                <div className="space-y-1">
-                  <Skeleton className="h-3.5 w-32" />
-                  <Skeleton className="h-3 w-24" />
-                </div>
-              </div>
+              <Group gap="sm">
+                <Skeleton h={32} w={32} radius="xl" />
+                <Stack gap={4}>
+                  <Skeleton h={14} w={128} />
+                  <Skeleton h={12} w={96} />
+                </Stack>
+              </Group>
             ) : me.isError || !me.data ? (
               <ErrorState
                 error={me.error}
@@ -352,37 +308,43 @@ export function SettingsPage() {
                 compact
               />
             ) : (
-              <div className="flex flex-wrap items-center gap-3">
-                <Avatar
-                  person={{
-                    id: me.data.user.id,
-                    displayName: me.data.user.displayName,
-                    avatarUrl: me.data.user.avatarUrl,
-                  }}
-                  size="lg"
-                  online
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <p className="text-[13px] font-medium text-fg">
+              <Group gap="sm" wrap="wrap">
+                <Indicator
+                  inline
+                  size={10}
+                  color="green"
+                  withBorder
+                  position="bottom-end"
+                >
+                  <Avatar
+                    src={me.data.user.avatarUrl ?? null}
+                    name={me.data.user.displayName}
+                    color="initials"
+                    size="lg"
+                    radius="xl"
+                  />
+                </Indicator>
+                <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                  <Group gap={6} wrap="wrap">
+                    <Text size="sm" fw={500}>
                       {me.data.user.displayName}
-                    </p>
+                    </Text>
                     {me.data.user.isAdmin ? (
-                      <Badge variant="accent" size="sm">
+                      <Badge variant="light" color="blue" size="xs">
                         admin
                       </Badge>
                     ) : null}
-                  </div>
-                  <p className="text-[13px] text-muted-foreground">
+                  </Group>
+                  <Text size="sm" c="dimmed">
                     @{me.data.user.username} · {me.data.authMethod}
-                  </p>
-                </div>
-                <Badge variant="outline" size="sm">
+                  </Text>
+                </Stack>
+                <Badge variant="outline" color="gray" size="xs">
                   {me.data.user.hiddenPresence
                     ? "presence hidden"
                     : "presence visible"}
                 </Badge>
-              </div>
+              </Group>
             )}
           </Section>
 
@@ -395,19 +357,21 @@ export function SettingsPage() {
           </Section>
 
           {state.isLoading ? (
-            <div className="space-y-2 rounded-xl border border-border/40 bg-card/30 p-4">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-2/3" />
-            </div>
+            <Paper withBorder radius="md" p="sm">
+              <Stack gap="xs">
+                <Skeleton h={16} w={128} />
+                <Skeleton h={32} />
+                <Skeleton h={32} w="66%" />
+              </Stack>
+            </Paper>
           ) : state.isError || !state.data ? (
-            <div className="rounded-xl border border-border/40 bg-card/30">
+            <Paper withBorder radius="md">
               <ErrorState
                 error={state.error}
                 title="Cannot load workspace preferences"
                 onRetry={() => void state.refetch()}
               />
-            </div>
+            </Paper>
           ) : (
             <SettingsForm
               key={JSON.stringify(state.data.settings)}
@@ -424,8 +388,8 @@ export function SettingsPage() {
               <ApprovalRulesSection />
             </Section>
           ) : null}
-        </div>
-      </div>
-    </div>
+        </Stack>
+      </PageContainer>
+    </ScrollArea>
   );
 }

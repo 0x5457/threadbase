@@ -3,6 +3,7 @@ import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalResolvedResponse } from "@/api/types/ApprovalResolvedResponse";
 import type { ApprovalRulesResponse } from "@/api/types/ApprovalRulesResponse";
 import type { AuthMeDto } from "@/api/types/AuthMeDto";
+import type { BaselineDto } from "@/api/types/BaselineDto";
 import type { AuthStatusResponse } from "@/api/types/AuthStatusResponse";
 import type { AddMemberRequest } from "@/api/types/AddMemberRequest";
 import type { ChangesDto } from "@/api/types/ChangesDto";
@@ -31,8 +32,6 @@ import type { CreateThreadRequest } from "@/api/types/CreateThreadRequest";
 import type { DecisionRequest } from "@/api/types/DecisionRequest";
 import type { EventsPageDto } from "@/api/types/EventsPageDto";
 import type { InboxPageDto } from "@/api/types/InboxPageDto";
-import type { LoginRequest } from "@/api/types/LoginRequest";
-import type { LoginResponse } from "@/api/types/LoginResponse";
 import type { OkResponse } from "@/api/types/OkResponse";
 import type { ProjectId } from "@/api/types/ProjectId";
 import type { ProjectResponse } from "@/api/types/ProjectResponse";
@@ -42,7 +41,6 @@ import type { SearchResponseDto } from "@/api/types/SearchResponseDto";
 import type { SettingsPatch } from "@/api/types/SettingsPatch";
 import type { SendMessageRequest } from "@/api/types/SendMessageRequest";
 import type { SendMessageResponse } from "@/api/types/SendMessageResponse";
-import type { SetupRequest } from "@/api/types/SetupRequest";
 import type { StateResponse } from "@/api/types/StateResponse";
 import type { ThreadBundleResponse } from "@/api/types/ThreadBundleResponse";
 import type { ThreadState } from "@/api/types/ThreadState";
@@ -59,9 +57,6 @@ function segment(value: string): string {
 
 export const endpoints = {
   authStatus: "/api/auth/status",
-  authSetup: "/api/auth/setup",
-  authLogin: "/api/auth/login",
-  authLogout: "/api/auth/logout",
   authMe: "/api/auth/me",
   projects: "/api/projects",
   project: (projectId: ProjectId) => `/api/projects/${segment(projectId)}`,
@@ -77,6 +72,8 @@ export const endpoints = {
   sendMessage: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/messages`,
   markRead: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/read`,
+  markUnread: (threadId: ThreadId) =>
+    `/api/threads/${segment(threadId)}/unread`,
   restartAgent: (threadId: ThreadId) =>
     `/api/threads/${segment(threadId)}/restart`,
   cancelTurn: (threadId: ThreadId) => `/api/threads/${segment(threadId)}/cancel`,
@@ -139,24 +136,6 @@ export const endpoints = {
 
 export function fetchAuthStatus(): Promise<AuthStatusResponse> {
   return api<AuthStatusResponse>(endpoints.authStatus);
-}
-
-export function setupAdmin(request: SetupRequest): Promise<LoginResponse> {
-  return api<LoginResponse>(endpoints.authSetup, {
-    method: "POST",
-    body: request,
-  });
-}
-
-export function login(request: LoginRequest): Promise<LoginResponse> {
-  return api<LoginResponse>(endpoints.authLogin, {
-    method: "POST",
-    body: request,
-  });
-}
-
-export function logout(): Promise<OkResponse | void> {
-  return api<OkResponse | void>(endpoints.authLogout, { method: "POST" });
 }
 
 export function fetchMe(): Promise<AuthMeDto> {
@@ -267,6 +246,10 @@ export function markThreadRead(threadId: ThreadId): Promise<OkResponse> {
   return api<OkResponse>(endpoints.markRead(threadId), { method: "POST" });
 }
 
+export function markThreadUnread(threadId: ThreadId): Promise<OkResponse> {
+  return api<OkResponse>(endpoints.markUnread(threadId), { method: "POST" });
+}
+
 export function cancelSubagent(
   threadId: ThreadId,
   subagentId: string,
@@ -339,8 +322,9 @@ export function setSeen(
   threadId: ThreadId,
   paths: string[],
   seen: boolean,
+  baseline?: BaselineDto,
 ): Promise<OkResponse> {
-  const body: SeenRequest = { paths, seen };
+  const body: SeenRequest = { paths, seen, baseline: baseline ?? null };
   return api<OkResponse>(endpoints.markSeen(threadId), {
     method: "POST",
     body,

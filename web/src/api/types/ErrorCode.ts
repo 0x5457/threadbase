@@ -7,7 +7,6 @@ export type ErrorCode =
   | "validation"
   | "conflict"
   | "already_sent"
-  | "setup_required"
   | "rate_limited"
   | "csrf"
   | "path_outside_workspace"

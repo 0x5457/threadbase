@@ -1,7 +1,20 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Send, Square, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { notifications } from "@mantine/notifications";
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Flex,
+  Menu,
+  Paper,
+  Popover,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+} from "@mantine/core";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 import {
@@ -10,28 +23,17 @@ import {
   retryQueueItem,
   sendMessage,
 } from "@/api/endpoints";
-import { queryKeys, useAgentConfig, useMe, useQueue } from "@/api/queries";
+import {
+  queryKeys,
+  useAgentConfig,
+  useMe,
+  useQueue,
+  useWorkspaceState,
+} from "@/api/queries";
 import type { DeliveryMode } from "@/api/types/DeliveryMode";
 import type { QueueItemDto } from "@/api/types/QueueItemDto";
 import type { Participant } from "@/api/types/Participant";
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Textarea,
-} from "@/components/ui";
 import { usePresenceStore } from "@/lib/presence";
-import { cn } from "@/lib/utils";
 
 interface ComposerProps {
   threadId: string;
@@ -68,6 +70,8 @@ export function Composer({
 }: ComposerProps) {
   const me = useMe();
   const queue = useQueue(threadId);
+  const workspaceState = useWorkspaceState();
+  const sendWithModifier = workspaceState.data?.settings.sendWithModifier ?? true;
   const config = useAgentConfig(threadId);
   const modelOption = config.data?.options.find(
     (option) => option.category === "model",
@@ -93,6 +97,7 @@ export function Composer({
   const [status, setStatus] = useState<string>("connecting");
   const [version, setVersion] = useState(0);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [confirmStop, setConfirmStop] = useState<{ status: string } | null>(null);
   const retry = useMutation({
     mutationFn: (item: QueueItemDto) => retryQueueItem(threadId, item.id),
     onSuccess: () => {
@@ -100,7 +105,8 @@ export function Composer({
         queryKey: queryKeys.queue(threadId),
       });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const stopTurn = useMutation({
     mutationFn: () => cancelTurn(threadId),
@@ -115,7 +121,8 @@ export function Composer({
         queryKey: queryKeys.threadEvents(threadId),
       });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const blocks = doc.getArray<Y.Map<unknown>>("blocks");
 
@@ -178,6 +185,35 @@ export function Composer({
     const text = block.get("text");
     return text instanceof Y.Text && text.toString().trim().length > 0;
   });
+  const showConfirmStop = confirmStop?.status === threadStatus;
+  const pendingDraftText = useRef("");
+
+  // If the server consumed the draft before this client's send arrived,
+  // restore the text locally so the author can retry or edit it.
+  const restoreDraft = (text: string) => {
+    if (!synced || !userId || !text.trim()) {
+      return;
+    }
+    doc.transact(() => {
+      const block = new Y.Map<unknown>();
+      block.set("id", randomId());
+      block.set("author", userId);
+      block.set("createdAt", Date.now());
+      block.set("text", new Y.Text(text));
+      blocks.push([block]);
+    });
+  };
+
+  const sendWithRetention = (delivery: DeliveryMode | null) => {
+    const text = list
+      .map((block) => block.get("text"))
+      .filter((text): text is Y.Text => text instanceof Y.Text)
+      .map((text) => text.toString())
+      .join("\n")
+      .trim();
+    pendingDraftText.current = text;
+    send.mutate(delivery);
+  };
 
   const send = useMutation({
     mutationFn: (delivery: DeliveryMode | null) =>
@@ -188,17 +224,20 @@ export function Composer({
       }),
     onSuccess: (response) => {
       if (response.delivery === "queued") {
-        toast.success(
-          response.queuePosition
+        notifications.show({
+          message: response.queuePosition
             ? `Queued at position ${response.queuePosition}`
             : "Queued",
-        );
+          color: "green",
+        });
       } else {
-        toast.success(
-          response.delivery === "stopped_and_sent"
-            ? "Stopped the previous turn and sent"
-            : "Sent",
-        );
+        notifications.show({
+          message:
+            response.delivery === "stopped_and_sent"
+              ? "Stopped the previous turn and sent"
+              : "Sent",
+          color: "green",
+        });
       }
       void queryClient.invalidateQueries({
         queryKey: queryKeys.threadEvents(threadId),
@@ -213,7 +252,14 @@ export function Composer({
         queryKey: queryKeys.queue(threadId),
       });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      notifications.show({ message, color: "red" });
+      if (message.includes("draft already sent") && pendingDraftText.current.trim()) {
+        restoreDraft(pendingDraftText.current);
+        pendingDraftText.current = "";
+      }
+    },
   });
 
   const withdraw = useMutation({
@@ -226,207 +272,298 @@ export function Composer({
         queryKey: queryKeys.threadBundle(threadId),
       });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
 
   if (!canWrite) {
     return (
-      <div className="border-t border-border/60 bg-background px-4 py-3 text-center text-[12px] text-muted-foreground">
-        <Users className="mr-1.5 inline size-3.5" aria-hidden />
-        Read-only.
+      <Flex
+        align="center"
+        justify="center"
+        gap="xs"
+        px="md"
+        py="sm"
+        style={{
+          borderTop: "1px solid var(--mantine-color-default-border)",
+          background: "var(--mantine-color-default)",
+          fontSize: 12,
+          color: "var(--mantine-color-dimmed)",
+        }}
+      >
+        <Users size={14} aria-hidden />
+        <Text component="span" fz={12} c="dimmed">
+          Read-only.
+        </Text>
         {onRequestAccess ? (
           <Button
             type="button"
-            size="sm"
-            variant="link"
-            className="ml-2 h-auto px-0 align-baseline"
+            variant="subtle"
+            color="blue"
+            size="compact-xs"
+            px={0}
             onClick={onRequestAccess}
           >
             Request access
           </Button>
         ) : null}
-      </div>
+      </Flex>
     );
   }
 
   return (
-    <>
-    <div className="bg-background px-4 pt-2">
-      <div className="mx-auto w-full max-w-3xl">
-        {(queue.data?.items.length ?? 0) > 0 ? (
-          <div className="mb-2 space-y-1 rounded-xl border border-border/60 bg-card/70 p-2.5">
-            <div className="flex items-center gap-2 text-[13px] uppercase tracking-wide text-faint">
-              Queue
-              <span className="font-mono">{queue.data?.items.length}</span>
-            </div>
-            {queue.data?.items.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-start gap-2 rounded bg-canvas px-2 py-1.5"
-              >
-                <span className="font-mono text-[13px] text-faint">
-                  {item.position}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] text-fg">{item.text}</p>
-                  <p className="text-[9px] text-faint">
-                    {item.author.displayName}
-                    {item.superseded ? " · previous turn cancelled" : ""}
-                  </p>
-                </div>
-                {item.superseded ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-auto px-1 py-0 text-[11px] text-primary"
-                    onClick={() => retry.mutate(item)}
-                  >
-                    continue
-                  </Button>
-                ) : null}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-auto px-1 py-0 text-[11px] text-faint hover:text-danger"
-                  onClick={() => withdraw.mutate(item)}
-                >
-                  withdraw
-                </Button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    </div>
-    <div
-      className="border-t border-border/60 bg-background px-4 py-3"
+    <Box
+      px="md"
+      py="sm"
+      style={{
+        background: "var(--mantine-color-default)",
+        borderTop: "1px solid var(--mantine-color-default-border)",
+      }}
       onKeyDown={(event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        const modifier = event.metaKey || event.ctrlKey;
+        if (modifier && event.key === "Enter") {
           event.preventDefault();
           if (synced && hasText && !send.isPending) {
-            send.mutate("auto");
+            sendWithRetention("auto");
+          }
+          return;
+        }
+        if (
+          !modifier &&
+          !event.shiftKey &&
+          !event.altKey &&
+          event.key === "Enter" &&
+          !sendWithModifier
+        ) {
+          event.preventDefault();
+          if (synced && hasText && !send.isPending) {
+            sendWithRetention("auto");
           }
         }
       }}
     >
-      <div className="mx-auto w-full max-w-3xl">
-        <div className="rounded-2xl border border-border/70 bg-card/60 transition-colors focus-within:border-border-strong/80">
-          <div className="max-h-[46vh] min-h-[148px] space-y-1 overflow-y-auto px-3.5 py-3">
-            {list.map((block) => {
-              const author = participants.find(
-                (participant) =>
-                  participant.user.id === block.get("author"),
-              );
-              return (
-                <DraftBlockEditor
-                  key={String(block.get("id"))}
-                  block={block}
-                  isMine={block.get("author") === userId}
-                  authorName={author?.user.displayName}
-                  authorColor={author?.user.color}
-                  awareness={provider.awareness}
-                />
-              );
-            })}
-          </div>
-          <div className="flex min-h-10 items-center gap-1.5 border-t border-border/50 px-2.5 py-1.5">
+      <Box style={{ maxWidth: 768, margin: "0 auto", width: "100%" }}>
+        {(queue.data?.items.length ?? 0) > 0 ? (
+          <Paper withBorder p="sm" radius="md" mb="xs" data-testid="queue-panel">
+            <Flex
+              align="center"
+              gap="xs"
+              mb="xs"
+              style={{
+                fontSize: 13,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                color: "var(--mantine-color-dimmed)",
+              }}
+            >
+              Queue
+              <Text size="xs" ff="monospace" c="dimmed">
+                {queue.data?.items.length}
+              </Text>
+            </Flex>
+            <Stack gap="xs">
+              {queue.data?.items.map((item) => (
+                <Flex
+                  key={item.id}
+                  align="flex-start"
+                  gap="xs"
+                  p="xs"
+                  style={{
+                    background: "var(--mantine-color-default-hover)",
+                    borderRadius: "var(--mantine-radius-md)",
+                  }}
+                >
+                  <Text size="sm" ff="monospace" c="dimmed">
+                    {item.position}
+                  </Text>
+                  <Box flex={1} miw={0}>
+                    <Text size="sm" truncate="end">
+                      {item.text}
+                    </Text>
+                    <Text fz={11} c="dimmed">
+                      {item.author.displayName}
+                      {item.superseded ? " · previous turn cancelled" : ""}
+                    </Text>
+                  </Box>
+                  {item.superseded ? (
+                    <Button
+                      type="button"
+                      variant="subtle"
+                      color="blue"
+                      size="compact-xs"
+                      onClick={() => retry.mutate(item)}
+                    >
+                      continue
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="subtle"
+                    color="dark"
+                    size="compact-xs"
+                    onClick={() => withdraw.mutate(item)}
+                  >
+                    withdraw
+                  </Button>
+                </Flex>
+              ))}
+            </Stack>
+          </Paper>
+        ) : null}
+        <Paper withBorder radius="md" style={{ overflow: "hidden" }}>
+          <Box
+            px="sm"
+            py="sm"
+            style={{
+              maxHeight: "46vh",
+              minHeight: 96,
+              overflowY: "auto",
+            }}
+          >
+            <Stack gap="xs">
+              {list.map((block) => {
+                const author = participants.find(
+                  (participant) =>
+                    participant.user.id === block.get("author"),
+                );
+                return (
+                  <DraftBlockEditor
+                    key={String(block.get("id"))}
+                    block={block}
+                    isMine={block.get("author") === userId}
+                    authorName={author?.user.displayName}
+                    authorColor={author?.user.color}
+                    awareness={provider.awareness}
+                  />
+                );
+              })}
+            </Stack>
+          </Box>
+          <Flex
+            align="center"
+            gap="xs"
+            px="xs"
+            py="xs"
+            style={{
+              minHeight: 40,
+              borderTop: "1px solid var(--mantine-color-default-border)",
+            }}
+          >
             <span
-              className={cn(
-                "size-1.5 rounded-full",
-                status === "connected" && synced
-                  ? "bg-success"
-                  : status === "connected"
-                    ? "bg-warning"
-                    : "bg-danger",
-              )}
+              aria-hidden
               title={
                 status === "connected" && synced
                   ? "Drafts synced"
                   : "Draft connection unavailable"
               }
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                flexShrink: 0,
+                background:
+                  status === "connected" && synced
+                    ? "var(--mantine-color-green-6)"
+                    : status === "connected"
+                      ? "var(--mantine-color-yellow-6)"
+                      : "var(--mantine-color-red-6)",
+              }}
             />
             {modelOption ? (
               <Select
-                value={modelValue || undefined}
-                onValueChange={(next) => {
-                  setModelOverride(next);
-                  onApplyConfig?.(next, effortValue);
+                value={modelValue || null}
+                onChange={(next) => {
+                  if (next) {
+                    setModelOverride(next);
+                    onApplyConfig?.(next, effortValue);
+                  }
                 }}
-              >
-                <SelectTrigger
-                  aria-label="Model"
-                  size="sm"
-                  className="h-7 max-w-[190px] border-0 bg-transparent px-2 text-[12px] text-muted-foreground shadow-none hover:bg-muted/60"
-                >
-                  <SelectValue placeholder="Model" />
-                </SelectTrigger>
-                <SelectContent align="start">
-                  {!modelOption.options.some(
+                data={[
+                  ...(!modelOption.options.some(
                     (value) => value.value === modelValue,
-                  ) && modelValue ? (
-                    <SelectItem value={modelValue}>{modelValue}</SelectItem>
-                  ) : null}
-                  {modelOption.options.map((value) => (
-                    <SelectItem key={value.value} value={value.value}>
-                      {value.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  ) && modelValue
+                    ? [{ value: modelValue, label: modelValue }]
+                    : []),
+                  ...modelOption.options.map((value) => ({
+                    value: value.value,
+                    label: value.name,
+                  })),
+                ]}
+                placeholder="Model"
+                aria-label="Model"
+                size="xs"
+                variant="unstyled"
+                style={{ maxWidth: 190, fontSize: 12 }}
+              />
             ) : null}
             {effortOption ? (
               <Select
-                value={effortValue || undefined}
-                onValueChange={(next) => {
-                  setEffortOverride(next);
-                  onApplyConfig?.(modelValue, next);
+                value={effortValue || null}
+                onChange={(next) => {
+                  if (next) {
+                    setEffortOverride(next);
+                    onApplyConfig?.(modelValue, next);
+                  }
                 }}
-              >
-                <SelectTrigger
-                  aria-label="Effort"
-                  size="sm"
-                  className="h-7 border-0 bg-transparent px-2 text-[12px] text-muted-foreground shadow-none hover:bg-muted/60"
-                >
-                  <SelectValue placeholder="Effort" />
-                </SelectTrigger>
-                <SelectContent align="start">
-                  {effortOption.options.map((value) => (
-                    <SelectItem key={value.value} value={value.value}>
-                      {value.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                data={effortOption.options.map((value) => ({
+                  value: value.value,
+                  label: value.name,
+                }))}
+                placeholder="Effort"
+                aria-label="Effort"
+                size="xs"
+                variant="unstyled"
+                style={{ fontSize: 12 }}
+              />
             ) : null}
-            <Popover open={mentionOpen} onOpenChange={setMentionOpen}>
-              <PopoverTrigger asChild>
+            <Popover
+              opened={mentionOpen}
+              onChange={setMentionOpen}
+              position="top-start"
+              width={208}
+            >
+              <Popover.Target>
                 <Button
                   type="button"
-                  size="sm"
-                  variant="ghost"
+                  variant="subtle"
+                  color="dark"
+                  size="xs"
                   aria-label="Mention a teammate"
                 >
                   @
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                side="top"
-                className="w-52 p-1"
-              >
+              </Popover.Target>
+              <Popover.Dropdown p="xs">
                 {participants.length === 0 ? (
-                  <p className="px-2 py-1.5 text-[12px] text-muted-foreground">
+                  <Text size="xs" c="dimmed" px="xs" py="xs">
                     No teammates to mention
-                  </p>
+                  </Text>
                 ) : (
                   participants.map((participant) => (
                     <Button
                       key={participant.user.id}
                       type="button"
-                      variant="ghost"
-                      className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-[12px]"
+                      variant="subtle"
+                      color="dark"
+                      fullWidth
+                      justify="flex-start"
+                      size="xs"
+                      leftSection={
+                        <span
+                          aria-hidden
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: participant.user.color,
+                          }}
+                        />
+                      }
+                      rightSection={
+                        <Text fz={11} c="dimmed">
+                          @{participant.user.username}
+                        </Text>
+                      }
                       onClick={() => {
                         const own = blocks
                           .toArray()
@@ -445,83 +582,89 @@ export function Composer({
                         setMentionOpen(false);
                       }}
                     >
-                      <span
-                        className="size-2 rounded-full"
-                        style={{ background: participant.user.color }}
-                      />
                       {participant.user.displayName}
-                      <span className="ml-auto text-[10px] text-muted-foreground">
-                        @{participant.user.username}
-                      </span>
                     </Button>
                   ))
                 )}
-              </PopoverContent>
+              </Popover.Dropdown>
             </Popover>
-            <div className="ml-auto flex items-center">
+            <Flex ml="auto" align="center" gap="xs">
               {threadStatus === "running" ? (
                 <Button
                   type="button"
-                  size="sm"
-                  variant="ghost"
+                  variant="subtle"
+                  color="dark"
+                  size="xs"
                   loading={stopTurn.isPending}
                   onClick={() => stopTurn.mutate()}
                 >
-                  <Square aria-hidden />
+                  <Square size={12} aria-hidden />
                   Stop
                 </Button>
               ) : null}
               {threadStatus === "running" && synced ? (
                 <Button
                   type="button"
-                  size="sm"
-                  variant="secondary"
+                  variant="outline"
+                  size="xs"
                   loading={send.isPending}
                   disabled={!hasText}
-                  onClick={() => send.mutate("stop_and_send")}
+                  title={
+                    showConfirmStop
+                      ? "Cancels the current turn and any pending approvals"
+                      : "Cancel the current turn and send this message"
+                  }
+                  onClick={() => {
+                    if (showConfirmStop) {
+                      sendWithRetention("stop_and_send");
+                      setConfirmStop(null);
+                    } else {
+                      setConfirmStop({ status: threadStatus });
+                    }
+                  }}
                 >
-                  Stop & send
+                  {showConfirmStop ? "Confirm stop & send" : "Stop & send"}
                 </Button>
               ) : null}
               <Button
                 type="button"
-                size="sm"
-                variant="ghost"
-                className="ml-1"
+                variant="subtle"
+                color="dark"
+                size="xs"
                 loading={send.isPending}
                 disabled={!synced || !hasText}
-                onClick={() => send.mutate("auto")}
+                onClick={() => sendWithRetention("auto")}
               >
-                <Send aria-hidden />
+                <Send size={12} aria-hidden />
                 Send
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
+              <Menu shadow="md" width={200}>
+                <Menu.Target>
+                  <ActionIcon
                     type="button"
-                    size="icon-sm"
-                    variant="ghost"
+                    variant="subtle"
+                    color="dark"
+                    size="sm"
                     aria-label="More send options"
                     disabled={!synced || !hasText || send.isPending}
                   >
-                    <ChevronDown aria-hidden />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-44">
-                  <DropdownMenuItem onSelect={() => send.mutate("queue")}>
+                    <ChevronDown size={14} aria-hidden />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item onClick={() => sendWithRetention("queue")}>
                     Queue after the current turn
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => send.mutate("inject")}>
+                  </Menu.Item>
+                  <Menu.Item onClick={() => sendWithRetention("inject")}>
                     Inject into current turn
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    </>
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            </Flex>
+          </Flex>
+        </Paper>
+      </Box>
+    </Box>
   );
 }
 
@@ -619,22 +762,34 @@ function DraftBlockEditor({
   };
 
   return (
-    <div
-      className="group border-l-2 py-1 pl-2"
-      style={{ borderLeftColor: authorColor ?? "var(--border-strong)" }}
+    <Box
+      pl="xs"
+      py="xs"
+      style={{
+        borderLeft: `2px solid ${authorColor ?? "var(--mantine-color-default-border)"}`,
+      }}
     >
-      <div className="flex items-center gap-1.5 text-[13px] text-faint">
+      <Flex align="center" gap="xs" fz={13} c="dimmed">
         <span
-          className="size-1.5 rounded-full"
-          style={{ background: authorColor ?? "var(--border-strong)" }}
+          aria-hidden
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background:
+              authorColor ?? "var(--mantine-color-default-border)",
+            flexShrink: 0,
+          }}
         />
-        <span className={isMine ? "text-muted-foreground" : ""}>
+        <Text component="span" fz={13} c={isMine ? "dimmed" : undefined}>
           {isMine ? "You" : (authorName ?? "Member")}
-        </span>
+        </Text>
         {remoteEditors.length > 0 ? (
-          <span className="text-info">· {remoteEditors.join(", ")} editing</span>
+          <Text component="span" fz={13} c="blue.6">
+            · {remoteEditors.join(", ")} editing
+          </Text>
         ) : null}
-      </div>
+      </Flex>
       <Textarea
         ref={area}
         value={value}
@@ -650,8 +805,15 @@ function DraftBlockEditor({
         }}
         aria-label={isMine ? "Message" : "Edit shared draft"}
         placeholder={isMine ? "Message" : "Edit draft…"}
-        className="mt-0.5 min-h-20 resize-none border-0 bg-transparent px-0 py-1 text-[14px] leading-[1.65] shadow-none focus-visible:ring-0"
+        variant="unstyled"
+        resize="none"
+        style={{
+          padding: "4px 0",
+          fontSize: 14,
+          lineHeight: 1.65,
+          minHeight: 80,
+        }}
       />
-    </div>
+    </Box>
   );
 }

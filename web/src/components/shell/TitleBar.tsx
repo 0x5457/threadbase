@@ -1,13 +1,22 @@
 import {
-  CheckCheck,
+  ActionIcon,
+  Box,
+  Button,
+  Indicator,
+  Kbd,
+  Text,
+  Tooltip,
+} from "@mantine/core";
+import {
   PanelLeft,
   PanelRight,
   Search,
   Share2,
+  ShieldCheck,
 } from "lucide-react";
 import type { Participant } from "@/api/types/Participant";
-import { AvatarStack, Button, IconButton, Kbd, Tooltip } from "@/components/ui";
-import { modKeyLabel } from "@/lib/platform";
+import { AvatarStack } from "@/components/app";
+import { modKeyCombo } from "@/lib/platform";
 
 export interface TitleBarProps {
   title: string;
@@ -51,70 +60,109 @@ export function TitleBar({
     online: participant.online,
   }));
 
+  const sidebarLabel = sidebarOpen ? "Hide sidebar" : "Show sidebar";
+  const drawerLabel = drawerOpen ? "Hide right drawer" : "Show right drawer";
+
   return (
-    <header className="drag-region relative z-30 flex h-11 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3">
-      <div className="no-drag flex items-center gap-1">
-        <Tooltip content={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
-          <IconButton
-            label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+    <header
+      className="drag-region"
+      style={{
+        position: "relative",
+        zIndex: 30,
+        display: "flex",
+        height: 44,
+        flexShrink: 0,
+        alignItems: "center",
+        gap: 8,
+        borderBottom: "1px solid var(--mantine-color-default-border)",
+        background: "var(--mantine-color-body)",
+        paddingInline: 12,
+      }}
+    >
+      <div
+        className="no-drag"
+        style={{ display: "flex", alignItems: "center", gap: 4 }}
+      >
+        <Tooltip label={sidebarLabel}>
+          <ActionIcon
+            variant="default"
+            size="sm"
+            aria-label={sidebarLabel}
             aria-expanded={sidebarOpen}
             onClick={onToggleSidebar}
           >
-            <PanelLeft />
-          </IconButton>
+            <PanelLeft size={16} aria-hidden />
+          </ActionIcon>
         </Tooltip>
         <Button
           type="button"
-          variant="ghost"
+          variant="light"
+          color="gray"
           size="sm"
           onClick={onOpenSearch}
-          className="no-drag h-8 gap-2 bg-muted/50 px-2 text-muted-foreground"
           aria-label="Search workspace"
+          leftSection={<Search size={14} aria-hidden />}
+          style={{ fontWeight: 400 }}
         >
-          <Search className="size-3.5" aria-hidden />
-          <Kbd className="hidden md:inline-flex">{modKeyLabel()}K</Kbd>
+          <Kbd visibleFrom="md">{modKeyCombo("K")}</Kbd>
         </Button>
       </div>
 
-      <div className="flex min-w-0 flex-1 items-center justify-center gap-2 px-2">
-        <div className="min-w-0 text-center">
-          <p className="truncate text-[13px] font-medium leading-tight text-foreground">
+      <div
+        style={{
+          display: "flex",
+          minWidth: 0,
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          paddingInline: 8,
+        }}
+      >
+        <div style={{ minWidth: 0, textAlign: "center" }}>
+          <Text size="sm" fw={500} truncate>
             {title}
-          </p>
+          </Text>
         </div>
         {people.length > 0 ? (
-          <AvatarStack
-            people={people}
-            max={4}
-            size="sm"
-            className="hidden sm:flex"
-            onSelect={
-              onFollow
-                ? (person) => {
-                    if (person.id !== "system") {
-                      onFollow(person.id);
+          <Box visibleFrom="sm">
+            <AvatarStack
+              people={people}
+              max={4}
+              size="sm"
+              onSelect={
+                onFollow
+                  ? (person) => {
+                      if (person.id !== "system") {
+                        onFollow(person.id);
+                      }
                     }
-                  }
-                : undefined
-            }
-          />
+                  : undefined
+              }
+            />
+          </Box>
         ) : null}
         {followingName ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onStopFollowing}
-            className="no-drag hidden h-auto rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[10px] text-info sm:flex"
-          >
-            Following {followingName} · stop
-          </Button>
+          <Box visibleFrom="sm" style={{ display: "flex" }}>
+            <Button
+              type="button"
+              variant="light"
+              color="gray"
+              size="compact-xs"
+              onClick={onStopFollowing}
+            >
+              Following {followingName} · stop
+            </Button>
+          </Box>
         ) : null}
       </div>
 
-      <div className="no-drag flex items-center justify-end gap-1">
+      <div
+        className="no-drag"
+        style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}
+      >
         <Tooltip
-          content={
+          label={
             shareDisabled
               ? "Open a thread to copy its share link"
               : "Copy link to this thread"
@@ -122,41 +170,58 @@ export function TitleBar({
         >
           <Button
             type="button"
-            variant="ghost"
+            variant="subtle"
             size="sm"
             disabled={shareDisabled || !onShare}
             onClick={onShare}
-            className="gap-1.5 px-2 text-[12px] text-muted-foreground"
+            leftSection={<Share2 size={14} aria-hidden />}
+            style={{ fontWeight: 400 }}
           >
-            <Share2 className="size-3.5" aria-hidden />
-            <span className="hidden sm:inline">Share</span>
+            <Box visibleFrom="sm" component="span">
+              Share
+            </Box>
           </Button>
         </Tooltip>
-        <Tooltip content="Approvals">
-          <span className="relative">
-            <IconButton
-              label="Approvals"
-              variant={approvalsCount > 0 ? "subtle" : "ghost"}
+        <Tooltip label="Approvals">
+          <Indicator
+            disabled={approvalsCount <= 0}
+            label={approvalsCount > 99 ? "99+" : approvalsCount}
+            size={18}
+            color="yellow"
+            position="top-end"
+            offset={2}
+            styles={{
+              indicator: {
+                color: "var(--mantine-color-black)",
+                fontSize: 11,
+                fontWeight: 600,
+                paddingInline: 2,
+              },
+            }}
+          >
+            <ActionIcon
+              variant={approvalsCount > 0 ? "light" : "default"}
+              color={approvalsCount > 0 ? "yellow" : undefined}
+              size="md"
+              aria-label="Approvals"
               onClick={onOpenApprovals}
             >
-              <CheckCheck />
-            </IconButton>
-            {approvalsCount > 0 ? (
-              <span className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border border-panel bg-warning px-0.5 text-[9px] font-semibold leading-none text-canvas">
-                {approvalsCount > 99 ? "99+" : approvalsCount}
-              </span>
-            ) : null}
-          </span>
+              <ShieldCheck size={16} aria-hidden />
+            </ActionIcon>
+          </Indicator>
         </Tooltip>
-        <Tooltip content={drawerOpen ? "Hide right drawer" : "Show right drawer"}>
-          <IconButton
-            label={drawerOpen ? "Hide right drawer" : "Show right drawer"}
+        <Tooltip label={drawerLabel}>
+          <ActionIcon
+            variant={drawerOpen ? "light" : "default"}
+            color={drawerOpen ? "blue" : undefined}
+            size="sm"
+            aria-label={drawerLabel}
             aria-expanded={drawerOpen}
-            pressed={drawerOpen}
+            aria-pressed={drawerOpen}
             onClick={onToggleDrawer}
           >
-            <PanelRight />
-          </IconButton>
+            <PanelRight size={16} aria-hidden />
+          </ActionIcon>
         </Tooltip>
       </div>
     </header>

@@ -2,15 +2,29 @@ import {
   Bookmark,
   Bot,
   ChevronRight,
-  Folder,
+  FolderGit2,
   FolderPlus,
   Inbox,
   LogOut,
-  MessageSquare,
+  MessageSquareText,
   Plus,
   Settings,
   Users,
+  X,
 } from "lucide-react";
+import {
+  ActionIcon,
+  Avatar,
+  Badge,
+  Box,
+  Indicator,
+  Kbd,
+  Menu,
+  Skeleton,
+  Stack,
+  Tooltip,
+  UnstyledButton,
+} from "@mantine/core";
 import {
   useMemo,
   useRef,
@@ -28,26 +42,9 @@ import type { SubagentStatus } from "@/api/types/SubagentStatus";
 import type { ThreadDto } from "@/api/types/ThreadDto";
 import type { UserDto } from "@/api/types/UserDto";
 import type { ThreadStatus } from "@/api/types/ThreadStatus";
-import {
-  Avatar,
-  AvatarStack,
-  Badge,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  EmptyState,
-  ErrorState,
-  IconButton,
-  Kbd,
-  Skeleton,
-  Tooltip,
-} from "@/components/ui";
+import { AvatarStack, EmptyState, ErrorState } from "@/components/app";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
 import { modKeyLabel } from "@/lib/platform";
-import { cn } from "@/lib/utils";
 
 export interface SidebarTreeProps {
   projects: ProjectDto[];
@@ -73,26 +70,36 @@ export interface SidebarTreeProps {
   onOpenSettings: () => void;
   onLogout: () => void;
   onNavigate?: () => void;
+  /** Renders a close button in the header when the tree is an overlay sheet. */
+  onClose?: () => void;
 }
 
 type AnyStatus = ThreadStatus | SubagentStatus;
 
+const rowTransition = "background-color 120ms ease, color 120ms ease";
+const rowHover = {
+  ":hover": {
+    backgroundColor: "var(--mantine-color-default-hover)",
+    color: "var(--mantine-color-text)",
+  },
+} as const;
+
 function statusColor(status: AnyStatus): string {
   switch (status) {
     case "running":
-      return "bg-success";
+      return "var(--mantine-color-teal-filled)";
     case "preparing":
-      return "bg-info";
+      return "var(--mantine-color-blue-filled)";
     case "requires_action":
-      return "bg-warning";
+      return "var(--mantine-color-yellow-filled)";
     case "error":
-      return "bg-danger";
+      return "var(--mantine-color-red-filled)";
     case "interrupted":
-      return "bg-danger/60";
+      return "var(--mantine-color-red-filled)";
     case "archived":
-      return "bg-border-strong";
+      return "var(--mantine-color-gray-6)";
     default:
-      return "bg-border-strong";
+      return "var(--mantine-color-gray-6)";
   }
 }
 
@@ -120,22 +127,24 @@ function statusLabel(status: AnyStatus): string {
 function StatusDot({
   status,
   pulse,
-  className,
 }: {
   status: AnyStatus;
   pulse?: boolean;
-  className?: string;
 }) {
   return (
     <span
       title={statusLabel(status)}
-      className={cn(
-        "inline-block size-1.5 shrink-0 rounded-full",
-        statusColor(status),
-        (pulse || status === "running" || status === "preparing") &&
-          "animate-pulse",
-        className,
-      )}
+      style={{
+        display: "inline-block",
+        width: 6,
+        height: 6,
+        flexShrink: 0,
+        borderRadius: "50%",
+        backgroundColor: statusColor(status),
+        ...(pulse || status === "running" || status === "preparing"
+          ? { animation: "sidebar-pulse 1.6s ease-in-out infinite" }
+          : {}),
+      }}
     />
   );
 }
@@ -231,6 +240,60 @@ function moveTreeFocus(
   return false;
 }
 
+function TreeRow({
+  level,
+  depth,
+  selected,
+  expanded,
+  onSelect,
+  children,
+}: {
+  level: number;
+  depth: number;
+  selected: boolean;
+  expanded?: boolean;
+  onSelect: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <UnstyledButton
+      component="div"
+      role="treeitem"
+      aria-level={level}
+      aria-selected={selected}
+      aria-expanded={expanded}
+      tabIndex={0}
+      data-tree-row
+      data-depth={depth}
+      data-expanded={expanded}
+      onClick={onSelect}
+      onKeyDown={(event) => activateRow(event, onSelect)}
+      h={{ base: 40, md: 34 }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        borderRadius: "var(--mantine-radius-md)",
+        paddingRight: 4,
+        paddingLeft: 4 + depth * 16,
+        fontSize: 13,
+        cursor: "default",
+        outline: "none",
+        transition: rowTransition,
+        backgroundColor: selected
+          ? "var(--mantine-color-default-hover)"
+          : undefined,
+        color: selected
+          ? "var(--mantine-color-text)"
+          : "var(--mantine-color-dimmed)",
+      }}
+      styles={{ root: rowHover }}
+    >
+      {children}
+    </UnstyledButton>
+  );
+}
+
 function RowChevron({
   expanded,
   onClick,
@@ -241,18 +304,32 @@ function RowChevron({
   label: string;
 }) {
   return (
-    <button
+    <UnstyledButton
       type="button"
       aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
       data-tree-chevron
       onClick={onClick}
-      className="flex size-4 shrink-0 items-center justify-center rounded text-faint hover:bg-hover hover:text-fg"
+      w={{ base: 28, md: 16 }}
+      h={{ base: 28, md: 16 }}
+      style={{
+        display: "flex",
+        flexShrink: 0,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: "var(--mantine-radius-md)",
+        color: "var(--mantine-color-dimmed)",
+      }}
+      styles={{ root: rowHover }}
     >
       <ChevronRight
-        className={cn("size-3 transition-transform", expanded && "rotate-90")}
+        size={12}
         aria-hidden
+        style={{
+          transform: expanded ? "rotate(90deg)" : "none",
+          transition: "transform 120ms ease",
+        }}
       />
-    </button>
+    </UnstyledButton>
   );
 }
 
@@ -324,24 +401,12 @@ function ThreadNode({
 
   return (
     <div role="none">
-      <div
-        role="treeitem"
-        aria-level={depth + 1}
-        aria-selected={selected}
-        aria-expanded={childCount > 0 ? expanded : undefined}
-        tabIndex={0}
-        data-tree-row
-        data-depth={depth}
-        data-expanded={childCount > 0 ? expanded : undefined}
-        onClick={activate}
-        onKeyDown={(event) => activateRow(event, activate)}
-        className={cn(
-          "group flex h-8 cursor-default items-center gap-1 rounded-md pr-2 text-[13px] outline-none transition-colors",
-          selected
-            ? "bg-accent text-foreground"
-            : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-        )}
-        style={{ paddingLeft: `${4 + depth * 14}px` }}
+      <TreeRow
+        level={depth + 1}
+        depth={depth}
+        selected={selected}
+        expanded={childCount > 0 ? expanded : undefined}
+        onSelect={activate}
       >
         {childCount > 0 ? (
           <RowChevron
@@ -353,55 +418,85 @@ function ThreadNode({
             }}
           />
         ) : (
-          <span className="size-4 shrink-0" aria-hidden />
+          <span style={{ width: 16, flexShrink: 0 }} aria-hidden />
         )}
-        <StatusDot
-          status={thread.status}
-          pulse={thread.status === "running"}
-          className="ml-0.5"
+        <StatusDot status={thread.status} pulse={thread.status === "running"} />
+        <MessageSquareText
+          size={14}
+          aria-hidden
+          style={{
+            marginLeft: 2,
+            flexShrink: 0,
+            color: "var(--mantine-color-dimmed)",
+          }}
         />
-        <MessageSquare className="ml-0.5 size-3.5 shrink-0 text-faint" aria-hidden />
         <span
-          className={cn(
-            "min-w-0 flex-1 truncate",
-            (selected || thread.unread) && "font-medium",
-          )}
+          style={{
+            minWidth: 0,
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            ...(selected || thread.unread ? { fontWeight: 500 } : {}),
+          }}
         >
           {thread.title}
         </span>
         {thread.pinned ? (
-          <Bookmark className="size-3 shrink-0 text-faint" aria-label="Pinned" />
+          <Bookmark
+            size={12}
+            aria-label="Pinned"
+            style={{ flexShrink: 0, color: "var(--mantine-color-dimmed)" }}
+          />
         ) : null}
         {thread.pendingApprovals > 0 ? (
-          <Badge variant="warning" size="sm">
+          <Badge color="yellow" variant="light" size="xs">
             {thread.pendingApprovals}
           </Badge>
         ) : null}
         {people.length > 0 ? (
-          <AvatarStack
-            people={people}
-            max={2}
-            size="xs"
-            className="hidden shrink-0 group-hover:flex"
-          />
+          <Box style={{ flexShrink: 0 }}>
+            <AvatarStack people={people} max={2} size="xs" />
+          </Box>
         ) : null}
         {thread.unread ? (
           <span
-            className="size-1.5 shrink-0 rounded-full bg-info"
+            style={{
+              width: 6,
+              height: 6,
+              flexShrink: 0,
+              borderRadius: "50%",
+              backgroundColor: "var(--mantine-color-blue-filled)",
+            }}
             aria-label="Unread"
           />
         ) : null}
-      </div>
+      </TreeRow>
       {showProjectName && depth === 0 ? (
         <p
-          className="truncate pb-1 pl-9 pr-2 text-[13px] text-faint"
           aria-hidden
+          style={{
+            margin: 0,
+            padding: "0 8px 4px 36px",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 13,
+            color: "var(--mantine-color-dimmed)",
+          }}
         >
           {projectName}
         </p>
       ) : null}
       {expanded && childCount > 0 ? (
-        <div className="relative ml-3 border-l border-border/70 pl-1">
+        <div
+          style={{
+            position: "relative",
+            marginLeft: 12,
+            borderLeft: "1px solid var(--mantine-color-default-border)",
+            paddingLeft: 4,
+          }}
+        >
           {visibleThreads.map((child) => (
             <ThreadNode
               key={child.id}
@@ -434,16 +529,28 @@ function ThreadNode({
             />
           ))}
           {remaining > 0 ? (
-            <button
+            <UnstyledButton
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
                 setShowAll(true);
               }}
-              className="flex h-7 w-full items-center rounded-md pl-6 pr-2 text-left text-[13px] text-faint hover:bg-hover hover:text-fg"
+              h={{ base: 36, md: 28 }}
+              style={{
+                display: "flex",
+                width: "100%",
+                alignItems: "center",
+                borderRadius: "var(--mantine-radius-md)",
+                paddingLeft: 24,
+                paddingRight: 8,
+                textAlign: "left",
+                fontSize: 13,
+                color: "var(--mantine-color-dimmed)",
+              }}
+              styles={{ root: rowHover }}
             >
               Show {remaining} more
-            </button>
+            </UnstyledButton>
           ) : null}
         </div>
       ) : null}
@@ -477,24 +584,12 @@ function SubagentNode({
 
   return (
     <div role="none">
-      <div
-        role="treeitem"
-        aria-level={depth + 1}
-        aria-selected={selected}
-        aria-expanded={children.length > 0 ? expanded : undefined}
-        tabIndex={0}
-        data-tree-row
-        data-depth={depth}
-        data-expanded={children.length > 0 ? expanded : undefined}
-        onClick={activate}
-        onKeyDown={(event) => activateRow(event, activate)}
-        className={cn(
-          "flex h-[28px] cursor-default items-center gap-1 rounded-md pr-1.5 text-[13px] outline-none transition-colors",
-          selected
-            ? "bg-active text-fg"
-            : "text-muted-foreground hover:bg-hover hover:text-fg",
-        )}
-        style={{ paddingLeft: `${4 + depth * 14}px` }}
+      <TreeRow
+        level={depth + 1}
+        depth={depth}
+        selected={selected}
+        expanded={children.length > 0 ? expanded : undefined}
+        onSelect={activate}
       >
         {children.length > 0 ? (
           <RowChevron
@@ -506,14 +601,42 @@ function SubagentNode({
             }}
           />
         ) : (
-          <span className="size-4 shrink-0" aria-hidden />
+          <span style={{ width: 16, flexShrink: 0 }} aria-hidden />
         )}
-        <StatusDot status={subagent.status} pulse={subagent.status === "running"} />
-        <Bot className="ml-0.5 size-3.5 shrink-0 text-faint" aria-hidden />
-        <span className="min-w-0 flex-1 truncate">{subagent.title}</span>
-      </div>
+        <StatusDot
+          status={subagent.status}
+          pulse={subagent.status === "running"}
+        />
+        <Bot
+          size={14}
+          aria-hidden
+          style={{
+            marginLeft: 2,
+            flexShrink: 0,
+            color: "var(--mantine-color-dimmed)",
+          }}
+        />
+        <span
+          style={{
+            minWidth: 0,
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {subagent.title}
+        </span>
+      </TreeRow>
       {expanded && children.length > 0 ? (
-        <div className="relative ml-3 border-l border-border/70 pl-1">
+        <div
+          style={{
+            position: "relative",
+            marginLeft: 12,
+            borderLeft: "1px solid var(--mantine-color-default-border)",
+            paddingLeft: 4,
+          }}
+        >
           {children.map((child) => (
             <SubagentNode
               key={child.id}
@@ -576,17 +699,30 @@ function ProjectNode({
   const [showAll, setShowAll] = useState(false);
   const expanded = !collapsedProjects.has(project.id);
   const addThread = (
-    <button
+    <UnstyledButton
       type="button"
       onClick={(event) => {
         event.stopPropagation();
         onNewThread(project.id);
       }}
-      className="flex h-7 w-full items-center gap-2 rounded-md pl-6 pr-2 text-left text-[13px] text-faint transition-colors hover:bg-hover hover:text-fg"
+      h={{ base: 36, md: 28 }}
+      style={{
+        display: "flex",
+        width: "100%",
+        alignItems: "center",
+        gap: 8,
+        borderRadius: "var(--mantine-radius-md)",
+        paddingLeft: 24,
+        paddingRight: 8,
+        textAlign: "left",
+        fontSize: 13,
+        color: "var(--mantine-color-dimmed)",
+      }}
+      styles={{ root: rowHover }}
     >
-      <Plus className="size-3" aria-hidden />
+      <Plus size={12} aria-hidden />
       New Thread
-    </button>
+    </UnstyledButton>
   );
 
   if (rootThreads.length === 0) {
@@ -601,8 +737,24 @@ function ProjectNode({
           onLocate={() => onLocateProject?.(project.id)}
         />
         {expanded ? (
-          <div className="relative ml-3 border-l border-border/70 pl-1">
-            <p className="px-2 py-1 text-[13px] text-faint">No threads yet</p>
+          <div
+            style={{
+              position: "relative",
+              marginLeft: 12,
+              borderLeft: "1px solid var(--mantine-color-default-border)",
+              paddingLeft: 4,
+            }}
+          >
+            <p
+              style={{
+                margin: 0,
+                padding: "4px 8px",
+                fontSize: 13,
+                color: "var(--mantine-color-dimmed)",
+              }}
+            >
+              No threads yet
+            </p>
             {addThread}
           </div>
         ) : null}
@@ -625,7 +777,14 @@ function ProjectNode({
         onLocate={() => onLocateProject?.(project.id)}
       />
       {expanded ? (
-        <div className="relative ml-3 border-l border-border/70 pl-1">
+        <div
+          style={{
+            position: "relative",
+            marginLeft: 12,
+            borderLeft: "1px solid var(--mantine-color-default-border)",
+            paddingLeft: 4,
+          }}
+        >
           {addThread}
           {visible.map((thread) => (
             <ThreadNode
@@ -647,13 +806,25 @@ function ProjectNode({
             />
           ))}
           {remaining > 0 ? (
-            <button
+            <UnstyledButton
               type="button"
               onClick={() => setShowAll(true)}
-              className="flex h-7 w-full items-center rounded-md pl-6 pr-2 text-left text-[13px] text-faint hover:bg-hover hover:text-fg"
+              h={{ base: 36, md: 28 }}
+              style={{
+                display: "flex",
+                width: "100%",
+                alignItems: "center",
+                borderRadius: "var(--mantine-radius-md)",
+                paddingLeft: 24,
+                paddingRight: 8,
+                textAlign: "left",
+                fontSize: 13,
+                color: "var(--mantine-color-dimmed)",
+              }}
+              styles={{ root: rowHover }}
             >
               Show {remaining} more
-            </button>
+            </UnstyledButton>
           ) : null}
         </div>
       ) : null}
@@ -677,22 +848,12 @@ function ProjectRow({
   onLocate?: () => void;
 }) {
   return (
-    <div
-      role="treeitem"
-      aria-level={1}
-      aria-selected={selected}
-      aria-expanded={expanded}
-      tabIndex={0}
-      data-tree-row
-      data-depth={0}
-      data-expanded={expanded}
-      onClick={onSelect}
-      onKeyDown={(event) => activateRow(event, onSelect)}
-      className={cn(
-        "flex h-8 cursor-default items-center gap-1 rounded-md pr-2 text-[13px] outline-none transition-colors",
-        selected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-      )}
-      style={{ paddingLeft: "4px" }}
+    <TreeRow
+      level={1}
+      depth={0}
+      selected={selected}
+      expanded={expanded}
+      onSelect={onSelect}
     >
       <RowChevron
         expanded={expanded}
@@ -702,32 +863,67 @@ function ProjectRow({
           onToggle();
         }}
       />
-      <Folder className="size-3.5 shrink-0 text-faint" aria-hidden />
-      <span className="min-w-0 flex-1 truncate font-medium">{project.name}</span>
+      <FolderGit2
+        size={14}
+        aria-hidden
+        style={{ flexShrink: 0, color: "var(--mantine-color-dimmed)" }}
+      />
+      <span
+        style={{
+          minWidth: 0,
+          flex: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          fontWeight: 500,
+        }}
+      >
+        {project.name}
+      </span>
       {project.waitingApprovals > 0 ? (
-        <Badge variant="warning" size="sm">
+        <Badge color="yellow" variant="light" size="xs">
           {project.waitingApprovals}
         </Badge>
       ) : null}
       {!project.available ? (
-        <button
+        <UnstyledButton
           type="button"
-          className="shrink-0 rounded px-1 text-[13px] text-warning hover:bg-hover hover:text-warning"
           title="Project path is unavailable"
           onClick={(event) => {
             event.stopPropagation();
             onLocate?.();
           }}
+          style={{
+            flexShrink: 0,
+            borderRadius: "var(--mantine-radius-md)",
+            padding: "0 4px",
+            fontSize: 13,
+            color: "var(--mantine-color-yellow-6)",
+          }}
+          styles={{
+            root: {
+              ":hover": {
+                backgroundColor: "var(--mantine-color-default-hover)",
+                color: "var(--mantine-color-yellow-7)",
+              },
+            },
+          }}
         >
           Locate…
-        </button>
+        </UnstyledButton>
       ) : null}
       {project.activeThreads > 0 ? (
-        <span className="text-[13px] tabular-nums text-faint">
+        <span
+          style={{
+            fontSize: 13,
+            fontVariantNumeric: "tabular-nums",
+            color: "var(--mantine-color-dimmed)",
+          }}
+        >
           {project.activeThreads}
         </span>
       ) : null}
-    </div>
+    </TreeRow>
   );
 }
 
@@ -755,6 +951,7 @@ export function SidebarTree({
   onOpenSettings,
   onLogout,
   onNavigate,
+  onClose,
 }: SidebarTreeProps) {
   const treeRef = useRef<HTMLDivElement>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
@@ -901,40 +1098,87 @@ export function SidebarTree({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex h-12 shrink-0 items-center justify-between px-4">
-        <span className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+    <div
+      style={{
+        display: "flex",
+        height: "100%",
+        minHeight: 0,
+        flexDirection: "column",
+        backgroundColor: "var(--mantine-color-body)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          height: 44,
+          flexShrink: 0,
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0 12px",
+        }}
+      >
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            letterSpacing: "-0.01em",
+            color: "var(--mantine-color-text)",
+          }}
+        >
           Threadbase
         </span>
-        <Tooltip content={`New project (${modKeyLabel()}⇧A)`}>
-          <IconButton
-            label="New project"
-            size="sm"
-            onClick={onNewProject}
-          >
-            <FolderPlus />
-          </IconButton>
-        </Tooltip>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <Tooltip label={`New project (${modKeyLabel()}⇧A)`}>
+            <ActionIcon
+              variant="default"
+              size="lg"
+              aria-label="New project"
+              onClick={onNewProject}
+            >
+              <FolderPlus size={16} />
+            </ActionIcon>
+          </Tooltip>
+          {onClose ? (
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="lg"
+              aria-label="Close sidebar"
+              onClick={onClose}
+            >
+              <X size={16} />
+            </ActionIcon>
+          ) : null}
+        </div>
       </div>
 
       <div
         ref={treeRef}
         role="tree"
         aria-label="Projects and threads"
-        className="min-h-0 flex-1 overflow-y-auto px-2 py-2"
+        style={{
+          minHeight: 0,
+          flex: 1,
+          overflowY: "auto",
+          padding: "8px 8px",
+        }}
         onKeyDown={(event) => {
           moveTreeFocus(event, treeRef.current);
         }}
       >
         {loading ? (
-          <div className="space-y-1.5 px-1 pt-1">
-            {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton
-                key={index}
-                className={cn("h-6", index % 3 === 0 ? "w-11/12" : "w-4/5")}
-              />
-            ))}
-          </div>
+          <Box px={4} pt={4}>
+            <Stack gap={6}>
+              {Array.from({ length: 6 }).map((_, index) => (
+                <Skeleton
+                  key={index}
+                  height={24}
+                  width={index % 3 === 0 ? "92%" : "80%"}
+                  radius="md"
+                />
+              ))}
+            </Stack>
+          </Box>
         ) : error ? (
           <ErrorState
             error={error}
@@ -949,28 +1193,37 @@ export function SidebarTree({
             description="Add a local repository to start a thread."
             compact
             action={
-              <button
+              <UnstyledButton
                 type="button"
                 onClick={onNewProject}
-                className="rounded-md border border-border bg-surface px-2 py-1 text-[13px] text-fg hover:bg-hover"
+                style={{
+                  borderRadius: "var(--mantine-radius-md)",
+                  border: "1px solid var(--mantine-color-default-border)",
+                  backgroundColor: "var(--mantine-color-default)",
+                  padding: "4px 8px",
+                  fontSize: 13,
+                  color: "var(--mantine-color-text)",
+                }}
+                styles={{ root: rowHover }}
               >
                 Add project
-              </button>
+              </UnstyledButton>
             }
           />
         ) : (
-          <div className="space-y-2.5">
+          <Stack gap={10}>
             {pinnedThreads.length > 0 ? (
               <section aria-label="Pinned">
                 <SidebarGroupLabel icon={Bookmark}>Pinned</SidebarGroupLabel>
-                <div role="group">
+                <Box role="group">
                   {pinnedThreads.map((thread) => (
                     <ThreadNode
                       key={thread.id}
                       thread={thread}
                       depth={0}
                       projectName={
-                        projectById.get(thread.projectId)?.name ?? "Unknown project"
+                        projectById.get(thread.projectId)?.name ??
+                        "Unknown project"
                       }
                       showProjectName
                       childThreads={childThreads}
@@ -987,13 +1240,13 @@ export function SidebarTree({
                       onSelectSubagent={selectSubagent}
                     />
                   ))}
-                </div>
+                </Box>
               </section>
             ) : null}
 
             <section aria-label="Projects">
-              <SidebarGroupLabel icon={Folder}>Projects</SidebarGroupLabel>
-              <div role="group">
+              <SidebarGroupLabel icon={FolderGit2}>Projects</SidebarGroupLabel>
+              <Box role="group">
                 {projects.map((project) => (
                   <ProjectNode
                     key={project.id}
@@ -1019,18 +1272,18 @@ export function SidebarTree({
                       onNewThread(projectId);
                       onNavigate?.();
                     }}
-                    onLocateProject={(projectId) => onLocateProject?.(projectId)}
+                    onLocateProject={(projectId) =>
+                      onLocateProject?.(projectId)
+                    }
                   />
                 ))}
-              </div>
+              </Box>
             </section>
 
             {orphanThreads.length > 0 ? (
               <section aria-label="Threads">
-                <SidebarGroupLabel icon={MessageSquare}>
-                  Threads
-                </SidebarGroupLabel>
-                <div role="group">
+                <SidebarGroupLabel icon={MessageSquareText}>Threads</SidebarGroupLabel>
+                <Box role="group">
                   {orphanThreads.map((thread) => (
                     <ThreadNode
                       key={thread.id}
@@ -1052,81 +1305,153 @@ export function SidebarTree({
                       onSelectSubagent={selectSubagent}
                     />
                   ))}
-                </div>
+                </Box>
               </section>
             ) : null}
-          </div>
+          </Stack>
         )}
       </div>
 
-      <div className="shrink-0 border-t border-border/50 p-2">
-        <button
+      <div
+        style={{
+          flexShrink: 0,
+          borderTop: "1px solid var(--mantine-color-default-border)",
+          padding: 8,
+          paddingBottom: "calc(8px + env(safe-area-inset-bottom))",
+        }}
+      >
+        <UnstyledButton
           type="button"
           onClick={openInbox}
-          className="mb-1 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+          h={{ base: 40, md: 32 }}
+          style={{
+            marginBottom: 4,
+            display: "flex",
+            width: "100%",
+            alignItems: "center",
+            gap: 8,
+            borderRadius: "var(--mantine-radius-md)",
+            padding: "0 8px",
+            textAlign: "left",
+            fontSize: 12,
+            color: "var(--mantine-color-dimmed)",
+          }}
+          styles={{ root: rowHover }}
         >
-          <Inbox className="size-3.5" aria-hidden />
-          <span className="flex-1">Inbox</span>
+          <Inbox size={14} aria-hidden />
+          <span style={{ flex: 1 }}>Inbox</span>
           {inboxCount > 0 ? (
-            <Badge variant="info" size="sm">
+            <Badge color="blue" variant="light" size="xs">
               {inboxCount > 99 ? "99+" : inboxCount}
             </Badge>
           ) : null}
-          <Kbd>{modKeyLabel()}⇧J</Kbd>
-        </button>
-        <div className="flex items-center gap-2 rounded-md px-1.5 py-1">
+          <Kbd visibleFrom="md">{modKeyLabel()}⇧J</Kbd>
+        </UnstyledButton>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            borderRadius: "var(--mantine-radius-md)",
+            padding: "4px 6px",
+          }}
+        >
           {userLoading ? (
-            <Skeleton className="size-6 rounded-full" />
+            <Skeleton height={24} width={24} circle />
           ) : user ? (
-            <Avatar
-              person={{
-                id: user.id,
-                displayName: user.displayName,
-                avatarUrl: user.avatarUrl,
-              }}
-              size="md"
-              online
-            />
+            <Indicator
+              inline
+              position="bottom-end"
+              size={8}
+              color="green"
+              withBorder
+            >
+              <Avatar
+                src={user.avatarUrl ?? null}
+                alt={user.displayName}
+                name={user.displayName}
+                color="initials"
+                size={24}
+                radius="xl"
+              />
+            </Indicator>
           ) : (
-            <span className="flex size-6 items-center justify-center rounded-full bg-raised text-faint">
-              <Users className="size-3.5" aria-hidden />
+            <span
+              style={{
+                display: "flex",
+                width: 24,
+                height: 24,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "50%",
+                backgroundColor: "var(--mantine-color-gray-1)",
+                color: "var(--mantine-color-dimmed)",
+              }}
+            >
+              <Users size={14} aria-hidden />
             </span>
           )}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-medium text-fg">
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p
+              style={{
+                margin: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontSize: 13,
+                fontWeight: 500,
+                color: "var(--mantine-color-text)",
+              }}
+            >
               {user?.displayName ?? (userLoading ? "Loading…" : "Signed out")}
             </p>
-            <p className="truncate text-[11px] text-faint">
+            <p
+              style={{
+                margin: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontSize: 11,
+                color: "var(--mantine-color-dimmed)",
+              }}
+            >
               {user ? `@${user.username}` : "No active session"}
             </p>
           </div>
           <ThemeToggle />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <IconButton label="Account menu" size="sm">
-                <Settings />
-              </IconButton>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top">
-              <DropdownMenuLabel>
+          <Menu position="top-end" width={200}>
+            <Menu.Target>
+              <ActionIcon
+                variant="default"
+                size="sm"
+                aria-label="Account menu"
+              >
+                <Settings size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>
                 {user ? `@${user.username}` : "Account"}
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={openInbox}>
-                <Inbox />
+              </Menu.Label>
+              <Menu.Divider />
+              <Menu.Item leftSection={<Inbox size={14} />} onClick={openInbox}>
                 Inbox
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={openSettings}>
-                <Settings />
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<Settings size={14} />}
+                onClick={openSettings}
+              >
                 Settings
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={signOut}>
-                <LogOut />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Item
+                leftSection={<LogOut size={14} />}
+                onClick={signOut}
+              >
+                Reload workspace
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         </div>
       </div>
     </div>
@@ -1138,11 +1463,23 @@ function SidebarGroupLabel({
   icon: Icon,
 }: {
   children: ReactNode;
-  icon: ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string; size?: number }>;
 }) {
   return (
-    <div className="flex items-center gap-1.5 px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
-      <Icon className="size-3" />
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "8px 8px 4px",
+        fontSize: 11,
+        fontWeight: 500,
+        textTransform: "uppercase",
+        letterSpacing: "0.14em",
+        color: "var(--mantine-color-dimmed)",
+      }}
+    >
+      <Icon size={12} />
       {children}
     </div>
   );

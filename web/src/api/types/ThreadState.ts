@@ -9,6 +9,10 @@ import type { ThreadStatus } from "./ThreadStatus";
  */
 export type ThreadState = {
   threadId: ThreadId;
+  /**
+   * Monotonic revision for this thread; consumers must discard older values.
+   */
+  revision: bigint;
   status: ThreadStatus;
   currentTurn: string | null;
   pendingApprovals: number;

@@ -1,26 +1,18 @@
+import {
+  Badge,
+  Group,
+  Kbd,
+  Skeleton,
+  Text,
+  VisuallyHidden,
+} from "@mantine/core";
+import { createSpotlight, Spotlight } from "@mantine/spotlight";
 import { CornerDownLeft } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceSearch } from "@/api/queries";
 import type { SearchResultDto } from "@/api/types/SearchResultDto";
-import {
-  Badge,
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  ErrorState,
-  Kbd,
-  Skeleton,
-} from "@/components/ui";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ErrorState } from "@/components/app";
 import { useDebouncedValue } from "@/lib/hooks";
 import { ApiError } from "@/lib/api";
 
@@ -65,8 +57,17 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const search = useWorkspaceSearch(debouncedQuery);
   const trimmed = query.trim();
   const searching = trimmed.length > 0 && debouncedQuery !== query;
+  const [store, controls] = useMemo(() => createSpotlight(), []);
 
-  const close = () => {
+  useEffect(() => {
+    if (open) {
+      controls.open();
+    } else {
+      controls.close();
+    }
+  }, [open, controls]);
+
+  const closePalette = () => {
     setQuery("");
     onOpenChange(false);
   };
@@ -76,111 +77,139 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     if (!path) {
       return;
     }
-    close();
+    closePalette();
     navigate(path);
   };
 
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) {
-          setQuery("");
-        }
-        onOpenChange(next);
+  const results = useMemo(() => {
+    if (searching || search.isLoading || search.isError) {
+      return [];
+    }
+    if (trimmed.length === 0) {
+      return [];
+    }
+    return search.data?.results ?? [];
+  }, [searching, search.isLoading, search.isError, trimmed, search.data]);
+
+  const nothingFound = searching || search.isLoading ? (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        padding: 6,
       }}
     >
-      <DialogContent
-        className="top-[14%] max-w-xl translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
-        showCloseButton={false}
-      >
-        <DialogTitle className="sr-only">Search Threadbase</DialogTitle>
-        <DialogDescription className="sr-only">
-          Search across projects, threads and files
-        </DialogDescription>
-        <Command shouldFilter={false} loop={false} className="p-0">
-          <CommandInput
-            autoFocus
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Search projects, threads and files…"
-            className="h-11 text-[13px]"
-          />
-          <CommandList className="max-h-[min(420px,60vh)] p-1.5">
-            {searching || search.isLoading ? (
-              <div className="space-y-1.5 p-1.5">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-3/4" />
-              </div>
-            ) : search.isError ? (
-              <ErrorState
-                error={search.error}
-                title="Search failed"
-                description={
-                  search.error instanceof ApiError
-                    ? search.error.message
-                    : undefined
+      <Skeleton height={32} />
+      <Skeleton height={32} />
+      <Skeleton height={32} width="75%" />
+    </div>
+  ) : search.isError ? (
+    <ErrorState
+      error={search.error}
+      title="Search failed"
+      description={
+        search.error instanceof ApiError
+          ? search.error.message
+          : undefined
+      }
+      compact
+    />
+  ) : trimmed.length === 0 ? (
+    <div
+      style={{
+        padding: "24px 12px",
+        textAlign: "center",
+      }}
+    >
+      <Text size="xs" c="dimmed">
+        Search across projects, threads and files.
+      </Text>
+      <Text size="xs" c="dimmed" mt={4}>
+        Results are requested from the workspace search API.
+      </Text>
+    </div>
+  ) : (
+    <Text
+      size="xs"
+      c="dimmed"
+      style={{
+        padding: "24px 12px",
+        textAlign: "center",
+      }}
+    >
+      No results for “{trimmed}”.
+    </Text>
+  );
+
+  return (
+    <Spotlight.Root
+      store={store}
+      shortcut={null}
+      query={query}
+      onQueryChange={setQuery}
+      title={<VisuallyHidden>Search Threadbase</VisuallyHidden>}
+      onSpotlightClose={() => onOpenChange(false)}
+      clearQueryOnClose
+    >
+      <Spotlight.Search
+        autoFocus
+        size="md"
+        placeholder="Search projects, threads and files…"
+      />
+      {results.length > 0 ? (
+        <Spotlight.ActionsList>
+          {results.map((result) => {
+            const path = resultPath(result);
+            return (
+              <Spotlight.Action
+                key={`${result.kind}:${result.id}`}
+                id={`${result.kind}:${result.id}`}
+                label={result.title}
+                description={result.subtitle ?? undefined}
+                disabled={!path}
+                leftSection={
+                  <Badge variant="outline" size="sm">
+                    {resultIconLabel(result.kind)}
+                  </Badge>
                 }
-                compact
+                rightSection={<CornerDownLeft size={12} aria-hidden />}
+                onClick={() => select(result)}
               />
-            ) : trimmed.length === 0 ? (
-              <div className="px-3 py-8 text-center">
-                <p className="text-[12px] text-muted-foreground">
-                  Search across projects, threads and files.
-                </p>
-                <p className="mt-1 text-[11px] text-faint">
-                  Results are requested from the workspace search API.
-                </p>
-              </div>
-            ) : search.data && search.data.results.length === 0 ? (
-              <CommandEmpty className="px-3 py-8 text-center text-[12px] text-muted-foreground">
-                No results for “{trimmed}”.
-              </CommandEmpty>
-            ) : (
-              <CommandGroup heading="Results">
-                {search.data?.results.map((result) => {
-                  const path = resultPath(result);
-                  return (
-                    <CommandItem
-                      key={`${result.kind}:${result.id}`}
-                      value={`${result.kind}:${result.id}`}
-                      disabled={!path}
-                      onSelect={() => select(result)}
-                      className="gap-2.5 px-2 py-2 text-[13px]"
-                    >
-                      <Badge variant="outline" size="sm">
-                        {resultIconLabel(result.kind)}
-                      </Badge>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate">{result.title}</span>
-                        {result.subtitle ? (
-                          <span className="block truncate text-[11px] text-muted-foreground">
-                            {result.subtitle}
-                          </span>
-                        ) : null}
-                      </span>
-                      <CornerDownLeft className="size-3 text-faint" aria-hidden />
-                    </CommandItem>
-                  );
-                })}
-              </CommandGroup>
-            )}
-          </CommandList>
-          <div className="flex items-center gap-3 border-t border-border/60 px-3 py-1.5 text-[11px] text-faint">
-            <span className="flex items-center gap-1">
+            );
+          })}
+        </Spotlight.ActionsList>
+      ) : (
+        <Spotlight.Empty>{nothingFound}</Spotlight.Empty>
+      )}
+      <Spotlight.Footer>
+        <Group
+          justify="space-between"
+          px="sm"
+          py="xs"
+          gap="xs"
+          wrap="nowrap"
+        >
+          <Group gap="xs" wrap="nowrap">
+            <Group gap={4} wrap="nowrap">
               <Kbd>↑</Kbd>
               <Kbd>↓</Kbd>
-              navigate
-            </span>
-            <span className="flex items-center gap-1">
+              <Text size="xs" c="dimmed">
+                navigate
+              </Text>
+            </Group>
+            <Group gap={4} wrap="nowrap">
               <Kbd>↵</Kbd>
-              open
-            </span>
-            <span className="ml-auto">Workspace search</span>
-          </div>
-        </Command>
-      </DialogContent>
-    </Dialog>
+              <Text size="xs" c="dimmed">
+                open
+              </Text>
+            </Group>
+          </Group>
+          <Text size="xs" c="dimmed">
+            Workspace search
+          </Text>
+        </Group>
+      </Spotlight.Footer>
+    </Spotlight.Root>
   );
 }

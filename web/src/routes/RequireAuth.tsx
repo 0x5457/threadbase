@@ -1,7 +1,8 @@
+import { Group, Loader, Stack, Text } from "@mantine/core";
 import type { ReactNode } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useMe } from "@/api/queries";
-import { ErrorState, LogoMark } from "@/components/ui";
+import { ErrorState, LogoMark } from "@/components/app";
 import { ApiError } from "@/lib/api";
 
 export function RequireAuth() {
@@ -39,20 +40,29 @@ export function RequireAuth() {
 
 function FullPageShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-full items-center justify-center bg-background p-6">
-      <div className="w-full max-w-md">{children}</div>
-    </div>
+    <Stack
+      align="center"
+      justify="center"
+      h="100%"
+      maw={448}
+      mx="auto"
+      p="md"
+    >
+      {children}
+    </Stack>
   );
 }
 
 function FullPageLoading({ label }: { label: string }) {
   return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
+    <Stack align="center" justify="center" h="100%" gap="xs">
       <LogoMark size={24} />
-      <p className="flex items-center gap-2 text-[12px]">
-        <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-        {label}
-      </p>
-    </div>
+      <Group gap="xs">
+        <Loader size="xs" color="blue" />
+        <Text size="xs" c="dimmed">
+          {label}
+        </Text>
+      </Group>
+    </Stack>
   );
 }

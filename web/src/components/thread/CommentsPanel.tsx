@@ -1,7 +1,21 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Send, Trash2 } from "lucide-react";
+import { MessageSquareText, Send, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
+import { notifications } from "@mantine/notifications";
+import {
+  ActionIcon,
+  Anchor,
+  Badge,
+  Box,
+  Button,
+  Divider,
+  Flex,
+  Paper,
+  Skeleton,
+  Stack,
+  Text,
+  Textarea,
+} from "@mantine/core";
 import {
   createComment,
   deleteComment,
@@ -10,15 +24,7 @@ import {
 } from "@/api/endpoints";
 import { queryKeys, useComments } from "@/api/queries";
 import type { CommentDto } from "@/api/types/CommentDto";
-import {
-  Badge,
-  Button,
-  EmptyState,
-  ErrorState,
-  IconButton,
-  Skeleton,
-  Textarea,
-} from "@/components/ui";
+import { EmptyState, ErrorState } from "@/components/app";
 
 export function CommentsPanel({
   threadId,
@@ -55,7 +61,8 @@ export function CommentsPanel({
       setBody("");
       refresh();
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const reply = useMutation({
     mutationFn: (parent: CommentDto) =>
@@ -70,31 +77,35 @@ export function CommentsPanel({
       setReplyTo(null);
       refresh();
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const send = useMutation({
     mutationFn: (comment: CommentDto) => sendComment(comment.id),
     onSuccess: refresh,
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const resolve = useMutation({
     mutationFn: (comment: CommentDto) =>
       updateComment(comment.id, { body: null, status: "resolved" }),
     onSuccess: refresh,
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const remove = useMutation({
     mutationFn: (comment: CommentDto) => deleteComment(comment.id),
     onSuccess: refresh,
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
 
   if (comments.isLoading) {
     return (
-      <div className="space-y-2 p-3">
-        <Skeleton className="h-14 w-full" />
-        <Skeleton className="h-20 w-full" />
-      </div>
+      <Stack gap="sm" p="sm">
+        <Skeleton height={56} />
+        <Skeleton height={80} />
+      </Stack>
     );
   }
   if (comments.isError) {
@@ -113,21 +124,21 @@ export function CommentsPanel({
     list.filter((comment) => comment.parentId === id);
 
   return (
-    <div className="flex min-h-0 flex-col">
-      <div className="border-b border-border p-2.5">
+    <Stack gap={0} style={{ minHeight: 0 }}>
+      <Box p="sm">
         {canWrite ? (
-          <div className="space-y-1.5">
+          <Stack gap="xs">
             <Textarea
               value={body}
               onChange={(event) => setBody(event.target.value)}
               placeholder="Leave a comment for the thread…"
               rows={2}
-              className="text-[13px]"
             />
-            <div className="flex justify-end gap-1.5">
+            <Flex justify="flex-end" gap="xs">
               <Button
-                size="sm"
-                variant="ghost"
+                variant="subtle"
+                color="dark"
+                size="xs"
                 disabled={!body.trim()}
                 loading={create.isPending}
                 onClick={() => create.mutate(false)}
@@ -135,148 +146,185 @@ export function CommentsPanel({
                 Save pending
               </Button>
               <Button
-                size="sm"
-                variant="primary"
+                size="xs"
                 disabled={!body.trim()}
                 loading={create.isPending}
                 onClick={() => create.mutate(true)}
               >
-                <Send aria-hidden />
+                <Send size={12} aria-hidden />
                 Send now
               </Button>
-            </div>
-          </div>
+            </Flex>
+          </Stack>
         ) : (
-          <p className="text-[13px] text-faint">
+          <Text size="xs" c="dimmed">
             Comments are visible to thread members.
-          </p>
+          </Text>
         )}
-      </div>
+      </Box>
+      <Divider />
       {topLevel.length === 0 ? (
         <EmptyState
-          icon={MessageSquare}
+          icon={MessageSquareText}
           title="No comments yet"
           compact
         />
       ) : (
-        <ul className="space-y-2 p-2.5">
+        <Stack gap="sm" p="sm">
           {topLevel.map((comment) => (
-            <li
-              key={comment.id}
-              className="rounded-lg border border-border bg-surface p-2.5"
-            >
-              <div className="flex items-center gap-1.5 text-[13px]">
-                <span className="text-fg">{comment.author.displayName}</span>
-                <span className="text-faint">@{comment.author.username}</span>
-                <Badge size="sm" variant="neutral" className="ml-auto">
-                  {comment.status}
-                </Badge>
-              </div>
-              <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-fg">
-                {comment.body}
-              </p>
-              <div className="mt-1 flex flex-wrap gap-2 text-[9.5px]">
-                {comment.anchor.kind === "message" ? (
-                  <a
-                    href={`#message-${comment.anchor.messageId}`}
-                    className="text-primary hover:underline"
+            <Paper key={comment.id} withBorder p="sm" radius="md">
+              <Stack gap={4}>
+                <Flex align="center" gap="xs" wrap="wrap">
+                  <Text size="sm" fw={500}>
+                    {comment.author.displayName}
+                  </Text>
+                  <Text size="sm" c="dimmed">
+                    @{comment.author.username}
+                  </Text>
+                  <Badge
+                    variant="light"
+                    color="gray"
+                    size="xs"
+                    style={{ marginLeft: "auto" }}
                   >
-                    jump to message
-                  </a>
-                ) : null}
-                {comment.deliveredSeq ? (
-                  <a
-                    href={`#event-${comment.deliveredSeq}`}
-                    className="text-primary hover:underline"
-                  >
-                    delivered at #{String(comment.deliveredSeq)}
-                  </a>
-                ) : null}
-              </div>
-              {comment.anchorChanged ? (
-                <p className="mt-1 text-[13px] text-warning">
-                  The original diff position changed; this comment is anchored to
-                  the file instead.
-                </p>
-              ) : null}
-              <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/70 pt-1.5">
-                {comment.status !== "delivered" &&
-                comment.status !== "resolved" &&
-                canWrite ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={send.isPending}
-                    onClick={() => send.mutate(comment)}
-                  >
-                    Send now
-                  </Button>
-                ) : null}
-                {comment.status !== "resolved" && canWrite ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => resolve.mutate(comment)}
-                  >
-                    Resolve
-                  </Button>
-                ) : null}
-                <Button
+                    {comment.status}
+                  </Badge>
+                </Flex>
+                <Text
                   size="sm"
-                  variant="ghost"
-                  onClick={() => setReplyTo(comment.id)}
+                  style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}
                 >
-                  Reply
-                </Button>
-                <IconButton
-                  label="Delete comment"
-                  size="sm"
-                  className="ml-auto text-faint hover:text-danger"
-                  onClick={() => remove.mutate(comment)}
+                  {comment.body}
+                </Text>
+                <Flex gap="md">
+                  {comment.anchor.kind === "message" ? (
+                    <Anchor
+                      href={`#message-${comment.anchor.messageId}`}
+                      size="xs"
+                      c="blue.6"
+                    >
+                      jump to message
+                    </Anchor>
+                  ) : null}
+                  {comment.deliveredSeq ? (
+                    <Anchor
+                      href={`#event-${comment.deliveredSeq}`}
+                      size="xs"
+                      c="blue.6"
+                    >
+                      delivered at #{String(comment.deliveredSeq)}
+                    </Anchor>
+                  ) : null}
+                </Flex>
+                {comment.anchorChanged ? (
+                  <Text size="xs" c="yellow.7">
+                    The original diff position changed; this comment is anchored
+                    to the file instead.
+                  </Text>
+                ) : null}
+                <Flex
+                  align="center"
+                  gap="xs"
+                  mt="xs"
+                  pt="xs"
+                  style={{
+                    borderTop:
+                      "1px solid var(--mantine-color-default-border)",
+                  }}
                 >
-                  <Trash2 />
-                </IconButton>
-              </div>
+                  {comment.status !== "delivered" &&
+                  comment.status !== "resolved" &&
+                  canWrite ? (
+                    <Button
+                      variant="subtle"
+                      color="dark"
+                      size="xs"
+                      loading={send.isPending}
+                      onClick={() => send.mutate(comment)}
+                    >
+                      Send now
+                    </Button>
+                  ) : null}
+                  {comment.status !== "resolved" && canWrite ? (
+                    <Button
+                      variant="subtle"
+                      color="dark"
+                      size="xs"
+                      onClick={() => resolve.mutate(comment)}
+                    >
+                      Resolve
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="subtle"
+                    color="dark"
+                    size="xs"
+                    onClick={() => setReplyTo(comment.id)}
+                  >
+                    Reply
+                  </Button>
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    size="xs"
+                    aria-label="Delete comment"
+                    style={{ marginLeft: "auto" }}
+                    onClick={() => remove.mutate(comment)}
+                  >
+                    <Trash2 size={12} aria-hidden />
+                  </ActionIcon>
+                </Flex>
+              </Stack>
               {repliesFor(comment.id).map((replyComment) => (
-                <div
+                <Box
                   key={replyComment.id}
-                  className="mt-1.5 border-l-2 border-border pl-2 text-[13px]"
+                  pl="sm"
+                  mt="xs"
+                  style={{
+                    borderLeft:
+                      "2px solid var(--mantine-color-default-border)",
+                  }}
                 >
-                  <p className="text-faint">
+                  <Text size="xs" c="dimmed">
                     {replyComment.author.displayName} · {replyComment.status}
-                  </p>
-                  <p className="whitespace-pre-wrap text-fg">{replyComment.body}</p>
-                </div>
+                  </Text>
+                  <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                    {replyComment.body}
+                  </Text>
+                </Box>
               ))}
               {replyTo === comment.id ? (
-                <div className="mt-1.5 space-y-1">
+                <Stack gap="xs" mt="xs">
                   <Textarea
                     value={replyBody}
                     onChange={(event) => setReplyBody(event.target.value)}
                     placeholder="Reply to this comment…"
                     rows={2}
-                    className="text-[13px]"
                   />
-                  <div className="flex justify-end gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => setReplyTo(null)}>
+                  <Flex justify="flex-end" gap="xs">
+                    <Button
+                      variant="subtle"
+                      color="dark"
+                      size="xs"
+                      onClick={() => setReplyTo(null)}
+                    >
                       Cancel
                     </Button>
                     <Button
-                      size="sm"
-                      variant="primary"
+                      size="xs"
                       disabled={!replyBody.trim()}
                       loading={reply.isPending}
                       onClick={() => reply.mutate(comment)}
                     >
                       Reply
                     </Button>
-                  </div>
-                </div>
+                  </Flex>
+                </Stack>
               ) : null}
-            </li>
+            </Paper>
           ))}
-        </ul>
+        </Stack>
       )}
-    </div>
+    </Stack>
   );
 }

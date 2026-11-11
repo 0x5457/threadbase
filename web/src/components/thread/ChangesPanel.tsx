@@ -1,7 +1,22 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, GitCompareArrows, RotateCcw, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { notifications } from "@mantine/notifications";
+import {
+  Badge,
+  Box,
+  Button,
+  Checkbox,
+  Divider,
+  Flex,
+  Select,
+  Skeleton,
+  Stack,
+  Text,
+  TextInput,
+  Textarea,
+  UnstyledButton,
+} from "@mantine/core";
 import {
   createComment,
   mergeBackChanges,
@@ -14,23 +29,8 @@ import type { CommentDto } from "@/api/types/CommentDto";
 import type { DiffLineDto } from "@/api/types/DiffLineDto";
 import type { FileChangeDto } from "@/api/types/FileChangeDto";
 import type { FileStatus } from "@/api/types/FileStatus";
-import {
-  Badge,
-  Button,
-  Checkbox,
-  EmptyState,
-  ErrorState,
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Skeleton,
-  Textarea,
-} from "@/components/ui";
+import { EmptyState, ErrorState } from "@/components/app";
 import { usePresenceStore } from "@/lib/presence";
-import { cn } from "@/lib/utils";
 
 const BASELINES: { value: BaselineKind; label: string }[] = [
   { value: "base_branch", label: "Base branch" },
@@ -54,28 +54,34 @@ function statusLabel(status: FileStatus) {
   }
 }
 
-function statusClass(status: FileStatus) {
+function statusColor(status: FileStatus): string {
   switch (status) {
     case "added":
     case "untracked":
-      return "border-success/30 bg-success/10 text-success";
+      return "green";
     case "deleted":
-      return "border-danger/30 bg-danger/10 text-danger";
+      return "red";
     case "renamed":
-      return "border-info/30 bg-info/10 text-info";
+      return "blue";
     default:
-      return "border-border bg-raised text-muted-foreground";
+      return "gray";
   }
 }
 
-function lineClass(line: DiffLineDto) {
+function lineTone(line: DiffLineDto): { bg: string; c: string } {
   if (line.kind === "add") {
-    return "bg-add text-success";
+    return {
+      bg: "var(--mantine-color-green-light)",
+      c: "var(--mantine-color-green-light-color)",
+    };
   }
   if (line.kind === "delete") {
-    return "bg-del text-danger";
+    return {
+      bg: "var(--mantine-color-red-light)",
+      c: "var(--mantine-color-red-light-color)",
+    };
   }
-  return "text-muted-foreground";
+  return { bg: "transparent", c: "var(--mantine-color-dimmed)" };
 }
 
 export function ChangesPanel({
@@ -117,9 +123,13 @@ export function ChangesPanel({
   };
   const seen = useMutation({
     mutationFn: ({ file, value }: { file: FileChangeDto; value: boolean }) =>
-      setSeen(threadId, [file.path], value),
+      setSeen(threadId, [file.path], value, {
+        kind: baseline,
+        commit: baseline === "commit" ? commit || null : null,
+      }),
     onSuccess: invalidate,
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const addComment = useMutation({
     mutationFn: () => {
@@ -149,32 +159,51 @@ export function ChangesPanel({
         queryKey: queryKeys.threadEvents(threadId),
       });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const markAllSeen = useMutation({
-    mutationFn: () => setSeen(threadId, (changes.data?.files ?? []).map((file) => file.path), true),
+    mutationFn: () =>
+      setSeen(
+        threadId,
+        (changes.data?.files ?? []).map((file) => file.path),
+        true,
+        {
+          kind: baseline,
+          commit: baseline === "commit" ? commit || null : null,
+        },
+      ),
     onSuccess: invalidate,
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const revert = useMutation({
     mutationFn: () => revertThread(threadId),
     onSuccess: () => {
-      toast.success("Reverted worktree to the base commit");
+      notifications.show({
+        message: "Reverted worktree to the base commit",
+        color: "green",
+      });
       invalidate();
       void queryClient.invalidateQueries({
         queryKey: queryKeys.threadEvents(threadId),
       });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   const merge = useMutation({
     mutationFn: () => mergeBackChanges(threadId, false, null),
     onSuccess: (result) => {
-      toast.success(`Applied ${result.files.length} files to the project`);
+      notifications.show({
+        message: `Applied ${result.files.length} files to the project`,
+        color: "green",
+      });
       invalidate();
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
 
   useEffect(() => {
@@ -199,11 +228,11 @@ export function ChangesPanel({
 
   if (changes.isLoading) {
     return (
-      <div className="space-y-2 px-3 py-3">
-        <Skeleton className="h-5 w-40" />
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-16 w-full" />
-      </div>
+      <Stack gap="xs" px="sm" py="sm">
+        <Skeleton height={20} width={160} />
+        <Skeleton height={40} />
+        <Skeleton height={64} />
+      </Stack>
     );
   }
   if (changes.isError) {
@@ -235,53 +264,61 @@ export function ChangesPanel({
   );
 
   return (
-    <div className="flex min-h-0 flex-col">
-      <div className="space-y-2 border-b border-border px-3 py-2.5">
-        <div className="flex items-center gap-2">
+    <Stack gap={0} style={{ minHeight: 0 }}>
+      <Box p="sm">
+        <Flex align="center" gap="xs">
           <Select
             value={baseline}
-            onValueChange={(value) => setBaseline(value as BaselineKind)}
+            onChange={(value) => {
+              if (value) {
+                setBaseline(value as BaselineKind);
+              }
+            }}
+            data={BASELINES}
+            size="xs"
+            aria-label="Baseline"
+            style={{ flex: 1 }}
+          />
+          <Text
+            size="xs"
+            ff="monospace"
+            c="dimmed"
+            style={{ whiteSpace: "nowrap" }}
           >
-            <SelectTrigger
-              size="sm"
-              className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-muted-foreground shadow-none hover:bg-muted/60"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="start">
-              {BASELINES.map((entry) => (
-                <SelectItem key={entry.value} value={entry.value}>
-                  {entry.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <span className="font-mono text-[13px] text-faint">
             {data.stats.seen}/{data.stats.total}
-          </span>
-        </div>
+          </Text>
+        </Flex>
         {baseline === "commit" ? (
-          <Input
+          <TextInput
             value={commit}
             onChange={(event) => setCommit(event.target.value.trim())}
             aria-label="Commit SHA"
             placeholder="Commit SHA"
-            className="h-8 font-mono text-[12px]"
+            size="xs"
+            ff="monospace"
+            mt="xs"
           />
         ) : null}
-        <div className="flex items-center justify-between text-[13px]">
-          <span className="text-muted-foreground">{data.baseLabel}</span>
-          <span className="font-mono">
-            <span className="text-success">+{data.stats.additions}</span>{" "}
-            <span className="text-danger">−{data.stats.deletions}</span>
-          </span>
-        </div>
+        <Flex justify="space-between" align="center" mt="xs" gap="xs">
+          <Text size="xs" c="dimmed" truncate="end">
+            {data.baseLabel}
+          </Text>
+          <Text size="xs" ff="monospace" style={{ whiteSpace: "nowrap" }}>
+            <Text component="span" c="green.6">
+              +{data.stats.additions}
+            </Text>{" "}
+            <Text component="span" c="red.6">
+              −{data.stats.deletions}
+            </Text>
+          </Text>
+        </Flex>
         {canWrite ? (
-          <div className="flex gap-1.5">
+          <Flex gap="xs" mt="xs">
             <Button
-              size="sm"
-              variant="ghost"
-              className="flex-1"
+              size="xs"
+              variant="subtle"
+              color="dark"
+              flex={1}
               loading={revert.isPending}
               onClick={() => {
                 if (
@@ -293,13 +330,13 @@ export function ChangesPanel({
                 }
               }}
             >
-              <Undo2 aria-hidden />
+              <Undo2 size={12} aria-hidden />
               Revert
             </Button>
             <Button
-              size="sm"
-              variant="secondary"
-              className="flex-1"
+              size="xs"
+              variant="outline"
+              flex={1}
               loading={merge.isPending}
               onClick={() => {
                 if (
@@ -311,62 +348,79 @@ export function ChangesPanel({
                 }
               }}
             >
-              <RotateCcw aria-hidden />
+              <RotateCcw size={12} aria-hidden />
               Apply
             </Button>
-          </div>
+          </Flex>
         ) : null}
-      </div>
-
-      <ul className="shrink-0 border-b border-border">
+      </Box>
+      <Divider />
+      <Box component="ul" style={{ listStyle: "none", margin: 0, padding: 0 }}>
         {data.files.map((file) => (
-          <li
-            key={file.path}
-            className={cn(
-              "flex items-center gap-2 border-b border-border/60 px-3 py-1.5 last:border-b-0",
-              selected === file.path && "bg-hover",
-            )}
-          >
-            <Checkbox
-              checked={file.seen}
-              aria-label={`Mark ${file.path} as seen`}
-              onCheckedChange={(value) =>
-                seen.mutate({ file, value: value === true })
-              }
-            />
-            <button
-              type="button"
-              className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              onClick={() =>
-                setSelected(selected === file.path ? null : file.path)
+          <li key={file.path}>
+            <Flex
+              align="center"
+              gap="xs"
+              px="sm"
+              py="xs"
+              bg={
+                selected === file.path
+                  ? "var(--mantine-color-default-hover)"
+                  : undefined
               }
             >
-              <span
-                className={cn(
-                  "flex size-5 shrink-0 items-center justify-center rounded border font-mono text-[13px] font-semibold",
-                  statusClass(file.status),
-                )}
+              <Checkbox
+                checked={file.seen}
+                aria-label={`Mark ${file.path} as seen`}
+                onChange={(event) =>
+                  seen.mutate({ file, value: event.currentTarget.checked })
+                }
+              />
+              <Button
+                variant="subtle"
+                color="dark"
+                justify="flex-start"
+                leftSection={
+                  <Badge
+                    variant="light"
+                    color={statusColor(file.status)}
+                    size="sm"
+                    circle
+                  >
+                    {statusLabel(file.status)}
+                  </Badge>
+                }
+                rightSection={
+                  <Text
+                    fz={11}
+                    ff="monospace"
+                    c="dimmed"
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    +{file.additions} −{file.deletions}
+                  </Text>
+                }
+                onClick={() =>
+                  setSelected(selected === file.path ? null : file.path)
+                }
+                style={{ flex: 1 }}
               >
-                {statusLabel(file.status)}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-fg">
-                {file.path}
-              </span>
-              <span className="shrink-0 font-mono text-[9.5px]">
-                <span className="text-success">+{file.additions}</span>{" "}
-                <span className="text-danger">−{file.deletions}</span>
-              </span>
-            </button>
+                <Text size="sm" ff="monospace" truncate="end" component="span">
+                  {file.path}
+                </Text>
+              </Button>
+            </Flex>
+            <Divider />
           </li>
         ))}
-      </ul>
+      </Box>
 
       {selected ? (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <Box style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           {diff.isLoading ? (
-            <div className="p-3">
-              <Skeleton className="h-24 w-full" />
-            </div>
+            <Box p="sm">
+              <Skeleton height={96} />
+            </Box>
           ) : diff.isError ? (
             <ErrorState
               error={diff.error}
@@ -375,36 +429,62 @@ export function ChangesPanel({
               compact
             />
           ) : diff.data?.binary ? (
-            <div className="p-3">
-              <Badge size="sm" variant="outline">
+            <Box p="sm">
+              <Badge variant="outline" color="gray" size="sm">
                 binary file
               </Badge>
-            </div>
+            </Box>
           ) : (
-            <div className="font-mono text-[13px]">
+            <Box
+              style={{
+                fontFamily: "var(--mantine-font-family-monospace)",
+                fontSize: 13,
+              }}
+            >
               {diff.data?.hunks.map((hunk) => (
-                <div key={hunk.id}>
-                  <div className="sticky top-0 flex items-center gap-2 border-y border-border bg-raised px-2 py-1 text-[9.5px] text-faint">
-                    <span className="truncate">{hunk.header}</span>
+                <Box key={hunk.id}>
+                  <Flex
+                    align="center"
+                    gap="xs"
+                    px="xs"
+                    py={4}
+                    style={{
+                      position: "sticky",
+                      top: 0,
+                      borderTop:
+                        "1px solid var(--mantine-color-default-border)",
+                      borderBottom:
+                        "1px solid var(--mantine-color-default-border)",
+                      background: "var(--mantine-color-default)",
+                      fontSize: 11,
+                      color: "var(--mantine-color-dimmed)",
+                    }}
+                  >
+                    <Text fz={11} ff="monospace" truncate="end">
+                      {hunk.header}
+                    </Text>
                     {fileComments.some(
                       (comment) => comment.anchor.hunkId === hunk.id,
                     ) ? (
-                      <button
-                        type="button"
-                        className="ml-auto shrink-0 rounded px-1 text-info hover:bg-hover"
+                      <Button
+                        variant="subtle"
+                        color="blue"
+                        size="compact-xs"
+                        ml="auto"
                         onClick={() => setShowComments((value) => !value)}
                       >
                         {fileComments.filter(
                           (comment) => comment.anchor.hunkId === hunk.id,
                         ).length}{" "}
                         {showComments ? "hide" : "comments"}
-                      </button>
+                      </Button>
                     ) : null}
-                  </div>
+                  </Flex>
                   {hunk.lines.map((line, index) => {
                     const lineNumber = line.newLine ?? line.oldLine ?? 0;
+                    const tone = lineTone(line);
                     return (
-                      <button
+                      <UnstyledButton
                         type="button"
                         key={`${hunk.id}-${index}`}
                         onClick={() => {
@@ -423,21 +503,41 @@ export function ChangesPanel({
                             },
                           });
                         }}
-                        className={cn(
-                          "grid w-full grid-cols-[2.5rem_2.5rem_1fr_1rem] gap-2 px-2 py-px text-left hover:bg-hover",
-                          lineClass(line),
-                        )}
+                        bg={tone.bg}
+                        c={tone.c}
+                        style={{
+                          display: "grid",
+                          width: "100%",
+                          gridTemplateColumns: "2.5rem 2.5rem 1fr 1rem",
+                          gap: "0.5rem",
+                          padding: "0 0.5rem",
+                          textAlign: "left",
+                          fontFamily: "inherit",
+                          fontSize: "inherit",
+                          lineHeight: "inherit",
+                        }}
                       >
-                        <span className="text-right text-faint/70">
+                        <span style={{ textAlign: "right", opacity: 0.7 }}>
                           {line.oldLine ?? ""}
                         </span>
-                        <span className="text-right text-faint/70">
+                        <span style={{ textAlign: "right", opacity: 0.7 }}>
                           {line.newLine ?? ""}
                         </span>
-                        <span className="whitespace-pre-wrap break-all">
+                        <span
+                          style={{
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-all",
+                          }}
+                        >
                           {line.content || " "}
                         </span>
-                        <span className="text-center text-info" aria-hidden>
+                        <span
+                          style={{
+                            textAlign: "center",
+                            color: "var(--mantine-color-blue-6)",
+                          }}
+                          aria-hidden
+                        >
                           {fileComments.some(
                             (comment) =>
                               comment.anchor.hunkId === hunk.id &&
@@ -446,71 +546,90 @@ export function ChangesPanel({
                             ? "●"
                             : ""}
                         </span>
-                      </button>
+                      </UnstyledButton>
                     );
                   })}
                   {showComments
                     ? fileComments
                         .filter((comment) => comment.anchor.hunkId === hunk.id)
                         .map((comment) => (
-                          <div
+                          <Box
                             key={comment.id}
-                            className="border-y border-info/20 bg-info/5 px-2 py-1.5"
+                            px="xs"
+                            py="xs"
+                            style={{
+                              borderTop:
+                                "1px solid var(--mantine-color-blue-light)",
+                              background: "var(--mantine-color-blue-light)",
+                            }}
                           >
-                            <p className="text-[9.5px] text-info">
+                            <Text fz={11} c="blue.6">
                               line {comment.anchor.line} ·{" "}
                               {comment.author.displayName}
-                              {comment.status === "pending" ? " · pending" : ""}
-                            </p>
-                            <p className="whitespace-pre-wrap text-[13px] text-fg">
+                              {comment.status === "pending"
+                                ? " · pending"
+                                : ""}
+                            </Text>
+                            <Text
+                              size="sm"
+                              style={{ whiteSpace: "pre-wrap" }}
+                            >
                               {comment.body}
-                            </p>
-                          </div>
+                            </Text>
+                          </Box>
                         ))
                     : null}
-                </div>
+                </Box>
               ))}
               {commentTarget ? (
-                <div className="space-y-1.5 border-t border-border bg-panel p-2.5">
-                  <p className="text-[13px] text-info">
+                <Box
+                  p="sm"
+                  style={{
+                    borderTop:
+                      "1px solid var(--mantine-color-default-border)",
+                    background: "var(--mantine-color-default)",
+                  }}
+                >
+                  <Text size="sm" c="blue.6" mb={4}>
                     Comment on {selected}:{commentTarget.line}
-                  </p>
+                  </Text>
                   <Textarea
                     value={commentBody}
                     onChange={(event) => setCommentBody(event.target.value)}
                     placeholder="Leave a review comment…"
                     rows={2}
-                    className="text-[13px]"
                   />
-                  <div className="flex justify-end gap-1.5">
+                  <Flex justify="flex-end" gap="xs" mt="xs">
                     <Button
-                      size="sm"
-                      variant="ghost"
+                      size="xs"
+                      variant="subtle"
+                      color="dark"
                       onClick={() => setCommentTarget(null)}
                     >
                       Cancel
                     </Button>
                     <Button
-                      size="sm"
-                      variant="primary"
+                      size="xs"
                       disabled={!commentBody.trim()}
                       loading={addComment.isPending}
                       onClick={() => addComment.mutate()}
                     >
                       Add pending comment
                     </Button>
-                  </div>
-                </div>
+                  </Flex>
+                </Box>
               ) : null}
-            </div>
+            </Box>
           )}
-        </div>
+        </Box>
       ) : (
-        <div className="p-3 text-[13px] text-faint">
-          <Check className="mr-1 inline size-3" aria-hidden />
-          Select a file to review its diff.
-        </div>
+        <Flex align="center" gap="xs" p="sm">
+          <Check size={12} aria-hidden />
+          <Text size="sm" c="dimmed">
+            Select a file to review its diff.
+          </Text>
+        </Flex>
       )}
-    </div>
+    </Stack>
   );
 }

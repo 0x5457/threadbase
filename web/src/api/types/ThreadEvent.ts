@@ -28,7 +28,14 @@ export type ThreadEvent =
     "type": "turn_started";
     turnId: TurnId;
     messageId: MessageId;
+    /**
+     * Primary author (the sender). Use `authors` for the full list.
+     */
     author: UserBrief;
+    /**
+     * Every author whose draft blocks were merged into this turn.
+     */
+    authors: Array<UserBrief>;
     prompt: string;
   }
   | {

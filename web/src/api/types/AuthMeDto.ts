@@ -4,6 +4,5 @@ import type { UserDto } from "./UserDto";
 export type AuthMeDto = {
   user: UserDto;
   authMethod: string;
-  tailscaleAvailable: boolean;
-  needsSetup: boolean;
+  needsAdmin: boolean;
 };

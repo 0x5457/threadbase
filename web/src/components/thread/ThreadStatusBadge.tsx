@@ -1,6 +1,19 @@
 /* eslint-disable react-refresh/only-export-components */
+import { Badge } from "@mantine/core";
 import type { ThreadStatus } from "@/api/types/ThreadStatus";
-import { Badge, type BadgeProps } from "@/components/ui";
+
+type StatusBadgeVariant = "neutral" | "info" | "warning" | "danger" | "outline";
+
+const STATUS_BADGE_TONE: Record<
+  StatusBadgeVariant,
+  { color: string; variant: "light" | "outline" }
+> = {
+  neutral: { color: "gray", variant: "light" },
+  info: { color: "blue", variant: "light" },
+  warning: { color: "yellow", variant: "light" },
+  danger: { color: "red", variant: "light" },
+  outline: { color: "gray", variant: "outline" },
+};
 
 export function threadStatusLabel(status: ThreadStatus): string {
   switch (status) {
@@ -21,9 +34,7 @@ export function threadStatusLabel(status: ThreadStatus): string {
   }
 }
 
-function threadStatusVariant(
-  status: ThreadStatus,
-): NonNullable<BadgeProps["variant"]> {
+function threadStatusVariant(status: ThreadStatus): StatusBadgeVariant {
   switch (status) {
     case "running":
     case "preparing":
@@ -41,24 +52,29 @@ function threadStatusVariant(
 }
 
 export function ThreadStatusBadge({ status }: { status: ThreadStatus }) {
+  const tone = STATUS_BADGE_TONE[threadStatusVariant(status)];
   return (
     <Badge
-      variant={threadStatusVariant(status)}
-      size="sm"
+      variant={tone.variant}
+      color={tone.color}
+      size="xs"
       title={
         status === "preparing"
           ? "Creating worktree → starting agent → binding session"
           : undefined
       }
+      leftSection={
+        <span
+          aria-hidden
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            backgroundColor: "currentColor",
+          }}
+        />
+      }
     >
-      <span
-        className={
-          status === "running" || status === "preparing"
-            ? "size-1.5 animate-pulse rounded-full bg-current"
-            : "size-1.5 rounded-full bg-current"
-        }
-        aria-hidden
-      />
       {threadStatusLabel(status)}
     </Badge>
   );

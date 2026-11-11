@@ -1,7 +1,20 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Link2, UserPlus } from "lucide-react";
+import {
+  ActionIcon,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Modal,
+  Paper,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { toast } from "sonner";
 import {
   addMember,
   createInvite,
@@ -12,25 +25,23 @@ import {
 import { queryKeys, useMe } from "@/api/queries";
 import type { Role } from "@/api/types/Role";
 import type { ThreadBundleDto } from "@/api/types/ThreadBundleDto";
-import {
-  Badge,
-  Button,
-  Dialog,
-  DialogContent,
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui";
-import { cn } from "@/lib/utils";
 
 interface ShareDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bundle: ThreadBundleDto;
 }
+
+const roleOptions: Array<{ value: Role; label: string }> = [
+  { value: "editor", label: "Editor" },
+  { value: "viewer", label: "Viewer" },
+  { value: "owner", label: "Owner" },
+];
+
+const accessOptions = [
+  ["invite_only", "Only invited"],
+  ["workspace", "Whole workspace"],
+] as const;
 
 export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
   const queryClient = useQueryClient();
@@ -52,16 +63,30 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
     mutationFn: (value: "invite_only" | "workspace") =>
       setShareLevel(thread.id, value),
     onSuccess: refresh,
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
   const member = useMutation({
     mutationFn: () => addMember(thread.id, { username: username.trim(), role }),
     onSuccess: () => {
       setUsername("");
       refresh();
-      toast.success("Member added");
+      notifications.show({
+        message: "Member added",
+        color: "green",
+        position: "bottom-right",
+      });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
   const invite = useMutation({
     mutationFn: () =>
@@ -77,101 +102,135 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
         const link = `${window.location.origin}/invite/${response.token}`;
         setInviteLink(link);
         void navigator.clipboard.writeText(link).catch(() => undefined);
-        toast.success("Invite link copied");
+        notifications.show({
+          message: "Invite link copied",
+          color: "green",
+          position: "bottom-right",
+        });
       } else {
-        toast.success("Member added");
+        notifications.show({
+          message: "Member added",
+          color: "green",
+          position: "bottom-right",
+        });
       }
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
   const revoke = useMutation({
     mutationFn: (inviteId: string) => revokeInvite(thread.id, inviteId),
     onSuccess: refresh,
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
   const remove = useMutation({
     mutationFn: (userId: string) => removeMember(thread.id, userId),
     onSuccess: refresh,
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(window.location.href);
-    toast.success("Thread link copied");
+    notifications.show({
+      message: "Thread link copied",
+      color: "green",
+      position: "bottom-right",
+    });
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        title="Share thread"
-        footer={
-          <>
-            <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-              Done
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => void copyLink()}>
-              <Link2 aria-hidden />
-              Copy link
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <p className="text-[13px] font-medium text-muted-foreground">Access</p>
-            <div className="grid grid-cols-2 gap-1.5">
-              {(
-                [
-                  ["invite_only", "Only invited"],
-                  ["workspace", "Whole workspace"],
-                ] as const
-              ).map(([value, label]) => (
-                <Button
-                  key={value}
-                  type="button"
-                  variant="ghost"
-                  disabled={!owner}
-                  aria-pressed={thread.shareLevel === value}
-                  onClick={() => level.mutate(value)}
-                  className={cn(
-                    "h-auto justify-start rounded-lg px-3 py-2 text-left text-[12px]",
-                    thread.shareLevel === value
-                      ? "bg-primary/10 text-foreground"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  <span className="flex items-center gap-1.5">
-                    {thread.shareLevel === value ? (
-                      <Check className="size-3 text-primary" aria-hidden />
-                    ) : null}
-                    {label}
-                  </span>
-                </Button>
-              ))}
-            </div>
-          </div>
+    <Modal
+      opened={open}
+      onClose={() => onOpenChange(false)}
+      title="Share thread"
+      size="sm"
+    >
+      <Stack gap="sm">
+        <Stack gap="xs">
+          <Text size="xs" c="dimmed">
+            Access
+          </Text>
+          <Box
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 6,
+            }}
+          >
+            {accessOptions.map(([value, label]) => (
+              <Button
+                key={value}
+                type="button"
+                variant="subtle"
+                color={thread.shareLevel === value ? "blue" : "gray"}
+                disabled={!owner}
+                aria-pressed={thread.shareLevel === value}
+                onClick={() => level.mutate(value)}
+                justify="flex-start"
+                size="xs"
+                leftSection={
+                  thread.shareLevel === value ? (
+                    <Check size={12} aria-hidden />
+                  ) : undefined
+                }
+              >
+                {label}
+              </Button>
+            ))}
+          </Box>
+        </Stack>
 
-          <div className="space-y-1.5">
-            <p className="text-[13px] font-medium text-muted-foreground">
-              Members <span className="text-faint">({bundle.members.length})</span>
-            </p>
-            <ul className="divide-y divide-border/40 overflow-hidden rounded-lg border border-border/40">
+        <Stack gap="xs">
+          <Text size="xs" c="dimmed">
+            Members{" "}
+            <Text component="span" size="xs" c="dimmed">
+              ({bundle.members.length})
+            </Text>
+          </Text>
+          <Paper withBorder radius="md">
+            <Stack gap={0}>
               {bundle.members.map((entry) => (
-                <li
+                <Group
                   key={entry.user.id}
-                  className="flex items-center gap-2 bg-card/30 px-3 py-2"
+                  gap="xs"
+                  px="sm"
+                  py="xs"
+                  wrap="nowrap"
+                  style={{
+                    borderBottom: "1px solid var(--mantine-color-default-border)",
+                  }}
                 >
                   <span
-                    className="size-2 rounded-full"
-                    style={{ background: entry.user.color }}
+                    aria-hidden
+                    style={{
+                      width: 8,
+                      height: 8,
+                      flexShrink: 0,
+                      borderRadius: "50%",
+                      background: entry.user.color,
+                    }}
                   />
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-fg">
+                  <Text size="sm" truncate="end" style={{ flex: 1 }}>
                     {entry.user.displayName}
-                    <span className="ml-1 text-[13px] text-faint">
+                    <Text component="span" size="sm" c="dimmed" ml={4}>
                       @{entry.user.username}
-                    </span>
-                  </span>
-                  <Badge size="sm" variant="neutral">
+                    </Text>
+                  </Text>
+                  <Badge variant="light" color="gray" size="xs">
                     {entry.role}
                   </Badge>
                   {owner &&
@@ -179,115 +238,149 @@ export function ShareDialog({ open, onOpenChange, bundle }: ShareDialogProps) {
                   entry.role !== "owner" ? (
                     <Button
                       type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-auto px-1 py-0 text-[12px] text-faint hover:text-danger"
+                      variant="subtle"
+                      color="red"
+                      size="xs"
+                      px="xs"
                       onClick={() => remove.mutate(entry.user.id)}
                     >
                       remove
                     </Button>
                   ) : null}
-                </li>
+                </Group>
               ))}
-            </ul>
-          </div>
+            </Stack>
+          </Paper>
+        </Stack>
 
-          {bundle.share.pendingInvites.length > 0 ? (
-            <div className="space-y-1.5">
-              <p className="text-[13px] font-medium text-muted-foreground">Pending links</p>
-              <ul className="divide-y divide-border/40 overflow-hidden rounded-lg border border-border/40">
+        {bundle.share.pendingInvites.length > 0 ? (
+          <Stack gap="xs">
+            <Text size="xs" c="dimmed">
+              Pending links
+            </Text>
+            <Paper withBorder radius="md">
+              <Stack gap={0}>
                 {bundle.share.pendingInvites.map((invite) => (
-                  <li
+                  <Group
                     key={invite.id}
-                    className="flex items-center gap-2 bg-surface px-2.5 py-1.5 text-[13px]"
+                    gap="xs"
+                    px="sm"
+                    py="xs"
+                    wrap="nowrap"
+                    style={{
+                      borderBottom:
+                        "1px solid var(--mantine-color-default-border)",
+                    }}
                   >
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    <Text size="sm" c="dimmed" truncate="end" style={{ flex: 1 }}>
                       {invite.email ?? "invite link"} · {invite.role}
-                    </span>
+                    </Text>
                     {owner ? (
                       <Button
                         type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-auto px-1 py-0 text-[12px] text-faint hover:text-danger"
+                        variant="subtle"
+                        color="red"
+                        size="xs"
+                        px="xs"
                         onClick={() => revoke.mutate(invite.id)}
                       >
                         revoke
                       </Button>
                     ) : null}
-                  </li>
+                  </Group>
                 ))}
-              </ul>
-            </div>
-          ) : null}
+              </Stack>
+            </Paper>
+          </Stack>
+        ) : null}
 
-          {owner ? (
-            <div className="space-y-1.5">
-              <p className="text-[13px] font-medium text-muted-foreground">Invite</p>
-              <div className="flex gap-1.5">
-                <Input
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  placeholder="username or email"
-                  className="h-8"
-                />
-                <Select
-                  value={role}
-                  onValueChange={(value) => setRole(value as Role)}
-                >
-                  <SelectTrigger className="h-8 w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="editor">Editor</SelectItem>
-                    <SelectItem value="viewer">Viewer</SelectItem>
-                    <SelectItem value="owner">Owner</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  loading={member.isPending || invite.isPending}
-                  disabled={!username.trim()}
-                  onClick={() => member.mutate()}
-                >
-                  <UserPlus aria-hidden />
-                  Add
-                </Button>
-              </div>
+        {owner ? (
+          <Stack gap="xs">
+            <Text size="xs" c="dimmed">
+              Invite
+            </Text>
+            <Group gap="xs" wrap="nowrap">
+              <TextInput
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder="username or email"
+                size="xs"
+              />
+              <Select
+                value={role}
+                onChange={(value) => setRole((value ?? "editor") as Role)}
+                data={roleOptions}
+                size="xs"
+                w={96}
+              />
               <Button
-                type="button"
-                size="sm"
-                variant="link"
-                className="h-auto justify-start px-0 text-[12px]"
-                onClick={() => invite.mutate()}
+                variant="filled"
+                size="xs"
+                loading={member.isPending || invite.isPending}
+                disabled={!username.trim()}
+                onClick={() => member.mutate()}
+                leftSection={<UserPlus size={14} aria-hidden />}
               >
-                Create a 14-day invite link instead
+                Add
               </Button>
-              {inviteLink ? (
-                <div className="flex items-center gap-1.5 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-2">
-                  <code className="min-w-0 flex-1 truncate text-[13px] text-fg">
-                    {inviteLink}
-                  </code>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    aria-label="Copy invite link"
-                    onClick={() => void navigator.clipboard.writeText(inviteLink)}
+            </Group>
+            <Button
+              type="button"
+              variant="subtle"
+              color="blue"
+              size="xs"
+              justify="flex-start"
+              px={0}
+              onClick={() => invite.mutate()}
+            >
+              Create a 14-day invite link instead
+            </Button>
+            {inviteLink ? (
+              <Paper withBorder radius="md" px="sm" py="xs">
+                <Group gap="xs">
+                  <Text
+                    size="sm"
+                    ff="var(--mantine-font-family-monospace)"
+                    truncate="end"
+                    style={{ flex: 1 }}
                   >
-                    <Copy />
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <p className="text-[13px] text-faint">
-              Only the thread owner can change access or invite people.
-            </p>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+                    {inviteLink}
+                  </Text>
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    size="sm"
+                    aria-label="Copy invite link"
+                    onClick={() =>
+                      void navigator.clipboard.writeText(inviteLink)
+                    }
+                  >
+                    <Copy size={14} />
+                  </ActionIcon>
+                </Group>
+              </Paper>
+            ) : null}
+          </Stack>
+        ) : (
+          <Text size="sm" c="dimmed">
+            Only the thread owner can change access or invite people.
+          </Text>
+        )}
+      </Stack>
+
+      <Group justify="flex-end" gap="xs" mt="sm">
+        <Button variant="default" size="sm" onClick={() => onOpenChange(false)}>
+          Done
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          leftSection={<Link2 size={14} aria-hidden />}
+          onClick={() => void copyLink()}
+        >
+          Copy link
+        </Button>
+      </Group>
+    </Modal>
   );
 }

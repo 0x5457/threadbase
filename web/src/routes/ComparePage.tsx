@@ -1,4 +1,16 @@
-import { ArrowLeftRight, ChevronLeft } from "lucide-react";
+import { ChevronLeft, Columns2 } from "lucide-react";
+import {
+  Anchor,
+  Group,
+  Paper,
+  ScrollArea,
+  Select,
+  SimpleGrid,
+  Skeleton,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
@@ -8,15 +20,16 @@ import {
 } from "@/api/queries";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
-import {
-  EmptyState,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Skeleton,
-} from "@/components/ui";
+import { EmptyState, PageContainer } from "@/components/app";
+import { layout } from "@/lib/design";
+
+const threadSelectData = (
+  list: Array<{ id: string; title: string; agent: string }>,
+) =>
+  list.map((thread) => ({
+    value: thread.id,
+    label: `${thread.title} · ${thread.agent}`,
+  }));
 
 function recentText(events: EventEnvelope[]): string[] {
   return events
@@ -36,11 +49,24 @@ function recentText(events: EventEnvelope[]): string[] {
     .slice(-6);
 }
 
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <Stack gap={0} align="center">
+      <Text size="xs" c="dimmed" tt="uppercase">
+        {label}
+      </Text>
+      <Text size="sm" className="tb-mono">
+        {value}
+      </Text>
+    </Stack>
+  );
+}
+
 function CompareColumn({ threadId }: { threadId: string }) {
   const bundle = useThreadBundle(threadId);
   const events = useThreadEvents(threadId);
   if (bundle.isLoading) {
-    return <Skeleton className="h-64 w-full rounded-xl" />;
+    return <Skeleton h={256} />;
   }
   if (!bundle.data) {
     return (
@@ -54,63 +80,60 @@ function CompareColumn({ threadId }: { threadId: string }) {
   const data = bundle.data.bundle;
   const recent = recentText(events.data?.events ?? []);
   return (
-    <section className="min-w-0 rounded-xl border border-border/40 bg-card/30">
-      <div className="border-b border-border/40 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h2 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-fg">
-            {data.thread.title}
-          </h2>
-          <ThreadStatusBadge status={data.thread.status} />
-        </div>
-        <p className="mt-0.5 text-[11px] text-faint">
-          {data.thread.agent}
-          {data.thread.model ? ` · ${data.thread.model}` : ""} ·{" "}
-          {data.thread.branch}
-        </p>
-      </div>
-      <div className="grid grid-cols-3 gap-1 border-b border-border/40 px-4 py-3 text-center">
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-faint">Messages</p>
-          <p className="font-mono text-[13px] text-fg">{events.data?.events.length ?? 0}</p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-faint">Changes</p>
-          <p className="font-mono text-[13px] text-fg">
-            +{data.thread.changes.additions} −{data.thread.changes.deletions}
-          </p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-faint">Approvals</p>
-          <p className="font-mono text-[13px] text-fg">
-            {data.thread.pendingApprovals}
-          </p>
-        </div>
-      </div>
-      <div className="space-y-1.5 p-3">
+    <Paper withBorder style={{ minWidth: 0 }}>
+      <Group justify="space-between" align="flex-start" gap="xs" wrap="wrap">
+        <Text size="sm" fw={600} truncate="end" style={{ flex: 1 }}>
+          {data.thread.title}
+        </Text>
+        <ThreadStatusBadge status={data.thread.status} />
+      </Group>
+      <Text size="xs" c="dimmed" mt={2}>
+        {data.thread.agent}
+        {data.thread.model ? ` · ${data.thread.model}` : ""} ·{" "}
+        {data.thread.branch}
+      </Text>
+
+      <SimpleGrid cols={3} spacing="xs" mt="sm">
+        <Metric label="Messages" value={String(events.data?.events.length ?? 0)} />
+        <Metric
+          label="Changes"
+          value={`+${data.thread.changes.additions} −${data.thread.changes.deletions}`}
+        />
+        <Metric label="Approvals" value={String(data.thread.pendingApprovals)} />
+      </SimpleGrid>
+
+      <Stack gap={6} mt="sm">
         {recent.length === 0 ? (
-          <p className="text-[13px] text-faint">No messages yet.</p>
+          <Text size="sm" c="dimmed">
+            No messages yet.
+          </Text>
         ) : (
           recent.map((text, index) => (
-            <p
+            <Text
               key={`${threadId}-${index}`}
-              className="line-clamp-2 rounded bg-canvas px-2 py-1 text-[13px] leading-relaxed text-muted-foreground"
+              size="sm"
+              c="dimmed"
+              bg="var(--mantine-color-default-hover)"
+              p="xs"
+              lineClamp={2}
             >
               {text}
-            </p>
+            </Text>
           ))
         )}
-      </div>
-      <div className="border-t border-border/40 px-4 py-2">
-        <Link
-          to={`/p/${encodeURIComponent(data.project.id)}/t/${encodeURIComponent(
-            data.thread.id,
-          )}`}
-          className="text-[13px] text-primary hover:underline"
-        >
-          Open thread
-        </Link>
-      </div>
-    </section>
+      </Stack>
+
+      <Anchor
+        component={Link}
+        to={`/p/${encodeURIComponent(data.project.id)}/t/${encodeURIComponent(
+          data.thread.id,
+        )}`}
+        size="sm"
+        mt="sm"
+      >
+        Open thread
+      </Anchor>
+    </Paper>
   );
 }
 
@@ -125,55 +148,61 @@ export function ComparePage() {
   const [right, setRight] = useState("");
   const selectedLeft = left || list[0]?.id || "";
   const selectedRight = right || list[1]?.id || "";
+  const data = threadSelectData(list);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl px-6 py-8">
-        <Link
+    <ScrollArea h="100%">
+      <PageContainer>
+        <Anchor
+          component={Link}
           to={projectId ? `/p/${encodeURIComponent(projectId)}` : "/"}
-          className="inline-flex items-center gap-1 text-[13px] text-faint hover:text-fg"
+          size="sm"
+          c="dimmed"
         >
-          <ChevronLeft className="size-3" aria-hidden />
-          Back to project
-        </Link>
-        <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground">
-              <ArrowLeftRight className="size-4 text-muted-foreground" aria-hidden />
-              Compare threads
-            </h1>
-            <p className="text-[12px] text-muted-foreground">
+          <Group gap={4}>
+            <ChevronLeft size={layout.icon.xs} aria-hidden />
+            Back to project
+          </Group>
+        </Anchor>
+
+        <Group
+          justify="space-between"
+          align="flex-start"
+          wrap="wrap"
+          gap="md"
+          mt="sm"
+        >
+          <Stack gap={2}>
+            <Group gap="xs">
+              <Columns2 size={layout.icon.md} aria-hidden />
+              <Title order={1}>Compare threads</Title>
+            </Group>
+            <Text size="xs" c="dimmed">
               Same-task runs side by side.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            <Select value={selectedLeft} onValueChange={setLeft}>
-              <SelectTrigger className="h-8 w-56">
-                <SelectValue placeholder="Left thread" />
-              </SelectTrigger>
-              <SelectContent>
-                {list.map((thread) => (
-                  <SelectItem key={thread.id} value={thread.id}>
-                    {thread.title} · {thread.agent}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={selectedRight} onValueChange={setRight}>
-              <SelectTrigger className="h-8 w-56">
-                <SelectValue placeholder="Right thread" />
-              </SelectTrigger>
-              <SelectContent>
-                {list.map((thread) => (
-                  <SelectItem key={thread.id} value={thread.id}>
-                    {thread.title} · {thread.agent}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            </Text>
+          </Stack>
+        </Group>
+
+        {/* Same two-column grid as the cards below, so the selects share the
+            cards' left and right edges at every width. */}
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mt="md">
+          <Select
+            label="Left thread"
+            value={selectedLeft || null}
+            onChange={(value) => setLeft(value ?? "")}
+            data={data}
+            placeholder="Left thread"
+          />
+          <Select
+            label="Right thread"
+            value={selectedRight || null}
+            onChange={(value) => setRight(value ?? "")}
+            data={data}
+            placeholder="Right thread"
+          />
+        </SimpleGrid>
+
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mt="md">
           {selectedLeft ? (
             <CompareColumn threadId={selectedLeft} />
           ) : (
@@ -184,8 +213,8 @@ export function ComparePage() {
           ) : (
             <EmptyState title="Create another thread to compare" compact />
           )}
-        </div>
-      </div>
-    </div>
+        </SimpleGrid>
+      </PageContainer>
+    </ScrollArea>
   );
 }

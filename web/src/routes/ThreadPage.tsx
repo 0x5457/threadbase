@@ -3,15 +3,32 @@ import {
   Archive,
   ArrowLeft,
   Bot,
-  CircleHelp,
-  MoreHorizontal,
   ChevronRight,
-  Layers,
+  CircleHelp,
+  Columns2,
+  MoreHorizontal,
   ShieldCheck,
   WifiOff,
 } from "lucide-react";
+import {
+  ActionIcon,
+  Anchor,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Menu,
+  Modal,
+  ScrollArea,
+  Skeleton,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+  VisuallyHidden,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -20,6 +37,7 @@ import {
   deleteThread,
   forkThread,
   markThreadRead,
+  markThreadUnread,
   restartAgent,
   requestAccess,
   respondElicitation,
@@ -48,27 +66,10 @@ import { Composer } from "@/components/thread/Composer";
 import { SubagentStatusBadge } from "@/components/thread/SubagentStatusBadge";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
-import {
-  Badge,
-  Button,
-  Dialog,
-  DialogContent,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  EmptyState,
-  IconButton,
-  Input,
-  ErrorState,
-  Skeleton,
-  buttonVariants,
-} from "@/components/ui";
+import { EmptyState, ErrorState } from "@/components/app";
 import { useOnlineStatus } from "@/lib/hooks";
 import { useLiveStore, useThreadLiveEvents } from "@/lib/live";
 import { formatTokenCount } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 export function ThreadPage() {
   const { projectId, threadId, subagentId } = useParams();
@@ -237,6 +238,63 @@ export function ThreadPage() {
       }
     },
   });
+
+  useEffect(() => {
+    if (!threadId) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      const status =
+        threadState.data?.status ?? bundle.data?.bundle.thread.status ?? "idle";
+      const members = bundle.data?.bundle.members ?? [];
+      const role = members.find(
+        (member) => member.user.id === me.data?.user.id,
+      )?.role;
+      const canWrite =
+        Boolean(me.data?.user.isAdmin) ||
+        role === "owner" ||
+        role === "editor";
+      if (
+        modifier &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "w"
+      ) {
+        event.preventDefault();
+        if (canWrite && !archive.isPending) {
+          archive.mutate(status !== "archived");
+        }
+        return;
+      }
+      if (
+        modifier &&
+        event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "u"
+      ) {
+        event.preventDefault();
+        const unread = bundle.data?.bundle.thread.unread ?? false;
+        const mutation = unread
+          ? markThreadRead(threadId)
+          : markThreadUnread(threadId);
+        void mutation
+          .then(() => {
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.threads,
+              exact: true,
+            });
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.threadBundle(threadId),
+            });
+          })
+          .catch(() => undefined);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [threadId, archive, bundle.data, threadState.data, me.data, queryClient]);
+
   const [divergedDismissed, setDivergedDismissed] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -282,7 +340,12 @@ export function ThreadPage() {
         });
       }
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
   const fork = useMutation({
     mutationFn: () => forkThread(threadId ?? "", null),
@@ -356,8 +419,18 @@ export function ThreadPage() {
   });
   const requestAccessMutation = useMutation({
     mutationFn: () => requestAccess(threadId ?? ""),
-    onSuccess: () => toast.success("Access request sent"),
-    onError: (error) => toast.error(String(error)),
+    onSuccess: () =>
+      notifications.show({
+        message: "Access request sent",
+        color: "green",
+        position: "bottom-right",
+      }),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
   const decision = useMutation({
     mutationFn: ({
@@ -387,52 +460,66 @@ export function ThreadPage() {
 
   if (!projectId || !threadId) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
+      <Stack align="center" justify="center" h="100%" p="lg">
         <ErrorState
           title="Thread not found"
           description="The URL does not contain a project id and thread id."
         />
-      </div>
+      </Stack>
     );
   }
 
   if (bundle.isLoading) {
     return (
-      <div className="flex h-full flex-col">
-        <div className="flex h-9 items-center gap-2 border-b border-border px-3">
-          <Skeleton className="h-4 w-32" />
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-3xl space-y-4 px-5 py-6">
-            <Skeleton className="h-16 w-4/5" />
-            <Skeleton className="h-28 w-full" />
-            <Skeleton className="h-16 w-2/3" />
-          </div>
-        </div>
-      </div>
+      <Stack h="100%" gap={0}>
+        <Box
+          px="md"
+          py={6}
+          style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
+        >
+          <Skeleton h={16} w={128} />
+        </Box>
+        <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+          <Box
+            maw={768}
+            mx="auto"
+            px="md"
+            py={{ base: "md", sm: "lg" }}
+            w="100%"
+          >
+            <Stack gap="sm">
+              <Skeleton h={64} w="80%" />
+              <Skeleton h={112} />
+              <Skeleton h={64} w="66%" />
+            </Stack>
+          </Box>
+        </ScrollArea>
+      </Stack>
     );
   }
 
   if (bundle.isError || !bundle.data) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="w-full max-w-md rounded-xl border border-border bg-panel">
-          <ErrorState
-            error={bundle.error}
-            title="Cannot open thread"
-            onRetry={() => void bundle.refetch()}
-          />
-          <div className="border-t border-border px-4 py-3 text-center">
-            <Link
+      <Stack align="center" justify="center" h="100%" p="lg">
+        <ErrorState
+          error={bundle.error}
+          title="Cannot open thread"
+          onRetry={() => void bundle.refetch()}
+          action={
+            <Anchor
+              component={Link}
               to={`/p/${encodeURIComponent(projectId)}`}
-              className="inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:text-fg"
+              size="sm"
+              c="dimmed"
             >
-              <ArrowLeft className="size-3" aria-hidden />
-              Back to project
-            </Link>
-          </div>
-        </div>
-      </div>
+              <Group gap={4}>
+                <ArrowLeft size={12} aria-hidden />
+                Back to project
+              </Group>
+            </Anchor>
+          }
+        />
+      </Stack>
     );
   }
 
@@ -448,6 +535,7 @@ export function ThreadPage() {
   )?.role;
   const canWrite =
     Boolean(me.data?.user.isAdmin) || myRole === "owner" || myRole === "editor";
+
   const onDecide = (
     approvalId: string,
     value: ApprovalDecision,
@@ -467,53 +555,98 @@ export function ThreadPage() {
     : approvals;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <Stack h="100%" gap={0}>
       {!online || !liveConnected ? (
-        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 text-[13px] text-warning">
-          <WifiOff className="size-3.5" aria-hidden />
-          Reconnecting… Input is preserved while the connection is offline.
-        </div>
+        <Group
+          gap="xs"
+          px="sm"
+          py={4}
+          wrap="nowrap"
+          style={{
+            borderBottom: "1px solid var(--mantine-color-yellow-filled)",
+            background: "var(--mantine-color-yellow-light)",
+          }}
+        >
+          <WifiOff size={14} aria-hidden style={{ flexShrink: 0 }} />
+          <Text size="sm" c="yellow">
+            Reconnecting… Input is preserved while the connection is offline.
+          </Text>
+        </Group>
       ) : null}
       {events.data?.resync ? (
-        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-info/25 bg-info/10 px-3 text-[13px] text-info">
-          <AlertCircle className="size-3.5" aria-hidden />
-          Event history was compacted. The latest window has been loaded.
-        </div>
+        <Group
+          gap="xs"
+          px="sm"
+          py={4}
+          wrap="nowrap"
+          style={{
+            borderBottom: "1px solid var(--mantine-color-blue-filled)",
+            background: "var(--mantine-color-blue-light)",
+          }}
+        >
+          <AlertCircle size={14} aria-hidden style={{ flexShrink: 0 }} />
+          <Text size="sm" c="blue">
+            Event history was compacted. The latest window has been loaded.
+          </Text>
+        </Group>
       ) : null}
 
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/50 bg-background px-4 text-[12px]">
-        <Link
+      <Group
+        gap="xs"
+        px="md"
+        py={6}
+        wrap="nowrap"
+        style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
+      >
+        <Anchor
+          component={Link}
           to={`/p/${encodeURIComponent(project.id)}`}
-          className="truncate text-muted-foreground hover:text-fg"
+          size="sm"
+          c="dimmed"
+          visibleFrom="sm"
         >
           {project.name}
-        </Link>
-        <ChevronRight className="size-3 shrink-0 text-faint" aria-hidden />
+        </Anchor>
+        <Box visibleFrom="sm" style={{ display: "flex", flexShrink: 0 }}>
+          <ChevronRight size={12} aria-hidden />
+        </Box>
         {selectedSubagent ? (
           <>
-            <Link
+            <Anchor
+              component={Link}
               to={`/p/${encodeURIComponent(project.id)}/t/${encodeURIComponent(
                 thread.id,
               )}`}
-              className="max-w-[180px] truncate text-muted-foreground hover:text-fg"
+              size="sm"
+              c="dimmed"
+              maw={180}
+              visibleFrom="sm"
             >
               {thread.title}
-            </Link>
-            <ChevronRight className="size-3 shrink-0 text-faint" aria-hidden />
-            <span className="flex min-w-0 items-center gap-1 text-fg">
-              <Bot className="size-3 shrink-0 text-faint" aria-hidden />
-              <span className="truncate">{selectedSubagent.title}</span>
-            </span>
+            </Anchor>
+            <Box visibleFrom="sm" style={{ display: "flex", flexShrink: 0 }}>
+              <ChevronRight size={12} aria-hidden />
+            </Box>
+            <Group gap={4} style={{ minWidth: 0, flex: 1 }}>
+              <Bot size={12} aria-hidden style={{ flexShrink: 0 }} />
+              <Text size="sm" truncate="end">
+                {selectedSubagent.title}
+              </Text>
+            </Group>
           </>
         ) : (
-          <span className="truncate text-fg">{thread.title}</span>
+          <Text size="sm" truncate="end" style={{ minWidth: 0, flex: 1 }}>
+            {thread.title}
+          </Text>
         )}
         <ThreadStatusBadge status={liveStatus} />
-        <div className="ml-auto flex items-center gap-2 text-faint">
+        <Group gap={4} style={{ marginLeft: "auto", flexShrink: 0 }} wrap="nowrap">
           {liveStatus === "error" || liveStatus === "interrupted" ? (
             <Button
-              size="sm"
-              variant="danger"
+              variant="light"
+              color="red"
+              size="xs"
+              visibleFrom="sm"
               loading={restart.isPending}
               disabled={!canWrite}
               onClick={() => restart.mutate()}
@@ -521,69 +654,125 @@ export function ThreadPage() {
               Restart agent
             </Button>
           ) : null}
-          <IconButton
-            label={liveStatus === "archived" ? "Unarchive thread" : "Archive thread"}
-            size="sm"
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="md"
+            visibleFrom="sm"
+            aria-label={
+              liveStatus === "archived" ? "Unarchive thread" : "Archive thread"
+            }
             disabled={!canWrite || archive.isPending}
             onClick={() => archive.mutate(liveStatus !== "archived")}
           >
-            <Archive />
-          </IconButton>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <IconButton label="Thread actions" size="sm">
-                <MoreHorizontal />
-              </IconButton>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-40">
-                <DropdownMenuItem
-                  onSelect={() => {
-                    setRenameValue(thread.title);
-                    setRenameOpen(true);
-                  }}
+            <Archive size={14} />
+          </ActionIcon>
+          <Menu position="bottom-end">
+            <Menu.Target>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="md"
+                aria-label="Thread actions"
+              >
+                <MoreHorizontal size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                onClick={() => {
+                  setRenameValue(thread.title);
+                  setRenameOpen(true);
+                }}
+              >
+                Rename
+              </Menu.Item>
+              <Menu.Item onClick={() => fork.mutate()}>Fork thread</Menu.Item>
+              {liveStatus === "error" || liveStatus === "interrupted" ? (
+                <Menu.Item
+                  hiddenFrom="sm"
+                  disabled={!canWrite || restart.isPending}
+                  onClick={() => restart.mutate()}
                 >
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => fork.mutate()}>
-                  Fork thread
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setDeleteOpen(true)}>
-                  Delete thread…
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-          </DropdownMenu>
+                  Restart agent
+                </Menu.Item>
+              ) : null}
+              <Menu.Item
+                hiddenFrom="sm"
+                disabled={!canWrite || archive.isPending}
+                onClick={() => archive.mutate(liveStatus !== "archived")}
+              >
+                {liveStatus === "archived" ? "Unarchive thread" : "Archive thread"}
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Item color="red" onClick={() => setDeleteOpen(true)}>
+                Delete thread…
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
           {livePendingApprovals > 0 ? (
-            <Badge variant="warning" size="sm">
-              <ShieldCheck className="size-2.5" aria-hidden />
-              {livePendingApprovals} waiting
+            <Badge
+              variant="light"
+              color="yellow"
+              size="xs"
+              leftSection={<ShieldCheck size={12} aria-hidden />}
+            >
+              <Box component="span" visibleFrom="sm">
+                {livePendingApprovals} waiting
+              </Box>
+              <Box component="span" hiddenFrom="sm">
+                {livePendingApprovals}
+              </Box>
             </Badge>
           ) : null}
           {livePendingElicitations > 0 ? (
-            <Badge variant="info" size="sm">
-              <CircleHelp className="size-2.5" aria-hidden />
-              {livePendingElicitations} question{livePendingElicitations > 1 ? "s" : ""}
+            <Badge
+              variant="light"
+              color="blue"
+              size="xs"
+              leftSection={<CircleHelp size={12} aria-hidden />}
+            >
+              <Box component="span" visibleFrom="sm">
+                {livePendingElicitations} question
+                {livePendingElicitations > 1 ? "s" : ""}
+              </Box>
+              <Box component="span" hiddenFrom="sm">
+                {livePendingElicitations}
+              </Box>
             </Badge>
           ) : null}
           {liveQueuedInputs > 0 ? (
-            <Badge variant="info" size="sm">
+            <Badge variant="light" color="blue" size="xs" visibleFrom="sm">
               {liveQueuedInputs} queued
             </Badge>
           ) : null}
           {threadState.data?.currentTurn ? (
             <Badge
               variant="outline"
-              size="sm"
+              color="gray"
+              size="xs"
+              visibleFrom="sm"
               title={`Current turn ${threadState.data.currentTurn}`}
+              leftSection={
+                <span
+                  aria-hidden
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: "currentColor",
+                    animation: "pulse 2s infinite",
+                  }}
+                />
+              }
             >
-              <span className="size-1.5 animate-pulse rounded-full bg-current" aria-hidden />
               live turn
             </Badge>
           ) : null}
-        </div>
-      </div>
+        </Group>
+      </Group>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <ScrollArea style={{ flex: 1, minHeight: 0 }}>
         {selectedSubagent ? (
           <SubagentView
             subagent={selectedSubagent}
@@ -625,58 +814,65 @@ export function ThreadPage() {
             }}
           />
         )}
-      </div>
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent
-          title="Rename thread"
-          footer={
-            <>
-              <Button size="sm" variant="ghost" onClick={() => setRenameOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                variant="primary"
-                loading={rename.isPending}
-                disabled={!renameValue.trim()}
-                onClick={() => rename.mutate()}
-              >
-                Save
-              </Button>
-            </>
-          }
-        >
-          <Input
-            autoFocus
-            aria-label="Thread title"
-            value={renameValue}
-            onChange={(event) => setRenameValue(event.target.value)}
-          />
-        </DialogContent>
-      </Dialog>
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent
-          title="Delete thread?"
-          description="The worktree and all uncommitted changes will be removed. This cannot be undone."
-          footer={
-            <>
-              <Button size="sm" variant="ghost" onClick={() => setDeleteOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                loading={remove.isPending}
-                onClick={() => remove.mutate()}
-              >
-                Delete
-              </Button>
-            </>
-          }
-        >
-          <p className="sr-only">Delete this thread and its worktree.</p>
-        </DialogContent>
-      </Dialog>
+      </ScrollArea>
+
+      <Modal
+        opened={renameOpen}
+        onClose={() => setRenameOpen(false)}
+        title="Rename thread"
+        size="sm"
+      >
+        <TextInput
+          autoFocus
+          aria-label="Thread title"
+          value={renameValue}
+          onChange={(event) => setRenameValue(event.target.value)}
+        />
+        <Group justify="flex-end" gap="xs" mt="sm">
+          <Button variant="default" size="sm" onClick={() => setRenameOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="filled"
+            size="sm"
+            loading={rename.isPending}
+            disabled={!renameValue.trim()}
+            onClick={() => rename.mutate()}
+          >
+            Save
+          </Button>
+        </Group>
+      </Modal>
+
+      <Modal
+        opened={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        title="Delete thread?"
+        size="sm"
+      >
+        <Text size="sm" c="dimmed" mb="sm">
+          The worktree and all uncommitted changes will be removed. This cannot
+          be undone.
+        </Text>
+        <VisuallyHidden>
+          <Text size="sm">Delete this thread and its worktree.</Text>
+        </VisuallyHidden>
+        <Group justify="flex-end" gap="xs" mt="sm">
+          <Button variant="default" size="sm" onClick={() => setDeleteOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="light"
+            color="red"
+            size="sm"
+            loading={remove.isPending}
+            onClick={() => remove.mutate()}
+          >
+            Delete
+          </Button>
+        </Group>
+      </Modal>
+
       {threadId && selectionTarget ? (
         <SelectionComment
           threadId={threadId}
@@ -693,26 +889,39 @@ export function ThreadPage() {
         />
       ) : null}
       {liveDiverged && !divergedDismissed ? (
-        <div className="flex flex-wrap items-center gap-2 border-t border-warning/30 bg-warning/5 px-4 py-2 text-[13px] text-warning">
-          <span>This thread has diverged from the project branch.</span>
+        <Group
+          gap="xs"
+          px="sm"
+          py="xs"
+          wrap="wrap"
+          style={{
+            borderTop: "1px solid var(--mantine-color-yellow-filled)",
+            background: "var(--mantine-color-yellow-light)",
+          }}
+        >
+          <Text size="sm" c="yellow">
+            This thread has diverged from the project branch.
+          </Text>
           <Button
-            size="sm"
-            variant="ghost"
-            className="h-auto px-0 font-medium text-foreground underline decoration-warning/50 underline-offset-2 hover:decoration-foreground"
+            variant="subtle"
+            color="blue"
+            size="xs"
+            px="xs"
             onClick={() => fork.mutate()}
           >
             Keep local changes in a new thread
           </Button>
           <Button
-            size="sm"
-            variant="ghost"
-            className="h-auto px-0 text-faint hover:text-danger"
+            variant="subtle"
+            color="red"
+            size="xs"
+            px="xs"
             disabled={discardDiverged.isPending}
             onClick={() => discardDiverged.mutate()}
           >
             Discard
           </Button>
-        </div>
+        </Group>
       ) : null}
       {selectedSubagent ? null : (
         <Composer
@@ -728,7 +937,7 @@ export function ThreadPage() {
           }
         />
       )}
-    </div>
+    </Stack>
   );
 }
 
@@ -756,76 +965,112 @@ function SubagentView({
   onCancel: () => void;
 }) {
   return (
-    <div className="flex min-h-full flex-col">
-      <div className="border-b border-border bg-panel/60">
-        <div className="mx-auto w-full max-w-3xl px-5 py-3">
-          <div className="flex flex-wrap items-start gap-2">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-raised text-muted-foreground">
-              <Bot className="size-4" aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-[13px] font-semibold text-fg">
+    <Stack h="100%" gap={0}>
+      <Box
+        px="md"
+        py="sm"
+        style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
+      >
+        <Box maw={768} mx="auto" w="100%">
+          <Group gap="xs" align="flex-start" wrap="wrap">
+            <Box
+              style={{
+                width: 28,
+                height: 28,
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "var(--mantine-radius-md)",
+                border: "1px solid var(--mantine-color-default-border)",
+              }}
+            >
+              <Bot size={16} aria-hidden />
+            </Box>
+            <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+              <Group gap="xs" wrap="wrap">
+                <Title order={4} fz="sm" fw={600}>
                   {subagent.title}
-                </h1>
+                </Title>
                 <SubagentStatusBadge status={subagent.status} />
-              </div>
+              </Group>
               {subagent.description ? (
-                <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">
+                <Text size="sm" c="dimmed">
                   {subagent.description}
-                </p>
+                </Text>
               ) : null}
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-faint">
+              <Group gap="sm">
                 {subagent.cwd ? (
-                  <span className="break-all font-mono">cwd: {subagent.cwd}</span>
+                  <Text
+                    size="sm"
+                    c="dimmed"
+                    ff="var(--mantine-font-family-monospace)"
+                    style={{ wordBreak: "break-all" }}
+                  >
+                    cwd: {subagent.cwd}
+                  </Text>
                 ) : null}
                 {subagent.usage ? (
-                  <span>
+                  <Text size="sm" c="dimmed">
                     {formatTokenCount(subagent.usage.totalTokens)} tokens
-                  </span>
+                  </Text>
                 ) : null}
-                <span className="font-mono">
+                <Text
+                  size="sm"
+                  c="dimmed"
+                  ff="var(--mantine-font-family-monospace)"
+                >
                   session {subagent.id.slice(0, 12)}
-                </span>
-              </div>
-            </div>
-            <Link
+                </Text>
+              </Group>
+            </Stack>
+            <Button
+              component={Link}
               to={`/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
                 threadId,
               )}/subagents/compare`}
-              className={cn(buttonVariants({ size: "sm", variant: "ghost" }))}
+              variant="subtle"
+              color="gray"
+              size="xs"
+              leftSection={<Columns2 size={14} aria-hidden />}
             >
-              <Layers aria-hidden />
               Compare
-            </Link>
+            </Button>
             {subagent.canCancel ? (
-              <Button size="sm" variant="danger" onClick={onCancel}>
+              <Button
+                variant="light"
+                color="red"
+                size="xs"
+                onClick={onCancel}
+              >
                 Cancel subagent
               </Button>
             ) : null}
-            <Link
+            <Button
+              component={Link}
               to={`/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(
                 threadId,
               )}`}
-              className={cn(buttonVariants({ size: "sm", variant: "secondary" }))}
+              variant="default"
+              size="xs"
+              leftSection={<ArrowLeft size={14} aria-hidden />}
             >
-              <Layers aria-hidden />
               Back to {threadTitle}
-            </Link>
-          </div>
-        </div>
-      </div>
+            </Button>
+          </Group>
+        </Box>
+      </Box>
 
-      <div className="min-h-0 flex-1">
+      <ScrollArea style={{ flex: 1, minHeight: 0 }}>
         {events.length === 0 && !loading && !error ? (
-          <div className="mx-auto w-full max-w-3xl px-5 py-8">
+          <Box maw={768} mx="auto" px="md" py="lg" w="100%">
             <EmptyState
               icon={Bot}
               title="No subagent activity recorded yet"
               description="The subagent transcript will appear here as it reports progress."
               compact
             />
-          </div>
+          </Box>
         ) : (
           <ThreadTimeline
             events={events}
@@ -835,14 +1080,25 @@ function SubagentView({
             onRetry={onRetry}
           />
         )}
-      </div>
+      </ScrollArea>
 
-      <div className="border-t border-border bg-panel px-5 py-2.5">
-        <p className="mx-auto max-w-3xl text-[13px] leading-relaxed text-faint">
+      <Box
+        px="md"
+        py="xs"
+        style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}
+      >
+        <Text
+          size="sm"
+          c="dimmed"
+          maw={768}
+          mx="auto"
+          w="100%"
+          style={{ lineHeight: 1.5 }}
+        >
           Subagent sessions cannot be prompted from the client. Ask the parent
           agent to relay the instruction in the parent thread.
-        </p>
-      </div>
-    </div>
+        </Text>
+      </Box>
+    </Stack>
   );
 }

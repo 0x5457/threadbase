@@ -1,20 +1,23 @@
 import { HelpCircle, ShieldAlert } from "lucide-react";
 import { useState } from "react";
+import {
+  ActionIcon,
+  Anchor,
+  Badge,
+  Box,
+  Button,
+  Checkbox,
+  Divider,
+  Flex,
+  Paper,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
 import type { ElicitationAction } from "@/api/types/ElicitationAction";
 import type { ElicitationDto } from "@/api/types/ElicitationDto";
 import type { CommentAnchor } from "@/api/types/CommentAnchor";
-import {
-  Badge,
-  Button,
-  Checkbox,
-  IconButton,
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui";
 
 interface SchemaProperty {
   type?: string;
@@ -67,161 +70,208 @@ export function ElicitationCard({
   const pending = elicitation.status === "pending" && resolvedAction === null;
 
   return (
-    <div className="flex gap-3">
-      <div className="w-7 shrink-0" />
-      <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-info/30 bg-info/5">
-        <div className="flex items-center gap-2 px-3 py-2">
-          <HelpCircle className="size-3.5 shrink-0 text-info" />
-          <span className="text-[13px] font-medium text-fg">
-            Agent needs input
-          </span>
-          {onComment ? (
-            <IconButton
-              label="Comment on question"
-              size="sm"
-              className="size-6 text-faint"
-              onClick={() =>
-                onComment({
-                  kind: "elicitation",
-                  elicitationId: elicitation.id,
-                })
-              }
-            >
-              <HelpCircle />
-            </IconButton>
-          ) : null}
-          <Badge
-            variant={pending ? "info" : "neutral"}
-            size="sm"
-            className="ml-auto"
-          >
-            {resolvedAction ?? elicitation.status}
-          </Badge>
-        </div>
-        <div className="space-y-2 border-t border-info/20 px-3 py-2">
-          <p className="text-[13px] text-fg">{elicitation.message}</p>
-          {authorizationUrl ? (
-            <div className="space-y-1 rounded border border-border bg-canvas px-2 py-1.5">
-              <p className="break-all font-mono text-[9.5px] text-muted-foreground">
-                {authorizationUrl}
-              </p>
-              <a
-                href={authorizationUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex text-[13px] text-primary hover:underline"
+    <Flex gap="md">
+      <Box w={28} />
+      <Box flex={1} miw={0}>
+        <Paper
+          withBorder
+          p="sm"
+          radius="md"
+          bg="var(--mantine-color-blue-light)"
+        >
+          <Flex align="center" gap="xs" wrap="wrap">
+            <HelpCircle
+              size={14}
+              aria-hidden
+              style={{ color: "var(--mantine-color-blue-light-color)" }}
+            />
+            <Text size="sm" fw={500}>
+              Agent needs input
+            </Text>
+            {onComment ? (
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="xs"
+                aria-label="Comment on question"
+                onClick={() =>
+                  onComment({
+                    kind: "elicitation",
+                    elicitationId: elicitation.id,
+                  })
+                }
               >
-                Open authorization page
-              </a>
-            </div>
-          ) : null}
-          <p className="text-[13px] text-faint">
-            {elicitation.agent}
-            {elicitation.blocking ? "" : " · non-blocking"}
-          </p>
-          {secret ? (
-            <p className="flex items-start gap-1.5 rounded border border-warning/30 bg-warning/5 px-2 py-1.5 text-[13px] text-warning">
-              <ShieldAlert className="mt-0.5 size-3 shrink-0" />
-              This form asks for a secret. Threadbase will not submit passwords
-              or tokens through elicitation.
-            </p>
-          ) : null}
-          {pending ? (
-            <>
-              {fields.map(([key, property]) => (
-                <label key={key} className="block space-y-1">
-                  <span className="text-[13px] text-muted-foreground">
-                    {property.title ?? key}
-                  </span>
-                  {property.type === "boolean" ? (
-                    <Checkbox
-                      checked={Boolean(values[key])}
-                      onCheckedChange={(checked) =>
-                        setValues((current) => ({
-                          ...current,
-                          [key]: checked === true,
-                        }))
-                      }
-                    />
-                  ) : property.enum ? (
-                    <Select
-                      value={String(values[key] ?? "")}
-                      onValueChange={(next) =>
-                        setValues((current) => ({
-                          ...current,
-                          [key]: next,
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {property.enum.map((option) => (
-                          <SelectItem
-                            key={String(option)}
-                            value={String(option)}
-                          >
-                            {String(option)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input
-                      type={property.type === "number" ? "number" : "text"}
-                      value={String(values[key] ?? "")}
-                      onChange={(event) =>
-                        setValues((current) => ({
-                          ...current,
-                          [key]:
-                            property.type === "number"
-                              ? Number(event.target.value)
-                              : event.target.value,
-                        }))
-                      }
-                      disabled={secret}
-                    />
-                  )}
-                  {property.description ? (
-                    <span className="block text-[13px] text-faint">
-                      {property.description}
-                    </span>
-                  ) : null}
-                </label>
-              ))}
-              <div className="flex flex-wrap gap-1.5 border-t border-info/20 pt-2">
-                <Button
-                  size="sm"
-                  variant="primary"
-                  disabled={secret || !onRespond}
-                  onClick={() => onRespond?.(elicitation.id, "accept", values)}
+                <HelpCircle size={14} aria-hidden />
+              </ActionIcon>
+            ) : null}
+            <Badge
+              variant="light"
+              color={pending ? "blue" : "gray"}
+              size="xs"
+              style={{ marginLeft: "auto" }}
+            >
+              {resolvedAction ?? elicitation.status}
+            </Badge>
+          </Flex>
+          <Divider
+            my="xs"
+            color="var(--mantine-color-blue-light-hover)"
+          />
+          <Stack gap="xs">
+            <Text size="sm">{elicitation.message}</Text>
+            {authorizationUrl ? (
+              <Paper withBorder p="xs" radius="md">
+                <Text
+                  fz={11}
+                  ff="monospace"
+                  c="dimmed"
+                  display="block"
+                  style={{ wordBreak: "break-all" }}
                 >
-                  Submit
-                </Button>
-                <Button
+                  {authorizationUrl}
+                </Text>
+                <Anchor
+                  href={authorizationUrl}
+                  target="_blank"
+                  rel="noreferrer"
                   size="sm"
-                  variant="secondary"
-                  onClick={() => onRespond?.(elicitation.id, "decline", {})}
+                  c="blue.6"
                 >
-                  Decline
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => onRespond?.(elicitation.id, "cancel", {})}
+                  Open authorization page
+                </Anchor>
+              </Paper>
+            ) : null}
+            <Text size="sm" c="dimmed">
+              {elicitation.agent}
+              {elicitation.blocking ? "" : " · non-blocking"}
+            </Text>
+            {secret ? (
+              <Paper
+                withBorder
+                p="xs"
+                radius="md"
+                bg="var(--mantine-color-yellow-light)"
+              >
+                <Flex align="flex-start" gap="xs">
+                  <ShieldAlert
+                    size={14}
+                    aria-hidden
+                    style={{
+                      marginTop: 2,
+                      flexShrink: 0,
+                      color: "var(--mantine-color-yellow-light-color)",
+                    }}
+                  />
+                  <Text size="sm" c="yellow-light-color">
+                    This form asks for a secret. Threadbase will not submit
+                    passwords or tokens through elicitation.
+                  </Text>
+                </Flex>
+              </Paper>
+            ) : null}
+            {pending ? (
+              <>
+                {fields.map(([key, property]) => (
+                  <Box component="label" key={key} display="block">
+                    <Text size="sm" c="dimmed" display="block" mb={4}>
+                      {property.title ?? key}
+                    </Text>
+                    {property.type === "boolean" ? (
+                      <Checkbox
+                        checked={Boolean(values[key])}
+                        onChange={(event) =>
+                          setValues((current) => ({
+                            ...current,
+                            [key]: event.currentTarget.checked,
+                          }))
+                        }
+                      />
+                    ) : property.enum ? (
+                      <Select
+                        value={String(values[key] ?? "")}
+                        onChange={(next) => {
+                          if (next !== null) {
+                            setValues((current) => ({
+                              ...current,
+                              [key]: next,
+                            }));
+                          }
+                        }}
+                        data={property.enum.map((option) => ({
+                          value: String(option),
+                          label: String(option),
+                        }))}
+                        placeholder="Select…"
+                      />
+                    ) : (
+                      <TextInput
+                        type={property.type === "number" ? "number" : "text"}
+                        value={String(values[key] ?? "")}
+                        onChange={(event) =>
+                          setValues((current) => ({
+                            ...current,
+                            [key]:
+                              property.type === "number"
+                                ? Number(event.target.value)
+                                : event.target.value,
+                          }))
+                        }
+                        disabled={secret}
+                      />
+                    )}
+                    {property.description ? (
+                      <Text size="sm" c="dimmed" display="block" mt={4}>
+                        {property.description}
+                      </Text>
+                    ) : null}
+                  </Box>
+                ))}
+                <Flex
+                  gap="xs"
+                  wrap="wrap"
+                  mt="xs"
+                  pt="xs"
+                  style={{
+                    borderTop:
+                      "1px solid var(--mantine-color-blue-light-hover)",
+                  }}
                 >
-                  Cancel
-                </Button>
-              </div>
-            </>
-          ) : elicitation.respondedBy ? (
-            <p className="text-[13px] text-faint">
-              Answered by {elicitation.respondedBy.displayName}
-            </p>
-          ) : null}
-        </div>
-      </div>
-    </div>
+                  <Button
+                    size="xs"
+                    disabled={secret || !onRespond}
+                    onClick={() =>
+                      onRespond?.(elicitation.id, "accept", values)
+                    }
+                  >
+                    Submit
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      onRespond?.(elicitation.id, "decline", {})
+                    }
+                  >
+                    Decline
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="dark"
+                    onClick={() => onRespond?.(elicitation.id, "cancel", {})}
+                  >
+                    Cancel
+                  </Button>
+                </Flex>
+              </>
+            ) : elicitation.respondedBy ? (
+              <Text size="sm" c="dimmed">
+                Answered by {elicitation.respondedBy.displayName}
+              </Text>
+            ) : null}
+          </Stack>
+        </Paper>
+      </Box>
+    </Flex>
   );
 }

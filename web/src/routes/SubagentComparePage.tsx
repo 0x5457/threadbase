@@ -1,17 +1,21 @@
-import { ArrowLeftRight, ChevronLeft } from "lucide-react";
+import { ChevronLeft, Columns2 } from "lucide-react";
+import {
+  Anchor,
+  Box,
+  Group,
+  Paper,
+  ScrollArea,
+  Select,
+  Skeleton,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useThreadBundle, useThreadEvents } from "@/api/queries";
 import { ThreadTimeline } from "@/components/thread/ThreadTimeline";
-import {
-  EmptyState,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Skeleton,
-} from "@/components/ui";
+import { EmptyState, PageContainer } from "@/components/app";
 
 export function SubagentComparePage() {
   const { projectId, threadId } = useParams();
@@ -28,60 +32,66 @@ export function SubagentComparePage() {
   const allEvents = events.data?.events ?? [];
   const leftEvents = allEvents.filter((event) => event.subagentId === left);
   const rightEvents = allEvents.filter((event) => event.subagentId === right);
+  const data = subagents.map((subagent) => ({
+    value: subagent.id,
+    label: subagent.title,
+  }));
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl px-5 py-4">
-        <Link
+    <ScrollArea h="100%">
+      <PageContainer>
+        <Anchor
+          component={Link}
           to={
             projectId && threadId
               ? `/p/${encodeURIComponent(projectId)}/t/${encodeURIComponent(threadId)}`
               : "/"
           }
-          className="inline-flex items-center gap-1 text-[13px] text-faint hover:text-fg"
+          size="sm"
+          c="dimmed"
         >
-          <ChevronLeft className="size-3" aria-hidden />
-          Back to thread
-        </Link>
-        <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground">
-              <ArrowLeftRight className="size-4 text-muted-foreground" aria-hidden />
-              Compare subagents
-            </h1>
-            <p className="text-[13px] text-muted-foreground">
+          <Group gap={4}>
+            <ChevronLeft size={12} aria-hidden />
+            Back to thread
+          </Group>
+        </Anchor>
+
+        <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm" mt="sm">
+          <Stack gap={2}>
+            <Group gap="xs">
+              <Columns2 size={16} aria-hidden />
+              <Title order={1}>
+                Compare subagents
+              </Title>
+            </Group>
+            <Text size="xs" c="dimmed">
               Two child sessions from the same thread, side by side.
-            </p>
-          </div>
-          <div className="flex gap-1.5">
-            <Select value={left} onValueChange={setLeftId}>
-              <SelectTrigger className="h-8 w-48">
-                <SelectValue placeholder="Left subagent" />
-              </SelectTrigger>
-              <SelectContent>
-                {subagents.map((subagent) => (
-                  <SelectItem key={subagent.id} value={subagent.id}>
-                    {subagent.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={right} onValueChange={setRightId}>
-              <SelectTrigger className="h-8 w-48">
-                <SelectValue placeholder="Right subagent" />
-              </SelectTrigger>
-              <SelectContent>
-                {subagents.map((subagent) => (
-                  <SelectItem key={subagent.id} value={subagent.id}>
-                    {subagent.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+            </Text>
+          </Stack>
+          <Group gap="sm" align="flex-end">
+            <Select
+              label="Left subagent"
+              value={left || null}
+              onChange={(value) => setLeftId(value ?? "")}
+              data={data}
+              placeholder="Left subagent"
+              w={192}
+              size="xs"
+            />
+            <Select
+              label="Right subagent"
+              value={right || null}
+              onChange={(value) => setRightId(value ?? "")}
+              data={data}
+              placeholder="Right subagent"
+              w={192}
+              size="xs"
+            />
+          </Group>
+        </Group>
+
         {bundle.isLoading ? (
-          <Skeleton className="mt-4 h-64 w-full" />
+          <Skeleton h={256} mt="md" radius="md" />
         ) : subagents.length < 2 ? (
           <EmptyState
             title="Not enough subagents"
@@ -89,41 +99,44 @@ export function SubagentComparePage() {
             compact
           />
         ) : (
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <Box
+            mt="md"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              gap: 12,
+              alignItems: "start",
+            }}
+          >
             {[left, right].map((id, index) => {
               const subagent = subagents.find((item) => item.id === id);
               const timeline = index === 0 ? leftEvents : rightEvents;
               return (
-                <div
-                  key={id}
-                  className="min-w-0 rounded-xl border border-border/40 bg-card/30"
-                >
-                  <div className="border-b border-border/40 px-4 py-3">
-                    <p className="text-[13px] font-medium text-fg">
-                      {subagent?.title ?? "Subagent"}
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-faint">
-                      {subagent?.status ?? "unknown"}
-                      {subagent?.cwd ? ` · ${subagent.cwd}` : ""}
-                      {subagent?.usage
-                        ? ` · ${subagent.usage.totalTokens} tokens`
-                        : ""}
-                    </p>
-                  </div>
+                <Paper key={id} withBorder radius="md" p="sm" style={{ minWidth: 0 }}>
+                  <Text size="sm" fw={500}>
+                    {subagent?.title ?? "Subagent"}
+                  </Text>
+                  <Text size="xs" c="dimmed" mt={2}>
+                    {subagent?.status ?? "unknown"}
+                    {subagent?.cwd ? ` · ${subagent.cwd}` : ""}
+                    {subagent?.usage
+                      ? ` · ${subagent.usage.totalTokens} tokens`
+                      : ""}
+                  </Text>
                   {timeline.length === 0 ? (
-                    <div className="p-4 text-[12px] text-muted-foreground">
+                    <Text size="xs" c="dimmed" mt="sm">
                       No child-session transcript was emitted by this adapter.
                       The parent timeline still contains the dispatch card.
-                    </div>
+                    </Text>
                   ) : (
                     <ThreadTimeline events={timeline} approvals={[]} />
                   )}
-                </div>
+                </Paper>
               );
             })}
-          </div>
+          </Box>
         )}
-      </div>
-    </div>
+      </PageContainer>
+    </ScrollArea>
   );
 }

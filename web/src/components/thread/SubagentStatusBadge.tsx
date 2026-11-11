@@ -1,6 +1,18 @@
 /* eslint-disable react-refresh/only-export-components */
+import { Badge } from "@mantine/core";
 import type { SubagentStatus } from "@/api/types/SubagentStatus";
-import { Badge, type BadgeProps } from "@/components/ui";
+
+type StatusBadgeVariant = "neutral" | "info" | "warning" | "danger";
+
+const STATUS_BADGE_TONE: Record<
+  StatusBadgeVariant,
+  { color: string; variant: "light" }
+> = {
+  neutral: { color: "gray", variant: "light" },
+  info: { color: "blue", variant: "light" },
+  warning: { color: "yellow", variant: "light" },
+  danger: { color: "red", variant: "light" },
+};
 
 export function subagentStatusLabel(status: SubagentStatus): string {
   switch (status) {
@@ -17,9 +29,7 @@ export function subagentStatusLabel(status: SubagentStatus): string {
   }
 }
 
-function subagentStatusVariant(
-  status: SubagentStatus,
-): NonNullable<BadgeProps["variant"]> {
+function subagentStatusVariant(status: SubagentStatus): StatusBadgeVariant {
   switch (status) {
     case "running":
       return "info";
@@ -38,16 +48,24 @@ function subagentStatusVariant(
  * translated into a ThreadStatus.
  */
 export function SubagentStatusBadge({ status }: { status: SubagentStatus }) {
+  const tone = STATUS_BADGE_TONE[subagentStatusVariant(status)];
   return (
-    <Badge variant={subagentStatusVariant(status)} size="sm">
-      <span
-        className={
-          status === "running"
-            ? "size-1.5 animate-pulse rounded-full bg-current"
-            : "size-1.5 rounded-full bg-current"
-        }
-        aria-hidden
-      />
+    <Badge
+      variant={tone.variant}
+      color={tone.color}
+      size="xs"
+      leftSection={
+        <span
+          aria-hidden
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            backgroundColor: "currentColor",
+          }}
+        />
+      }
+    >
       {subagentStatusLabel(status)}
     </Badge>
   );

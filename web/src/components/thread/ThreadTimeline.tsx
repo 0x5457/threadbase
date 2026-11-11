@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   ArrowLeftRight,
   Brain,
-  CheckCircle2,
   ChevronRight,
   CircleDot,
   FileSearch,
@@ -21,6 +20,19 @@ import {
   XCircle,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import {
+  ActionIcon,
+  Avatar,
+  Badge,
+  Box,
+  Button,
+  Flex,
+  Paper,
+  Skeleton,
+  Stack,
+  Text,
+  Textarea,
+} from "@mantine/core";
 import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
 import type { CommentAnchor } from "@/api/types/CommentAnchor";
@@ -31,21 +43,11 @@ import type { MessageDto } from "@/api/types/MessageDto";
 import type { PlanEntry } from "@/api/types/PlanEntry";
 import type { ToolCallData } from "@/api/types/ToolCallData";
 import type { ToolKind } from "@/api/types/ToolKind";
-import {
-  Avatar,
-  Badge,
-  Button,
-  EmptyState,
-  ErrorState,
-  IconButton,
-  Skeleton,
-  Textarea,
-} from "@/components/ui";
+import { EmptyState, ErrorState } from "@/components/app";
 import { ElicitationCard } from "@/components/thread/ElicitationCard";
 import { SubagentStatusBadge } from "@/components/thread/SubagentStatusBadge";
 import { usePresenceStore } from "@/lib/presence";
-import { formatTimestamp } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { formatTimestamp, initials } from "@/lib/format";
 
 interface MessageItem {
   kind: "message";
@@ -138,17 +140,17 @@ const TOOL_ICONS: Record<ToolKind, typeof Wrench> = {
   other: Wrench,
 };
 
-function toolStatusVariant(
+function toolStatusColor(
   status: ToolCallData["status"],
-): "neutral" | "info" | "success" | "danger" {
+): "blue" | "green" | "red" {
   switch (status) {
     case "pending":
     case "in_progress":
-      return "info";
+      return "blue";
     case "completed":
-      return "success";
+      return "green";
     case "failed":
-      return "danger";
+      return "red";
   }
 }
 
@@ -308,7 +310,7 @@ function buildTimeline(events: EventEnvelope[], activeSubagentCount = 0): Timeli
         role: "user",
         text: payload.prompt,
         author: payload.author,
-        authors: [payload.author],
+        authors: payload.authors?.length ? payload.authors : [payload.author],
         createdAt: event.ts,
       });
       continue;
@@ -398,6 +400,7 @@ function buildTimeline(events: EventEnvelope[], activeSubagentCount = 0): Timeli
   }
 
   const grouped: TimelineItem[] = [];
+
   for (const item of items) {
     if (item.kind === "tool") {
       const last = grouped.at(-1);
@@ -519,9 +522,9 @@ export function ThreadTimeline({
   const renderTool = (call: ToolCallData, key: string) => {
     const Icon = TOOL_ICONS[call.kind];
     return (
-      <div
+      <Flex
         key={key}
-        className="flex gap-3"
+        gap="md"
         onClick={() =>
           setLocal({
             panel: "transcript",
@@ -529,123 +532,267 @@ export function ThreadTimeline({
           })
         }
       >
-        <div className="w-7 shrink-0" />
-        <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-card/50">
-          <div className="flex items-center gap-2 px-3 py-2">
-            <Icon className="size-3.5 shrink-0 text-faint" aria-hidden />
-            <span className="truncate text-[13px] font-medium text-fg">
+        <Box w={28} />
+        <Paper
+          withBorder
+          radius="md"
+          flex={1}
+          miw={0}
+          style={{ overflow: "hidden" }}
+        >
+          <Flex align="center" gap="xs" px="sm" py="xs">
+            <Icon
+              size={14}
+              aria-hidden
+              style={{
+                color: "var(--mantine-color-dimmed)",
+                flexShrink: 0,
+              }}
+            />
+            <Text size="sm" fw={500} truncate="end" flex={1} miw={0}>
               {call.title}
-            </span>
+            </Text>
             {onComment ? (
-              <IconButton
-                label="Comment on tool call"
-                size="sm"
-                className="ml-auto size-6 text-faint"
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="xs"
+                aria-label="Comment on tool call"
+                style={{ marginLeft: "auto" }}
                 onClick={() =>
                   onComment({ kind: "tool_call", toolCallId: call.id })
                 }
               >
-                <MessageSquare />
-              </IconButton>
+                <MessageSquare size={12} aria-hidden />
+              </ActionIcon>
             ) : null}
             <Badge
-              variant={toolStatusVariant(call.status)}
-              size="sm"
-              className={onComment ? "shrink-0" : "ml-auto shrink-0"}
+              variant="light"
+              color={toolStatusColor(call.status)}
+              size="xs"
+              style={onComment ? undefined : { marginLeft: "auto" }}
             >
               {call.status.replace("_", " ")}
             </Badge>
-          </div>
+          </Flex>
           {call.locations.length > 0 ? (
-            <ul className="border-t border-border/70 px-3 py-1.5">
+            <Box
+              component="ul"
+              px="sm"
+              py="xs"
+              style={{
+                borderTop:
+                  "1px solid var(--mantine-color-default-border)",
+                listStyle: "none",
+                margin: 0,
+              }}
+            >
               {call.locations.map((location) => (
                 <li
                   key={`${location.path}:${location.line ?? 0}`}
-                  className="truncate font-mono text-[13px] text-faint"
+                  style={{
+                    fontFamily: "var(--mantine-font-family-monospace)",
+                    fontSize: 13,
+                    color: "var(--mantine-color-dimmed)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
                 >
                   {location.path}
                   {location.line ? `:${location.line}` : ""}
                 </li>
               ))}
-            </ul>
+            </Box>
           ) : null}
           {call.diff ? (
-            <details className="group border-t border-border/70">
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-[13px]">
-                <span className="truncate font-mono text-muted-foreground">
+            <details>
+              <summary
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "var(--mantine-spacing-xs) var(--mantine-spacing-sm)",
+                  fontSize: 13,
+                  listStyle: "none",
+                  cursor: "pointer",
+                  borderTop:
+                    "1px solid var(--mantine-color-default-border)",
+                }}
+              >
+                <Text
+                  size="sm"
+                  ff="monospace"
+                  c="dimmed"
+                  truncate="end"
+                  flex={1}
+                  miw={0}
+                >
                   {call.diff.path}
-                </span>
-                <span className="ml-auto shrink-0 font-mono text-success">
+                </Text>
+                <Text
+                  size="sm"
+                  ff="monospace"
+                  c="green.6"
+                  style={{ marginLeft: "auto", whiteSpace: "nowrap" }}
+                >
                   +{call.diff.additions}
-                </span>
-                <span className="shrink-0 font-mono text-danger">
+                </Text>
+                <Text
+                  size="sm"
+                  ff="monospace"
+                  c="red.6"
+                  style={{ whiteSpace: "nowrap" }}
+                >
                   −{call.diff.deletions}
-                </span>
-                <ChevronRight className="size-3 shrink-0 text-faint group-open:rotate-90" aria-hidden />
+                </Text>
+                <ChevronRight
+                  size={12}
+                  aria-hidden
+                  style={{
+                    color: "var(--mantine-color-dimmed)",
+                    flexShrink: 0,
+                  }}
+                />
               </summary>
               {call.diff.patch ? (
-                <pre className="mt-0 max-h-64 overflow-auto whitespace-pre-wrap break-all border-t border-border/70 bg-canvas p-2 font-mono text-[13px] text-fg">
+                <Box
+                  component="pre"
+                  p="xs"
+                  mah={256}
+                  style={{
+                    margin: 0,
+                    overflow: "auto",
+                    fontFamily: "var(--mantine-font-family-monospace)",
+                    fontSize: 13,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                    borderTop:
+                      "1px solid var(--mantine-color-default-border)",
+                  }}
+                >
                   {call.diff.patch}
-                </pre>
+                </Box>
               ) : null}
             </details>
           ) : null}
           {call.input || call.output ? (
-            <details className="border-t border-border/70 px-3 py-1.5 text-[13px] text-muted-foreground">
-              <summary className="cursor-pointer select-none text-faint hover:text-fg">
+            <details
+              style={{
+                borderTop:
+                  "1px solid var(--mantine-color-default-border)",
+                fontSize: 13,
+                color: "var(--mantine-color-dimmed)",
+              }}
+            >
+              <summary
+                style={{
+                  display: "flex",
+                  padding: "var(--mantine-spacing-xs) var(--mantine-spacing-sm)",
+                  listStyle: "none",
+                  cursor: "pointer",
+                  color: "var(--mantine-color-dimmed)",
+                }}
+              >
                 Details
               </summary>
               {call.input ? (
-                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[13px] text-fg">
+                <Box
+                  component="pre"
+                  p="xs"
+                  mah={192}
+                  style={{
+                    margin: 0,
+                    overflow: "auto",
+                    fontFamily: "var(--mantine-font-family-monospace)",
+                    fontSize: 13,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                    background: "var(--mantine-color-default)",
+                    borderRadius: "var(--mantine-radius-md)",
+                  }}
+                >
                   {call.input}
-                </pre>
+                </Box>
               ) : null}
               {call.output ? (
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[13px] text-fg">
+                <Box
+                  component="pre"
+                  p="xs"
+                  mah={256}
+                  style={{
+                    margin: 0,
+                    overflow: "auto",
+                    fontFamily: "var(--mantine-font-family-monospace)",
+                    fontSize: 13,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                    background: "var(--mantine-color-default)",
+                    borderRadius: "var(--mantine-radius-md)",
+                  }}
+                >
                   {call.output}
-                </pre>
+                </Box>
               ) : null}
             </details>
           ) : null}
-        </div>
-      </div>
+        </Paper>
+      </Flex>
     );
   };
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-3xl space-y-4 px-5 py-6">
-        <Skeleton className="h-14 w-4/5" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-14 w-3/5" />
-        <Skeleton className="h-32 w-full" />
-      </div>
+      <Box
+        px="md"
+        py="xl"
+        style={{ maxWidth: 768, margin: "0 auto", width: "100%" }}
+      >
+        <Stack gap="md">
+          <Skeleton height={56} width="80%" />
+          <Skeleton height={96} />
+          <Skeleton height={56} width="60%" />
+          <Skeleton height={128} />
+        </Stack>
+      </Box>
     );
   }
 
   if (error) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-5 py-10">
+      <Box
+        px="md"
+        py="xl"
+        style={{ maxWidth: 768, margin: "0 auto", width: "100%" }}
+      >
         <ErrorState
           error={error}
           title="Cannot load thread activity"
           onRetry={onRetry}
         />
-      </div>
+      </Box>
     );
   }
 
   if (items.length === 0) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-5 py-10">
+      <Box
+        px="md"
+        py="xl"
+        style={{ maxWidth: 768, margin: "0 auto", width: "100%" }}
+      >
         <EmptyState icon={MessageSquare} title="No activity yet" compact />
-      </div>
+      </Box>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-7">
-      <div className="space-y-4">
+    <Box
+      px="md"
+      py="lg"
+      style={{ maxWidth: 768, margin: "0 auto", width: "100%" }}
+    >
+      <Stack gap="sm">
         {items.map((item) => {
           if (item.kind === "message") {
             const author = item.author;
@@ -661,78 +808,106 @@ export function ThreadTimeline({
                   displayName: "Agent",
                 };
             return (
-              <div key={`event-wrap-${item.key}`}>
+              <Box key={`event-wrap-${item.key}`}>
                 {item.seq ? (
-                  <span id={`event-${item.seq}`} className="sr-only" aria-hidden />
+                  <span id={`event-${item.seq}`} aria-hidden />
                 ) : null}
-              <div
-                id={`message-${item.messageId}`}
-                data-message-id={item.messageId}
-                className="flex gap-3"
-                onClick={() =>
-                  setLocal({
-                    panel: "transcript",
-                    target: { kind: "message", messageId: item.messageId },
-                  })
-                }
-              >
-                <div className="flex w-7 shrink-0 justify-center pt-0.5">
-                  <Avatar person={person} size="md" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1.5 flex items-center gap-2 text-[11.5px] text-faint">
-                    <span className="font-medium text-muted-foreground">
-                      {author?.displayName ?? (item.role === "agent" ? "Agent" : "User")}
-                    </span>
-                    {item.authors.length > 1 ? (
-                      <span>+{item.authors.length - 1}</span>
-                    ) : null}
-                    {item.createdAt ? (
-                      <span title={formatTimestamp(item.createdAt)}>
-                        {formatTimestamp(item.createdAt)}
-                      </span>
-                    ) : null}
-                    <IconButton
-                      label="View comments"
-                      size="sm"
-                      className="ml-auto size-6 text-faint"
-                      onClick={() =>
-                        window.dispatchEvent(
-                          new CustomEvent("threadbase:open-comments"),
-                        )
-                      }
+                <Flex
+                  gap="md"
+                  id={`message-${item.messageId}`}
+                  data-message-id={item.messageId}
+                  onClick={() =>
+                    setLocal({
+                      panel: "transcript",
+                      target: { kind: "message", messageId: item.messageId },
+                    })
+                  }
+                >
+                  <Flex w={28} justify="center" pt={2}>
+                    <Avatar
+                      src={person.avatarUrl ?? null}
+                      alt={person.displayName}
+                      name={person.displayName}
+                      color={person.color ?? "initials"}
+                      size={24}
+                      radius="xl"
                     >
-                      <MessageSquareText />
-                    </IconButton>
-                    {onComment ? (
-                      <IconButton
-                        label="Comment on message"
-                        size="sm"
-                        className="size-6 text-faint"
+                      {initials(person.displayName)}
+                    </Avatar>
+                  </Flex>
+                  <Box flex={1} miw={0}>
+                    <Flex align="center" gap="xs" mb="xs">
+                      <Text fz={12} fw={500} c="dimmed">
+                        {author?.displayName ??
+                          (item.role === "agent" ? "Agent" : "User")}
+                      </Text>
+                      {item.authors.length > 1 ? (
+                        <Text fz={12} c="dimmed">
+                          +{item.authors.length - 1}
+                        </Text>
+                      ) : null}
+                      {item.createdAt ? (
+                        <Text
+                          fz={12}
+                          c="dimmed"
+                          title={formatTimestamp(item.createdAt)}
+                        >
+                          {formatTimestamp(item.createdAt)}
+                        </Text>
+                      ) : null}
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        size={24}
+                        aria-label="View comments"
+                        style={{ marginLeft: "auto" }}
                         onClick={() =>
-                          onComment({
-                            kind: "message",
-                            messageId: item.messageId,
-                          })
+                          window.dispatchEvent(
+                            new CustomEvent("threadbase:open-comments"),
+                          )
                         }
                       >
-                        <MessageSquare />
-                      </IconButton>
-                    ) : null}
-                  </div>
-                  <div
-                    className={cn(
-                      "whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-[13px] leading-relaxed",
-                      item.role === "user"
-                        ? "bg-muted/50 text-foreground"
-                        : "text-fg",
-                    )}
-                  >
-                    {item.text}
-                  </div>
-                </div>
-              </div>
-              </div>
+                        <MessageSquareText size={12} aria-hidden />
+                      </ActionIcon>
+                      {onComment ? (
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          size={24}
+                          aria-label="Comment on message"
+                          onClick={() =>
+                            onComment({
+                              kind: "message",
+                              messageId: item.messageId,
+                            })
+                          }
+                        >
+                          <MessageSquare size={12} aria-hidden />
+                        </ActionIcon>
+                      ) : null}
+                    </Flex>
+                    <Box
+                      px="sm"
+                      py="xs"
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "break-word",
+                        fontSize: 13,
+                        lineHeight: 1.6,
+                        borderRadius: "var(--mantine-radius-md)",
+                        ...(item.role === "user"
+                          ? {
+                              background:
+                                "var(--mantine-color-default-hover)",
+                            }
+                          : {}),
+                      }}
+                    >
+                      {item.text}
+                    </Box>
+                  </Box>
+                </Flex>
+              </Box>
             );
           }
 
@@ -745,23 +920,74 @@ export function ThreadTimeline({
               return renderTool(item.calls[0], item.key);
             }
             return (
-              <div key={item.key} className="flex gap-3">
-                <div className="w-7 shrink-0" />
-                <details className="group min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-card/40">
-                  <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[13px] text-muted-foreground hover:text-fg">
-                    <ChevronRight className="size-3.5 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
-                    <span className="truncate">{summarizeTools(item.calls)}</span>
-                    <Badge variant="neutral" size="sm" className="ml-auto shrink-0">
-                      {item.calls.length} calls
-                    </Badge>
-                  </summary>
-                  <div className="space-y-2 border-t border-border/70 p-2">
-                    {item.calls.map((call, index) =>
-                      renderTool(call, `${item.key}-${index}`),
-                    )}
-                  </div>
-                </details>
-              </div>
+              <Flex key={item.key} gap="md">
+                <Box w={28} />
+                <Box
+                  flex={1}
+                  miw={0}
+                  style={{
+                    border:
+                      "1px solid var(--mantine-color-default-border)",
+                    borderRadius: "var(--mantine-radius-md)",
+                    background: "var(--mantine-color-default)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <details>
+                    <summary
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        padding: "var(--mantine-spacing-xs) var(--mantine-spacing-sm)",
+                        fontSize: 13,
+                        listStyle: "none",
+                        cursor: "pointer",
+                        color: "var(--mantine-color-dimmed)",
+                      }}
+                    >
+                      <ChevronRight
+                        size={14}
+                        aria-hidden
+                        style={{
+                          color: "var(--mantine-color-dimmed)",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Text
+                        size="sm"
+                        fw={500}
+                        c="dimmed"
+                        truncate="end"
+                        flex={1}
+                        miw={0}
+                      >
+                        {summarizeTools(item.calls)}
+                      </Text>
+                      <Badge
+                        variant="light"
+                        color="gray"
+                        size="xs"
+                        style={{ marginLeft: "auto" }}
+                      >
+                        {item.calls.length} calls
+                      </Badge>
+                    </summary>
+                    <Stack
+                      gap="xs"
+                      p="xs"
+                      style={{
+                        borderTop:
+                          "1px solid var(--mantine-color-default-border)",
+                      }}
+                    >
+                      {item.calls.map((call, index) =>
+                        renderTool(call, `${item.key}-${index}`),
+                      )}
+                    </Stack>
+                  </details>
+                </Box>
+              </Flex>
             );
           }
 
@@ -779,34 +1005,68 @@ export function ThreadTimeline({
 
           if (item.kind === "plan") {
             return (
-              <div key={item.key} className="flex gap-3">
-                <div className="w-7 shrink-0" />
-                <div className="min-w-0 flex-1 rounded-xl bg-card/40 px-3 py-2.5">
-                  <div className="flex items-center gap-2 text-[13px] font-medium text-fg">
-                    <ListChecks className="size-3.5 text-faint" aria-hidden />
-                    Plan
-                  </div>
-                  <ul className="mt-1.5 space-y-1">
+              <Flex key={item.key} gap="md">
+                <Box w={28} />
+                <Paper withBorder radius="md" flex={1} p="sm">
+                  <Flex align="center" gap="xs" mb="xs">
+                    <ListChecks
+                      size={14}
+                      aria-hidden
+                      style={{
+                        color: "var(--mantine-color-dimmed)",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <Text size="sm" fw={500}>
+                      Plan
+                    </Text>
+                  </Flex>
+                  <Box
+                    component="ul"
+                    style={{ listStyle: "none", margin: 0, padding: 0 }}
+                  >
                     {item.entries.map((entry) => (
-                      <li key={entry.content} className="flex items-start gap-1.5 text-[13px] text-muted-foreground">
+                      <Flex
+                        component="li"
+                        key={entry.content}
+                        align="flex-start"
+                        gap="xs"
+                        fz={13}
+                        c="dimmed"
+                      >
                         <span
-                          className={cn(
-                            "mt-1 size-1.5 shrink-0 rounded-full",
-                            entry.status === "completed"
-                              ? "bg-success"
-                              : entry.status === "in_progress"
-                                ? "bg-warning"
-                                : "bg-border-strong",
-                          )}
+                          aria-hidden
+                          style={{
+                            marginTop: 4,
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            flexShrink: 0,
+                            background:
+                              entry.status === "completed"
+                                ? "var(--mantine-color-green-6)"
+                                : entry.status === "in_progress"
+                                  ? "var(--mantine-color-yellow-6)"
+                                  : "var(--mantine-color-default-border)",
+                          }}
                         />
-                        <span className={entry.status === "completed" ? "text-faint line-through" : ""}>
+                        <Text
+                          component="span"
+                          fz={13}
+                          c={entry.status === "completed" ? "dimmed" : undefined}
+                          style={
+                            entry.status === "completed"
+                              ? { textDecoration: "line-through" }
+                              : undefined
+                          }
+                        >
                           {entry.content}
-                        </span>
-                      </li>
+                        </Text>
+                      </Flex>
                     ))}
-                  </ul>
-                </div>
-              </div>
+                  </Box>
+                </Paper>
+              </Flex>
             );
           }
 
@@ -816,219 +1076,456 @@ export function ThreadTimeline({
                 ? `Sent Agent Message to ${item.to}`
                 : `Received Agent Message from ${item.from}`;
             return (
-              <div key={item.key} className="flex gap-3">
-                <div className="w-7 shrink-0" />
-                <details className="group min-w-0 flex-1 rounded-xl border border-border/40 bg-card/40">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[13px] text-muted-foreground">
-                    <ArrowLeftRight className="size-3.5 shrink-0 text-faint" aria-hidden />
-                    <span className="truncate">{label}</span>
-                    <ChevronRight className="ml-auto size-3 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
-                  </summary>
-                  <p className="whitespace-pre-wrap border-t border-border/70 px-3 py-2 text-[13px] leading-relaxed text-fg">
-                    {item.text}
-                  </p>
-                </details>
-              </div>
+              <Flex key={item.key} gap="md">
+                <Box w={28} />
+                <Box
+                  flex={1}
+                  miw={0}
+                  style={{
+                    border:
+                      "1px solid var(--mantine-color-default-border)",
+                    borderRadius: "var(--mantine-radius-md)",
+                    background: "var(--mantine-color-default)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <details>
+                    <summary
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        padding: "var(--mantine-spacing-xs) var(--mantine-spacing-sm)",
+                        fontSize: 13,
+                        listStyle: "none",
+                        cursor: "pointer",
+                        color: "var(--mantine-color-dimmed)",
+                      }}
+                    >
+                      <ArrowLeftRight
+                        size={14}
+                        aria-hidden
+                        style={{
+                          color: "var(--mantine-color-dimmed)",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Text
+                        size="sm"
+                        fw={500}
+                        c="dimmed"
+                        truncate="end"
+                        flex={1}
+                        miw={0}
+                      >
+                        {label}
+                      </Text>
+                      <ChevronRight
+                        size={12}
+                        aria-hidden
+                        style={{
+                          color: "var(--mantine-color-dimmed)",
+                          flexShrink: 0,
+                          marginLeft: "auto",
+                        }}
+                      />
+                    </summary>
+                    <Text
+                      size="sm"
+                      p="sm"
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        lineHeight: 1.6,
+                        borderTop:
+                          "1px solid var(--mantine-color-default-border)",
+                      }}
+                    >
+                      {item.text}
+                    </Text>
+                  </details>
+                </Box>
+              </Flex>
             );
           }
 
           if (item.kind === "subagent") {
             const subagent = item.subagent;
             return (
-              <div key={item.key} className="flex gap-3">
-                <div className="w-7 shrink-0" />
-                <details className="min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-card/40">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
-                    <GitBranch className="size-3.5 shrink-0 text-faint" aria-hidden />
-                    <span className="truncate text-[13px] font-medium text-fg">
-                      {subagent.title}
-                    </span>
-                    <SubagentStatusBadge status={subagent.status} />
-                    <ChevronRight className="size-3 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
-                  </summary>
-                  <div className="space-y-1 border-t border-border/70 px-3 py-2 text-[13px] text-muted-foreground">
-                    {subagent.description ? (
-                      <p className="whitespace-pre-wrap text-fg">{subagent.description}</p>
-                    ) : null}
-                    {subagent.status === "error" ? (
-                      <p className="flex items-center gap-1 text-danger">
-                        <XCircle className="size-3" aria-hidden />
-                        Stopped with an error
-                      </p>
-                    ) : null}
-                    {subagent.cwd ? (
-                      <p className="break-all font-mono text-[10.5px] text-faint">
-                        {subagent.cwd}
-                      </p>
-                    ) : (
-                      <p className="text-faint">No independent session</p>
-                    )}
-                    {subagent.usage ? (
-                      <p className="text-faint">
-                        {subagent.usage.totalTokens.toLocaleString()} tokens
-                      </p>
-                    ) : null}
-                    {onOpenSubagent ? (
-                      <Button
+              <Flex key={item.key} gap="md">
+                <Box w={28} />
+                <Box
+                  flex={1}
+                  miw={0}
+                  style={{
+                    border:
+                      "1px solid var(--mantine-color-default-border)",
+                    borderRadius: "var(--mantine-radius-md)",
+                    background: "var(--mantine-color-default)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <details>
+                    <summary
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        padding: "var(--mantine-spacing-xs) var(--mantine-spacing-sm)",
+                        listStyle: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <GitBranch
+                        size={14}
+                        aria-hidden
+                        style={{
+                          color: "var(--mantine-color-dimmed)",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Text
                         size="sm"
-                        variant="ghost"
-                        className="px-0"
-                        onClick={() => onOpenSubagent(subagent.id)}
+                        fw={500}
+                        truncate="end"
+                        flex={1}
+                        miw={0}
                       >
-                        Open subagent
-                      </Button>
-                    ) : null}
-                  </div>
-                </details>
-              </div>
+                        {subagent.title}
+                      </Text>
+                      <SubagentStatusBadge status={subagent.status} />
+                      <ChevronRight
+                        size={12}
+                        aria-hidden
+                        style={{
+                          color: "var(--mantine-color-dimmed)",
+                          flexShrink: 0,
+                          marginLeft: "auto",
+                        }}
+                      />
+                    </summary>
+                    <Box
+                      p="sm"
+                      style={{
+                        borderTop:
+                          "1px solid var(--mantine-color-default-border)",
+                      }}
+                    >
+                      <Stack gap={4}>
+                        {subagent.description ? (
+                          <Text
+                            size="sm"
+                            style={{ whiteSpace: "pre-wrap" }}
+                          >
+                            {subagent.description}
+                          </Text>
+                        ) : null}
+                        {subagent.status === "error" ? (
+                          <Flex align="center" gap="xs">
+                            <XCircle
+                              size={12}
+                              aria-hidden
+                              style={{
+                                color: "var(--mantine-color-red-6)",
+                              }}
+                            />
+                            <Text size="sm" c="red.6">
+                              Stopped with an error
+                            </Text>
+                          </Flex>
+                        ) : null}
+                        {subagent.cwd ? (
+                          <Text
+                            fz={12}
+                            ff="monospace"
+                            c="dimmed"
+                            style={{ wordBreak: "break-all" }}
+                          >
+                            {subagent.cwd}
+                          </Text>
+                        ) : (
+                          <Text size="sm" c="dimmed">
+                            No independent session
+                          </Text>
+                        )}
+                        {subagent.usage ? (
+                          <Text size="sm" c="dimmed">
+                            {subagent.usage.totalTokens.toLocaleString()} tokens
+                          </Text>
+                        ) : null}
+                        {onOpenSubagent ? (
+                          <Button
+                            variant="subtle"
+                            color="dark"
+                            size="xs"
+                            px={0}
+                            onClick={() => onOpenSubagent(subagent.id)}
+                          >
+                            Open subagent
+                          </Button>
+                        ) : null}
+                      </Stack>
+                    </Box>
+                  </details>
+                </Box>
+              </Flex>
             );
           }
 
           if (item.kind === "approval") {
             const approval = approvalById.get(item.approval.id) ?? item.approval;
             return (
-              <div key={item.key} className="flex gap-3">
-                <div className="w-7 shrink-0" />
-                <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-warning/25 bg-warning/[0.04]">
-                  <div className="flex items-center gap-2 px-3 py-2">
-                    <ShieldAlert className="size-3.5 shrink-0 text-warning" />
-                    <span className="text-[13px] font-medium text-fg">
-                      {approval.title}
-                    </span>
-                    <Badge
-                      variant={
-                        item.resolved && approval.status !== "pending"
-                          ? "neutral"
-                          : "warning"
-                      }
+              <Flex key={item.key} gap="md">
+                <Box w={28} />
+                <Box
+                  flex={1}
+                  miw={0}
+                  style={{
+                    border:
+                      "1px solid var(--mantine-color-yellow-light)",
+                    borderRadius: "var(--mantine-radius-md)",
+                    background: "var(--mantine-color-yellow-light)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <Flex align="center" gap="xs" px="sm" py="xs">
+                    <ShieldAlert
+                      size={14}
+                      aria-hidden
+                      style={{
+                        color:
+                          "var(--mantine-color-yellow-light-color)",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <Text
                       size="sm"
-                      className="ml-auto"
+                      fw={500}
+                      truncate="end"
+                      flex={1}
+                      miw={0}
+                    >
+                      {approval.title}
+                    </Text>
+                    <Badge
+                      variant="light"
+                      color={
+                        item.resolved && approval.status !== "pending"
+                          ? "gray"
+                          : "yellow"
+                      }
+                      size="xs"
+                      style={{ marginLeft: "auto" }}
                     >
                       {item.decision ?? approval.status}
                     </Badge>
-                  </div>
-                  <div className="space-y-1.5 border-t border-warning/20 px-3 py-2">
-                    <p className="text-[13px] text-muted-foreground">
-                      {approval.agent}
-                      {approval.subagentId
-                        ? ` · subagent ${approval.subagentId}`
-                        : ""}
-                    </p>
-                    {approval.command ? (
-                      <pre className="overflow-x-auto rounded bg-canvas px-2 py-1.5 font-mono text-[13px] text-fg">
-                        {approval.command}
-                      </pre>
-                    ) : null}
-                    {approval.cwd ? (
-                      <p className="break-all font-mono text-[13px] text-faint">
-                        cwd: {approval.cwd}
-                      </p>
-                    ) : null}
-                    {approval.paths.length > 0 ? (
-                      <p className="break-all font-mono text-[13px] text-faint">
-                        {approval.paths.join(", ")}
-                      </p>
-                    ) : null}
-                    {approval.input ? (
-                      <details className="text-[13px] text-muted-foreground">
-                        <summary className="cursor-pointer text-faint hover:text-fg">
-                          Full parameters
-                        </summary>
-                        <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-canvas p-2 font-mono text-[13px] text-fg">
-                          {approval.input}
-                        </pre>
-                      </details>
-                    ) : null}
-                    {!item.resolved && approval.status === "pending" && onDecide ? (
-                      denyFor === approval.id ? (
-                        <div className="space-y-1.5 border-t border-warning/20 pt-2">
-                          <Textarea
-                            autoFocus
-                            value={denyNote}
-                            onChange={(event) => setDenyNote(event.target.value)}
-                            placeholder="Why deny?"
-                            rows={2}
-                            className="text-[13px]"
-                          />
-                          <div className="flex gap-1.5">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                setDenyFor(null);
-                                setDenyNote("");
-                              }}
-                            >
-                              Cancel
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="danger"
-                              disabled={!denyNote.trim()}
-                              onClick={() => {
-                                onDecide(approval.id, "deny", denyNote.trim());
-                                setDenyFor(null);
-                                setDenyNote("");
-                              }}
-                            >
-                              Deny with reason
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-wrap gap-1.5 border-t border-warning/20 pt-2">
-                          {(approval.options.length > 0
-                            ? approval.options
-                            : [
-                                { id: "once", kind: "allow_once" as const, label: "Allow once" },
-                                {
-                                  id: "thread",
-                                  kind: "allow_thread" as const,
-                                  label: "Allow for thread",
-                                },
-                                { id: "deny", kind: "deny" as const, label: "Deny" },
-                              ]
-                          ).map((option) =>
-                            option.kind === "deny" ? (
+                  </Flex>
+                  <Box
+                    px="sm"
+                    py="xs"
+                    style={{
+                      borderTop:
+                        "1px solid var(--mantine-color-yellow-light-hover)",
+                    }}
+                  >
+                    <Stack gap={4}>
+                      <Text size="sm" c="dimmed">
+                        {approval.agent}
+                        {approval.subagentId
+                          ? ` · subagent ${approval.subagentId}`
+                          : ""}
+                      </Text>
+                      {approval.command ? (
+                        <Box
+                          component="pre"
+                          p="xs"
+                          style={{
+                            margin: 0,
+                            overflowX: "auto",
+                            fontFamily:
+                              "var(--mantine-font-family-monospace)",
+                            fontSize: 13,
+                            background: "var(--mantine-color-default)",
+                            borderRadius: "var(--mantine-radius-md)",
+                          }}
+                        >
+                          {approval.command}
+                        </Box>
+                      ) : null}
+                      {approval.cwd ? (
+                        <Text
+                          size="sm"
+                          ff="monospace"
+                          c="dimmed"
+                          style={{ wordBreak: "break-all" }}
+                        >
+                          cwd: {approval.cwd}
+                        </Text>
+                      ) : null}
+                      {approval.paths.length > 0 ? (
+                        <Text
+                          size="sm"
+                          ff="monospace"
+                          c="dimmed"
+                          style={{ wordBreak: "break-all" }}
+                        >
+                          {approval.paths.join(", ")}
+                        </Text>
+                      ) : null}
+                      {approval.input ? (
+                        <details style={{ fontSize: 13 }}>
+                          <summary
+                            style={{
+                              cursor: "pointer",
+                              listStyle: "none",
+                              color: "var(--mantine-color-dimmed)",
+                            }}
+                          >
+                            Full parameters
+                          </summary>
+                          <Box
+                            component="pre"
+                            p="xs"
+                            mah={224}
+                            mt={4}
+                            style={{
+                              margin: 0,
+                              overflow: "auto",
+                              fontFamily:
+                                "var(--mantine-font-family-monospace)",
+                              fontSize: 13,
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-all",
+                              background: "var(--mantine-color-default)",
+                              borderRadius: "var(--mantine-radius-md)",
+                            }}
+                          >
+                            {approval.input}
+                          </Box>
+                        </details>
+                      ) : null}
+                      {!item.resolved &&
+                      approval.status === "pending" &&
+                      onDecide ? (
+                        denyFor === approval.id ? (
+                          <Box
+                            pt="xs"
+                            style={{
+                              borderTop:
+                                "1px solid var(--mantine-color-yellow-light-hover)",
+                            }}
+                          >
+                            <Textarea
+                              autoFocus
+                              value={denyNote}
+                              onChange={(event) =>
+                                setDenyNote(event.target.value)
+                              }
+                              placeholder="Why deny?"
+                              rows={2}
+                            />
+                            <Flex gap="xs" mt="xs">
                               <Button
-                                key={option.id}
-                                size="sm"
-                                variant="danger"
+                                variant="subtle"
+                                color="dark"
+                                size="xs"
                                 onClick={() => {
-                                  setDenyFor(approval.id);
+                                  setDenyFor(null);
                                   setDenyNote("");
                                 }}
                               >
-                                {option.label}
+                                Cancel
                               </Button>
-                            ) : (
                               <Button
-                                key={option.id}
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => onDecide(approval.id, option.kind)}
+                                color="red"
+                                size="xs"
+                                disabled={!denyNote.trim()}
+                                onClick={() => {
+                                  onDecide(
+                                    approval.id,
+                                    "deny",
+                                    denyNote.trim(),
+                                  );
+                                  setDenyFor(null);
+                                  setDenyNote("");
+                                }}
                               >
-                                {option.label}
+                                Deny with reason
                               </Button>
-                            ),
-                          )}
-                        </div>
-                      )
-                    ) : null}
-                  </div>
-                </div>
-              </div>
+                            </Flex>
+                          </Box>
+                        ) : (
+                          <Flex
+                            gap="xs"
+                            wrap="wrap"
+                            pt="xs"
+                            style={{
+                              borderTop:
+                                "1px solid var(--mantine-color-yellow-light-hover)",
+                            }}
+                          >
+                            {(approval.options.length > 0
+                              ? approval.options
+                              : [
+                                  {
+                                    id: "once",
+                                    kind: "allow_once" as const,
+                                    label: "Allow once",
+                                  },
+                                  {
+                                    id: "thread",
+                                    kind: "allow_thread" as const,
+                                    label: "Allow for thread",
+                                  },
+                                  {
+                                    id: "deny",
+                                    kind: "deny" as const,
+                                    label: "Deny",
+                                  },
+                                ]
+                            ).map((option) =>
+                              option.kind === "deny" ? (
+                                <Button
+                                  key={option.id}
+                                  size="xs"
+                                  color="red"
+                                  onClick={() => {
+                                    setDenyFor(approval.id);
+                                    setDenyNote("");
+                                  }}
+                                >
+                                  {option.label}
+                                </Button>
+                              ) : (
+                                <Button
+                                  key={option.id}
+                                  size="xs"
+                                  variant="outline"
+                                  onClick={() =>
+                                    onDecide(approval.id, option.kind)
+                                  }
+                                >
+                                  {option.label}
+                                </Button>
+                              ),
+                            )}
+                          </Flex>
+                        )
+                      ) : null}
+                    </Stack>
+                  </Box>
+                </Box>
+              </Flex>
             );
           }
 
-          const toneClass =
+          const toneColor =
             item.tone === "danger"
-              ? "bg-danger/5 text-danger"
+              ? "var(--mantine-color-red-filled)"
               : item.tone === "warning"
-                ? "bg-warning/5 text-warning"
+                ? "var(--mantine-color-yellow-filled)"
                 : item.tone === "info"
-                  ? "bg-info/5 text-info"
-                  : "bg-muted/25 text-muted-foreground";
+                  ? "var(--mantine-color-blue-filled)"
+                  : "var(--mantine-color-dimmed)";
           const NoticeIcon =
             item.tone === "danger"
               ? AlertTriangle
@@ -1038,25 +1535,43 @@ export function ThreadTimeline({
                   ? ArrowLeftRight
                   : CircleDot;
           return (
-            <div key={item.key} className="flex gap-3">
-              <div className="w-7 shrink-0" />
-              <div
-                className={cn(
-                  "flex min-w-0 flex-1 items-start gap-2 rounded-xl px-3 py-2",
-                  toneClass,
-                )}
+            <Flex key={item.key} gap="md">
+              <Box w={28} />
+              <Flex
+                align="center"
+                gap={6}
+                py={2}
+                flex={1}
+                miw={0}
               >
-                <NoticeIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">
-                  <span className="font-medium">{item.label}</span>
-                  {item.text ? <span className="text-muted-foreground"> · {item.text}</span> : null}
-                </p>
-                <CheckCircle2 className="ml-auto size-3 shrink-0 opacity-40" aria-hidden />
-              </div>
-            </div>
+                <NoticeIcon
+                  size={12}
+                  aria-hidden
+                  style={{ color: toneColor, flexShrink: 0 }}
+                />
+                <Text
+                  size="xs"
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "break-word",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <Text component="span" fw={500}>
+                    {item.label}
+                  </Text>
+                  {item.text ? (
+                    <Text component="span" c="dimmed">
+                      {" "}
+                      · {item.text}
+                    </Text>
+                  ) : null}
+                </Text>
+              </Flex>
+            </Flex>
           );
         })}
-      </div>
-    </div>
+      </Stack>
+    </Box>
   );
 }

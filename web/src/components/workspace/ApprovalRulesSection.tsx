@@ -1,8 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import {
+  ActionIcon,
+  Badge,
+  Group,
+  Paper,
+  Skeleton,
+  Stack,
+  Text,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteApprovalRule, fetchApprovalRules } from "@/api/endpoints";
-import { Badge, Button, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { EmptyState, ErrorState } from "@/components/app";
 
 export function ApprovalRulesSection() {
   const queryClient = useQueryClient();
@@ -14,12 +23,21 @@ export function ApprovalRulesSection() {
     mutationFn: (id: string) => deleteApprovalRule(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["approval-rules"] });
-      toast.success("Allow rule revoked");
+      notifications.show({
+        message: "Allow rule revoked",
+        color: "green",
+        position: "bottom-right",
+      });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
   if (rules.isLoading) {
-    return <Skeleton className="h-20 w-full" />;
+    return <Skeleton h={80} />;
   }
   if (rules.isError) {
     return (
@@ -43,36 +61,54 @@ export function ApprovalRulesSection() {
     );
   }
   return (
-    <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
-      {items.map((rule) => (
-        <li key={rule.id} className="flex items-center gap-2 bg-surface px-3 py-2">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] text-fg">
-              {rule.agent} · {rule.tool}
-              {rule.commandPrefix ? (
-                <span className="ml-1 font-mono text-[13px] text-muted-foreground">
-                  {rule.commandPrefix}
-                </span>
-              ) : null}
-            </p>
-            <p className="text-[9.5px] text-faint">
-              {rule.scope} · created by {rule.createdBy.displayName}
-            </p>
-          </div>
-          <Badge size="sm" variant="outline">
-            allow
-          </Badge>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label="Revoke allow rule"
-            loading={remove.isPending}
-            onClick={() => remove.mutate(rule.id)}
+    <Paper withBorder radius="md">
+      <Stack gap={0}>
+        {items.map((rule) => (
+          <Group
+            key={rule.id}
+            gap="sm"
+            px="sm"
+            py="xs"
+            wrap="nowrap"
+            style={{
+              borderBottom: "1px solid var(--mantine-color-default-border)",
+            }}
           >
-            <Trash2 aria-hidden />
-          </Button>
-        </li>
-      ))}
-    </ul>
+            <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
+              <Text size="sm" truncate="end">
+                {rule.agent} · {rule.tool}
+                {rule.commandPrefix ? (
+                  <Text
+                    component="span"
+                    size="sm"
+                    c="dimmed"
+                    ff="var(--mantine-font-family-monospace)"
+                    ml={4}
+                  >
+                    {rule.commandPrefix}
+                  </Text>
+                ) : null}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {rule.scope} · created by {rule.createdBy.displayName}
+              </Text>
+            </Stack>
+            <Badge variant="outline" color="gray" size="xs">
+              allow
+            </Badge>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label="Revoke allow rule"
+              loading={remove.isPending}
+              onClick={() => remove.mutate(rule.id)}
+            >
+              <Trash2 size={14} aria-hidden />
+            </ActionIcon>
+          </Group>
+        ))}
+      </Stack>
+    </Paper>
   );
 }

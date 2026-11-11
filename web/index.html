@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,10 +10,9 @@
     <script>
       try {
         const theme = localStorage.getItem("threadbase.theme");
-        if (theme === "light" || theme === "dark") {
-          document.documentElement.dataset.theme = theme;
-          document.documentElement.style.colorScheme = theme;
-        }
+        const resolved = theme === "light" || theme === "dark" ? theme : "dark";
+        document.documentElement.dataset.mantineColorScheme = resolved;
+        document.documentElement.style.colorScheme = resolved;
       } catch {
         // Storage may be unavailable in hardened browser contexts.
       }

@@ -1,279 +1,195 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, ShieldCheck } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Alert, Button, Code, Stack, Text, Title } from "@mantine/core";
+import { RotateCw, ShieldCheck, ShieldX } from "lucide-react";
+import { useEffect, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { login, setupAdmin } from "@/api/endpoints";
-import { queryKeys, useAuthStatus, useMe } from "@/api/queries";
-import type { AuthMeDto } from "@/api/types/AuthMeDto";
-import {
-  Badge,
-  Button,
-  ErrorState,
-  Input,
-  LogoMark,
-} from "@/components/ui";
+import { useAuthStatus, useMe } from "@/api/queries";
+import { LogoMark } from "@/components/app";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
-import { describeError } from "@/lib/errors";
 
 interface LoginLocationState {
   from?: string;
 }
 
+/**
+ * Sign-in is performed by `tailscale serve`, which forwards the tailnet
+ * identity of the caller. This page only explains what to do when that
+ * identity is missing or was rejected.
+ */
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const queryClient = useQueryClient();
   const status = useAuthStatus();
   const me = useMe();
-  const [displayName, setDisplayName] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [validation, setValidation] = useState<string | null>(null);
+  const from = (location.state as LoginLocationState | null)?.from ?? "/";
+  const signedIn = Boolean(me.data);
 
-  const from =
-    (location.state as LoginLocationState | null)?.from ?? "/";
-
-  const completeLogin = (result: { user: AuthMeDto["user"] }) => {
-    queryClient.setQueryData<AuthMeDto>(queryKeys.me, {
-      user: result.user,
-      authMethod: "password",
-      tailscaleAvailable: false,
-      needsSetup: false,
-    });
-    navigate(from, { replace: true });
-  };
-
-  const loginMutation = useMutation({
-    mutationFn: () => login({ username: username.trim(), password }),
-    onSuccess: completeLogin,
-  });
-  const setupMutation = useMutation({
-    mutationFn: () =>
-      setupAdmin({
-        username: username.trim(),
-        password,
-        displayName: displayName.trim(),
-      }),
-    onSuccess: completeLogin,
-  });
-
-  if (status.isLoading || me.isLoading) {
-    return <LoginLoading />;
-  }
+  useEffect(() => {
+    if (signedIn) {
+      navigate(from, { replace: true });
+    }
+  }, [from, navigate, signedIn]);
 
   if (me.data) {
     return <Navigate to={from} replace />;
   }
 
-  if (status.isError) {
-    return (
-      <LoginFrame>
-        <ErrorState
-          error={status.error}
-          title="Cannot reach Threadbase"
-          description="The local service did not answer the auth status check."
-          onRetry={() => void status.refetch()}
-        />
-      </LoginFrame>
-    );
-  }
-
-  if (!status.data) {
-    return <LoginLoading />;
-  }
-
-  const auth = status.data.status;
-  const needsSetup = auth.needsSetup;
-  const mutation = needsSetup ? setupMutation : loginMutation;
-
-  const submit = () => {
-    if (needsSetup) {
-      if (!displayName.trim()) {
-        setValidation("Enter a display name.");
-        return;
-      }
-      if (username.trim().length < 3 || username.trim().length > 32) {
-        setValidation("Username must be between 3 and 32 characters.");
-        return;
-      }
-      if (!/^[A-Za-z0-9._-]+$/.test(username.trim())) {
-        setValidation(
-          "Username may contain letters, digits, dots, dashes and underscores.",
-        );
-        return;
-      }
-      if (password.length < 10) {
-        setValidation("Password must be at least 10 characters.");
-        return;
-      }
-      if (password !== confirmPassword) {
-        setValidation("Passwords do not match.");
-        return;
-      }
-    } else {
-      if (!username.trim() || !password) {
-        setValidation("Enter your username and password.");
-        return;
-      }
-    }
-    setValidation(null);
-    mutation.mutate();
-  };
+  const auth = status.data?.status;
+  const behindTailscale = auth?.tailscaleHeader ?? false;
+  const devIdentity = auth?.devIdentity ?? false;
 
   return (
-    <LoginFrame>
-      <div className="mb-5 space-y-1.5">
-        <div className="flex items-center gap-2">
-          <h1 className="text-[24px] font-semibold tracking-[-0.03em] text-foreground">
-            {needsSetup ? "Set up your workspace" : "Sign in to Threadbase"}
-          </h1>
-          {needsSetup ? (
-            <Badge variant="accent" size="sm">
-              first run
-            </Badge>
-          ) : null}
-        </div>
-        {needsSetup ? (
-          <p className="text-[12px] leading-relaxed text-muted-foreground">
-            Create the local admin account.
-          </p>
-        ) : null}
-      </div>
+    <Page>
+      <Stack gap={6} mb="lg">
+        <Title order={1} fz={22} fw={600} style={{ letterSpacing: "-0.02em" }}>
+          Sign in with Tailscale
+        </Title>
+        <Text size="xs" c="dimmed">
+          Threadbase has no passwords. Access is granted by your tailnet
+          identity.
+        </Text>
+      </Stack>
 
-      {!needsSetup && auth.tailscaleHeader ? (
-        <div className="mb-4 flex items-start gap-2 rounded-md border border-info/25 bg-info/5 px-2.5 py-2 text-[13px] text-muted-foreground">
-          <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-info" />
-          <span>
-            Tailscale identity detected. If this browser is already trusted,
-            the workspace opens automatically after sign-in.
-          </span>
-        </div>
+      {status.isError ? (
+        <Alert
+          color="red"
+          variant="light"
+          icon={<ShieldX size={14} />}
+          mb="md"
+        >
+          <Text size="xs">
+            Cannot reach the Threadbase service. Start it on the host machine
+            and retry.
+          </Text>
+        </Alert>
+      ) : behindTailscale ? (
+        <Alert
+          color="red"
+          variant="light"
+          icon={<ShieldX size={14} />}
+          title="Identity not accepted"
+          mb="md"
+        >
+          <Stack gap={6}>
+            <Text size="xs">
+              Tailscale forwarded this request, but the server did not accept
+              the identity headers. Check that the service is reached through
+              <Code>tailscale serve</Code> on the host, not a raw port forward.
+            </Text>
+          </Stack>
+        </Alert>
+      ) : devIdentity ? (
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<ShieldCheck size={14} />}
+          title="Development identity enabled"
+          mb="md"
+        >
+          <Text size="xs">
+            Requests from this machine use the configured development identity.
+            Reload after starting the server, or open the workspace through
+            Tailscale.
+          </Text>
+        </Alert>
+      ) : (
+        <Alert
+          color="blue"
+          variant="light"
+          icon={<ShieldCheck size={14} />}
+          title="Open this workspace through Tailscale"
+          mb="md"
+        >
+          <Stack gap={8}>
+            <Text size="xs">
+              This service only accepts requests proxied by Tailscale on the
+              host machine. Open the tailnet address instead of a local port.
+            </Text>
+            <Code block>
+              tailscale serve --bg 443 http://127.0.0.1:7777
+            </Code>
+            <Text size="xs" c="dimmed">
+              Then browse to{" "}
+              <Code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</Code>.
+            </Text>
+          </Stack>
+        </Alert>
+      )}
+
+      {auth?.needsAdmin ? (
+        <Alert color="grape" variant="light" mb="md">
+          <Text size="xs">
+            No administrator yet. The first tailnet identity that signs in
+            becomes the administrator of this instance.
+          </Text>
+        </Alert>
       ) : null}
 
-      {!auth.localLogin ? (
-        <div className="mb-4 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-2 text-[13px] text-muted-foreground">
-          Local password login is disabled from this address. Open Threadbase
-          through Tailscale or from the host machine.
-        </div>
-      ) : null}
-
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
+      <Button
+        fullWidth
+        variant="filled"
+        leftSection={<RotateCw size={14} />}
+        loading={status.isFetching || me.isFetching}
+        onClick={() => {
+          void status.refetch();
+          void me.refetch();
         }}
       >
-        {needsSetup ? (
-          <label className="block space-y-1.5">
-            <span className="text-[13px] font-medium text-muted-foreground">
-              Display name
-            </span>
-            <Input
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-              placeholder="Ada Lovelace"
-              autoComplete="name"
-              autoFocus
-            />
-          </label>
-        ) : null}
-        <label className="block space-y-1.5">
-          <span className="text-[13px] font-medium text-muted-foreground">Username</span>
-          <Input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            placeholder="ada"
-            autoComplete="username"
-            autoCapitalize="none"
-            spellCheck={false}
-            autoFocus={!needsSetup}
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-[13px] font-medium text-muted-foreground">Password</span>
-          <Input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder={needsSetup ? "At least 10 characters" : "Your password"}
-            autoComplete={needsSetup ? "new-password" : "current-password"}
-          />
-        </label>
-        {needsSetup ? (
-          <label className="block space-y-1.5">
-            <span className="text-[13px] font-medium text-muted-foreground">
-              Confirm password
-            </span>
-            <Input
-              type="password"
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-              placeholder="Repeat the password"
-              autoComplete="new-password"
-            />
-          </label>
-        ) : null}
+        Retry sign-in
+      </Button>
 
-        {validation ? (
-          <p role="alert" className="text-[13px] text-danger">
-            {validation}
-          </p>
-        ) : null}
-        {mutation.isError ? (
-          <p role="alert" className="text-[13px] text-danger">
-            {describeError(
-              mutation.error,
-              needsSetup ? "Setup failed" : "Sign in failed",
-            ).description}
-          </p>
-        ) : null}
-
-        <Button
-          type="submit"
-          variant="primary"
-          size="lg"
-          className="w-full"
-          loading={mutation.isPending}
-          disabled={!auth.localLogin}
-        >
-          {needsSetup ? "Create workspace" : "Sign in"}
-          {!mutation.isPending ? <ArrowRight aria-hidden /> : null}
-        </Button>
-      </form>
-
-    </LoginFrame>
+      <Text size="xs" c="dimmed" mt="lg" ta="center">
+        Signed in automatically while your tailnet session is valid.
+      </Text>
+    </Page>
   );
 }
 
-function LoginFrame({ children }: { children: ReactNode }) {
+function Page({ children }: { children: ReactNode }) {
   return (
-    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-background p-6">
-      <div className="absolute right-3 top-3 z-10">
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        minHeight: "100dvh",
+        alignItems: "center",
+        justifyContent: "center",
+        overflowY: "auto",
+        padding: "max(24px, env(safe-area-inset-top)) 16px",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          right: "max(12px, env(safe-area-inset-right))",
+          top: "max(12px, env(safe-area-inset-top))",
+          zIndex: 10,
+        }}
+      >
         <ThemeToggle />
       </div>
-      <div className="relative w-full max-w-[380px]">
-        <div className="mb-8 flex items-center justify-center gap-2.5">
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: 420,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            marginBottom: 28,
+          }}
+        >
           <LogoMark size={22} />
-          <p className="text-[15px] font-semibold tracking-tight text-foreground">
+          <Text size="md" fw={600} style={{ letterSpacing: "-0.01em" }}>
             Threadbase
-          </p>
+          </Text>
         </div>
         {children}
       </div>
-    </div>
-  );
-}
-
-function LoginLoading() {
-  return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
-      <LogoMark size={24} />
-      <p className="flex items-center gap-2 text-[13px]">
-        <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-        Connecting to Threadbase…
-      </p>
     </div>
   );
 }

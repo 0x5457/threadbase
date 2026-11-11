@@ -1,48 +1,86 @@
 import { AlertTriangle, FolderGit2, FolderPlus } from "lucide-react";
-import { Link, useOutletContext } from "react-router-dom";
+import {
+  Box,
+  Button,
+  Group,
+  ScrollArea,
+  Skeleton,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
+import { useOutletContext } from "react-router-dom";
 import { useProjects, useWorkspaceThreads } from "@/api/queries";
 import type { ProjectDto } from "@/api/types/ProjectDto";
-import { Button, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { EmptyState, ErrorState, PageContainer } from "@/components/app";
+import { DataBadge, ListRow } from "@/components/ui";
 import { formatRelativeTime } from "@/lib/format";
+import { layout, fontSizes } from "@/lib/design";
 import type { WorkspaceOutletContext } from "./workspace-context";
 
 function ProjectRow({ project }: { project: ProjectDto }) {
   return (
-    <Link
-      to={`/p/${encodeURIComponent(project.id)}`}
-      className="group flex items-center gap-3 px-4 py-4 transition-colors hover:bg-accent/40"
-    >
-      <span className="flex size-8 shrink-0 items-center justify-center text-muted-foreground">
-        <FolderGit2 className="size-4" aria-hidden />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] font-medium text-fg">
-            {project.name}
+    <ListRow
+      href={`/p/${encodeURIComponent(project.id)}`}
+      icon={<FolderGit2 size={layout.icon.md} aria-hidden />}
+      meta={
+        <Group gap="md" visibleFrom="sm" wrap="nowrap">
+          <DataBadge tone="neutral">{project.activeThreads} threads</DataBadge>
+          {project.waitingApprovals > 0 ? (
+            <DataBadge tone="warning">
+              {project.waitingApprovals} waiting
+            </DataBadge>
+          ) : null}
+          <span
+            className="tb-mono"
+            style={{
+              fontSize: fontSizes.xs,
+              color: "var(--mantine-color-dimmed)",
+            }}
+          >
+            {formatRelativeTime(project.lastActivityAt)}
           </span>
+        </Group>
+      }
+    >
+      <Box
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+          minWidth: 0,
+        }}
+      >
+        <Group gap={6} wrap="nowrap">
+          <Text size="sm" fw={500} truncate="end">
+            {project.name}
+          </Text>
           {!project.available ? (
             <AlertTriangle
-              className="size-3.5 shrink-0 text-warning"
+              size={layout.icon.sm}
               aria-label="Project path is unavailable"
+              color="var(--mantine-color-yellow-filled)"
+              style={{ flexShrink: 0 }}
             />
           ) : null}
-        </div>
-        <p className="truncate font-mono text-[11px] text-faint">
+        </Group>
+        <Text
+          size="xs"
+          c="dimmed"
+          truncate="end"
+          className="tb-mono"
+        >
           {project.path}
-        </p>
-      </div>
-      <div className="hidden shrink-0 items-center gap-4 text-[11.5px] text-faint sm:flex">
-        <span>{project.activeThreads} threads</span>
-        {project.waitingApprovals > 0 ? (
-          <span className="text-warning">
-            {project.waitingApprovals} waiting
-          </span>
-        ) : null}
-        <span className="w-16 text-right">
-          {formatRelativeTime(project.lastActivityAt)}
-        </span>
-      </div>
-    </Link>
+        </Text>
+        {/* Narrow screens have no meta column, so keep the counts in the row. */}
+        <Text size="xs" c="dimmed" truncate="end" hiddenFrom="sm">
+          {project.activeThreads} threads
+          {project.waitingApprovals > 0
+            ? ` · ${project.waitingApprovals} waiting`
+            : ""}
+        </Text>
+      </Box>
+    </ListRow>
   );
 }
 
@@ -53,61 +91,53 @@ export function WorkspacePage() {
   const projectList = projects.data?.projects ?? [];
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <div className="mx-auto w-full max-w-4xl px-6 py-10">
-          <div className="flex items-center justify-between">
-            <h1 className="text-[24px] font-semibold tracking-[-0.03em] text-foreground">
-              Projects
-            </h1>
-            <Button variant="primary" size="sm" onClick={openNewProject}>
-              <FolderPlus aria-hidden />
-              Add project
-            </Button>
-          </div>
+    <ScrollArea h="100%">
+      <PageContainer>
+        <Group justify="space-between" align="center" gap="sm">
+          <Group gap="xs" wrap="nowrap">
+            <FolderGit2 size={layout.icon.md} aria-hidden />
+            <Title order={1}>Projects</Title>
+          </Group>
+          <Button
+            variant="filled"
+            leftSection={<FolderPlus size={layout.icon.sm} aria-hidden />}
+            onClick={openNewProject}
+          >
+            Add project
+          </Button>
+        </Group>
 
-          <div className="mt-5">
-            {projects.isLoading ? (
-              <div className="space-y-1">
-                {Array.from({ length: 4 }).map((_, index) => (
-                  <Skeleton key={index} className="h-14 w-full" />
-                ))}
-              </div>
-            ) : projects.isError ? (
-              <ErrorState
-                error={projects.error}
-                title="Cannot load projects"
-                onRetry={() => void projects.refetch()}
-              />
-            ) : projectList.length === 0 ? (
-              <EmptyState
-                icon={FolderPlus}
-                title="No projects"
-                action={
-                  <Button variant="primary" size="sm" onClick={openNewProject}>
-                    <FolderPlus aria-hidden />
-                    Add project
-                  </Button>
-                }
-                compact
-              />
-            ) : (
-              <div className="mt-2 divide-y divide-border/40">
-                {projectList.map((project) => (
-                  <ProjectRow key={project.id} project={project} />
-                ))}
-              </div>
-            )}
-            {threads.isError ? (
-              <p className="mt-3 text-[12px] text-warning">
-                {threads.error instanceof Error
-                  ? threads.error.message
-                  : "Thread counts unavailable."}
-              </p>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    </div>
+        <Box mt="lg">
+          {projects.isLoading ? (
+            <Stack gap="xs">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={index} h={layout.rowHeight} />
+              ))}
+            </Stack>
+          ) : projects.isError ? (
+            <ErrorState
+              error={projects.error}
+              title="Cannot load projects"
+              onRetry={() => void projects.refetch()}
+            />
+          ) : projectList.length === 0 ? (
+            <EmptyState icon={FolderPlus} title="No projects" compact />
+          ) : (
+            <Stack gap={0} mt="xs">
+              {projectList.map((project) => (
+                <ProjectRow key={project.id} project={project} />
+              ))}
+            </Stack>
+          )}
+          {threads.isError ? (
+            <Text size="xs" c="yellow" mt="sm">
+              {threads.error instanceof Error
+                ? threads.error.message
+                : "Thread counts unavailable."}
+            </Text>
+          ) : null}
+        </Box>
+      </PageContainer>
+    </ScrollArea>
   );
 }

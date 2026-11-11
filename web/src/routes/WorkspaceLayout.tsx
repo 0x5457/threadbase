@@ -1,11 +1,18 @@
+import {
+  Button,
+  Group,
+  ScrollArea,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
-import { toast } from "sonner";
 import {
   createThread,
   decideApproval,
-  logout as logoutRequest,
   updateProject,
 } from "@/api/endpoints";
 import {
@@ -21,10 +28,10 @@ import type { ApprovalDecision } from "@/api/types/ApprovalDecision";
 import type { ApprovalDto } from "@/api/types/ApprovalDto";
 import type { SubagentDto } from "@/api/types/SubagentDto";
 import type { ThreadDto } from "@/api/types/ThreadDto";
+import { ResponsiveModal } from "@/components/app";
 import { AppShell } from "@/components/shell/AppShell";
 import { SidebarTree } from "@/components/shell/SidebarTree";
 import { SubagentStatusBadge } from "@/components/thread/SubagentStatusBadge";
-import { Button, Dialog, DialogContent, Input } from "@/components/ui";
 import { NewProjectDialog } from "@/components/workspace/NewProjectDialog";
 import { ShareDialog } from "@/components/workspace/ShareDialog";
 import { useOnlineStatus } from "@/lib/hooks";
@@ -47,6 +54,12 @@ function pageTitle(
   if (pathname === "/settings") {
     return { title: "Settings" };
   }
+  if (pathname.startsWith("/invite/")) {
+    return { title: "Invite" };
+  }
+  if (pathname.endsWith("/compare")) {
+    return { title: "Compare", subtitle: projectName };
+  }
   if (thread) {
     const subtitleParts = [projectName].filter(Boolean);
     if (subagent) {
@@ -61,6 +74,9 @@ function pageTitle(
   }
   if (projectName) {
     return { title: projectName, subtitle: "Project" };
+  }
+  if (pathname !== "/") {
+    return { title: "Not found" };
   }
   return { title: "Projects", subtitle: "Workspace" };
 }
@@ -152,16 +168,13 @@ export function WorkspaceLayout() {
     activeSubagent,
   );
 
+  // Signing out is a tailnet concern: the identity comes from `tailscale serve`
+  // on every request, so this only clears local caches.
   const logoutMutation = useMutation({
-    mutationFn: logoutRequest,
+    mutationFn: async () => undefined,
     onSuccess: () => {
       queryClient.clear();
-      navigate("/login", { replace: true });
-    },
-    onError: (error) => {
-      toast.error(
-        error instanceof Error ? error.message : "Could not sign out.",
-      );
+      window.location.assign("/");
     },
   });
 
@@ -188,12 +201,19 @@ export function WorkspaceLayout() {
         });
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
-      toast.success("Approval updated");
+      notifications.show({
+        message: "Approval updated",
+        color: "green",
+        position: "bottom-right",
+      });
     },
     onError: (error) => {
-      toast.error(
-        error instanceof Error ? error.message : "Could not update approval.",
-      );
+      notifications.show({
+        message:
+          error instanceof Error ? error.message : "Could not update approval.",
+        color: "red",
+        position: "bottom-right",
+      });
     },
   });
 
@@ -224,7 +244,12 @@ export function WorkspaceLayout() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
       void queryClient.invalidateQueries({ queryKey: queryKeys.threads, exact: true });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
 
   const createThreadMutation = useMutation({
@@ -258,7 +283,12 @@ export function WorkspaceLayout() {
         )}`,
       );
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({
+        message: String(error),
+        color: "red",
+        position: "bottom-right",
+      }),
   });
 
   const openNewThread = (projectId: string, options?: NewThreadOptions) => {
@@ -288,7 +318,10 @@ export function WorkspaceLayout() {
     const timer = window.setTimeout(() => {
       setFollowUserId(null);
       setFollowUserName(null);
-      toast.message("The followed member went offline");
+      notifications.show({
+        message: "The followed member went offline",
+        position: "bottom-right",
+      });
     }, 30_000);
     return () => window.clearTimeout(timer);
   }, [followUserId, presence.online]);
@@ -367,7 +400,11 @@ export function WorkspaceLayout() {
           url.searchParams.set("selection", selection.slice(0, 500));
         }
         void navigator.clipboard.writeText(url.toString());
-        toast.success(selection ? "Link to selection copied" : "Link copied");
+        notifications.show({
+          message: selection ? "Link to selection copied" : "Link copied",
+          color: "green",
+          position: "bottom-right",
+        });
       }
       if (modifier && !event.altKey && !event.shiftKey && key === "j") {
         event.preventDefault();
@@ -466,7 +503,7 @@ export function WorkspaceLayout() {
           shareDisabled: !activeThread,
           onShare: activeThread ? share : undefined,
         }}
-        sidebar={(closeSidebar) => (
+        sidebar={(closeSidebar, { overlay }) => (
           <SidebarTree
             projects={projectList}
             threads={threadList}
@@ -514,6 +551,7 @@ export function WorkspaceLayout() {
             onOpenSettings={() => navigate("/settings")}
             onLogout={() => logoutMutation.mutate()}
             onNavigate={closeSidebar}
+            onClose={overlay ? closeSidebar : undefined}
           />
         )}
         statusBar={{
@@ -561,63 +599,62 @@ export function WorkspaceLayout() {
         />
       ) : null}
 
-      <Dialog
-        open={Boolean(locateProjectId)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setLocateProjectId(null);
-            setLocatePath("");
-          }
+      <ResponsiveModal
+        opened={Boolean(locateProjectId)}
+        onClose={() => {
+          setLocateProjectId(null);
+          setLocatePath("");
         }}
+        title="Locate project"
+        size="sm"
       >
-        <DialogContent
-          title="Locate project"
-          footer={
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setLocateProjectId(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                variant="primary"
-                loading={locateMutation.isPending}
-                disabled={!locatePath.trim()}
-                onClick={() => locateMutation.mutate()}
-              >
-                Locate
-              </Button>
-            </>
-          }
-        >
-          <Input
-            autoFocus
-            aria-label="Project path"
-            value={locatePath}
-            onChange={(event) => setLocatePath(event.target.value)}
-            placeholder="/path/to/repo"
-          />
-        </DialogContent>
-      </Dialog>
+        <TextInput
+          autoFocus
+          aria-label="Project path"
+          value={locatePath}
+          onChange={(event) => setLocatePath(event.target.value)}
+          placeholder="/path/to/repo"
+        />
+        <Group justify="flex-end" gap="xs" mt="sm">
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => {
+              setLocateProjectId(null);
+              setLocatePath("");
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="filled"
+            size="sm"
+            loading={locateMutation.isPending}
+            disabled={!locatePath.trim()}
+            onClick={() => locateMutation.mutate()}
+          >
+            Locate
+          </Button>
+        </Group>
+      </ResponsiveModal>
 
-      <Dialog
-        open={subthreadPickerOpen}
-        onOpenChange={setSubthreadPickerOpen}
+      <ResponsiveModal
+        opened={subthreadPickerOpen}
+        onClose={() => setSubthreadPickerOpen(false)}
+        title="View all subthreads"
+        size="sm"
       >
-        <DialogContent
-          title="View all subthreads"
-          description="Every child session in this thread. Click one to open its transcript."
-        >
-          <Input
-            value={subthreadFilter}
-            onChange={(event) => setSubthreadFilter(event.target.value)}
-            placeholder="Filter subthreads…"
-            autoFocus
-          />
-          <ul className="mt-2 max-h-72 divide-y divide-border overflow-y-auto rounded-md border border-border">
+        <Text size="sm" c="dimmed" mb="sm">
+          Every child session in this thread. Click one to open its transcript.
+        </Text>
+        <TextInput
+          value={subthreadFilter}
+          onChange={(event) => setSubthreadFilter(event.target.value)}
+          placeholder="Filter subthreads…"
+          autoFocus
+        />
+        <ScrollArea h={{ base: "50dvh", sm: 288 }} mt="xs">
+          <Stack gap={2}>
             {(bundle.data?.bundle.subagents ?? [])
               .filter((subagent) =>
                 subagent.title
@@ -625,46 +662,59 @@ export function WorkspaceLayout() {
                   .includes(subthreadFilter.trim().toLowerCase()),
               )
               .map((subagent) => (
-                <li key={subagent.id}>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-fg hover:bg-hover"
-                    onClick={() => {
-                      setSubthreadPickerOpen(false);
-                      navigate(
-                        `/p/${encodeURIComponent(
-                          bundle.data?.bundle.project.id ?? "",
-                        )}/t/${encodeURIComponent(
-                          bundle.data?.bundle.thread.id ?? "",
-                        )}/s/${encodeURIComponent(subagent.id)}`,
-                      );
-                    }}
-                  >
-                    <span className="size-1.5 rounded-full bg-border-strong" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {subagent.title}
-                    </span>
+                <Button
+                  key={subagent.id}
+                  variant="subtle"
+                  color="gray"
+                  justify="flex-start"
+                  fullWidth
+                  leftSection={
+                    <span
+                      aria-hidden
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: "var(--mantine-color-gray-filled)",
+                      }}
+                    />
+                  }
+                  rightSection={
                     <SubagentStatusBadge status={subagent.status} />
-                  </button>
-                </li>
+                  }
+                  onClick={() => {
+                    setSubthreadPickerOpen(false);
+                    navigate(
+                      `/p/${encodeURIComponent(
+                        bundle.data?.bundle.project.id ?? "",
+                      )}/t/${encodeURIComponent(
+                        bundle.data?.bundle.thread.id ?? "",
+                      )}/s/${encodeURIComponent(subagent.id)}`,
+                    );
+                  }}
+                >
+                  <Text size="sm" truncate="end">
+                    {subagent.title}
+                  </Text>
+                </Button>
               ))}
             {(bundle.data?.bundle.subagents.length ?? 0) === 0 ? (
-              <li className="px-3 py-4 text-[13px] text-faint">
+              <Text size="sm" c="dimmed" px="xs" py="sm">
                 No subthreads in this thread.
-              </li>
+              </Text>
             ) : null}
-          </ul>
-          <div className="mt-2 flex justify-end">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setSubthreadPickerOpen(false)}
-            >
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </Stack>
+        </ScrollArea>
+        <Group justify="flex-end" mt="xs">
+          <Button
+            variant="default"
+            size="xs"
+            onClick={() => setSubthreadPickerOpen(false)}
+          >
+            Close
+          </Button>
+        </Group>
+      </ResponsiveModal>
 
       {bundle.data ? (
         <ShareDialog
@@ -673,8 +723,6 @@ export function WorkspaceLayout() {
           bundle={bundle.data.bundle}
         />
       ) : null}
-
-
     </>
   );
 }

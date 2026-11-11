@@ -1,36 +1,54 @@
-import { expect, test, type BrowserContext, type APIRequestContext } from "@playwright/test";
+import { expect, test, type BrowserContext, type APIRequestContext, type Page } from "@playwright/test";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
 
 const BASE = "http://127.0.0.1:7790";
 const REPO = "/tmp/threadbase-e2e/repo";
+
+/**
+ * Screenshot evidence is opt-in: `E2E_SCREENSHOTS=1 pnpm exec playwright test`.
+ * Full-page captures plus their animation-settle waits were the single largest
+ * cost in this suite, so the default run skips both.
+ */
+const SCREENSHOTS = process.env.E2E_SCREENSHOTS === "1";
+
+async function shot(page: Page, name: string): Promise<void> {
+  if (!SCREENSHOTS) {
+    return;
+  }
+  await page.screenshot({
+    path: `test-results/screenshots/${name}.png`,
+    fullPage: true,
+  });
+}
+// Sign-in is performed by `tailscale serve`; the server trusts these headers
+// because the test connects over loopback.
 const ADMIN = {
+  login: "ada@example.com",
   username: "ada",
-  password: "correct horse battery",
   displayName: "Ada Lovelace",
 };
 const BOB = {
+  login: "bob@example.com",
   username: "bob",
-  password: "correct horse battery",
   displayName: "Bob Stone",
 };
 
-function csrf() {
+function identityHeaders(who: { login: string; displayName: string }) {
+  return {
+    "tailscale-user-login": who.login,
+    "tailscale-user-name": who.displayName,
+  };
+}
+
+function csrf(who: { login: string; displayName: string } = ADMIN) {
   return {
     origin: BASE,
     "x-requested-with": "threadbase",
     "content-type": "application/json",
+    ...identityHeaders(who),
   };
-}
-
-async function setupAdmin(request: APIRequestContext) {
-  const response = await request.post(`${BASE}/api/auth/setup`, {
-    headers: csrf(),
-    data: ADMIN,
-  });
-  expect(response.status()).toBe(200);
-  return request.storageState();
 }
 
 async function createProject(request: APIRequestContext) {
@@ -58,12 +76,26 @@ async function createThread(request: APIRequestContext, projectId: string) {
   return (await response.json()).thread;
 }
 
-async function createBob(request: APIRequestContext) {
-  const response = await request.post(`${BASE}/api/auth/users`, {
+// The first identity to authenticate becomes the administrator.
+async function authenticateAdmin(request: APIRequestContext) {
+  const response = await request.get(`${BASE}/api/auth/me`, {
     headers: csrf(),
-    data: { ...BOB, isAdmin: false },
   });
   expect(response.status()).toBe(200);
+  const body = await response.json();
+  expect(body.user.username).toBe(ADMIN.username);
+  expect(body.user.isAdmin).toBe(true);
+}
+
+// Provisioning a second identity keeps it non-admin.
+async function createBob(request: APIRequestContext) {
+  const response = await request.get(`${BASE}/api/auth/me`, {
+    headers: csrf(BOB),
+  });
+  expect(response.status()).toBe(200);
+  const body = await response.json();
+  expect(body.user.username).toBe(BOB.username);
+  expect(body.user.isAdmin).toBe(false);
 }
 
 async function shareWorkspace(request: APIRequestContext, threadId: string) {
@@ -79,13 +111,13 @@ async function shareWorkspace(request: APIRequestContext, threadId: string) {
   expect(response.status()).toBe(200);
 }
 
-async function loginAsBob(context: BrowserContext) {
+async function openAs(
+  context: BrowserContext,
+  path: string,
+) {
   const page = await context.newPage();
-  await page.goto("/login");
-  await page.getByLabel("Username").fill(BOB.username);
-  await page.getByLabel("Password").fill(BOB.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await page.goto(path);
+  await expect(page).not.toHaveURL(/\/login$/);
   return page;
 }
 
@@ -93,15 +125,18 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   browser,
   playwright,
 }) => {
-  const api = await playwright.request.newContext({ baseURL: BASE });
-  const storage = await setupAdmin(api);
+  const api = await playwright.request.newContext({
+    baseURL: BASE,
+    extraHTTPHeaders: identityHeaders(ADMIN),
+  });
+  await authenticateAdmin(api);
   const project = await createProject(api);
   const thread = await createThread(api, project.id);
   await createBob(api);
   await shareWorkspace(api, thread.id);
 
   const adminContext = await browser.newContext({
-    storageState: storage,
+    extraHTTPHeaders: identityHeaders(ADMIN),
     viewport: { width: 1440, height: 900 },
   });
   const admin = await adminContext.newPage();
@@ -119,6 +154,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.getByRole("button", { name: "Thread actions" }).focus();
   await admin.keyboard.press("Enter");
   await expect(admin.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await expect(admin.locator("[data-autofocus]")).toBeFocused();
   await admin.keyboard.press("Escape");
   await expect(admin.getByRole("menuitem", { name: "Rename" })).toBeHidden();
 
@@ -158,23 +194,16 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
 
   await admin.reload();
   await expect(admin.getByText("Hello", { exact: false })).toBeVisible({ timeout: 10_000 });
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/thread-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "thread-1440-dark");
   await admin.getByRole("button", { name: "Switch to light theme" }).click();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/thread-1440-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "thread-1440-light");
   await admin.getByRole("button", { name: "Switch to dark theme" }).click();
 
   const bobContext = await browser.newContext({
+    extraHTTPHeaders: identityHeaders(BOB),
     viewport: { width: 768, height: 900 },
   });
-  const bob = await loginAsBob(bobContext);
+  const bob = await openAs(bobContext, "/");
   const bobErrors: string[] = [];
   bob.on("console", (message) => {
     if (message.type() === "error") {
@@ -187,13 +216,11 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(bob.getByPlaceholder("Message")).toHaveCount(0);
   await bob.getByRole("button", { name: "Request access" }).click();
   await expect(bob.getByText("Access request sent")).toBeVisible({ timeout: 5_000 });
-  await bob.waitForTimeout(300);
-  await bob.screenshot({ path: "test-results/screenshots/thread-768-readonly.png", fullPage: true });
+  await shot(bob, "thread-768-readonly");
   await bob.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
   await bob.reload();
   await expect(bob.getByText("Hello", { exact: false })).toBeVisible();
-  await bob.waitForTimeout(300);
-  await bob.screenshot({ path: "test-results/screenshots/thread-768-light.png", fullPage: true });
+  await shot(bob, "thread-768-light");
   await bob.evaluate(() => localStorage.setItem("threadbase.theme", "dark"));
   await bob.reload();
 
@@ -250,11 +277,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(drawerAgain.getByText("three", { exact: false }).first()).toBeVisible({
     timeout: 10_000,
   });
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/changes-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "changes-1440-dark");
   await drawerAgain.getByText("three", { exact: false }).first().click();
   await expect(drawerAgain.getByText("Comment on README.md:2")).toBeVisible();
   await drawerAgain
@@ -316,9 +339,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(admin.getByText("Queued at position 1")).toBeVisible({
     timeout: 10_000,
   });
-  const queuePanel = admin
-    .locator("div.mb-2.space-y-1")
-    .filter({ hasText: "Queue" });
+  const queuePanel = admin.getByTestId("queue-panel");
   await expect(queuePanel).toBeVisible({ timeout: 10_000 });
   const helloMessages = admin.getByText("Hello", { exact: false });
   const helloBefore = await helloMessages.count();
@@ -350,12 +371,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   });
   await admin.keyboard.press("Shift+Escape");
   await admin.getByPlaceholder("Message").fill("Draft in progress");
-  await admin.waitForTimeout(300);
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/composer-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "composer-1440-dark");
   await admin.getByPlaceholder("Message").fill("");
 
   // Subagent dispatch card, live running summary and the full picker.
@@ -372,18 +388,10 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(admin.getByText("Nested helper", { exact: true }).first()).toBeVisible({
     timeout: 15_000,
   });
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/subagents-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "subagents-1440-dark");
   await admin.keyboard.press("Control+j");
   await expect(admin.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/subagent-picker-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "subagent-picker-1440-dark");
   await admin.keyboard.press("Escape");
 
   // Deny with an explicit reason: the decision request carries the note.
@@ -404,11 +412,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(admin.getByText("Share thread", { exact: true })).toBeVisible({
     timeout: 5_000,
   });
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/share-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "share-1440-dark");
   await admin.keyboard.press("Escape");
 
   // Thread lifecycle: rename, fork, delete from the thread action menu.
@@ -434,19 +438,11 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   expect(forkedUrl).not.toBe(admin.url());
 
   // Project and new-thread options, then inbox evidence.
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/project-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "project-1440-dark");
   await admin.getByRole("button", { name: "New thread options" }).click();
   await expect(admin.getByText("Base branch", { exact: true })).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/new-thread-menu-1440-dark.png",
-    fullPage: true,
-  });
-  await admin.getByLabel("Agent").click();
+  await shot(admin, "new-thread-menu-1440-dark");
+  await admin.getByRole("combobox", { name: "Agent" }).click();
   await admin.getByRole("option", { name: "Claude Code" }).click();
   await admin.getByLabel("Model").fill("sonnet");
   await admin.getByLabel("Base branch").fill("main");
@@ -465,79 +461,43 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   });
   await admin.goto("/inbox");
   await expect(admin.getByText("Inbox", { exact: false }).first()).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/inbox-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "inbox-1440-dark");
   await admin.goto("/");
   await expect(
     admin.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/workspace-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "workspace-1440-dark");
   await admin.goto("/settings");
   await expect(admin.getByText("Settings", { exact: true }).first()).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/settings-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "settings-1440-dark");
   await admin.evaluate(() =>
     localStorage.setItem("threadbase.theme", "light"),
   );
   await admin.reload();
   await expect(admin.getByRole("heading", { name: "Settings" })).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/settings-1440-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "settings-1440-light");
   await admin.goto("/");
   await expect(
     admin.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/workspace-1440-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "workspace-1440-light");
 
   const narrowContext = await browser.newContext({
-    storageState: storage,
+    extraHTTPHeaders: identityHeaders(ADMIN),
     viewport: { width: 768, height: 900 },
   });
   const narrow = await narrowContext.newPage();
   await narrow.goto("/");
   await expect(narrow.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-  await narrow.waitForTimeout(300);
-  await narrow.screenshot({
-    path: "test-results/screenshots/workspace-768-dark.png",
-    fullPage: true,
-  });
+  await shot(narrow, "workspace-768-dark");
   await narrow.goto("/settings");
   await expect(narrow.getByRole("heading", { name: "Settings" })).toBeVisible();
-  await narrow.waitForTimeout(300);
-  await narrow.screenshot({
-    path: "test-results/screenshots/settings-768-dark.png",
-    fullPage: true,
-  });
+  await shot(narrow, "settings-768-dark");
   await narrow.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
   await narrow.reload();
-  await narrow.waitForTimeout(300);
-  await narrow.screenshot({
-    path: "test-results/screenshots/settings-768-light.png",
-    fullPage: true,
-  });
+  await shot(narrow, "settings-768-light");
   await narrow.goto("/");
-  await narrow.waitForTimeout(300);
-  await narrow.screenshot({
-    path: "test-results/screenshots/workspace-768-light.png",
-    fullPage: true,
-  });
+  await shot(narrow, "workspace-768-light");
   await narrowContext.close();
 
   // Narrow-window visual matrix for the remaining review surfaces.
@@ -545,121 +505,61 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await admin.evaluate(() => localStorage.setItem("threadbase.theme", "dark"));
   await admin.goto(`/p/${project.id}`);
   await expect(admin.getByRole("heading", { name: "repo" })).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/project-768-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "project-768-dark");
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
   await expect(admin.getByPlaceholder("Message")).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/composer-768-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "composer-768-dark");
   await admin.getByLabel("Show right drawer").click();
   const narrowDrawer = admin.getByRole("complementary", { name: "Right drawer" });
   await narrowDrawer.getByRole("tab", { name: "Files" }).click();
   await expect(narrowDrawer.getByText("README.md")).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/files-768-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "files-768-dark");
   await narrowDrawer.getByRole("tab", { name: "Output" }).click();
   await expect(narrowDrawer.getByText("Run tests").first()).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/output-768-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "output-768-dark");
   await narrowDrawer.getByRole("tab", { name: "Changes" }).click();
   await expect(narrowDrawer.getByText("README.md")).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/changes-768-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "changes-768-dark");
   await admin.keyboard.press("Shift+Escape");
   await admin.getByRole("button", { name: "Share", exact: true }).click();
   await expect(admin.getByText("Share thread", { exact: true })).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/share-768-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "share-768-dark");
   await admin.keyboard.press("Escape");
 
   await admin.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
   await admin.goto(`/p/${project.id}`);
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/project-768-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "project-768-light");
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
   await admin.getByLabel("Show right drawer").click();
   const lightDrawer = admin.getByRole("complementary", { name: "Right drawer" });
   await lightDrawer.getByRole("tab", { name: "Changes" }).click();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/changes-768-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "changes-768-light");
   await admin.keyboard.press("Shift+Escape");
   await admin.goto("/inbox");
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/inbox-768-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "inbox-768-light");
 
   await admin.setViewportSize({ width: 1440, height: 900 });
   await admin.evaluate(() => localStorage.setItem("threadbase.theme", "dark"));
   await admin.goto(`/p/${project.id}/compare`);
   await expect(admin.getByRole("heading", { name: "Compare threads" })).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/compare-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "compare-1440-dark");
   await admin.goto(`/p/${project.id}/t/${thread.id}/subagents/compare`);
   await expect(admin.getByRole("heading", { name: "Compare subagents" })).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/subagent-compare-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "subagent-compare-1440-dark");
 
   // 768/light coverage for the comparison and share surfaces.
   await admin.setViewportSize({ width: 768, height: 900 });
   await admin.evaluate(() => localStorage.setItem("threadbase.theme", "light"));
   await admin.goto(`/p/${project.id}/compare`);
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/compare-768-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "compare-768-light");
   await admin.goto(`/p/${project.id}/t/${thread.id}/subagents/compare`);
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/subagent-compare-768-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "subagent-compare-768-light");
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
   await admin.getByRole("button", { name: "Share", exact: true }).click();
   await expect(admin.getByText("Share thread", { exact: true })).toBeVisible();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/share-768-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "share-768-light");
   await admin.keyboard.press("Escape");
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/composer-768-light.png",
-    fullPage: true,
-  });
+  await shot(admin, "composer-768-light");
   await admin.evaluate(() => localStorage.setItem("threadbase.theme", "dark"));
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
   const compactSubagent = admin
@@ -667,25 +567,17 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
     .getByText("Test investigator", { exact: true })
     .first();
   await compactSubagent.scrollIntoViewIfNeeded();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/subagents-768-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "subagents-768-dark");
   await admin.goto("/inbox");
   await admin.reload();
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/inbox-768-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "inbox-768-dark");
 
   // Live reconnect state and a real divergence caused by rewriting the project branch.
   await admin.setViewportSize({ width: 1440, height: 900 });
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
 
   const offlineContext = await browser.newContext({
-    storageState: storage,
+    extraHTTPHeaders: identityHeaders(ADMIN),
     viewport: { width: 1440, height: 900 },
   });
   const offline = await offlineContext.newPage();
@@ -693,11 +585,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(offline.getByPlaceholder("Message")).toBeVisible();
   await offlineContext.setOffline(true);
   await expect(offline.getByText("Reconnecting…").first()).toBeVisible({ timeout: 10_000 });
-  await offline.waitForTimeout(300);
-  await offline.screenshot({
-    path: "test-results/screenshots/reconnecting-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(offline, "reconnecting-1440-dark");
   await offlineContext.setOffline(false);
   await expect(offline.getByText("Reconnecting…").first()).toBeHidden({ timeout: 15_000 });
   await expect(offline.getByText("Hello", { exact: false }).first()).toBeVisible({
@@ -717,11 +605,7 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   await expect(
     admin.getByText("This thread has diverged from the project branch."),
   ).toBeVisible({ timeout: 10_000 });
-  await admin.waitForTimeout(300);
-  await admin.screenshot({
-    path: "test-results/screenshots/diverged-1440-dark.png",
-    fullPage: true,
-  });
+  await shot(admin, "diverged-1440-dark");
 
   // Archive is a real thread action, not only a code path.
   await admin.goto(`/p/${project.id}/t/${thread.id}`);
@@ -733,12 +617,13 @@ test("setup, create thread, stream, approve, replay and read-only viewer", async
   });
   const login = await loginContext.newPage();
   await login.goto("/login");
-  await expect(login.getByLabel("Username")).toBeVisible();
-  await login.waitForTimeout(300);
-  await login.screenshot({
-    path: "test-results/screenshots/login-1440-dark.png",
-    fullPage: true,
-  });
+  await expect(
+    login.getByRole("heading", { name: "Sign in with Tailscale" }),
+  ).toBeVisible();
+  await expect(
+    login.getByText("Open this workspace through Tailscale"),
+  ).toBeVisible();
+  await shot(login, "login-1440-dark");
   await loginContext.close();
 
   expect(adminErrors, adminErrors.join("\n")).toEqual([]);

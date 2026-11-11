@@ -1,17 +1,14 @@
+import { useMediaQuery as useMantineMediaQuery } from "@mantine/hooks";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
-function subscribeToMediaQuery(query: string, callback: () => void): () => void {
-  const mediaQuery = window.matchMedia(query);
-  mediaQuery.addEventListener("change", callback);
-  return () => mediaQuery.removeEventListener("change", callback);
-}
-
+/**
+ * Mantine's media-query hook, but with the initial value read synchronously so
+ * the shell does not flash the wrong layout on first paint.
+ */
 export function useMediaQuery(query: string): boolean {
-  return useSyncExternalStore(
-    (callback) => subscribeToMediaQuery(query, callback),
-    () => window.matchMedia(query).matches,
-    () => false,
-  );
+  return useMantineMediaQuery(query, false, {
+    getInitialValueInEffect: false,
+  });
 }
 
 function subscribeToOnlineStatus(callback: () => void): () => void {

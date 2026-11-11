@@ -1,217 +1,227 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "@mantine/core/styles.css";
+@import "@mantine/notifications/styles.css";
+@import "@mantine/spotlight/styles.css";
 @import "@fontsource-variable/geist";
 
-@custom-variant dark (&:is([data-theme="dark"] *));
+/* ───────────────────────────────────────────────────────────────
+ * Threadbase Global Styles
+ * ───────────────────────────────────────────────────────────────
+ *
+ * Design tokens live in `lib/design/tokens.ts` and are consumed
+ * by the Mantine theme in `main.tsx`.  This file handles:
+ *   – Global resets and base styles
+ *   – Animation keyframes
+ *   – Utility classes for one-off layout needs
+ *   – Scrollbar & selection theming
+ */
 
-@theme inline {
-  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-  --font-heading: var(--font-sans);
+/* ─── Base ────────────────────────────────────────────────────── */
 
-  /* App surfaces */
-  --color-canvas: var(--canvas);
-  --color-panel: var(--panel);
-  --color-surface: var(--surface);
-  --color-raised: var(--raised);
-  --color-hover: var(--hover);
-  --color-active: var(--active);
-  --color-border: var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-fg: var(--foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-faint: var(--faint);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-destructive: var(--destructive);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-  --color-danger: var(--danger);
-  --color-info: var(--info);
-  --color-add: var(--add);
-  --color-del: var(--del);
-
-  /* shadcn semantic tokens */
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
-
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+html,
+body,
+#root {
+  height: 100%;
 }
 
-:root {
-  --font-code: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-
-  --canvas: #09090b;
-  --panel: #0c0c0e;
-  --surface: #111113;
-  --raised: #18181b;
-  --hover: #1c1c20;
-  --active: #27272a;
-  --border: #232327;
-  --border-strong: #3f3f46;
-  --foreground: #fafafa;
-  --muted: #18181b;
-  --muted-foreground: #a1a1aa;
-  --faint: #71717a;
-  --primary: #fafafa;
-  --primary-foreground: #09090b;
-  --secondary: #18181b;
-  --secondary-foreground: #fafafa;
-  --accent: #1c1c20;
-  --accent-foreground: #fafafa;
-  --destructive: #ef4444;
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --danger: #f87171;
-  --info: #60a5fa;
-  --add: rgb(74 222 128 / 0.12);
-  --del: rgb(248 113 113 / 0.12);
-
-  --background: var(--canvas);
-  --card: var(--panel);
-  --card-foreground: var(--foreground);
-  --popover: var(--panel);
-  --popover-foreground: var(--foreground);
-  --input: var(--border);
-  --ring: #d4d4d8;
-  --sidebar: var(--panel);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--hover);
-  --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
-  --radius: 0.5rem;
-
-  color-scheme: dark;
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-:root[data-theme="light"] {
-  --canvas: #fafafa;
-  --panel: #ffffff;
-  --surface: #ffffff;
-  --raised: #f4f4f5;
-  --hover: #f4f4f5;
-  --active: #e4e4e7;
-  --border: #e4e4e7;
-  --border-strong: #d4d4d8;
-  --foreground: #18181b;
-  --muted: #f4f4f5;
-  --muted-foreground: #52525b;
-  --faint: #71717a;
-  --primary: #18181b;
-  --primary-foreground: #fafafa;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #18181b;
-  --accent: #f4f4f5;
-  --accent-foreground: #18181b;
-  --destructive: #dc2626;
-  --success: #16a34a;
-  --warning: #d97706;
-  --danger: #dc2626;
-  --info: #2563eb;
-  --add: rgb(22 163 74 / 0.1);
-  --del: rgb(220 38 38 / 0.1);
-  --ring: #18181b;
-
-  color-scheme: light;
+/* Router <Link> elements are plain anchors; without this they inherit
+   the browser's default link colour (blue in light, lavender in dark)
+   and turn list rows into links.  Mantine's <Anchor> keeps its own
+   class and is unaffected. */
+a {
+  color: inherit;
+  text-decoration: none;
 }
 
-@layer base {
-  * {
-    border-color: var(--border);
-    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
-  }
+/* ─── Selection ───────────────────────────────────────────────── */
 
-  html,
-  body,
-  #root {
-    height: 100%;
-  }
+::selection {
+  background: var(--mantine-color-primary-light-hover);
+  color: var(--mantine-color-text);
+}
 
-  body {
-    margin: 0;
-    background: var(--canvas);
-    color: var(--foreground);
-    font-family: var(--font-sans);
-    font-size: 13px;
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
+/* ─── Scrollbars ──────────────────────────────────────────────── */
 
-  code,
-  pre,
-  kbd {
-    font-family: var(--font-mono);
-  }
+/* WebKit (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
 
-  ::selection {
-    background: color-mix(in oklab, var(--primary) 24%, transparent);
-  }
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 
-  :focus-visible {
-    outline: 1.5px solid var(--ring);
-    outline-offset: 2px;
-  }
+::-webkit-scrollbar-thumb {
+  background: var(--mantine-color-default-border);
+  border-radius: 3px;
+}
 
-  button,
-  input,
-  textarea,
-  select {
-    font: inherit;
-    color: inherit;
-  }
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mantine-color-dimmed);
+}
 
-  ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--mantine-color-default-border) transparent;
+}
 
-  ::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border: 3px solid transparent;
-    background-clip: content-box;
-    border-radius: 999px;
-  }
+/* ─── Animations ──────────────────────────────────────────────── */
 
-  ::-webkit-scrollbar-track {
-    background: transparent;
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
-@utility drag-region {
-  -webkit-app-region: drag;
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-@utility no-drag {
-  -webkit-app-region: no-drag;
+@keyframes fade-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes sidebar-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── Utility classes ───────────────────────────────────────────
+ *  Use these for one-off layout needs instead of inline styles.
+ */
+
+.tb-animate-fade-in {
+  animation: fade-in 150ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.tb-animate-fade-in-up {
+  animation: fade-in-up 200ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.tb-animate-scale-in {
+  animation: scale-in 300ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.tb-animate-slide-in-right {
+  animation: slide-in-right 200ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* Focus ring helper — applied to custom interactive elements that
+   don't use Mantine's built-in focus styles. */
+.tb-focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mantine-color-primary-light-hover);
+  border-radius: 6px;
+}
+
+/* Transition helper for opacity/colour changes. */
+.tb-transition {
+  transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Prevent text selection on UI chrome. */
+.tb-no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Truncate with ellipsis. */
+.tb-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Hide content visually but keep it accessible to screen readers. */
+.tb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Mono font stack for code / paths / diffs. */
+.tb-mono {
+  font-family: var(--mantine-font-family-monospace);
+  font-variant-numeric: tabular-nums;
 }

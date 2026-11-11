@@ -3,6 +3,6 @@
 export type HealthResponse = {
   ok: boolean;
   version: string;
-  needsSetup: boolean;
+  needsAdmin: boolean;
   bind: string;
 };

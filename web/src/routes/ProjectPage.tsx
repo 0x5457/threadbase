@@ -1,37 +1,47 @@
 import {
+  Archive,
   ChevronDown,
   ChevronLeft,
+  Columns2,
   FolderGit2,
   GitBranch,
-  MessageSquare,
+  MessageSquareText,
   Pin,
   Plus,
-  ShieldCheck,
 } from "lucide-react";
+import {
+  Anchor,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Menu,
+  ScrollArea,
+  Select,
+  Skeleton,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import { useState } from "react";
 import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { useProject, useProjectOverview, useProjectThreads } from "@/api/queries";
-import { Archive, ArrowLeftRight } from "lucide-react";
+import {
+  useProject,
+  useProjectOverview,
+  useProjectThreads,
+} from "@/api/queries";
 import type { ThreadDto } from "@/api/types/ThreadDto";
 import { ThreadStatusBadge } from "@/components/thread/ThreadStatusBadge";
 import {
   AvatarStack,
-  Badge,
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
   EmptyState,
   ErrorState,
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Skeleton,
-} from "@/components/ui";
+  PageContainer,
+} from "@/components/app";
+import { DataBadge, ListRow } from "@/components/ui";
 import { formatRelativeTime } from "@/lib/format";
+import { layout, fontSizes } from "@/lib/design";
 import type {
   NewThreadOptions,
   WorkspaceOutletContext,
@@ -41,6 +51,34 @@ function threadPath(thread: ThreadDto): string {
   return `/p/${encodeURIComponent(thread.projectId)}/t/${encodeURIComponent(
     thread.id,
   )}`;
+}
+
+const agentOptions = [
+  { value: "default", label: "Default" },
+  { value: "codex", label: "Codex" },
+  { value: "claude", label: "Claude Code" },
+  { value: "opencode", label: "opencode" },
+  { value: "pi", label: "pi" },
+];
+
+/** Single source for both the per-row and the summary diff readout. */
+function DiffStat({
+  additions,
+  deletions,
+}: {
+  additions: number;
+  deletions: number;
+}) {
+  return (
+    <Group gap={4} wrap="nowrap" className="tb-mono" fz={fontSizes.xs}>
+      <Text size="xs" c="green">
+        +{additions}
+      </Text>
+      <Text size="xs" c="red">
+        −{deletions}
+      </Text>
+    </Group>
+  );
 }
 
 function ThreadRow({
@@ -58,45 +96,56 @@ function ThreadRow({
   }));
 
   return (
-    <Link
-      to={threadPath(thread)}
-      className="flex items-center gap-3 border-b border-border/40 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-accent/40"
-    >
-      <span className="flex size-7 shrink-0 items-center justify-center text-faint">
-        <MessageSquare className="size-3.5" aria-hidden />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] font-medium text-fg">
-            {thread.title}
-          </span>
-          {thread.pinned ? (
-            <Pin className="size-3 shrink-0 text-faint" aria-label="Pinned" />
-          ) : null}
+    <ListRow
+      href={threadPath(thread)}
+      icon={<MessageSquareText size={layout.icon.sm} aria-hidden />}
+      meta={
+        <Group gap="sm" visibleFrom="sm" wrap="nowrap">
           <ThreadStatusBadge status={thread.status} />
-        </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-faint">
-          <span>{thread.agent}</span>
-          {subthreadCount > 0 ? (
-            <span>{subthreadCount} subthreads</span>
+          {thread.pendingApprovals > 0 ? (
+            <DataBadge tone="warning">{thread.pendingApprovals}</DataBadge>
           ) : null}
-          <span>{formatRelativeTime(thread.updatedAt)}</span>
-        </div>
-      </div>
-      <div className="hidden shrink-0 items-center gap-2.5 sm:flex">
-        {thread.pendingApprovals > 0 ? (
-          <Badge variant="warning" size="sm">
-            <ShieldCheck className="size-2.5" aria-hidden />
-            {thread.pendingApprovals}
-          </Badge>
-        ) : null}
-        <span className="font-mono text-[11px] tabular-nums">
-          <span className="text-success">+{thread.changes.additions}</span>{" "}
-          <span className="text-danger">−{thread.changes.deletions}</span>
-        </span>
-        {people.length > 0 ? <AvatarStack people={people} max={3} size="xs" /> : null}
-      </div>
-    </Link>
+          <DiffStat
+            additions={thread.changes.additions}
+            deletions={thread.changes.deletions}
+          />
+          {people.length > 0 ? (
+            <AvatarStack people={people} max={3} size="xs" />
+          ) : null}
+        </Group>
+      }
+    >
+      <Box style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <Group gap={6} wrap="nowrap">
+          <Text size="sm" fw={500} truncate="end" style={{ flex: 1 }}>
+            {thread.title}
+          </Text>
+          {thread.pinned ? (
+            <Pin size={layout.icon.xs} aria-label="Pinned" style={{ flexShrink: 0 }} />
+          ) : null}
+        </Group>
+        <Group gap="sm" wrap="nowrap">
+          <Text size="xs" c="dimmed">
+            {thread.agent}
+          </Text>
+          {subthreadCount > 0 ? (
+            <Text size="xs" c="dimmed">
+              {subthreadCount} subthreads
+            </Text>
+          ) : null}
+          <Text size="xs" c="dimmed">
+            {formatRelativeTime(thread.updatedAt)}
+          </Text>
+          <Group gap="xs" wrap="nowrap" hiddenFrom="sm">
+            <ThreadStatusBadge status={thread.status} />
+            <DiffStat
+              additions={thread.changes.additions}
+              deletions={thread.changes.deletions}
+            />
+          </Group>
+        </Group>
+      </Box>
+    </ListRow>
   );
 }
 
@@ -115,46 +164,45 @@ export function ProjectPage() {
 
   if (!projectId) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
+      <Stack align="center" justify="center" h="100%" p="lg">
         <ErrorState
           title="Project not found"
           description="The URL does not contain a project id."
         />
-      </div>
+      </Stack>
     );
   }
 
   if (project.isLoading) {
     return (
-      <div className="mx-auto w-full max-w-4xl space-y-4 px-6 py-7">
-        <Skeleton className="h-6 w-48" />
-        <Skeleton className="h-4 w-72" />
-        <Skeleton className="h-24 w-full rounded-xl" />
-        <Skeleton className="h-40 w-full rounded-xl" />
-      </div>
+      <PageContainer>
+        <Stack gap="sm">
+          <Skeleton h={24} w={192} />
+          <Skeleton h={16} w={288} />
+          <Skeleton h={96} />
+          <Skeleton h={160} />
+        </Stack>
+      </PageContainer>
     );
   }
 
   if (project.isError || !project.data) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="w-full max-w-md rounded-xl border border-border bg-panel">
-          <ErrorState
-            error={project.error}
-            title="Cannot open project"
-            onRetry={() => void project.refetch()}
-          />
-          <div className="border-t border-border px-4 py-3 text-center">
-            <Link
-              to="/"
-              className="inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:text-fg"
-            >
-              <ChevronLeft className="size-3" aria-hidden />
-              Back to projects
-            </Link>
-          </div>
-        </div>
-      </div>
+      <Stack align="center" justify="center" h="100%" p="lg">
+        <ErrorState
+          error={project.error}
+          title="Cannot open project"
+          onRetry={() => void project.refetch()}
+          action={
+            <Anchor component={Link} to="/" size="sm" c="dimmed">
+              <Group gap={4}>
+                <ChevronLeft size={layout.icon.xs} aria-hidden />
+                Back to projects
+              </Group>
+            </Anchor>
+          }
+        />
+      </Stack>
     );
   }
 
@@ -193,125 +241,117 @@ export function ProjectPage() {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <div className="mx-auto w-full max-w-4xl px-6 py-8">
-        <Link
-          to="/"
-          className="mb-4 inline-flex items-center gap-1 text-[13px] text-faint transition-colors hover:text-fg"
-        >
-          <ChevronLeft className="size-3" aria-hidden />
-          Projects
-        </Link>
+    <ScrollArea h="100%">
+      <PageContainer>
+        <Anchor component={Link} to="/" size="sm" c="dimmed">
+          <Group gap={4}>
+            <ChevronLeft size={layout.icon.xs} aria-hidden />
+            Projects
+          </Group>
+        </Anchor>
 
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="flex size-10 shrink-0 items-center justify-center text-muted-foreground">
-              <FolderGit2 className="size-6" aria-hidden />
-            </span>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-[26px] font-semibold tracking-[-0.03em] text-foreground">
-                  {data.name}
-                </h1>
+        <Group
+          justify="space-between"
+          align="flex-start"
+          wrap="wrap"
+          gap="md"
+          mt="sm"
+        >
+          <Group align="flex-start" gap="xs" style={{ minWidth: 0 }}>
+            <FolderGit2
+              size={layout.icon.md}
+              aria-hidden
+              style={{ flexShrink: 0, marginTop: 3 }}
+            />
+            <Stack gap={2} style={{ minWidth: 0 }}>
+              <Group gap="xs" wrap="wrap">
+                <Title order={1}>{data.name}</Title>
                 {!data.available ? (
-                  <Badge variant="danger" size="sm">
+                  <Badge variant="light" color="red" size="xs">
                     path unavailable
                   </Badge>
                 ) : null}
-              </div>
-              <p className="truncate font-mono text-[11px] text-faint">
+              </Group>
+              <Text size="xs" c="dimmed" className="tb-mono" truncate="end">
                 {data.path}
-              </p>
-              <p className="mt-1 flex items-center gap-1 text-[11.5px] text-muted-foreground">
-                <GitBranch className="size-2.5" aria-hidden />
-                {data.defaultBranch}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
+              </Text>
+              <Group gap={4}>
+                <GitBranch size={layout.icon.xs} aria-hidden />
+                <Text size="xs" c="dimmed">
+                  {data.defaultBranch}
+                </Text>
+              </Group>
+            </Stack>
+          </Group>
+          <Group gap="xs" wrap="wrap" style={{ flexShrink: 0 }}>
             <Button
-              variant="secondary"
-              size="md"
+              variant="default"
+              leftSection={<Columns2 size={layout.icon.sm} aria-hidden />}
               onClick={() =>
                 navigate(`/p/${encodeURIComponent(projectId)}/compare`)
               }
             >
-              <ArrowLeftRight aria-hidden />
               Compare
             </Button>
             <Button
-              variant="secondary"
-              size="md"
+              variant="default"
+              leftSection={<Archive size={layout.icon.sm} aria-hidden />}
               onClick={() => setShowArchived((value) => !value)}
             >
-              <Archive aria-hidden />
               {showArchived ? "Hide archived" : "Archived"}
             </Button>
-            <div className="flex items-center">
+            <Button.Group>
               <Button
-                variant="primary"
-                size="md"
-                className="rounded-r-none"
+                variant="filled"
+                leftSection={<Plus size={layout.icon.sm} aria-hidden />}
                 onClick={() => openNewThread(data.id)}
               >
-                <Plus aria-hidden />
                 New thread
               </Button>
-              <DropdownMenu open={newThreadOpen} onOpenChange={setNewThreadOpen}>
-                <DropdownMenuTrigger asChild>
+              <Menu
+                opened={newThreadOpen}
+                onChange={setNewThreadOpen}
+                position="bottom-end"
+                // The dropdown hosts a form (agent/model/branch). A nested
+                // Select portals its options outside this dropdown, which
+                // Mantine treats as an outside click and would unmount the
+                // form mid-edit.
+                closeOnClickOutside={false}
+                closeOnItemClick={false}
+              >
+                <Menu.Target>
                   <Button
-                    variant="primary"
-                    size="md"
-                    className="rounded-l-none border-l border-white/20 px-2"
+                    variant="filled"
                     aria-label="New thread options"
+                    px="xs"
                   >
-                    <ChevronDown className="size-3.5" aria-hidden />
+                    <ChevronDown size={layout.icon.sm} aria-hidden />
                   </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-64 p-2">
-                  <div className="space-y-2">
-                    <label className="block text-[13px] text-muted-foreground">
-                      Agent
-                      <Select
-                        value={newAgent || "default"}
-                        onValueChange={(value) =>
-                          setNewAgent(value === "default" ? "" : value)
-                        }
-                      >
-                        <SelectTrigger className="mt-1 h-8 w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Default</SelectItem>
-                          <SelectItem value="codex">Codex</SelectItem>
-                          <SelectItem value="claude">Claude Code</SelectItem>
-                          <SelectItem value="opencode">opencode</SelectItem>
-                          <SelectItem value="pi">pi</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </label>
-                    <label className="block text-[13px] text-muted-foreground">
-                      Model
-                      <Input
-                        value={newModel}
-                        onChange={(event) => setNewModel(event.target.value)}
-                        placeholder="Agent default"
-                        className="mt-1 h-7 text-[13px]"
-                      />
-                    </label>
-                    <label className="block text-[13px] text-muted-foreground">
-                      Base branch
-                      <Input
-                        value={newBranch}
-                        onChange={(event) => setNewBranch(event.target.value)}
-                        placeholder={data.defaultBranch}
-                        className="mt-1 h-7 font-mono text-[13px]"
-                      />
-                    </label>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Stack gap="sm" p="xs" w={256}>
+                    <Select
+                      label="Agent"
+                      value={newAgent || "default"}
+                      onChange={(value) =>
+                        setNewAgent(value === "default" ? "" : (value ?? ""))
+                      }
+                      data={agentOptions}
+                    />
+                    <TextInput
+                      label="Model"
+                      value={newModel}
+                      onChange={(event) => setNewModel(event.target.value)}
+                      placeholder="Agent default"
+                    />
+                    <TextInput
+                      label="Base branch"
+                      value={newBranch}
+                      onChange={(event) => setNewBranch(event.target.value)}
+                      placeholder={data.defaultBranch}
+                      className="tb-mono"
+                    />
                     <Button
-                      className="w-full"
-                      size="sm"
-                      variant="primary"
                       onClick={() => {
                         const options: NewThreadOptions = {
                           agent: newAgent || null,
@@ -324,75 +364,66 @@ export function ProjectPage() {
                     >
                       Create
                     </Button>
-                  </div>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </div>
-        </div>
+                  </Stack>
+                </Menu.Dropdown>
+              </Menu>
+            </Button.Group>
+          </Group>
+        </Group>
 
-        <div className="mt-6 flex flex-wrap items-center gap-x-3 text-[11.5px] text-faint">
-          <span>{threadList.length} threads</span>
-          {active > 0 ? <span>{active} running</span> : null}
-          {waiting > 0 ? <span className="text-warning">{waiting} waiting</span> : null}
-          <span className="font-mono">
-            <span className="text-success">+{additions}</span>{" "}
-            <span className="text-danger">−{deletions}</span>
-          </span>
-        </div>
+        <Group gap="md" mt="lg" wrap="wrap">
+          <DataBadge tone="neutral">{threadList.length} threads</DataBadge>
+          {active > 0 ? (
+            <DataBadge tone="info" dot>
+              {active} running
+            </DataBadge>
+          ) : null}
+          {waiting > 0 ? (
+            <DataBadge tone="warning" dot>
+              {waiting} waiting
+            </DataBadge>
+          ) : null}
+          {additions > 0 || deletions > 0 ? (
+            <DiffStat additions={additions} deletions={deletions} />
+          ) : null}
+        </Group>
 
         {overview.data?.overview.recentActivity[0] ? (
-          <p className="mt-2 truncate text-[11.5px] text-faint">
+          <Text size="xs" c="dimmed" mt="xs" truncate="end">
             Last: {overview.data.overview.recentActivity[0].actor.displayName}{" "}
-            {overview.data.overview.recentActivity[0].summary}
-            <span className="mx-1.5">·</span>
-            {formatRelativeTime(
-              overview.data.overview.recentActivity[0].ts,
-            )}
-          </p>
+            {overview.data.overview.recentActivity[0].summary} ·{" "}
+            {formatRelativeTime(overview.data.overview.recentActivity[0].ts)}
+          </Text>
         ) : null}
 
-        <div className="mt-3">
+        <Box mt="md">
           {threads.isLoading ? (
-            <div className="space-y-1 py-1">
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-3/4" />
-            </div>
+            <Stack gap="xs">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <Skeleton key={index} h={layout.rowHeight} />
+              ))}
+            </Stack>
           ) : threads.isError ? (
             <ErrorState
               error={threads.error}
               title="Cannot load threads"
               onRetry={() => void threads.refetch()}
-              compact
             />
           ) : rootThreads.length === 0 ? (
-            <EmptyState
-              icon={MessageSquare}
-              title="No threads"
-              compact
-              action={
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => openNewThread(data.id)}
-                >
-                  <Plus aria-hidden />
-                  New thread
-                </Button>
-              }
-            />
+            <EmptyState icon={MessageSquareText} title="No threads" compact />
           ) : (
-            rootThreads.map((thread) => (
-              <ThreadRow
-                key={thread.id}
-                thread={thread}
-                subthreadCount={childCount.get(thread.id) ?? 0}
-              />
-            ))
+            <Stack gap={0}>
+              {rootThreads.map((thread) => (
+                <ThreadRow
+                  key={thread.id}
+                  thread={thread}
+                  subthreadCount={childCount.get(thread.id) ?? 0}
+                />
+              ))}
+            </Stack>
           )}
-        </div>
-      </div>
-    </div>
+        </Box>
+      </PageContainer>
+    </ScrollArea>
   );
 }

@@ -1,15 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { toast } from "sonner";
+import { notifications } from "@mantine/notifications";
+import { Button, Group, Modal, Text, Textarea } from "@mantine/core";
 import { createComment } from "@/api/endpoints";
 import { queryKeys } from "@/api/queries";
 import type { CommentAnchor } from "@/api/types/CommentAnchor";
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  Textarea,
-} from "@/components/ui";
 
 export function CommentDialog({
   open,
@@ -44,49 +39,53 @@ export function CommentDialog({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.threadBundle(threadId),
       });
-      toast.success("Comment saved");
+      notifications.show({ message: "Comment saved", color: "green" });
     },
-    onError: (error) => toast.error(String(error)),
+    onError: (error) =>
+      notifications.show({ message: String(error), color: "red" }),
   });
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        title="Add comment"
-        description="Comments are attached to this anchor and delivered with the next message, or sent immediately."
-        footer={
-          <>
-            <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!body.trim()}
-              loading={create.isPending}
-              onClick={() => create.mutate(false)}
-            >
-              Save pending
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={!body.trim()}
-              loading={create.isPending}
-              onClick={() => create.mutate(true)}
-            >
-              Send now
-            </Button>
-          </>
-        }
-      >
-        <Textarea
-          autoFocus
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
-          placeholder="What should the agent know about this?"
-          rows={4}
-        />
-      </DialogContent>
-    </Dialog>
+    <Modal
+      opened={open}
+      onClose={() => onOpenChange(false)}
+      title="Add comment"
+      size="md"
+    >
+      <Text size="sm" c="dimmed" mb="sm">
+        Comments are attached to this anchor and delivered with the next
+        message, or sent immediately.
+      </Text>
+      <Textarea
+        autoFocus
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        placeholder="What should the agent know about this?"
+        rows={4}
+      />
+      <Group justify="flex-end" gap="xs" mt="sm">
+        <Button
+          variant="subtle"
+          color="dark"
+          onClick={() => onOpenChange(false)}
+        >
+          Cancel
+        </Button>
+        <Button
+          variant="outline"
+          disabled={!body.trim()}
+          loading={create.isPending}
+          onClick={() => create.mutate(false)}
+        >
+          Save pending
+        </Button>
+        <Button
+          disabled={!body.trim()}
+          loading={create.isPending}
+          onClick={() => create.mutate(true)}
+        >
+          Send now
+        </Button>
+      </Group>
+    </Modal>
   );
 }

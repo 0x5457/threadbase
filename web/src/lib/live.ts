@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { toast } from "sonner";
+import { notifications as appNotifications } from "@mantine/notifications";
 import { create } from "zustand";
 import { queryKeys, useMe, useWorkspaceState } from "@/api/queries";
 import type { EventEnvelope } from "@/api/types/EventEnvelope";
@@ -12,6 +12,10 @@ import type { ThreadStatus } from "@/api/types/ThreadStatus";
 export const useLiveStore = create<{ connected: boolean }>(() => ({
   connected: false,
 }));
+
+// Highest ThreadState revision applied per thread. Server broadcasts are
+// serialized per thread, but REST replays can still interleave with WS pushes.
+const lastStateRevision = new Map<string, bigint>();
 
 function websocketUrl(path: string): string {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
@@ -183,6 +187,12 @@ export function useThreadLiveEvents(threadId: string | undefined) {
             if (parsed.state.threadId !== threadId) {
               break;
             }
+            const revision = parsed.state.revision;
+            const last = lastStateRevision.get(threadId);
+            if (last !== undefined && revision <= last) {
+              break;
+            }
+            lastStateRevision.set(threadId, revision);
             queryClient.setQueryData<ThreadBundleResponse>(
               queryKeys.threadBundle(threadId),
               (current) =>
@@ -223,7 +233,7 @@ export function useThreadLiveEvents(threadId: string | undefined) {
           }
           case "notice": {
             if (parsed.level === "error") {
-              toast.error(parsed.message);
+              appNotifications.show({ color: "red", message: parsed.message });
             }
             break;
           }

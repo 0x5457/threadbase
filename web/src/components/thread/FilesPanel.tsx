@@ -1,17 +1,21 @@
 import { ChevronLeft, FileCode2, Folder, FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Flex,
+  Skeleton,
+  Stack,
+  Text,
+  Textarea,
+  UnstyledButton,
+} from "@mantine/core";
 import { createComment } from "@/api/endpoints";
 import { queryKeys, useFile, useFiles } from "@/api/queries";
-import {
-  Button,
-  EmptyState,
-  ErrorState,
-  Skeleton,
-  Textarea,
-} from "@/components/ui";
+import { EmptyState, ErrorState } from "@/components/app";
 import { usePresenceStore } from "@/lib/presence";
-import { cn } from "@/lib/utils";
 
 export function FilesPanel({ threadId }: { threadId: string }) {
   const [path, setPath] = useState("");
@@ -57,24 +61,33 @@ export function FilesPanel({ threadId }: { threadId: string }) {
 
   if (selected) {
     return (
-      <div className="flex min-h-0 flex-col">
-        <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-2">
-          <button
-            type="button"
-            className="flex size-6 items-center justify-center rounded text-faint hover:bg-hover hover:text-fg"
-            onClick={() => setSelected(null)}
+      <Stack gap={0} style={{ minHeight: 0 }}>
+        <Flex
+          align="center"
+          gap="xs"
+          h={32}
+          px="xs"
+          style={{
+            borderBottom: "1px solid var(--mantine-color-default-border)",
+          }}
+        >
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
             aria-label="Back to file list"
+            onClick={() => setSelected(null)}
           >
-            <ChevronLeft className="size-3.5" aria-hidden />
-          </button>
-          <span className="truncate font-mono text-[13px] text-faint">
+            <ChevronLeft size={14} aria-hidden />
+          </ActionIcon>
+          <Text size="sm" ff="monospace" c="dimmed" truncate="end">
             {selected}
-          </span>
-        </div>
+          </Text>
+        </Flex>
         {file.isLoading ? (
-          <div className="p-3">
-            <Skeleton className="h-40 w-full" />
-          </div>
+          <Box p="sm">
+            <Skeleton height={160} />
+          </Box>
         ) : file.isError ? (
           <ErrorState
             error={file.error}
@@ -83,93 +96,142 @@ export function FilesPanel({ threadId }: { threadId: string }) {
             compact
           />
         ) : (
-          <div className="min-h-0 flex-1 overflow-auto">
-            <div className="font-mono text-[13px] leading-relaxed">
+          <Box style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            <Stack gap={0} style={{ fontFamily: "var(--mantine-font-family-monospace)", fontSize: 13, lineHeight: 1.6 }}>
               {(file.data?.file.content ?? "").split("\n").map((text, index) => {
                 const number = index + 1;
                 return (
-                  <button
+                  <UnstyledButton
                     type="button"
                     key={number}
                     onClick={() => setLine(number)}
-                    className={`grid w-full grid-cols-[2.5rem_1fr] gap-2 px-2 py-px text-left hover:bg-hover ${
-                      line === number ? "bg-hover" : ""
-                    }`}
+                    style={{
+                      display: "grid",
+                      width: "100%",
+                      gridTemplateColumns: "2.5rem 1fr",
+                      gap: "0.5rem",
+                      padding: "0 0.5rem",
+                      textAlign: "left",
+                      cursor: "pointer",
+                      background:
+                        line === number
+                          ? "var(--mantine-color-default-hover)"
+                          : "transparent",
+                    }}
                   >
-                    <span className="text-right text-faint/70">{number}</span>
-                    <span className="whitespace-pre-wrap break-all text-fg">
+                    <span
+                      style={{
+                        textAlign: "right",
+                        color: "var(--mantine-color-dimmed)",
+                      }}
+                    >
+                      {number}
+                    </span>
+                    <span
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "break-word",
+                      }}
+                    >
                       {text || " "}
                     </span>
-                  </button>
+                  </UnstyledButton>
                 );
               })}
-            </div>
+            </Stack>
             {line ? (
-              <div className="sticky bottom-0 space-y-1 border-t border-border bg-panel p-2">
-                <p className="text-[9.5px] text-info">
+              <Box
+                p="xs"
+                style={{
+                  position: "sticky",
+                  bottom: 0,
+                  borderTop: "1px solid var(--mantine-color-default-border)",
+                  background: "var(--mantine-color-default)",
+                }}
+              >
+                <Text fz={11} c="blue.6" mb={4}>
                   Comment on {selected}:{line}
-                </p>
+                </Text>
                 <Textarea
                   value={comment}
                   onChange={(event) => setComment(event.target.value)}
                   placeholder="Leave a file comment…"
                   rows={2}
-                  className="text-[13px]"
                 />
-                <div className="flex justify-end gap-1">
-                  <Button size="sm" variant="ghost" onClick={() => setLine(null)}>
+                <Flex justify="flex-end" gap="xs" mt="xs">
+                  <Button
+                    variant="subtle"
+                    color="dark"
+                    size="xs"
+                    onClick={() => setLine(null)}
+                  >
                     Cancel
                   </Button>
                   <Button
-                    size="sm"
-                    variant="primary"
+                    size="xs"
                     disabled={!comment.trim()}
                     loading={addComment.isPending}
                     onClick={() => addComment.mutate()}
                   >
                     Add pending comment
                   </Button>
-                </div>
-              </div>
+                </Flex>
+              </Box>
             ) : null}
-          </div>
+          </Box>
         )}
-      </div>
+      </Stack>
     );
   }
 
   return (
-    <div className="flex min-h-0 flex-col">
-      <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-1 border-b border-border px-2 py-1">
-        <button
-          type="button"
-          className="text-[13px] text-primary hover:underline"
+    <Stack gap={0} style={{ minHeight: 0 }}>
+      <Flex
+        align="center"
+        gap={4}
+        px="xs"
+        py="xs"
+        style={{
+          minHeight: 32,
+          borderBottom: "1px solid var(--mantine-color-default-border)",
+        }}
+        wrap="wrap"
+      >
+        <Button
+          variant="subtle"
+          color="blue"
+          size="compact-xs"
+          px={0}
           onClick={() => setPath("")}
         >
           worktree
-        </button>
+        </Button>
         {segments.map((segment, index) => {
           const next = segments.slice(0, index + 1).join("/");
           return (
-            <span key={next} className="flex items-center gap-1">
-              <span className="text-[13px] text-faint">/</span>
-              <button
-                type="button"
-                className="text-[13px] text-muted-foreground hover:text-fg"
+            <Flex key={next} align="center" gap={4}>
+              <Text size="xs" c="dimmed">
+                /
+              </Text>
+              <Button
+                variant="subtle"
+                color="dark"
+                size="compact-xs"
+                px={0}
                 onClick={() => setPath(next)}
               >
                 {segment}
-              </button>
-            </span>
+              </Button>
+            </Flex>
           );
         })}
-      </div>
+      </Flex>
       {files.isLoading ? (
-        <div className="space-y-1.5 p-2">
+        <Stack gap="xs" p="xs">
           {Array.from({ length: 6 }).map((_, index) => (
-            <Skeleton key={index} className="h-6 w-full" />
+            <Skeleton key={index} height={24} />
           ))}
-        </div>
+        </Stack>
       ) : files.isError ? (
         <ErrorState
           error={files.error}
@@ -184,14 +246,46 @@ export function FilesPanel({ threadId }: { threadId: string }) {
           compact
         />
       ) : (
-        <ul className="min-h-0 flex-1 overflow-y-auto py-1">
+        <Box
+          component="ul"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            listStyle: "none",
+            padding: 4,
+            margin: 0,
+          }}
+        >
           {files.data?.entries.map((entry) => (
             <li key={entry.path}>
-              <button
-                type="button"
-                className={cn(
-                  "flex w-full items-center gap-2 px-2.5 py-1 text-left hover:bg-hover",
-                )}
+              <Button
+                variant="subtle"
+                color="dark"
+                fullWidth
+                justify="flex-start"
+                leftSection={
+                  entry.isDir ? (
+                    <Folder
+                      size={14}
+                      aria-hidden
+                      style={{ color: "var(--mantine-color-blue-6)" }}
+                    />
+                  ) : (
+                    <FileCode2
+                      size={14}
+                      aria-hidden
+                      style={{ color: "var(--mantine-color-dimmed)" }}
+                    />
+                  )
+                }
+                rightSection={
+                  !entry.isDir ? (
+                    <Text fz={11} c="dimmed">
+                      {entry.size} B
+                    </Text>
+                  ) : undefined
+                }
                 onClick={() => {
                   if (entry.isDir) {
                     setPath(entry.path);
@@ -200,24 +294,19 @@ export function FilesPanel({ threadId }: { threadId: string }) {
                   }
                 }}
               >
-                {entry.isDir ? (
-                  <Folder className="size-3.5 shrink-0 text-info" aria-hidden />
-                ) : (
-                  <FileCode2 className="size-3.5 shrink-0 text-faint" aria-hidden />
-                )}
-                <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-fg">
+                <Text
+                  size="sm"
+                  ff="monospace"
+                  truncate="end"
+                  component="span"
+                >
                   {entry.name}
-                </span>
-                {!entry.isDir ? (
-                  <span className="shrink-0 text-[9.5px] text-faint">
-                    {entry.size} B
-                  </span>
-                ) : null}
-              </button>
+                </Text>
+              </Button>
             </li>
           ))}
-        </ul>
+        </Box>
       )}
-    </div>
+    </Stack>
   );
 }

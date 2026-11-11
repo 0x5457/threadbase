@@ -1,17 +1,14 @@
+import { Box, Button, Text, Tooltip } from "@mantine/core";
 import {
   AlertCircle,
-  CircleDot,
   FileDiff,
   FolderGit2,
   Folder,
   GitBranch,
-  Loader2,
 } from "lucide-react";
 import type { ProjectDto } from "@/api/types/ProjectDto";
 import type { ThreadDto } from "@/api/types/ThreadDto";
-import { Button, Tooltip } from "@/components/ui";
 import { basename } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 export interface StatusBarProps {
   project?: ProjectDto | null;
@@ -41,103 +38,251 @@ export function StatusBar({
       : null;
 
   return (
-    <footer className="z-20 flex h-8 shrink-0 items-center gap-3 border-t border-border/50 bg-background px-3 text-[11px] text-muted-foreground">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <Tooltip content={project?.path ?? "No project selected"}>
-          <span className="flex min-w-0 items-center gap-1">
-            <Folder className="size-3 shrink-0 text-faint" aria-hidden />
-            <span className="max-w-[160px] truncate">
+    <footer
+      style={{
+        zIndex: 20,
+        display: "flex",
+        height: 32,
+        flexShrink: 0,
+        alignItems: "center",
+        gap: 12,
+        borderTop: "1px solid var(--mantine-color-default-border)",
+        background: "var(--mantine-color-body)",
+        paddingInline: 12,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          minWidth: 0,
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <Tooltip label={project?.path ?? "No project selected"} inline>
+          <span
+            style={{
+              display: "flex",
+              minWidth: 0,
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <Folder
+              size={12}
+              aria-hidden
+              style={{ flexShrink: 0, color: "var(--mantine-color-dimmed)" }}
+            />
+            <span
+              style={{
+                maxWidth: 160,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               {project?.name ?? "Threadbase"}
             </span>
           </span>
         </Tooltip>
         {thread ? (
           <>
-            <span className="h-3 w-px bg-border" aria-hidden />
-            <span className="flex items-center gap-1">
-              <GitBranch className="size-3 shrink-0 text-faint" aria-hidden />
-              <span className="max-w-[140px] truncate">{thread.branch}</span>
+            <span
+              aria-hidden
+              style={{
+                width: 1,
+                height: 12,
+                background: "var(--mantine-color-default-border)",
+              }}
+            />
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <GitBranch
+                size={12}
+                aria-hidden
+                style={{ flexShrink: 0, color: "var(--mantine-color-dimmed)" }}
+              />
+              <span
+                style={{
+                  maxWidth: 140,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {thread.branch}
+              </span>
             </span>
             {workIn ? (
               <>
-                <span className="hidden h-3 w-px bg-border sm:block" aria-hidden />
+                <Box
+                  component="span"
+                  visibleFrom="sm"
+                  aria-hidden
+                  style={{
+                    width: 1,
+                    height: 12,
+                    background: "var(--mantine-color-default-border)",
+                  }}
+                />
                 <Tooltip
-                  content={
+                  label={
                     thread.worktreePath
                       ? `Work In: ${thread.worktreePath}`
                       : "Work In: managed isolated worktree"
                   }
+                  inline
                 >
-                  <span className="hidden items-center gap-1 sm:flex">
+                  <Box
+                    component="span"
+                    visibleFrom="sm"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
                     <FolderGit2
-                      className="size-3 shrink-0 text-faint"
+                      size={12}
                       aria-hidden
+                      style={{ flexShrink: 0, color: "var(--mantine-color-dimmed)" }}
                     />
-                    <span className="max-w-[140px] truncate">{workIn}</span>
-                  </span>
+                    <span
+                      style={{
+                        maxWidth: 140,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {workIn}
+                    </span>
+                  </Box>
                 </Tooltip>
               </>
             ) : null}
           </>
         ) : (
-          <span className="text-faint">
+          <Text size="xs" c="dimmed">
             {projectCount} {projectCount === 1 ? "project" : "projects"} ·{" "}
             {threadCount} {threadCount === 1 ? "thread" : "threads"}
-          </span>
+          </Text>
         )}
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-3">
+      <div
+        style={{
+          marginLeft: "auto",
+          display: "flex",
+          flexShrink: 0,
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
         {offline ? (
-          <span className="flex items-center gap-1 text-warning">
-            <AlertCircle className="size-3" aria-hidden />
-            Reconnecting…
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              color: "var(--mantine-color-yellow-filled)",
+            }}
+          >
+            <AlertCircle size={12} aria-hidden />
+            <Text size="xs">Reconnecting…</Text>
           </span>
         ) : null}
         {thread ? (
           <Button
             type="button"
-            variant="ghost"
+            variant="subtle"
             size="sm"
             onClick={onOpenChanges}
-            className="h-auto gap-1.5 px-1 py-0.5 text-muted-foreground"
             title="Open changes"
+            leftSection={<FileDiff size={14} aria-hidden />}
+            style={{
+              height: "auto",
+              gap: 6,
+              padding: "2px 4px",
+              fontWeight: 400,
+              color: "var(--mantine-color-dimmed)",
+            }}
           >
-            <FileDiff className="size-3 text-faint" aria-hidden />
-            <span className="text-success">
-              +{thread.changes.additions}
+            <span
+              style={{
+                display: "inline-flex",
+                gap: 4,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              <Text size="xs" c="green">
+                +{thread.changes.additions}
+              </Text>
+              <Text size="xs" c="red">
+                −{thread.changes.deletions}
+              </Text>
             </span>
-            <span className="text-danger">−{thread.changes.deletions}</span>
             {thread.changes.seen > 0 && thread.changes.total > 0 ? (
-              <span className="text-faint">
+              <Text size="xs" c="dimmed">
                 {thread.changes.seen}/{thread.changes.total} seen
-              </span>
+              </Text>
             ) : null}
           </Button>
         ) : null}
-        <span className="flex items-center gap-1" title="Running threads">
-          {runningCount > 0 ? (
-            <Loader2 className="size-3 animate-spin text-info" aria-hidden />
-          ) : (
-            <CircleDot className="size-3 text-faint" aria-hidden />
-          )}
-          <span className={cn(runningCount > 0 && "text-fg")}>
-            {runningCount} running
-          </span>
-        </span>
-        <span className="flex items-center gap-1" title="Waiting for approval">
-          <span
-            className={cn(
-              "size-1.5 rounded-full",
-              waitingCount > 0 ? "bg-warning" : "bg-border-strong",
-            )}
-            aria-hidden
-          />
-          <span className={cn(waitingCount > 0 && "text-fg")}>
-            {waitingCount} waiting
-          </span>
-        </span>
+        <CountIndicator
+          count={runningCount}
+          label="running"
+          active={runningCount > 0}
+          color="var(--mantine-color-blue-filled)"
+        />
+        <CountIndicator
+          count={waitingCount}
+          label="waiting"
+          active={waitingCount > 0}
+          color="var(--mantine-color-yellow-filled)"
+        />
       </div>
     </footer>
+  );
+}
+
+/** One visual language for every status-bar counter: a 6px dot + count. */
+function CountIndicator({
+  count,
+  label,
+  active,
+  color,
+}: {
+  count: number;
+  label: string;
+  active: boolean;
+  color: string;
+}) {
+  return (
+    <span
+      title={`${count} ${label}`}
+      style={{ display: "flex", alignItems: "center", gap: 4 }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          flexShrink: 0,
+          background: active
+            ? color
+            : "var(--mantine-color-default-border)",
+        }}
+      />
+      <Text size="xs" c={active ? undefined : "dimmed"}>
+        {count} {label}
+      </Text>
+    </span>
   );
 }
