@@ -49,6 +49,7 @@ export function useLiveThread(
   const [error, setError] = useState<string | null>(null);
   const [presence, setPresence] = useState<LivePresence>(EMPTY_PRESENCE);
   const [hasEarlier, setHasEarlier] = useState(false);
+  const [loading, setLoading] = useState(true);
   const oldestRef = useRef(0);
   const publishRef = useRef<((next: EventStore) => void) | null>(null);
   const loadingEarlier = useRef(false);
@@ -105,6 +106,7 @@ export function useLiveThread(
     setConnected(false);
     setError(null);
     setHasEarlier(false);
+    setLoading(true);
     oldestRef.current = 0;
 
     if (typeof WebSocket === "undefined") {
@@ -164,6 +166,7 @@ export function useLiveThread(
         ? replaceEvents(page.events)
         : mergeEvents(storeRef.current, page.events);
       publish(next);
+      setLoading(false);
       if (firstLoad) {
         oldestRef.current = page.oldestSeq;
         setHasEarlier(page.oldestSeq > 1);
@@ -370,6 +373,7 @@ export function useLiveThread(
     error,
     presence,
     hasEarlier,
+    loading,
     loadEarlier,
     sendPresence,
   };

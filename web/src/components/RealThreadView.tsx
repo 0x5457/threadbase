@@ -869,7 +869,11 @@ export const RealThreadView = memo(function RealThreadView({
     </>
   );
 
-  if (bundleQuery.isPending && live.events.length === 0) {
+  if (
+    !live.error &&
+    live.events.length === 0 &&
+    (bundleQuery.isPending || live.loading)
+  ) {
     // Slow links should see the shape of a transcript instead of a bare spinner.
     return (
       <div
@@ -880,7 +884,7 @@ export const RealThreadView = memo(function RealThreadView({
         {[0, 1, 2, 3].map((row) => (
           <div key={row} className="block">
             <div className="block-gutter">
-              <Skeleton height={22} width={22} circle />
+              <Skeleton height={32} width={32} circle />
             </div>
             <div className="block-body">
               <Skeleton height={10} width={`${28 + row * 6}%`} mb={8} />
