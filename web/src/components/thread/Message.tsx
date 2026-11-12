@@ -5,13 +5,14 @@ import {
   IconMessagePlus,
 } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { memo } from "react";
 import type { ViewItem } from "../../lib/thread-events";
 import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
 
-const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 
 export const Message = memo(function Message({
   item,

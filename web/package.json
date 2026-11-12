@@ -39,6 +39,7 @@
     "react-markdown": "^10.1.0",
     "react-router": "^8.5.1",
     "react-virtuoso": "^4.18.22",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "truncate-utf8-bytes": "^1.0.2",
     "y-websocket": "3.1.0",
