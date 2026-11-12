@@ -12,7 +12,6 @@ interface MobileTabBarProps {
   view: MobileTab;
   unreadCount: number;
   threadsOpened: boolean;
-  changesOpened: boolean;
   changesEnabled: boolean;
   onInbox: () => void;
   onThreads: () => void;
@@ -30,19 +29,24 @@ export function MobileTabBar({
   view,
   unreadCount,
   threadsOpened,
-  changesOpened,
   changesEnabled,
   onInbox,
   onThreads,
   onChanges,
   onSettings,
 }: MobileTabBarProps) {
-  const inboxActive = view === "inbox";
+  // The drawer is a third navigation state; while it is open only its tab is
+  // highlighted, so the bar never shows two active destinations at once.
+  const inboxActive = view === "inbox" && !threadsOpened;
   const threadsActive = threadsOpened || view === "thread" || view === "project";
-  const settingsActive = view === "settings";
+  const settingsActive = view === "settings" && !threadsOpened;
 
   return (
-    <AppShell.Footer className="mobile-tabs">
+    <AppShell.Footer
+      component="nav"
+      className="mobile-tabs"
+      aria-label="Primary navigation"
+    >
       <button
         type="button"
         className={`mobile-tab${inboxActive ? " active" : ""}`}
@@ -78,7 +82,7 @@ export function MobileTabBar({
 
       <button
         type="button"
-        className={`mobile-tab${changesOpened ? " active" : ""}`}
+        className="mobile-tab"
         aria-label="Changes"
         aria-disabled={!changesEnabled}
         disabled={!changesEnabled}

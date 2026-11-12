@@ -596,3 +596,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Long-press actions target the whole row; keep iOS from starting a text
+   selection/callout first. */
+.inbox-row {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Press feedback for long-pressable rows (iOS has no hover). */
+.inbox-row:active,
+.side-nav:active {
+  background: var(--selected);
+}
