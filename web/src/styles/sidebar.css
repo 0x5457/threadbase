@@ -110,10 +110,17 @@
   position: relative;
 }
 
+.side-project-head {
+  position: relative;
+}
+
+/* The NavLink root also contains the expanded thread list, so a percentage top
+   drifts once a project is open. Mantine keeps the row at min-height 36px, so
+   the menu is centred against that fixed row instead. */
 .side-project .project-menu {
   position: absolute;
-  top: 3px;
-  right: 24px;
+  top: 8px;
+  right: 32px;
   opacity: 0;
   color: var(--ink-muted);
 }
