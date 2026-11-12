@@ -195,6 +195,13 @@ export const Tool = memo(function Tool({
   const detailsLabel = call.diff?.patch
     ? "Full diff"
     : (DETAIL_LABELS[call.kind] ?? "Details");
+  // Shell tools stream stdout/stderr into `output`; show its opening lines
+  // under the command so a run is readable without opening the full output.
+  const rawOutput = call.output ?? "";
+  const outputLines =
+    call.kind === "execute" && output === null && rawOutput.trim() !== ""
+      ? rawOutput.split("\n")
+      : [];
   // Image results are the content: no input JSON toggle to open.
   const hasDetails = Boolean(
     call.diff?.patch ||
@@ -233,6 +240,20 @@ export const Tool = memo(function Tool({
             ))}
             {preview.hidden > 0 ? (
               <div className="tool-line more">… {preview.hidden} more lines</div>
+            ) : null}
+          </div>
+        ) : null}
+        {outputLines.length > 0 ? (
+          <div className="tool-lines tool-output">
+            {outputLines.slice(0, 3).map((line, index) => (
+              <div key={index} className="tool-line">
+                {clip(line)}
+              </div>
+            ))}
+            {outputLines.length > 3 ? (
+              <div className="tool-line more">
+                … {outputLines.length - 3} more lines
+              </div>
             ) : null}
           </div>
         ) : null}
