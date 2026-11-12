@@ -78,7 +78,26 @@ pub async fn create(
     user: &CurrentUser,
     request: &CreateProjectRequest,
 ) -> Result<ProjectDto, ServerError> {
-    let raw = request.path.trim();
+    let path = project_path(request.path.trim())?;
+    register(pool, user, &path, request.name.as_deref()).await
+}
+
+/// Create the project directory and initialize a repository in it (or finish
+/// initializing an existing empty one), then register it. `roots` are the
+/// directories the server may write in, mirroring the directory picker.
+pub async fn create_repository(
+    pool: &SqlitePool,
+    user: &CurrentUser,
+    request: &CreateProjectRequest,
+    roots: &[PathBuf],
+) -> Result<ProjectDto, ServerError> {
+    let path = project_path(request.path.trim())?;
+    let target = prepare_repository(&path, request.name.as_deref(), roots).await?;
+    register(pool, user, &target, request.name.as_deref()).await
+}
+
+/// Validated path shared by both creation paths.
+fn project_path(raw: &str) -> Result<PathBuf, ServerError> {
     if raw.is_empty() {
         return Err(ServerError(ApiError::validation(
             "project path is required",
@@ -90,7 +109,158 @@ pub async fn create(
             "project path must be absolute",
         )));
     }
-    let info: GitInfo = git::inspect(&path)
+    Ok(path)
+}
+
+/// Make `path` a repository Threadbase can use. The directory is created when
+/// it is missing; an empty directory or a repository without commits is
+/// initialized in place. Anything else is refused before touching it.
+async fn prepare_repository(
+    path: &Path,
+    name: Option<&str>,
+    roots: &[PathBuf],
+) -> Result<PathBuf, ServerError> {
+    let folder = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.starts_with('.'))
+        .ok_or_else(|| {
+            ServerError(ApiError::validation(
+                "project directory name is required and cannot start with a dot",
+            ))
+        })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| ServerError(ApiError::validation("project path is not valid")))?;
+    let parent = threadbase_workspace::path::ensure_within_any(roots, parent)
+        .map_err(|_| ServerError(ApiError::validation("directory is not available")))?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|_| ServerError(ApiError::validation("parent directory does not exist")))?;
+    let target = parent.join(folder);
+    let mut created: Vec<PathBuf> = Vec::new();
+
+    match tokio::fs::symlink_metadata(&target).await {
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(ServerError(ApiError::validation(
+                "project path exists and is not a directory",
+            )));
+        }
+        Ok(_) => {
+            let mut entries = tokio::fs::read_dir(&target).await.map_err(|error| {
+                ServerError(ApiError::validation(format!(
+                    "could not read the directory: {error}"
+                )))
+            })?;
+            while let Some(entry) = entries.next_entry().await.map_err(|error| {
+                ServerError(ApiError::validation(format!(
+                    "could not read the directory: {error}"
+                )))
+            })? {
+                if entry.file_name().to_str() == Some(".git") {
+                    continue;
+                }
+                return Err(ServerError(ApiError::validation(
+                    "the directory is not empty; create the project elsewhere or add it as it is",
+                )));
+            }
+            if target.join(".git").exists() {
+                match git::inspect(&target).await {
+                    Ok(_) => {
+                        return Err(ServerError(ApiError::validation(
+                            "this directory is already a git repository; add it instead",
+                        )))
+                    }
+                    // A repository without commits is exactly what init fixes.
+                    Err(git::GitError::NoCommits(_)) => {}
+                    // A broken repository is reinitialized below.
+                    Err(_) => {}
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tokio::fs::create_dir(&target).await.map_err(|error| {
+                ServerError(ApiError::validation(format!(
+                    "could not create the directory: {error}"
+                )))
+            })?;
+            created.push(target.clone());
+        }
+        Err(error) => {
+            return Err(ServerError(ApiError::validation(format!(
+                "could not inspect the directory: {error}"
+            ))));
+        }
+    }
+
+    let heading = name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
+        .unwrap_or_else(|| folder.to_owned());
+    if let Err(error) = initialize_repository(&target, &heading, &mut created).await {
+        discard(&created).await;
+        return Err(error);
+    }
+    target.canonicalize().map_err(|error| {
+        ServerError(ApiError::validation(format!(
+            "could not resolve the project path: {error}"
+        )))
+    })
+}
+
+/// `created` records what this call added so a failure can be undone without
+/// touching anything the user already had.
+async fn initialize_repository(
+    target: &Path,
+    heading: &str,
+    created: &mut Vec<PathBuf>,
+) -> Result<(), ServerError> {
+    if !target.join(".git").exists() {
+        git::init_repository(target)
+            .await
+            .map_err(|error| ServerError(ApiError::validation(error.to_string())))?;
+        created.push(target.join(".git"));
+    }
+    let readme = target.join("README.md");
+    if !readme.exists() {
+        tokio::fs::write(&readme, format!("# {heading}\n"))
+            .await
+            .map_err(|error| {
+                ServerError(ApiError::validation(format!(
+                    "could not write README.md: {error}"
+                )))
+            })?;
+        created.push(readme);
+    }
+    git::commit_all(target, "Initial commit")
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            ServerError(ApiError::validation(format!(
+                "could not create the initial commit: {error}"
+            )))
+        })
+}
+
+async fn discard(created: &[PathBuf]) {
+    for path in created.iter().rev() {
+        if path.is_dir() {
+            let _ = tokio::fs::remove_dir_all(path).await;
+        } else {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+    }
+}
+
+async fn register(
+    pool: &SqlitePool,
+    user: &CurrentUser,
+    path: &Path,
+    requested_name: Option<&str>,
+) -> Result<ProjectDto, ServerError> {
+    let info: GitInfo = git::inspect(path)
         .await
         .map_err(|error| ServerError(ApiError::validation(inspect_message(&error))))?;
     let canonical = info.root.to_string_lossy().to_string();
@@ -103,9 +273,7 @@ pub async fn create(
             "this project has already been added",
         )));
     }
-    let name = request
-        .name
-        .as_deref()
+    let name = requested_name
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)

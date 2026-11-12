@@ -74,9 +74,13 @@ async fn create_project(
     user: CurrentUser,
     Json(request): Json<CreateProjectRequest>,
 ) -> Result<Json<ProjectResponse>, ServerError> {
-    Ok(Json(ProjectResponse {
-        project: projects::create(&state.pool, &user, &request).await?,
-    }))
+    let project = if request.create {
+        let roots = crate::routes_fs::allowed_roots(&state).await?;
+        projects::create_repository(&state.pool, &user, &request, &roots).await?
+    } else {
+        projects::create(&state.pool, &user, &request).await?
+    };
+    Ok(Json(ProjectResponse { project }))
 }
 
 async fn get_project(

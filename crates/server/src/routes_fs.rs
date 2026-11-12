@@ -19,16 +19,31 @@ struct DirectoryQuery {
     path: Option<String>,
 }
 
-async fn list_directories(
-    State(state): State<crate::app::AppState>,
-    _user: CurrentUser,
-    Query(query): Query<DirectoryQuery>,
-) -> Result<Json<DirectoryListingDto>, ServerError> {
+/// Directories the server may browse and create projects in: the user's home
+/// directory plus every registered project root.
+pub async fn allowed_roots(
+    state: &crate::app::AppState,
+) -> Result<Vec<PathBuf>, ServerError> {
     let home_root = std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
         .map(|path| path.canonicalize().unwrap_or(path))
         .or_else(|| state.config.data_dir.parent().map(Path::to_path_buf));
+    let mut roots: Vec<PathBuf> = home_root.into_iter().collect();
+    let project_paths: Vec<String> = sqlx::query_scalar("SELECT path FROM projects")
+        .fetch_all(&state.pool)
+        .await?;
+    roots.extend(project_paths.into_iter().map(PathBuf::from));
+    Ok(roots)
+}
+
+async fn list_directories(
+    State(state): State<crate::app::AppState>,
+    _user: CurrentUser,
+    Query(query): Query<DirectoryQuery>,
+) -> Result<Json<DirectoryListingDto>, ServerError> {
+    let roots = allowed_roots(&state).await?;
+    let home_root = roots.first().cloned();
     let requested = query
         .path
         .filter(|value| !value.trim().is_empty())
@@ -49,11 +64,6 @@ async fn list_directories(
     } else {
         path
     };
-    let mut roots: Vec<PathBuf> = home_root.into_iter().collect();
-    let project_paths: Vec<String> = sqlx::query_scalar("SELECT path FROM projects")
-        .fetch_all(&state.pool)
-        .await?;
-    roots.extend(project_paths.into_iter().map(PathBuf::from));
     let path = threadbase_workspace::path::ensure_within_any(&roots, &path)
         .map_err(|_| ServerError(ApiError::validation("directory is not available")))?;
     let path = path
