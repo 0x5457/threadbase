@@ -98,4 +98,5 @@ export type ThreadEvent =
     text: string;
   }
   | { "type": "context_compacted"; summary: string | null }
-  | { "type": "system_notice"; level: string; message: string };
+  | { "type": "system_notice"; level: string; message: string }
+  | { "type": "agent_log"; level: string; text: string };

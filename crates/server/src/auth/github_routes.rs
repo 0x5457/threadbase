@@ -6,13 +6,14 @@ use crate::app::AppState;
 use crate::auth::{self, client_ip_for_headers, Identity, METHOD_GITHUB};
 use crate::auth_github;
 use crate::auth_session;
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use url::form_urlencoded;
@@ -26,8 +27,12 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/auth/github/callback", get(github_callback))
 }
 
-async fn github_start(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if !RateLimit::allow_start(&headers) {
+async fn github_start(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if !RateLimit::allow_start(&headers, Some(peer)) {
         return redirect_error("too many sign-in attempts, wait a minute");
     }
     let Some(oauth) = state.config.github.as_ref() else {
@@ -68,10 +73,11 @@ struct CallbackQuery {
 
 async fn github_callback(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<CallbackQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if !RateLimit::allow_callback(&headers) {
+    if !RateLimit::allow_callback(&headers, Some(peer)) {
         return redirect_error("too many sign-in attempts, wait a minute");
     }
     let mut cookies = HeaderMap::new();
@@ -133,6 +139,7 @@ async fn github_callback(
 
     let allowed = match auth::may_sign_in(
         &state.pool,
+        profile.id,
         &profile.login,
         &state.config.admins,
         &state.config.github_allow,
@@ -154,6 +161,7 @@ async fn github_callback(
     }
 
     let identity = Identity::github(
+        profile.id,
         &profile.login,
         profile.display_name.as_deref(),
         profile.avatar_url.as_deref(),
@@ -167,7 +175,7 @@ async fn github_callback(
         }
     };
 
-    let ip = client_ip_for_headers(&headers);
+    let ip = client_ip_for_headers(&headers, Some(peer));
     let user_agent = headers
         .get(header::USER_AGENT)
         .and_then(|value| value.to_str().ok());
@@ -265,17 +273,17 @@ impl AuthEndpoint {
 struct RateLimit;
 
 impl RateLimit {
-    fn allow_start(headers: &HeaderMap) -> bool {
-        Self::allow(AuthEndpoint::Start, headers)
+    fn allow_start(headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
+        Self::allow(AuthEndpoint::Start, headers, peer)
     }
 
-    fn allow_callback(headers: &HeaderMap) -> bool {
-        Self::allow(AuthEndpoint::Callback, headers)
+    fn allow_callback(headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
+        Self::allow(AuthEndpoint::Callback, headers, peer)
     }
 
-    fn allow(endpoint: AuthEndpoint, headers: &HeaderMap) -> bool {
+    fn allow(endpoint: AuthEndpoint, headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
         static BUCKETS: OnceLock<Mutex<HashMap<String, (u32, Instant)>>> = OnceLock::new();
-        let key = endpoint.bucket_key(&client_ip_for_headers(headers));
+        let key = endpoint.bucket_key(&client_ip_for_headers(headers, peer));
         let buckets = BUCKETS.get_or_init(|| Mutex::new(HashMap::new()));
         let Ok(mut buckets) = buckets.lock() else {
             return true;
@@ -406,6 +414,9 @@ mod tests {
 
     #[test]
     fn concurrent_rate_limit_checks_do_not_deadlock() {
+        // A loopback peer is what a local tunnel looks like, so the forwarded
+        // address is trusted and every request gets its own bucket.
+        let peer = Some(SocketAddr::from(([127, 0, 0, 1], 0)));
         let workers: Vec<_> = (0..8)
             .map(|worker| {
                 std::thread::spawn(move || {
@@ -416,7 +427,7 @@ mod tests {
                             HeaderValue::from_str(&format!("198.51.100.{worker}:{request}"))
                                 .expect("valid test header"),
                         );
-                        assert!(RateLimit::allow_callback(&headers));
+                        assert!(RateLimit::allow_callback(&headers, peer));
                     }
                 })
             })

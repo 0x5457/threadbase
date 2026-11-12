@@ -1,8 +1,25 @@
 import { jsonRequest, request } from "./client";
 import type { AuthMeDto } from "./types/AuthMeDto";
 import type { AuthStatusResponse } from "./types/AuthStatusResponse";
+import type { UpdateUserRequest } from "./types/UpdateUserRequest";
+import type { UserDto } from "./types/UserDto";
+import type { UserListResponse } from "./types/UserListResponse";
 
 export type Me = AuthMeDto;
+export type User = UserDto;
+export type UserAccess = UserDto["access"];
+
+export function listUsers() {
+  return request<UserListResponse>("/api/auth/users");
+}
+
+export function updateUser(userId: string, input: UpdateUserRequest) {
+  return jsonRequest<UserListResponse>(
+    `/api/auth/users/${encodeURIComponent(userId)}`,
+    "PATCH",
+    input,
+  );
+}
 
 export function getMe() {
   return request<Me>("/api/auth/me");

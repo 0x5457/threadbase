@@ -133,6 +133,7 @@ export function Composer({
             editor={editor}
             hasText={hasText}
             writable={session.writable}
+            readOnlyAccount={session.readOnlyAccount}
             agent={session.agent}
             userId={session.currentUserId}
             userName={session.currentUserName}

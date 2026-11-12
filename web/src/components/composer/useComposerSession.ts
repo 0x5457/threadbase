@@ -45,7 +45,6 @@ export function useComposerSession({
   const [sending, setSending] = useState(false);
   const [delivery, setDelivery] = useState<ComposerDelivery>("auto");
   const agent = agentName ?? "agent";
-  const writable = canWrite !== false;
   const modelLabel = [agent, modelName, effort].filter(Boolean).join(" · ");
 
   // AuthGate already fetched this; the query is a cache read for the composer.
@@ -54,6 +53,8 @@ export function useComposerSession({
     queryFn: getMe,
     staleTime: 60_000,
   });
+  const readOnlyAccount = me.data?.user.access === "read_only";
+  const writable = canWrite !== false && !readOnlyAccount;
   const currentUserId = userId ?? me.data?.user.id ?? null;
   const currentUserAvatar = me.data?.user.avatarUrl ?? null;
   const currentUserName =
@@ -204,15 +205,18 @@ export function useComposerSession({
     ? `${draft.synced && draft.connected ? "live" : draft.connected ? "syncing" : "offline"}${editingNames.length ? ` · ${editingNames.join(", ")} editing` : ""}`
     : "";
   const sendBlocked = draft.active && !draft.synced;
-  const sendLabel = !writable
-    ? "Viewers cannot send"
-    : sendBlocked
-      ? "Waiting for the shared draft to sync"
-      : "Send  ⌘↵";
+  const sendLabel = readOnlyAccount
+    ? "Read-only account: ask an admin for editing access"
+    : !writable
+      ? "Viewers cannot send"
+      : sendBlocked
+        ? "Waiting for the shared draft to sync"
+        : "Send  ⌘↵";
 
   return {
     agent,
     writable,
+    readOnlyAccount,
     modelLabel,
     sending,
     delivery,

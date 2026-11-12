@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   AppShell,
+  Badge,
   Box,
   Burger,
   Text,
@@ -14,7 +15,8 @@ import {
   IconSearch,
   IconSun,
 } from "@tabler/icons-react";
-import type { ThreadSummary } from "../api";
+import { useQuery } from "@tanstack/react-query";
+import { getMe, type ThreadSummary } from "../api";
 import { Participants } from "./titlebar/Participants";
 import { ThreadMenu } from "./titlebar/ThreadMenu";
 import { TitleActions } from "./titlebar/TitleActions";
@@ -71,6 +73,12 @@ export function TitleBar({
 }: TitleBarProps) {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: getMe,
+    staleTime: 60_000,
+  });
+  const readOnly = me.data?.user.access === "read_only";
 
   return (
     <AppShell.Header className="header">
@@ -114,6 +122,11 @@ export function TitleBar({
         <Text size="md" fw={500} className="doc-title">
           {title}
         </Text>
+        {readOnly ? (
+          <Badge variant="light" color="gray" style={{ textTransform: "none" }}>
+            Read-only
+          </Badge>
+        ) : null}
         <Participants
           participants={participants}
           onlineUserIds={onlineUserIds}

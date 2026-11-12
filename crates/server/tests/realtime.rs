@@ -51,7 +51,7 @@ async fn start() -> Server {
     });
     let user = threadbase_server::auth::ensure_identity_user(
         &state.pool,
-        &threadbase_server::auth::Identity::github("ada", Some("Ada"), None),
+        &threadbase_server::auth::Identity::github(1, "ada", Some("Ada"), None),
         &[],
     )
     .await

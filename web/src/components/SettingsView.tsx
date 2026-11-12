@@ -15,7 +15,8 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { getState, updateSettings, type Settings } from "../api";
+import { getMe, getState, updateSettings, type Settings } from "../api";
+import { PeopleSection } from "./PeopleSection";
 
 const agents = [
   { value: "codex", label: "Codex" },
@@ -33,6 +34,11 @@ const baselines = [
 export function SettingsView() {
   const queryClient = useQueryClient();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: getMe,
+    staleTime: 60_000,
+  });
   const state = useQuery({
     queryKey: ["state"],
     queryFn: getState,
@@ -245,6 +251,10 @@ export function SettingsView() {
               />
             </Stack>
           </Card>
+
+          {me.data?.user.isAdmin ? (
+            <PeopleSection currentUserId={me.data.user.id} />
+          ) : null}
 
           <Group justify="flex-end">
             <Button color="dark" loading={saving} onClick={() => void save()}>

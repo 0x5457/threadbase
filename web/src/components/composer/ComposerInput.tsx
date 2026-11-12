@@ -15,6 +15,7 @@ interface ComposerInputProps {
   editor: Editor | null;
   hasText: boolean;
   writable: boolean;
+  readOnlyAccount: boolean;
   agent: string;
   userId: string | null;
   userName: string | null;
@@ -26,6 +27,7 @@ export function ComposerInput({
   editor,
   hasText,
   writable,
+  readOnlyAccount,
   agent,
   userId,
   userName,
@@ -58,7 +60,11 @@ export function ComposerInput({
         <EditorContent editor={editor} />
         {!hasText ? (
           <span className="composer-placeholder" aria-hidden="true">
-            {writable ? `Message ${agent}…` : "Read-only access to this thread"}
+            {writable
+              ? `Message ${agent}…`
+              : readOnlyAccount
+                ? "Read-only account — ask an admin for editing access"
+                : "Read-only access to this thread"}
           </span>
         ) : null}
       </div>

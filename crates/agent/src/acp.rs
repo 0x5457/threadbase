@@ -5,8 +5,9 @@
 //! is a [`RawAgentEvent`].
 
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsString;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,6 +52,8 @@ use crate::{
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
+const MAX_READ_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_WRITE_BYTES: usize = 4 * 1024 * 1024;
 
 type OutgoingLines = Pin<Box<dyn Sink<String, Error = io::Error> + Send>>;
 type IncomingLines = Pin<Box<dyn Stream<Item = io::Result<String>> + Send>>;
@@ -150,6 +153,9 @@ impl Harness for AcpHarness {
         self.stopping.store(false, Ordering::SeqCst);
         self.model.clone_from(&ctx.model);
         self.effort.clone_from(&ctx.effort);
+        // The adapter may only touch files below the launch directory; resolve
+        // it once here so every fs request is checked against the same root.
+        let fs_root = ctx.cwd.canonicalize().unwrap_or_else(|_| ctx.cwd.clone());
 
         let resolved = profile::resolve(&self.profile);
         if resolved.via_npx {
@@ -197,6 +203,8 @@ impl Harness for AcpHarness {
         let permission_bus = self.bus.clone();
         let elicitation_state = self.state.clone();
         let elicitation_bus = self.bus.clone();
+        let read_root = fs_root.clone();
+        let write_root = fs_root;
 
         let driver = tokio::spawn(async move {
             let result = Client
@@ -263,7 +271,34 @@ impl Harness for AcpHarness {
                 )
                 .on_receive_request(
                     async move |request: ReadTextFileRequest, responder, _connection| {
-                        match tokio::fs::read_to_string(&request.path).await {
+                        let path = match confine_path(&read_root, Path::new(&request.path)) {
+                            Ok(path) => path,
+                            Err(message) => {
+                                return responder.respond_with_error(
+                                    agent_client_protocol::Error::internal_error().data(message),
+                                );
+                            }
+                        };
+                        let metadata = match tokio::fs::metadata(&path).await {
+                            Ok(metadata) => metadata,
+                            Err(error) => {
+                                return responder.respond_with_error(
+                                    agent_client_protocol::Error::internal_error().data(format!(
+                                        "failed to read {}: {error}",
+                                        request.path.display()
+                                    )),
+                                );
+                            }
+                        };
+                        if metadata.len() > MAX_READ_BYTES {
+                            return responder.respond_with_error(
+                                agent_client_protocol::Error::internal_error().data(format!(
+                                    "file too large to read: {}",
+                                    request.path.display()
+                                )),
+                            );
+                        }
+                        match tokio::fs::read_to_string(&path).await {
                             Ok(content) => responder.respond(ReadTextFileResponse::new(
                                 read_window(&content, request.line, request.limit),
                             )),
@@ -279,7 +314,23 @@ impl Harness for AcpHarness {
                 )
                 .on_receive_request(
                     async move |request: WriteTextFileRequest, responder, _connection| {
-                        match tokio::fs::write(&request.path, request.content).await {
+                        let path = match confine_path(&write_root, Path::new(&request.path)) {
+                            Ok(path) => path,
+                            Err(message) => {
+                                return responder.respond_with_error(
+                                    agent_client_protocol::Error::internal_error().data(message),
+                                );
+                            }
+                        };
+                        if request.content.len() > MAX_WRITE_BYTES {
+                            return responder.respond_with_error(
+                                agent_client_protocol::Error::internal_error().data(format!(
+                                    "file too large to write: {}",
+                                    request.path.display()
+                                )),
+                            );
+                        }
+                        match tokio::fs::write(&path, request.content).await {
                             Ok(()) => responder.respond(WriteTextFileResponse::new()),
                             Err(error) => responder.respond_with_error(
                                 agent_client_protocol::Error::internal_error().data(format!(
@@ -1580,6 +1631,85 @@ fn read_window(content: &str, line: Option<u32>, limit: Option<u32>) -> String {
         .join("\n")
 }
 
+fn outside_workspace(candidate: &Path) -> String {
+    format!("path outside workspace: {}", candidate.display())
+}
+
+/// Resolve an adapter-supplied path against the launch directory and reject
+/// anything that escapes it, including through symlinked ancestors.
+fn confine_path(root: &Path, candidate: &Path) -> Result<PathBuf, String> {
+    if candidate.as_os_str().to_string_lossy().contains('\0') {
+        return Err(outside_workspace(candidate));
+    }
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let joined = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        canonical_root.join(candidate)
+    };
+
+    // Lexically fold `.` and `..` before touching the filesystem. The root is
+    // the join base, so a `..` that would pop above it is an escape.
+    let root_components: Vec<Component<'_>> = canonical_root.components().collect();
+    let joined_components: Vec<Component<'_>> = joined.components().collect();
+    if joined_components.len() < root_components.len()
+        || joined_components[..root_components.len()] != root_components[..]
+    {
+        return Err(outside_workspace(candidate));
+    }
+    let mut remainder = PathBuf::new();
+    for component in &joined_components[root_components.len()..] {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !remainder.pop() {
+                    return Err(outside_workspace(candidate));
+                }
+            }
+            Component::Normal(part) => remainder.push(part),
+            _ => return Err(outside_workspace(candidate)),
+        }
+    }
+    let lexical = if remainder.as_os_str().is_empty() {
+        canonical_root.clone()
+    } else {
+        canonical_root.join(&remainder)
+    };
+
+    // Canonicalize the nearest existing ancestor so a symlink in any existing
+    // component cannot redirect the request, while still allowing new files.
+    let mut ancestor = lexical.as_path();
+    let mut missing: Vec<OsString> = Vec::new();
+    let canonical = loop {
+        if let Ok(path) = ancestor.canonicalize() {
+            break Some((path, missing));
+        }
+        // A broken symlink is an existing entry whose target cannot be
+        // resolved; rejecting it closes the write-through-a-dangling-link case.
+        if ancestor.symlink_metadata().is_ok() {
+            return Err(outside_workspace(candidate));
+        }
+        let Some(name) = ancestor.file_name() else {
+            break None;
+        };
+        missing.push(name.to_os_string());
+        let Some(parent) = ancestor.parent() else {
+            break None;
+        };
+        ancestor = parent;
+    };
+    let Some((mut resolved, missing)) = canonical else {
+        return Err(outside_workspace(candidate));
+    };
+    for name in missing.iter().rev() {
+        resolved.push(name);
+    }
+    if !resolved.starts_with(&canonical_root) {
+        return Err(outside_workspace(candidate));
+    }
+    Ok(resolved)
+}
+
 fn stop_reason_name(reason: &StopReason) -> String {
     serde_json::to_value(reason)
         .ok()
@@ -1606,4 +1736,70 @@ struct SteeringResponse {
     outcome: String,
     #[serde(default)]
     reason: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn workspace() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("temp directory");
+        let root = dir.path().canonicalize().expect("canonical workspace");
+        (dir, root)
+    }
+
+    #[test]
+    fn confine_path_allows_relative_inside_workspace() {
+        let (_dir, root) = workspace();
+        fs::write(root.join("notes.txt"), "ok").expect("write fixture");
+        assert_eq!(
+            confine_path(&root, Path::new("notes.txt")).expect("inside path"),
+            root.join("notes.txt")
+        );
+    }
+
+    #[test]
+    fn confine_path_allows_absolute_inside_workspace() {
+        let (_dir, root) = workspace();
+        fs::write(root.join("notes.txt"), "ok").expect("write fixture");
+        assert_eq!(
+            confine_path(&root, &root.join("notes.txt")).expect("inside path"),
+            root.join("notes.txt")
+        );
+    }
+
+    #[test]
+    fn confine_path_rejects_parent_escape() {
+        let (_dir, root) = workspace();
+        assert!(confine_path(&root, Path::new("../outside.txt")).is_err());
+        assert!(confine_path(&root, Path::new("nested/../../outside.txt")).is_err());
+        assert!(confine_path(&root, Path::new("nul\0name")).is_err());
+    }
+
+    #[test]
+    fn confine_path_rejects_absolute_outside_workspace() {
+        let (_dir, root) = workspace();
+        let outside = tempfile::tempdir().expect("outside directory");
+        let path = outside.path().join("secret.txt");
+        assert!(confine_path(&root, &path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confine_path_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let (_dir, root) = workspace();
+        let outside = tempfile::tempdir().expect("outside directory");
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, "secret").expect("write fixture");
+        symlink(outside.path(), root.join("linked-dir")).expect("directory symlink");
+        symlink(&secret, root.join("linked-file")).expect("file symlink");
+        symlink(outside.path().join("new-file"), root.join("dangling-link"))
+            .expect("dangling symlink");
+        assert!(confine_path(&root, Path::new("linked-dir/secret.txt")).is_err());
+        assert!(confine_path(&root, Path::new("linked-file")).is_err());
+        assert!(confine_path(&root, Path::new("dangling-link")).is_err());
+    }
 }

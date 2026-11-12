@@ -42,9 +42,9 @@ fn fixture_binary() -> Option<PathBuf> {
 }
 
 /// Issues a real session cookie value for an identity created by `fixture`.
-async fn session_for(fixture: &Fixture, login: &str) -> String {
+async fn session_for(fixture: &Fixture, github_id: i64) -> String {
     let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE identity_key = ?")
-        .bind(format!("github:{login}"))
+        .bind(format!("github:{github_id}"))
         .fetch_one(&fixture.state.pool)
         .await
         .unwrap();
@@ -71,7 +71,7 @@ async fn fixture() -> Option<Fixture> {
     let pool = db::connect_memory().await.unwrap();
     let user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github("ada", Some("Ada"), None),
+        &auth::Identity::github(1, "ada", Some("Ada"), None),
         &[],
     )
     .await
@@ -450,7 +450,7 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
     };
     let viewer = auth::ensure_identity_user(
         &fixture.state.pool,
-        &auth::Identity::github("viewer", Some("Viewer"), None),
+        &auth::Identity::github(3, "viewer", Some("Viewer"), None),
         &[],
     )
     .await
@@ -491,7 +491,7 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
     };
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let viewer_session = session_for(&fixture, "viewer").await;
+    let viewer_session = session_for(&fixture, 3).await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/approvals/{}/decide", approval.id))
@@ -877,7 +877,7 @@ async fn draft_route_preserves_multiple_authors() {
     };
     let bob = auth::ensure_identity_user(
         &fixture.state.pool,
-        &auth::Identity::github("bob", Some("Bob"), None),
+        &auth::Identity::github(4, "bob", Some("Bob"), None),
         &[],
     )
     .await
@@ -920,7 +920,7 @@ async fn draft_route_preserves_multiple_authors() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, "ada").await;
+    let session = session_for(&fixture, 1).await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -972,7 +972,7 @@ async fn queued_draft_route_preserves_multiple_authors() {
     };
     let bob = auth::ensure_identity_user(
         &fixture.state.pool,
-        &auth::Identity::github("bob", Some("Bob"), None),
+        &auth::Identity::github(4, "bob", Some("Bob"), None),
         &[],
     )
     .await
@@ -1014,7 +1014,7 @@ async fn queued_draft_route_preserves_multiple_authors() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, "ada").await;
+    let session = session_for(&fixture, 1).await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1074,7 +1074,7 @@ async fn empty_draft_send_returns_already_sent() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, "ada").await;
+    let session = session_for(&fixture, 1).await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1136,7 +1136,7 @@ async fn failed_send_retains_draft() {
     .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, "ada").await;
+    let session = session_for(&fixture, 1).await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))

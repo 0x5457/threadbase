@@ -25,7 +25,8 @@ pub async fn add_member(
         return Err(ServerError(ApiError::not_found("user not found")));
     }
     let target =
-        match crate::auth::load_user_by_identity(pool, &crate::auth::github_key(login)).await? {
+        match crate::auth::load_user_by_identity(pool, &crate::auth::github_login_key(login)).await?
+        {
             Some(user) => user,
             None => crate::auth::ensure_pending_identity(pool, login, None).await?,
         };
@@ -510,7 +511,7 @@ mod tests {
         };
         let target = crate::auth::ensure_identity_user(
             &pool,
-            &crate::auth::Identity::github("invitee", Some("Invitee"), None),
+            &crate::auth::Identity::github(2, "invitee", Some("Invitee"), None),
             &[],
         )
         .await

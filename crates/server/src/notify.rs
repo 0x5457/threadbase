@@ -2,6 +2,7 @@
 
 use crate::error::ServerError;
 use sqlx::SqlitePool;
+use std::net::{IpAddr, Ipv4Addr};
 use threadbase_shared::{now_ms, SettingsDto};
 use ulid::Ulid;
 
@@ -103,7 +104,21 @@ pub async fn webhook(pool: &SqlitePool, event: &str, thread_id: &str, summary: &
     });
     let event = event.to_owned();
     tokio::spawn(async move {
-        let result = reqwest::Client::new()
+        if !allowed_webhook_url(&url).await {
+            tracing::warn!(event, "webhook URL is not allowed; skipping delivery");
+            return;
+        }
+        let Ok(client) = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+        else {
+            tracing::warn!(
+                event,
+                "webhook client could not be created; skipping delivery"
+            );
+            return;
+        };
+        let result = client
             .post(url)
             .timeout(std::time::Duration::from_secs(5))
             .json(&payload)
@@ -115,6 +130,73 @@ pub async fn webhook(pool: &SqlitePool, event: &str, thread_id: &str, summary: &
     });
 }
 
+/// Webhook URLs are user supplied, so they must not be usable as an SSRF
+/// proxy into loopback or private networks. Hostnames are resolved here, and
+/// every returned address must be public.
+pub async fn allowed_webhook_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url.trim()) else {
+        return false;
+    };
+    if parsed.scheme() != "https" {
+        return false;
+    }
+    let Some(port) = parsed.port_or_known_default() else {
+        return false;
+    };
+    match parsed.host() {
+        Some(url::Host::Ipv4(ip)) => is_public_ip(IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => is_public_ip(IpAddr::V6(ip)),
+        Some(url::Host::Domain(domain)) => {
+            let Ok(addresses) = tokio::net::lookup_host((domain, port)).await else {
+                return false;
+            };
+            let mut resolved = false;
+            for address in addresses {
+                resolved = true;
+                if !is_public_ip(address.ip()) {
+                    return false;
+                }
+            }
+            resolved
+        }
+        None => false,
+    }
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+        return false;
+    }
+    match ip {
+        IpAddr::V4(ip) => is_public_ipv4(ip),
+        IpAddr::V6(ip) => {
+            // IPv4-mapped (and IPv4-compatible) forms must be judged as IPv4.
+            if let Some(mapped) = ip.to_ipv4_mapped().or_else(|| ip.to_ipv4()) {
+                return is_public_ipv4(mapped);
+            }
+            let first = ip.segments()[0];
+            // fc00::/7 unique-local and fe80::/10 link-local; ff00::/8
+            // multicast was rejected above.
+            first & 0xfe00 != 0xfc00 && first & 0xffc0 != 0xfe80
+        }
+    }
+}
+
+fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+    if ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+    {
+        return false;
+    }
+    let octets = ip.octets();
+    // 100.64.0.0/10 carrier-grade NAT.
+    !(octets[0] == 100 && (octets[1] & 0xc0) == 64)
+}
+
 #[must_use]
 pub fn approval_summary(title: &str) -> String {
     format!("Approval requested: {title}")
@@ -123,4 +205,53 @@ pub fn approval_summary(title: &str) -> String {
 #[must_use]
 pub fn elicitation_summary(agent: &str, message: &str) -> String {
     format!("Question from {agent}: {message}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_and_internal_addresses_are_not_public() {
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.1",
+            "169.254.1.1",
+            "100.64.0.1",
+            "100.127.255.255",
+            "0.0.0.0",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::1",
+            "::",
+            "fc00::1",
+            "fdff::1",
+            "fe80::1",
+            "ff02::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::ffff:0.0.0.0",
+            "::ffff:224.0.0.1",
+            "::ffff:255.255.255.255",
+        ] {
+            assert!(!is_public_ip(ip.parse().unwrap()), "{ip} must be rejected");
+        }
+        assert!(is_public_ip("8.8.8.8".parse().unwrap()));
+        assert!(is_public_ip("2606:4700:4700::1111".parse().unwrap()));
+        assert!(is_public_ip("::ffff:8.8.8.8".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn webhook_url_requires_https_and_a_public_host() {
+        assert!(!allowed_webhook_url("http://1.1.1.1/hook").await);
+        assert!(!allowed_webhook_url("https://127.0.0.1/hook").await);
+        assert!(!allowed_webhook_url("https://10.0.0.1/hook").await);
+        assert!(!allowed_webhook_url("https://[::1]/hook").await);
+        assert!(!allowed_webhook_url("not a url").await);
+        assert!(allowed_webhook_url("https://1.1.1.1/hook").await);
+        assert!(allowed_webhook_url("https://[2606:4700:4700::1111]/hook").await);
+    }
 }

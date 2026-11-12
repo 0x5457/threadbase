@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::assets;
 use crate::auth::needs_admin;
 use crate::error::ServerError;
-use crate::middleware::{csrf_guard, security_headers};
+use crate::middleware::{csrf_guard, host_guard, security_headers};
 use axum::extract::State;
 use axum::http::{StatusCode, Uri};
 use axum::middleware::{from_fn, from_fn_with_state};
@@ -20,6 +20,7 @@ use tower_http::trace::TraceLayer;
 
 pub fn router(state: AppState) -> Router {
     let csrf_state = state.clone();
+    let host_state = state.clone();
     Router::new()
         .merge(crate::routes_auth::router())
         .merge(crate::routes_workspace::router())
@@ -37,6 +38,7 @@ pub fn router(state: AppState) -> Router {
         .fallback(static_asset)
         .with_state(state)
         .layer(from_fn_with_state(csrf_state, csrf_guard))
+        .layer(from_fn_with_state(host_state, host_guard))
         .layer(from_fn(security_headers))
         .layer(CompressionLayer::new())
         .layer(TimeoutLayer::with_status_code(

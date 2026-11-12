@@ -32,6 +32,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     queryFn: getMe,
     retry: false,
     staleTime: 60_000,
+    // A pending account becomes usable as soon as an administrator approves
+    // it, so keep the session query warm until access is granted.
+    refetchInterval: (query) =>
+      query.state.data?.user.access === "pending" ? 5_000 : false,
+    refetchIntervalInBackground: true,
   });
 
   if (me.isPending) {
@@ -50,17 +55,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // live session on purpose so the shell can explain itself. Both would
   // otherwise render the workspace and fail every request with a 403.
   const access = me.data.user.access;
-  if (access === "pending") {
-    return <AccessScreen access={access} />;
-  }
-  if (access === "disabled") {
-    return <AccessScreen access={access} />;
+  if (access === "pending" || access === "disabled") {
+    return <AccessScreen access={access} user={me.data.user} />;
   }
 
   return <>{children}</>;
 }
 
-function AccessScreen({ access }: { access: "pending" | "disabled" }) {
+function AccessScreen({
+  access,
+  user,
+}: {
+  access: "pending" | "disabled";
+  user: { displayName: string; username: string };
+}) {
   const pending = access === "pending";
   return (
     <Center h="100dvh" px="md" className="auth-screen">
@@ -76,6 +84,17 @@ function AccessScreen({ access }: { access: "pending" | "disabled" }) {
             ? "Your GitHub account is signed in, but an administrator has not approved it yet. You will get access as soon as they do."
             : "An administrator removed your access to this workspace. Signing out clears the local session."}
         </Text>
+        <Text size="sm">
+          {user.displayName}{" "}
+          <Text component="span" size="sm" c="dimmed">
+            @{user.username}
+          </Text>
+        </Text>
+        {pending ? (
+          <Text size="xs" c="dimmed" ta="center">
+            This page checks again automatically.
+          </Text>
+        ) : null}
         <Box mt={4}>
           <Button
             variant="default"

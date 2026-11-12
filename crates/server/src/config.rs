@@ -139,6 +139,29 @@ impl Config {
         })
     }
 
+    /// True when `host_header` names this server: loopback names, the bind
+    /// address, or the host of `public_origin`. A port is ignored and the
+    /// comparison is case-insensitive.
+    #[must_use]
+    pub fn is_allowed_host(&self, host_header: &str) -> bool {
+        let Some(host) = normalized_host_header(host_header) else {
+            return false;
+        };
+        if host == "localhost" {
+            return true;
+        }
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return ip == self.bind.ip()
+                || ip == IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+                || ip == IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
+        }
+        self.public_origin
+            .as_deref()
+            .and_then(|origin| url::Url::parse(origin).ok())
+            .and_then(|origin| origin.host_str().and_then(normalize_host))
+            .is_some_and(|public_host| public_host == host)
+    }
+
     /// OAuth callback registered on the GitHub app.
     #[must_use]
     pub fn callback_url(&self) -> Option<String> {
@@ -178,6 +201,41 @@ fn is_loopback(ip: IpAddr) -> bool {
     }
 }
 
+/// Strip the optional port from a Host header, including bracketed IPv6.
+fn normalized_host_header(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let host = if let Some(rest) = value.strip_prefix('[') {
+        let (host, remainder) = rest.split_once(']')?;
+        if !remainder.is_empty() && !remainder.starts_with(':') {
+            return None;
+        }
+        host
+    } else if value.parse::<IpAddr>().is_ok() {
+        value
+    } else if let Some((host, port)) = value.rsplit_once(':') {
+        if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        host
+    } else {
+        value
+    };
+    normalize_host(host)
+}
+
+fn normalize_host(host: &str) -> Option<String> {
+    let host = host.trim();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    let host = host.trim_end_matches('.');
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +246,26 @@ mod tests {
         assert!(is_loopback("::1".parse().unwrap()));
         assert!(!is_loopback("0.0.0.0".parse().unwrap()));
         assert!(!is_loopback("192.168.1.2".parse().unwrap()));
+    }
+
+    #[test]
+    fn host_header_allowlist() {
+        let mut config = Config::default();
+        assert!(config.is_allowed_host("127.0.0.1:7777"));
+        assert!(config.is_allowed_host("LOCALHOST"));
+        assert!(config.is_allowed_host("[::1]:7777"));
+        assert!(config.is_allowed_host("::1"));
+        assert!(!config.is_allowed_host(""));
+        assert!(!config.is_allowed_host("evil.example"));
+        assert!(!config.is_allowed_host("127.0.0.2:7777"));
+
+        config.bind = "127.0.0.2:7777".parse().unwrap();
+        assert!(config.is_allowed_host("127.0.0.2:7777"));
+
+        config.public_origin = Some("https://machine.example.ts.net:8443".to_owned());
+        assert!(config.is_allowed_host("machine.example.ts.net"));
+        assert!(config.is_allowed_host("MACHINE.EXAMPLE.TS.NET:443"));
+        assert!(!config.is_allowed_host("other.example"));
     }
 
     #[test]

@@ -33,7 +33,7 @@ async fn fixture() -> Fixture {
     let pool = db::connect_memory().await.unwrap();
     let user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github("ada", Some("Ada"), None),
+        &auth::Identity::github(1, "ada", Some("Ada"), None),
         &[],
     )
     .await
