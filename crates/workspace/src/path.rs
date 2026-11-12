@@ -1,5 +1,6 @@
 //! Path containment for every file operation exposed through the API.
 
+use path_clean::PathClean;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
@@ -28,7 +29,10 @@ pub fn ensure_within(root: &Path, candidate: &Path) -> Result<PathBuf, PathError
     } else {
         root.join(candidate)
     };
-    let normalized = normalize(&joined)?;
+    if climbs_above_start(candidate) {
+        return Err(PathError::Outside(joined.display().to_string()));
+    }
+    let normalized = clean_path(&joined);
     let resolved = resolve_existing_ancestor(&normalized)?;
     if resolved.starts_with(&root) {
         Ok(normalized)
@@ -37,24 +41,33 @@ pub fn ensure_within(root: &Path, candidate: &Path) -> Result<PathBuf, PathError
     }
 }
 
-/// The lexical component walk rejects `..` that would climb above the join
-/// point. Existing ancestors are canonicalized so symlinks cannot escape.
-fn normalize(path: &Path) -> Result<PathBuf, PathError> {
-    let mut output = PathBuf::new();
+/// Lexically clean a path without touching the filesystem: `.` segments are
+/// dropped and `..` segments are resolved, as in `path_clean::PathClean`.
+/// Symlinks are resolved separately by [`ensure_within`].
+pub fn clean_path(path: &Path) -> PathBuf {
+    path.clean()
+}
+
+/// A path climbs above its start when a `..` prefix would pop more components
+/// than were traversed, even if a later component descends back inside. A
+/// rooted path cannot pop its root directory.
+fn climbs_above_start(path: &Path) -> bool {
+    let floor = usize::from(path.has_root());
+    let mut depth = floor;
     for component in path.components() {
         match component {
-            Component::Prefix(prefix) => output.push(prefix.as_os_str()),
-            Component::RootDir => output.push(Component::RootDir.as_os_str()),
-            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => {}
+            Component::Normal(_) => depth += 1,
             Component::ParentDir => {
-                if !output.pop() {
-                    return Err(PathError::Outside(path.display().to_string()));
+                if depth <= floor {
+                    return true;
                 }
+                depth -= 1;
             }
-            Component::Normal(part) => output.push(part),
+            _ => {}
         }
     }
-    Ok(output)
+    false
 }
 
 fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, PathError> {
@@ -126,6 +139,28 @@ mod tests {
         std::fs::create_dir(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
         let error = ensure_within(&root, Path::new("link/secret.txt")).unwrap_err();
+        assert!(matches!(error, PathError::Outside(_)));
+    }
+
+    #[test]
+    fn parent_above_root_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let error = ensure_within(&root, Path::new("../root/file.txt")).unwrap_err();
+        assert!(matches!(error, PathError::Outside(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_ancestor_escape_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("src/vendor")).unwrap();
+        let error = ensure_within(&root, Path::new("src/vendor/lib.rs")).unwrap_err();
         assert!(matches!(error, PathError::Outside(_)));
     }
 

@@ -1,8 +1,9 @@
-//! Pure diff parsing: hunks, line numbers, status and language names.
+//! Pure diff parsing: hunks, line numbers and status.
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use threadbase_shared::{DiffHunkDto, DiffLineDto, DiffLineKind, FileStatus};
+use unidiff::PatchSet;
 
 pub(super) fn hash_bytes(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
@@ -13,11 +14,15 @@ pub(super) fn hash_text(text: &str) -> String {
     hash_bytes(text.as_bytes())
 }
 
+pub(super) fn is_binary_bytes(bytes: &[u8]) -> bool {
+    content_inspector::inspect(bytes).is_binary()
+}
+
 pub(super) async fn file_line_stats(path: &Path) -> (bool, u32) {
     let Ok(content) = tokio::fs::read(path).await else {
         return (false, 0);
     };
-    if content.contains(&0) {
+    if is_binary_bytes(&content) {
         return (true, 0);
     }
     let lines = content.iter().filter(|byte| **byte == b'\n').count();
@@ -28,7 +33,7 @@ pub(super) async fn is_binary_file(path: &Path) -> bool {
     let Ok(content) = tokio::fs::read(path).await else {
         return false;
     };
-    content.contains(&0)
+    is_binary_bytes(&content)
 }
 
 pub(super) fn parse_status(value: &str) -> FileStatus {
@@ -42,75 +47,48 @@ pub(super) fn parse_status(value: &str) -> FileStatus {
 }
 
 pub(super) fn parse_hunks(path: &str, patch: &str) -> Vec<DiffHunkDto> {
-    let mut hunks = Vec::new();
-    let mut current: Option<DiffHunkDto> = None;
-    let mut old_line = 0u32;
-    let mut new_line = 0u32;
-    for line in patch.lines() {
-        if line.starts_with("@@") {
-            if let Some(hunk) = current.take() {
-                hunks.push(hunk);
-            }
-            let Some((old_start, old_lines, new_start, new_lines)) = parse_hunk_header(line) else {
-                continue;
-            };
-            old_line = old_start;
-            new_line = new_start;
-            current = Some(DiffHunkDto {
-                id: format!("h{}", hunks.len() + 1),
-                header: line.to_owned(),
-                context_hash: String::new(),
-                old_start,
-                old_lines,
-                new_start,
-                new_lines,
-                lines: Vec::new(),
-            });
-            continue;
-        }
-        let Some(hunk) = current.as_mut() else {
-            continue;
-        };
-        if line.starts_with("\\ No newline") {
-            continue;
-        }
-        let (kind, content) = if let Some(rest) = line.strip_prefix('+') {
-            (DiffLineKind::Add, rest)
-        } else if let Some(rest) = line.strip_prefix('-') {
-            (DiffLineKind::Delete, rest)
-        } else if let Some(rest) = line.strip_prefix(' ') {
-            (DiffLineKind::Context, rest)
-        } else {
-            continue;
-        };
-        let (old, new) = match kind {
-            DiffLineKind::Add => {
-                let value = Some(new_line);
-                new_line += 1;
-                (None, value)
-            }
-            DiffLineKind::Delete => {
-                let value = Some(old_line);
-                old_line += 1;
-                (value, None)
-            }
-            DiffLineKind::Context => {
-                let old = Some(old_line);
-                let new = Some(new_line);
-                old_line += 1;
-                new_line += 1;
-                (old, new)
-            }
-        };
-        hunk.lines.push(DiffLineDto {
-            kind,
-            old_line: old,
-            new_line: new,
-            content: content.to_owned(),
-        });
+    let mut patch_set = PatchSet::new();
+    if patch_set.parse(patch).is_err() {
+        return Vec::new();
     }
-    if let Some(hunk) = current.take() {
-        hunks.push(hunk);
+    // `unidiff` does not retain the raw `@@` line, and the stored header is
+    // part of the context hash comments are anchored to. Pair its hunks with
+    // the header lines from git in the order both appear.
+    let headers: Vec<&str> = patch
+        .lines()
+        .filter(|line| line.starts_with("@@"))
+        .collect();
+    let mut hunks = Vec::new();
+    let parsed_hunks = patch_set.files().iter().flat_map(|file| file.hunks());
+    for (header, hunk) in headers.into_iter().zip(parsed_hunks) {
+        let lines = hunk
+            .lines()
+            .iter()
+            .filter_map(|line| {
+                let kind = match line.line_type.as_str() {
+                    "+" => DiffLineKind::Add,
+                    "-" => DiffLineKind::Delete,
+                    " " => DiffLineKind::Context,
+                    _ => return None,
+                };
+                Some(DiffLineDto {
+                    kind,
+                    old_line: line.source_line_no.and_then(to_u32),
+                    new_line: line.target_line_no.and_then(to_u32),
+                    content: line.value.clone(),
+                })
+            })
+            .collect();
+        hunks.push(DiffHunkDto {
+            id: format!("h{}", hunks.len() + 1),
+            header: header.to_owned(),
+            context_hash: String::new(),
+            old_start: to_u32(hunk.source_start).unwrap_or(u32::MAX),
+            old_lines: to_u32(hunk.source_length).unwrap_or(u32::MAX),
+            new_start: to_u32(hunk.target_start).unwrap_or(u32::MAX),
+            new_lines: to_u32(hunk.target_length).unwrap_or(u32::MAX),
+            lines,
+        });
     }
     for hunk in &mut hunks {
         let mut value = format!("{path}:{}", hunk.header);
@@ -123,39 +101,89 @@ pub(super) fn parse_hunks(path: &str, patch: &str) -> Vec<DiffHunkDto> {
     hunks
 }
 
-pub(super) fn parse_hunk_header(line: &str) -> Option<(u32, u32, u32, u32)> {
-    let line = line.strip_prefix("@@")?;
-    let line = line.split("@@").next()?.trim();
-    let mut parts = line.split(' ');
-    let old = parts.next()?.strip_prefix('-')?;
-    let new = parts.next()?.strip_prefix('+')?;
-    let (old_start, old_lines) = parse_range(old)?;
-    let (new_start, new_lines) = parse_range(new)?;
-    Some((old_start, old_lines, new_start, new_lines))
+fn to_u32(value: usize) -> Option<u32> {
+    u32::try_from(value).ok()
 }
 
-pub(super) fn parse_range(value: &str) -> Option<(u32, u32)> {
-    match value.split_once(',') {
-        Some((start, len)) => Some((start.parse().ok()?, len.parse().ok()?)),
-        None => Some((value.parse().ok()?, 1)),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PATCH: &str = "diff --git a/src/main.rs b/src/main.rs\n\
+index 1111111..2222222 100644\n\
+--- a/src/main.rs\n\
++++ b/src/main.rs\n\
+@@ -1,3 +1,4 @@ fn main() {\n\
+ line one\n\
+-old\n\
++new\n\
++added\n\
+ line three\n\
+\\ No newline at end of file\n\
+@@ -10,1 +11,2 @@\n\
+ tail\n\
++extra\n";
+
+    #[test]
+    fn hunks_keep_git_headers_and_line_numbers() {
+        let hunks = parse_hunks("src/main.rs", PATCH);
+        assert_eq!(hunks.len(), 2);
+        let first = &hunks[0];
+        assert_eq!(first.id, "h1");
+        assert_eq!(first.header, "@@ -1,3 +1,4 @@ fn main() {");
+        assert_eq!(
+            (
+                first.old_start,
+                first.old_lines,
+                first.new_start,
+                first.new_lines
+            ),
+            (1, 3, 1, 4)
+        );
+        let lines: Vec<_> = first
+            .lines
+            .iter()
+            .map(|line| {
+                (
+                    line.kind,
+                    line.old_line,
+                    line.new_line,
+                    line.content.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                (DiffLineKind::Context, Some(1), Some(1), "line one"),
+                (DiffLineKind::Delete, Some(2), None, "old"),
+                (DiffLineKind::Add, None, Some(2), "new"),
+                (DiffLineKind::Add, None, Some(3), "added"),
+                (DiffLineKind::Context, Some(3), Some(4), "line three"),
+            ]
+        );
+        let second = &hunks[1];
+        assert_eq!(second.id, "h2");
+        assert_eq!(second.header, "@@ -10,1 +11,2 @@");
+        assert_eq!(
+            (
+                second.old_start,
+                second.old_lines,
+                second.new_start,
+                second.new_lines
+            ),
+            (10, 1, 11, 2)
+        );
     }
-}
 
-pub(super) fn language_for(path: &str) -> Option<&'static str> {
-    let extension = Path::new(path).extension()?.to_str()?;
-    Some(match extension {
-        "rs" => "rust",
-        "ts" | "tsx" => "typescript",
-        "js" | "jsx" | "mjs" | "cjs" => "javascript",
-        "json" => "json",
-        "md" => "markdown",
-        "css" => "css",
-        "html" => "html",
-        "py" => "python",
-        "go" => "go",
-        "toml" => "toml",
-        "yaml" | "yml" => "yaml",
-        "sh" | "bash" | "zsh" => "shell",
-        _ => return None,
-    })
+    #[test]
+    fn context_hash_matches_the_stored_header_and_contents() {
+        let hunks = parse_hunks("src/main.rs", PATCH);
+        let first = &hunks[0];
+        let expected = format!(
+            "src/main.rs:{}\nline one\nold\nnew\nadded\nline three",
+            first.header
+        );
+        assert_eq!(first.context_hash, hash_text(&expected)[..16]);
+    }
 }

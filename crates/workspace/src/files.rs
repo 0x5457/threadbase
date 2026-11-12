@@ -1,11 +1,25 @@
 //! Read-only workspace file browsing.
 
 use crate::path::{ensure_within, PathError};
+use ignore::WalkBuilder;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 use threadbase_shared::{FileContentDto, FileEntryDto};
 
 const MAX_FILE_BYTES: u64 = 512 * 1024;
+const MAX_SEARCH_ENTRIES: usize = 20_000;
+/// The walker counts the root as depth 0, so depth 17 is the deepest file the
+/// previous directory recursion visited.
+const MAX_SEARCH_DEPTH: usize = 17;
+const IGNORED_NAMES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".DS_Store",
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum FileError {
@@ -13,6 +27,8 @@ pub enum FileError {
     Path(#[from] PathError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("failed to walk workspace: {0}")]
+    Walk(String),
     #[error("path is not a directory")]
     NotADirectory,
     #[error("path is not a file")]
@@ -77,7 +93,7 @@ pub fn read(root: &Path, relative: &str) -> Result<FileContentDto, FileError> {
         return Err(FileError::TooLarge);
     }
     let bytes = std::fs::read(&path)?;
-    let truncated = bytes.contains(&0);
+    let truncated = content_inspector::inspect(&bytes).is_binary();
     let content = if truncated {
         "(binary file)".to_owned()
     } else {
@@ -87,44 +103,54 @@ pub fn read(root: &Path, relative: &str) -> Result<FileContentDto, FileError> {
         path: relative.to_owned(),
         content,
         truncated,
-        language: language_for(&path).map(ToOwned::to_owned),
+        language: None,
     })
 }
 
 fn ignored(name: &str) -> bool {
-    matches!(
-        name,
-        ".git" | "node_modules" | "target" | "dist" | "build" | ".next" | ".DS_Store"
-    )
-}
-
-fn language_for(path: &Path) -> Option<&'static str> {
-    let extension = path.extension()?.to_str()?;
-    Some(match extension {
-        "rs" => "rust",
-        "ts" | "tsx" => "typescript",
-        "js" | "jsx" | "mjs" | "cjs" => "javascript",
-        "json" => "json",
-        "md" => "markdown",
-        "css" => "css",
-        "html" => "html",
-        "py" => "python",
-        "go" => "go",
-        "toml" => "toml",
-        "yaml" | "yml" => "yaml",
-        "sh" | "bash" | "zsh" => "shell",
-        _ => return None,
-    })
+    IGNORED_NAMES.contains(&name)
 }
 
 /// Recursively finds files whose path contains `query` (case-insensitive).
-/// Hidden directories and build outputs are skipped, and the scan is capped so
-/// a huge repository cannot stall the composer.
+/// Hidden files, gitignored files and build outputs are skipped, and the scan
+/// is capped so a huge repository cannot stall the composer.
 pub fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<String>, FileError> {
     let needle = query.trim().to_lowercase();
     let mut results = Vec::new();
     let mut visited = 0usize;
-    collect_files(root, root, &needle, limit, &mut visited, 0, &mut results)?;
+    let walker = WalkBuilder::new(root)
+        .hidden(true)
+        .ignore(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .parents(true)
+        .follow_links(false)
+        .max_depth(Some(MAX_SEARCH_DEPTH))
+        .filter_entry(|entry| entry.depth() == 0 || !ignored(&entry.file_name().to_string_lossy()))
+        .build();
+    for entry in walker {
+        let entry = entry.map_err(|error| FileError::Walk(error.to_string()))?;
+        if entry.depth() == 0 {
+            continue;
+        }
+        if visited >= MAX_SEARCH_ENTRIES {
+            break;
+        }
+        visited += 1;
+        if entry.file_type().is_some_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if needle.is_empty() || relative.to_lowercase().contains(&needle) {
+            results.push(relative);
+        }
+    }
     results.sort_by(|left, right| {
         rank(left, &needle)
             .cmp(&rank(right, &needle))
@@ -149,42 +175,57 @@ fn rank(path: &str, needle: &str) -> u8 {
     }
 }
 
-fn collect_files(
-    root: &Path,
-    directory: &Path,
-    needle: &str,
-    limit: usize,
-    visited: &mut usize,
-    depth: usize,
-    results: &mut Vec<String>,
-) -> Result<(), FileError> {
-    if results.len() >= limit || *visited > 20_000 || depth > 16 {
-        return Ok(());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_skips_hidden_ignored_and_gitignored_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::create_dir_all(root.join(".hidden")).unwrap();
+        std::fs::create_dir(root.join("generated")).unwrap();
+        std::fs::write(root.join(".gitignore"), "generated\n").unwrap();
+        std::fs::write(root.join("src/main.rs"), "").unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.rs"), "").unwrap();
+        std::fs::write(root.join(".hidden/secret.rs"), "").unwrap();
+        std::fs::write(root.join(".dotfile.rs"), "").unwrap();
+        std::fs::write(root.join("generated/out.rs"), "").unwrap();
+        let results = search(root, "rs", 20).unwrap();
+        assert_eq!(results, vec!["src/main.rs"]);
     }
-    let mut entries: Vec<_> = std::fs::read_dir(directory)?.flatten().collect();
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        if results.len() >= limit || *visited > 20_000 {
-            return Ok(());
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || ignored(&name) {
-            continue;
-        }
-        *visited += 1;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files(root, &path, needle, limit, visited, depth + 1, results)?;
-            continue;
-        }
-        let relative = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        if needle.is_empty() || relative.to_lowercase().contains(needle) {
-            results.push(relative);
-        }
+
+    #[test]
+    fn search_ranks_file_name_matches_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("deep/nested")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("deep/nested/main.rs"), "").unwrap();
+        std::fs::write(root.join("src/main.rs"), "").unwrap();
+        std::fs::write(root.join("src/domain.rs"), "").unwrap();
+        let results = search(root, "main", 10).unwrap();
+        assert_eq!(
+            results,
+            vec!["src/main.rs", "deep/nested/main.rs", "src/domain.rs"]
+        );
     }
-    Ok(())
+
+    #[test]
+    fn read_flags_binary_content_and_leaves_language_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("bin.dat"), b"hello\0world").unwrap();
+        std::fs::write(root.join("text.txt"), b"hello world").unwrap();
+        let binary = read(root, "bin.dat").unwrap();
+        assert!(binary.truncated);
+        assert_eq!(binary.language, None);
+        let text = read(root, "text.txt").unwrap();
+        assert!(!text.truncated);
+        assert_eq!(text.content, "hello world");
+        assert_eq!(text.language, None);
+    }
 }
