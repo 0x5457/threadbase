@@ -474,6 +474,29 @@ export const RealThreadView = memo(function RealThreadView({
       }
       out.push({ kind: "tools", id: item.call.id, tools: [item] });
     }
+    // An assistant message narrates the work around it, but its row is created
+    // at the first streamed chunk — often before the tool calls it introduces.
+    // Keep the prose under those tools so the reading order is
+    // tools → answer, bounded by the next user message / turn marker.
+    for (let index = out.length - 2; index >= 0; index -= 1) {
+      const row = out[index];
+      if (!(row.kind === "message" && row.role === "agent")) continue;
+      let end = index + 1;
+      while (end < out.length) {
+        const next = out[end];
+        const movable =
+          next.kind === "tool" ||
+          next.kind === "tools" ||
+          next.kind === "run" ||
+          next.kind === "thinking";
+        if (!movable) break;
+        end += 1;
+      }
+      if (end > index + 1) {
+        out.splice(index, 1);
+        out.splice(end - 1, 0, row);
+      }
+    }
     return out;
   }, [items, pending.length]);
 

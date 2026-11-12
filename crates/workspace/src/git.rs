@@ -181,6 +181,28 @@ async fn add_all(root: &Path) -> Result<(), GitError> {
     git(root, &["add", "-A"]).await.map(|_| ())
 }
 
+/// Commit, falling back to a Threadbase author only when git has no identity
+/// configured. Repositories owned by the user keep their own author.
+async fn commit(root: &Path, message: &str) -> Result<(), GitError> {
+    let mut args: Vec<&str> = Vec::new();
+    let email = git_allow_failure(root, &["config", "user.email"]).await?;
+    if email.is_none_or(|value| value.is_empty()) {
+        args.extend([
+            "-c",
+            "user.name=Threadbase",
+            "-c",
+            "user.email=threadbase@localhost",
+        ]);
+    }
+    args.extend(["commit", "-m", message]);
+    git(root, &args).await.map(|_| ())
+}
+
+/// Initialize a repository with `main` as its default branch.
+pub async fn init_repository(root: &Path) -> Result<(), GitError> {
+    git(root, &["init", "-b", "main"]).await.map(|_| ())
+}
+
 pub async fn reset_index(root: &Path) -> Result<(), GitError> {
     git(root, &["reset"]).await.map(|_| ())
 }
@@ -216,13 +238,13 @@ pub async fn snapshot_worktree(root: &Path, message: &str) -> Result<String, Git
     if status.success() {
         return head_sha(root).await;
     }
-    git(root, &["commit", "-m", message]).await?;
+    commit(root, message).await?;
     head_sha(root).await
 }
 
 pub async fn commit_all(root: &Path, message: &str) -> Result<String, GitError> {
     add_all(root).await?;
-    git(root, &["commit", "-m", message]).await?;
+    commit(root, message).await?;
     head_sha(root).await
 }
 

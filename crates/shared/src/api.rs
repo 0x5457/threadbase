@@ -41,6 +41,10 @@ pub struct AuthStatusResponse {
 pub struct CreateProjectRequest {
     pub path: String,
     pub name: Option<String>,
+    /// Let the server create the directory and initialize a repository when it
+    /// is missing, empty, or a repository without commits.
+    #[serde(default)]
+    pub create: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
