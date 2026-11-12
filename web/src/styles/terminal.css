@@ -194,6 +194,21 @@
   }
 }
 
+/* Header toggle: the terminal is a panel, so its switch lives in the app chrome
+   next to the other panel/global controls, not in the account footer. */
+.header-terminal {
+  color: var(--ink-muted);
+}
+
+.header-terminal[data-active="true"] {
+  background: var(--selected);
+  color: var(--ink);
+}
+
+.header-terminal[data-active="true"]:hover {
+  background: var(--selected);
+}
+
 /* Status bar chip: a shell is alive but its drawer is closed. */
 .status-terminal {
   display: inline-flex;
