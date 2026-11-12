@@ -19,6 +19,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import {
   Fragment,
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -289,7 +290,12 @@ const TimelineList = forwardRef<HTMLDivElement, { style?: React.CSSProperties; c
 );
 TimelineList.displayName = "TimelineList";
 
-export function RealThreadView({
+/**
+ * Memoized: shell chrome (the nav drawer, theme toggles) re-renders App on every
+ * change, and re-rendering the virtualized transcript there is what made the
+ * phone sidebar feel stiff. The props here are stable, so it can skip those.
+ */
+export const RealThreadView = memo(function RealThreadView({
   threadId,
   onPresence,
   presencePanel = "transcript",
@@ -966,4 +972,4 @@ export function RealThreadView({
       </div>
     </>
   );
-}
+});
