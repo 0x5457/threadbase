@@ -100,6 +100,39 @@
   position: relative;
 }
 
+/* Who is speaking should be readable before the words are: the assistant keeps
+   the plain serif document column, a person gets a tinted bubble in the UI sans
+   face. Surfaces plus typeface carry the separation, so a long thread never
+   reads as one undifferentiated wall of text. */
+.message-user {
+  margin-top: 20px;
+}
+
+.message-user .block-body {
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 13px 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 4.5%, var(--paper));
+}
+
+.message-user .prose {
+  font-family: var(--mantine-font-family);
+  font-size: 14.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.message-user .msg-comment-btn {
+  top: 4px;
+  right: 5px;
+}
+
+.message-agent {
+  margin-top: 10px;
+}
+
 .msg-comment-btn {
   position: absolute;
   top: -1px;
@@ -123,27 +156,83 @@
 
 .queue-bar {
   display: flex;
-  max-height: 120px;
+  max-height: 200px;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   overflow-y: auto;
-  padding: 4px 24px 5px;
+  padding: 6px 20px 8px;
   border-top: 1px solid var(--line);
   background: var(--paper);
 }
 
-.queue-item {
-  height: 20px;
+/* Count stays visible while the list scrolls. */
+.queue-head {
+  position: sticky;
+  top: -6px;
+  z-index: 2;
+  padding: 2px 0 3px;
+  background: var(--paper);
 }
 
-.queue-text {
-  overflow: hidden;
+/* The bar scrolls instead of squeezing rows: flex children default to shrink,
+   which used to clip every row as soon as the queue outgrew the bar. Rows are
+   tall enough for a readable line and the three actions. */
+.queue-item {
+  height: 32px;
+  flex: none;
+  border-radius: 6px;
+}
+
+.queue-edit {
+  min-width: 0;
+  height: 24px;
   flex: 1;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.queue-edit:focus {
+  border-color: var(--brand);
+}
+
+/* Author is a quiet label; the queued text is the readable line. */
+.queue-item .queue-author {
+  max-width: 84px;
+  overflow: hidden;
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.stream-caret {
+.queue-item .queue-text {
+  overflow: hidden;
+  flex: 1;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-actions {
+  flex: none;
+}
+
+/* Rendered through ::after on the last markdown block: a sibling span would be
+   laid out after block-level <p> children, i.e. on its own line below the text. */
+.prose.streaming
+  > :is(p, h1, h2, h3, h4, h5, h6, blockquote):last-child::after,
+.prose.streaming > :is(ul, ol):last-child > li:last-child::after,
+.prose.streaming > pre:last-child > code::after {
+  content: "";
   display: inline-block;
   width: 6px;
   height: 13px;
@@ -273,7 +362,6 @@
 .queue-item {
   position: relative;
   overflow: hidden;
-  border-radius: 3px;
 }
 
 .queue-item-body {
@@ -282,9 +370,15 @@
   display: flex;
   height: 100%;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  padding-right: 2px;
+  border-radius: 6px;
   background: var(--paper);
   touch-action: pan-y;
+}
+
+.queue-item:not(.dragging):hover .queue-item-body {
+  background: var(--hover);
 }
 
 .queue-item.dragging .queue-item-body {

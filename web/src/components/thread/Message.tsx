@@ -5,13 +5,14 @@ import {
   IconMessagePlus,
 } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { memo } from "react";
 import type { ViewItem } from "../../lib/thread-events";
 import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
 
-const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 
 export const Message = memo(function Message({
   item,
@@ -26,9 +27,14 @@ export const Message = memo(function Message({
 }) {
   const agent = item.role === "agent";
   const press = useLongPress(() => onLongPress(item));
+  // Waiting for the first chunk owns no text yet: a caret then would hang
+  // under the previous block instead of tracking the agent's output.
+  const streaming = item.streaming && active && item.text.trim().length > 0;
 
   return (
-    <div className="block message-block">
+    <div
+      className={`block message-block ${agent ? "message-agent" : "message-user"}`}
+    >
       <div className="block-gutter" {...press}>
         <Avatar
           size={16}
@@ -51,7 +57,25 @@ export const Message = memo(function Message({
         >
           <IconMessagePlus size={12} stroke={1.5} />
         </ActionIcon>
-        <div className="prose">
+        {item.attachments.length ? (
+          <div className="message-images">
+            {item.attachments.map((attachment) => {
+              const url = `/api/attachments/${attachment.id}`;
+              return (
+                <a
+                  key={attachment.id}
+                  className="message-image"
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <img src={url} alt="" loading="lazy" />
+                </a>
+              );
+            })}
+          </div>
+        ) : null}
+        <div className={streaming ? "prose streaming" : "prose"}>
           {agent ? (
             <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>
               {item.text}
@@ -59,7 +83,6 @@ export const Message = memo(function Message({
           ) : (
             <p>{item.text}</p>
           )}
-          {item.streaming && active ? <span className="stream-caret" /> : null}
         </div>
       </div>
     </div>

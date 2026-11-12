@@ -53,6 +53,7 @@ pub struct NewQueuedInput<'a> {
     pub author_id: &'a str,
     pub text: &'a str,
     pub authors_json: Option<&'a str>,
+    pub attachments_json: Option<&'a str>,
     pub created_at: i64,
 }
 
@@ -66,15 +67,16 @@ pub async fn enqueue(pool: &SqlitePool, input: NewQueuedInput<'_>) -> Result<u32
     .await?;
     let status = queue_status_str(QueueStatus::Queued);
     sqlx::query(
-        "INSERT INTO queued_inputs(id, thread_id, author_id, text, authors_json, status,
-            position, created_at, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO queued_inputs(id, thread_id, author_id, text, authors_json, attachments_json,
+            status, position, created_at, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(Ulid::new().to_string())
     .bind(input.thread_id)
     .bind(input.author_id)
     .bind(input.text)
     .bind(input.authors_json)
+    .bind(input.attachments_json)
     .bind(status)
     .bind(position)
     .bind(input.created_at)
@@ -98,9 +100,9 @@ pub async fn status_of(pool: &SqlitePool, item_id: &str) -> Result<QueueStatus, 
 pub async fn head(
     pool: &SqlitePool,
     thread_id: &str,
-) -> Result<Option<(String, String, String, Option<String>)>, ServerError> {
+) -> Result<Option<(String, String, String, Option<String>, Option<String>)>, ServerError> {
     let row = sqlx::query_as(
-        "SELECT id, author_id, text, authors_json FROM queued_inputs
+        "SELECT id, author_id, text, authors_json, attachments_json FROM queued_inputs
          WHERE thread_id = ? AND status = ? AND superseded = 0
          ORDER BY position ASC LIMIT 1",
     )
@@ -207,6 +209,97 @@ pub async fn restore(
         item_id,
         current,
         &QueueAction::Restore,
+        None,
+    )
+    .await
+}
+
+/// One queued input plus the fields every delivery path needs.
+pub struct QueuedInput {
+    pub author_id: String,
+    pub text: String,
+    pub authors_json: Option<String>,
+    pub attachments_json: Option<String>,
+    pub status: QueueStatus,
+}
+
+#[derive(Debug, FromRow)]
+struct ItemRow {
+    author_id: String,
+    text: String,
+    authors_json: Option<String>,
+    attachments_json: Option<String>,
+    status: String,
+}
+
+/// Load one item, scoped to its thread so a mismatched id reads as missing.
+pub async fn item(
+    pool: &SqlitePool,
+    thread_id: &str,
+    item_id: &str,
+) -> Result<QueuedInput, ServerError> {
+    let row: Option<ItemRow> = sqlx::query_as(
+        "SELECT author_id, text, authors_json, attachments_json, status FROM queued_inputs
+         WHERE id = ? AND thread_id = ?",
+    )
+    .bind(item_id)
+    .bind(thread_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(row) = row else {
+        return Err(ServerError(ApiError::not_found("queued message not found")));
+    };
+    Ok(QueuedInput {
+        author_id: row.author_id,
+        text: row.text,
+        authors_json: row.authors_json,
+        attachments_json: row.attachments_json,
+        status: parse_queue_status(&row.status).unwrap_or(QueueStatus::Queued),
+    })
+}
+
+/// Rewrite a message that is still waiting; sent or dropped rows are immutable.
+pub async fn update_text(
+    pool: &SqlitePool,
+    projection: &Projection,
+    thread_id: &str,
+    item_id: &str,
+    text: &str,
+) -> Result<(), ServerError> {
+    let updated = sqlx::query(
+        "UPDATE queued_inputs SET text = ?, updated_at = ?
+         WHERE id = ? AND thread_id = ? AND status = ?",
+    )
+    .bind(text)
+    .bind(now_ms())
+    .bind(item_id)
+    .bind(thread_id)
+    .bind(queue_status_str(QueueStatus::Queued))
+    .execute(pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(ServerError(ApiError::not_found(
+            "queued message not found or already sent",
+        )));
+    }
+    projection.publish(thread_id).await;
+    Ok(())
+}
+
+/// Hand a claimed item back to the queue: a steering attempt failed, so the
+/// message keeps waiting for the next turn instead of being dropped.
+pub async fn release(
+    pool: &SqlitePool,
+    projection: &Projection,
+    thread_id: &str,
+    item_id: &str,
+) -> Result<QueueStatus, ServerError> {
+    transition(
+        pool,
+        projection,
+        thread_id,
+        item_id,
+        QueueAction::Release,
         None,
     )
     .await
@@ -461,6 +554,7 @@ mod tests {
                     author_id: user.as_str(),
                     text,
                     authors_json: None,
+                    attachments_json: None,
                     created_at: now_ms(),
                 },
             )
@@ -585,5 +679,61 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.0.code, threadbase_shared::ErrorCode::NotFound);
         assert_eq!(status_of(&pool, "q1").await.unwrap(), QueueStatus::Sending);
+    }
+
+    #[tokio::test]
+    async fn update_text_rewrites_only_waiting_items() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Queued,
+            1,
+        )
+        .await;
+        let projection = projection(&pool);
+        update_text(&pool, &projection, thread.as_str(), "q1", "edited")
+            .await
+            .unwrap();
+        let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
+        assert_eq!(items[0].text, "edited");
+
+        dispatch(&pool, &projection, thread.as_str(), "q1")
+            .await
+            .unwrap();
+        let error = update_text(&pool, &projection, thread.as_str(), "q1", "late")
+            .await
+            .unwrap_err();
+        assert_eq!(error.0.code, threadbase_shared::ErrorCode::NotFound);
+    }
+
+    #[tokio::test]
+    async fn release_returns_a_claimed_item_to_the_queue() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Queued,
+            1,
+        )
+        .await;
+        let projection = projection(&pool);
+        dispatch(&pool, &projection, thread.as_str(), "q1")
+            .await
+            .unwrap();
+        assert_eq!(
+            release(&pool, &projection, thread.as_str(), "q1")
+                .await
+                .unwrap(),
+            QueueStatus::Queued
+        );
+        let head_item = head(&pool, thread.as_str()).await.unwrap().unwrap();
+        assert_eq!(head_item.0, "q1");
     }
 }

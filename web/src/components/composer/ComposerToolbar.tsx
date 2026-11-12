@@ -18,11 +18,14 @@ import {
   IconMessagePlus,
 } from "@tabler/icons-react";
 import type { ModelChoice } from "../ModelPicker";
+import type { Usage } from "../../api/types/Usage";
 import { ComposerModelControls } from "./ComposerModelControls";
+import { ContextMeter } from "./ContextMeter";
 import type { ComposerDelivery } from "./useComposerSession";
 
 interface ComposerToolbarProps {
   agent: string;
+  usage?: Usage | null;
   watching?: number;
   terminalUsers?: string[];
   draftActive: boolean;
@@ -52,6 +55,7 @@ interface ComposerToolbarProps {
 
 export function ComposerToolbar({
   agent,
+  usage,
   watching,
   terminalUsers,
   draftActive,
@@ -110,6 +114,7 @@ export function ComposerToolbar({
         </ActionIcon>
       </Tooltip>
       <div className="spacer" />
+      <ContextMeter usage={usage ?? null} />
       <Kbd visibleFrom="sm" mr={4}>
         ⌘↵
       </Kbd>

@@ -18,7 +18,7 @@ use agent_client_protocol::v1::schema::{
     CancelNotification, ClientCapabilities, ContentBlock, CreateElicitationRequest,
     CreateElicitationResponse, ElicitationAcceptAction, ElicitationAction as AcpElicitationAction,
     ElicitationCapabilities, ElicitationContentValue, ElicitationFormCapabilities, ElicitationMode,
-    ElicitationScope, FileSystemCapabilities, IdleStopReason, InitializeRequest,
+    ElicitationScope, FileSystemCapabilities, IdleStopReason, ImageContent, InitializeRequest,
     LoadSessionRequest, McpServer, NewSessionRequest, PermissionOptionId, PermissionOptionKind,
     Plan as AcpPlan, PlanEntry as AcpPlanEntry, PlanEntryPriority as AcpPlanPriority,
     PlanEntryStatus as AcpPlanStatus, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
@@ -47,8 +47,8 @@ use tokio::sync::{broadcast, oneshot, watch};
 use crate::profile::{self, AgentProfile, ResolvedProfile};
 use crate::{
     Capabilities, Harness, HarnessError, HarnessResult, LaunchCtx, NewSession, PermissionOption,
-    PermissionRequest, RawAgentEvent, SessionId, SteeringOutcome, SubagentEvent, ToolCallEvent,
-    TurnHandle,
+    PermissionRequest, PromptPart, RawAgentEvent, SessionId, SteeringOutcome, SubagentEvent,
+    ToolCallEvent, TurnHandle,
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
@@ -407,6 +407,7 @@ impl Harness for AcpHarness {
         });
         self.capabilities = Capabilities {
             steering,
+            images: response.agent_capabilities.prompt_capabilities.image,
             subagents: ctx.subagents,
             elicitation_form: true,
             elicitation_url: false,
@@ -638,7 +639,7 @@ impl Harness for AcpHarness {
         Ok(())
     }
 
-    async fn prompt(&mut self, parts: Vec<String>) -> HarnessResult<TurnHandle> {
+    async fn prompt(&mut self, parts: Vec<PromptPart>) -> HarnessResult<TurnHandle> {
         let connection = self.connection()?.clone();
         let session = self.active_session()?.clone();
         let turn_id = {
@@ -652,13 +653,8 @@ impl Harness for AcpHarness {
         let handle = TurnHandle {
             turn_id: turn_id.clone(),
         };
-        let request = PromptRequest::new(
-            AcpSessionId::new(session.0.as_str()),
-            parts
-                .into_iter()
-                .map(|text| ContentBlock::Text(TextContent::new(text)))
-                .collect(),
-        );
+        let request =
+            PromptRequest::new(AcpSessionId::new(session.0.as_str()), prompt_blocks(parts));
         let bus = self.bus.clone();
         let state = self.state.clone();
         tokio::spawn(async move {
@@ -799,20 +795,22 @@ impl Harness for AcpHarness {
         self.bus.subscribe()
     }
 
-    async fn steer(&mut self, parts: Vec<String>) -> HarnessResult<SteeringOutcome> {
+    async fn steer(&mut self, parts: Vec<PromptPart>) -> HarnessResult<SteeringOutcome> {
         if !self.capabilities.steering {
             return Err(HarnessError::Unavailable(
                 "agent did not advertise steering support".to_owned(),
+            ));
+        }
+        if PromptPart::has_image(&parts) && !self.capabilities.images {
+            return Err(HarnessError::Unavailable(
+                "agent did not advertise image prompts".to_owned(),
             ));
         }
         let connection = self.connection()?.clone();
         let session = self.active_session()?.0.clone();
         let request = SteeringRequest {
             session_id: AcpSessionId::new(session),
-            prompt: parts
-                .into_iter()
-                .map(|text| ContentBlock::Text(TextContent::new(text)))
-                .collect(),
+            prompt: prompt_blocks(parts),
             meta: Some(steering_meta()),
         };
         let response = connection
@@ -1708,6 +1706,20 @@ fn confine_path(root: &Path, candidate: &Path) -> Result<PathBuf, String> {
         return Err(outside_workspace(candidate));
     }
     Ok(resolved)
+}
+
+/// Map prompt parts to ACP content blocks. Text stays plain; images carry the
+/// base64 payload the protocol expects.
+fn prompt_blocks(parts: Vec<PromptPart>) -> Vec<ContentBlock> {
+    parts
+        .into_iter()
+        .map(|part| match part {
+            PromptPart::Text(text) => ContentBlock::Text(TextContent::new(text)),
+            PromptPart::Image { mime_type, data } => {
+                ContentBlock::Image(ImageContent::new(data, mime_type))
+            }
+        })
+        .collect()
 }
 
 fn stop_reason_name(reason: &StopReason) -> String {

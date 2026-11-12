@@ -113,6 +113,7 @@ async fn fixture() -> Option<Fixture> {
             effort: None,
             base_branch: Some("main".into()),
             initial_prompt: None,
+            worktree: None,
         },
     )
     .await
@@ -403,6 +404,7 @@ async fn fake_agent_streams_tools_and_permissions() {
             effort: None,
             base_branch: Some("main".into()),
             initial_prompt: Some("stream".into()),
+            worktree: None,
         },
     )
     .await
@@ -448,23 +450,15 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
-    let viewer = auth::ensure_identity_user(
+    // A fresh GitHub account lands on `pending` access, which authz clamps to
+    // viewer: no thread-level grant is needed to read, and none can raise it.
+    auth::ensure_identity_user(
         &fixture.state.pool,
         &auth::Identity::github(3, "viewer", Some("Viewer"), None),
         &[],
     )
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'viewer', ?)",
-    )
-    .bind(fixture.thread.id.as_str())
-    .bind(viewer.id.as_str())
-    .bind(threadbase_shared::now_ms())
-    .execute(&fixture.state.pool)
-    .await
-    .unwrap();
-
     fixture
         .state
         .agents
@@ -671,6 +665,7 @@ async fn first_turn_replaces_the_default_thread_title() {
             effort: None,
             base_branch: Some("main".into()),
             initial_prompt: None,
+            worktree: None,
         },
     )
     .await
@@ -846,6 +841,7 @@ async fn draft_send_preserves_multiple_authors() {
             "shared draft",
             None,
             &[ada, bob],
+            &[],
         )
         .await
         .unwrap();
@@ -882,24 +878,10 @@ async fn draft_route_preserves_multiple_authors() {
     )
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'editor', ?)",
-    )
-    .bind(fixture.thread.id.as_str())
-    .bind(bob.id.as_str())
-    .bind(threadbase_shared::now_ms())
-    .execute(&fixture.state.pool)
-    .await
-    .unwrap();
-
     // Seed the draft with two per-author blocks via the persisted snapshot.
     let mut draft = threadbase_draft::DraftDoc::new();
-    draft
-        .append_block("b1", fixture.user.user.id.as_str(), "ada part", 1)
-        .unwrap();
-    draft
-        .append_block("b2", bob.id.as_str(), "bob part", 2)
-        .unwrap();
+    threadbase_draft::seed_text(&mut draft, fixture.user.user.id.as_str(), &["ada part"]).unwrap();
+    threadbase_draft::seed_text(&mut draft, bob.id.as_str(), &["bob part"]).unwrap();
     let blob = draft.encode_full();
     sqlx::query(
         "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
@@ -977,23 +959,9 @@ async fn queued_draft_route_preserves_multiple_authors() {
     )
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'editor', ?)",
-    )
-    .bind(fixture.thread.id.as_str())
-    .bind(bob.id.as_str())
-    .bind(threadbase_shared::now_ms())
-    .execute(&fixture.state.pool)
-    .await
-    .unwrap();
-
     let mut draft = threadbase_draft::DraftDoc::new();
-    draft
-        .append_block("b1", fixture.user.user.id.as_str(), "ada part", 1)
-        .unwrap();
-    draft
-        .append_block("b2", bob.id.as_str(), "bob part", 2)
-        .unwrap();
+    threadbase_draft::seed_text(&mut draft, fixture.user.user.id.as_str(), &["ada part"]).unwrap();
+    threadbase_draft::seed_text(&mut draft, bob.id.as_str(), &["bob part"]).unwrap();
     let blob = draft.encode_full();
     sqlx::query(
         "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
@@ -1120,9 +1088,7 @@ async fn failed_send_retains_draft() {
     );
 
     let mut draft = threadbase_draft::DraftDoc::new();
-    draft
-        .append_block("b1", fixture.user.user.id.as_str(), "keep me", 1)
-        .unwrap();
+    threadbase_draft::seed_text(&mut draft, fixture.user.user.id.as_str(), &["keep me"]).unwrap();
     let blob = draft.encode_full();
     sqlx::query(
         "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
@@ -1158,14 +1124,14 @@ async fn failed_send_retains_draft() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
-    let blocks = fixture
+    let (text, authors) = fixture
         .state
         .drafts
-        .peek_blocks(fixture.thread.id.as_str())
+        .peek_draft(fixture.thread.id.as_str())
         .await
         .unwrap();
-    assert_eq!(blocks.len(), 1, "failed send must retain the draft");
-    assert_eq!(blocks[0].text, "keep me");
+    assert_eq!(text, "keep me", "failed send must retain the draft");
+    assert_eq!(authors.len(), 1);
 }
 
 #[tokio::test]
@@ -1196,6 +1162,7 @@ async fn queued_turn_writes_current_turn() {
             "permission",
             Some(threadbase_shared::DeliveryMode::Queue),
             &[ada],
+            &[],
         )
         .await
         .unwrap();
@@ -1256,4 +1223,119 @@ async fn snapshot_revisions_are_monotonic() {
         first.revision,
         second.revision
     );
+}
+
+#[tokio::test]
+async fn pasted_images_upload_serve_and_reach_the_agent() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, 1).await;
+    let png: &[u8] = b"\x89PNG\r\n\x1a\nimage-bytes";
+
+    let mut upload = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{}/attachments", fixture.thread.id))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "image/png")
+        .header("cookie", format!("threadbase_session={session}"))
+        .body(Body::from(png.to_vec()))
+        .unwrap();
+    upload
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(upload).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let attachment: threadbase_shared::AttachmentDto = serde_json::from_slice(&body).unwrap();
+    assert_eq!(attachment.mime_type, "image/png");
+    assert_eq!(attachment.byte_size, i64::try_from(png.len()).unwrap());
+
+    let mut read = Request::builder()
+        .method("GET")
+        .uri(format!("/api/attachments/{}", attachment.id))
+        .header("host", "localhost")
+        .header("cookie", format!("threadbase_session={session}"))
+        .body(Body::empty())
+        .unwrap();
+    read.extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(read).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let served = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(served.as_ref(), png);
+
+    // The prompt must carry the image block to the agent, and the turn event
+    // must remember the attachment so a reload still renders it.
+    let after = max_seq(&fixture.state.pool, fixture.thread.id.as_str()).await;
+    let author = threadbase_server::agents::user_brief(&fixture.user);
+    let attachments = threadbase_server::attachments::resolve(
+        &fixture.state.pool,
+        fixture.thread.id.as_str(),
+        &[attachment.id],
+    )
+    .await
+    .unwrap();
+    fixture
+        .state
+        .agents
+        .send_with_authors(
+            fixture.thread.id.as_str(),
+            &fixture.user,
+            "image",
+            None,
+            &[author],
+            &attachments,
+        )
+        .await
+        .unwrap();
+
+    let started = wait_for_after(
+        &fixture.state.pool,
+        fixture.thread.id.as_str(),
+        after,
+        |event| matches!(event, ThreadEvent::TurnStarted { .. }),
+    )
+    .await;
+    let ThreadEvent::TurnStarted { attachments, .. } = started else {
+        unreachable!();
+    };
+    assert_eq!(attachments.len(), 1);
+
+    let reply = wait_for_after(
+        &fixture.state.pool,
+        fixture.thread.id.as_str(),
+        after,
+        |event| matches!(event, ThreadEvent::MessageDelta { text, .. } if text.contains("images:")),
+    )
+    .await;
+    let ThreadEvent::MessageDelta { text, .. } = reply else {
+        unreachable!();
+    };
+    assert_eq!(text, "images:1");
 }

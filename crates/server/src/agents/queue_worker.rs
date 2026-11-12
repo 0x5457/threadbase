@@ -28,7 +28,8 @@ async fn process(inner: &Arc<Inner>, thread_id: &str) -> Result<(), ServerError>
     {
         return Ok(());
     }
-    let Some((id, author_id, text, authors_json)) = queue::head(&inner.pool, thread_id).await?
+    let Some((id, author_id, text, authors_json, attachments_json)) =
+        queue::head(&inner.pool, thread_id).await?
     else {
         return Ok(());
     };
@@ -38,6 +39,11 @@ async fn process(inner: &Arc<Inner>, thread_id: &str) -> Result<(), ServerError>
         .and_then(|json| serde_json::from_str::<Vec<UserBrief>>(json).ok())
         .filter(|authors| !authors.is_empty())
         .unwrap_or_else(|| vec![author.clone()]);
+    let attachments = attachments_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Vec<threadbase_shared::AttachmentDto>>(json).ok())
+        .filter(|attachments| !attachments.is_empty())
+        .unwrap_or_default();
     let Some(claim) = session.claim_start().await else {
         return Ok(());
     };
@@ -51,6 +57,7 @@ async fn process(inner: &Arc<Inner>, thread_id: &str) -> Result<(), ServerError>
         authors: &authors,
         prompt: &text,
         delivery: Delivery::Queued,
+        attachments: &attachments,
     };
     match begin_turn(inner, claim, start).await {
         Ok((handle, _)) => {

@@ -9,7 +9,7 @@ import {
   sendDraft,
   sendMessage,
 } from "../../api";
-import { useDraftSession, userColor as colorForUser } from "../../lib/draft";
+import { useDraftSession } from "../../lib/draft";
 
 export type ComposerDelivery = "auto" | "queue";
 
@@ -65,11 +65,7 @@ export function useComposerSession({
       ? { id: currentUserId, name: currentUserName }
       : null,
   );
-  const {
-    setMyText: mirrorDraft,
-    markSent: markDraftSent,
-    setEditing: setDraftEditing,
-  } = draft;
+  const { setEditing: setDraftEditing } = draft;
 
   // Reading config must not start the adapter: opening a thread should not
   // spawn the agent process. An absent session reports no options.
@@ -108,16 +104,19 @@ export function useComposerSession({
       editor: Editor | null,
       setHasText: (value: boolean) => void,
       resetSuggestion: () => void,
-    ) => {
-      if (!editor || sending || !writable) return;
-      if (editor.getText().trim().length === 0) return;
+      attachmentIds: string[] = [],
+    ): Promise<boolean> => {
+      if (!editor || sending || !writable) return false;
+      if (editor.getText().trim().length === 0 && attachmentIds.length === 0) {
+        return false;
+      }
       const shared = Boolean(threadId) && draft.active;
       if (shared && !draft.synced) {
         notifications.show({
           message: "Draft is still syncing with the thread",
           color: "yellow",
         });
-        return;
+        return false;
       }
       resetSuggestion();
       const text = editor.getText().trim();
@@ -126,38 +125,20 @@ export function useComposerSession({
         editor.commands.clearContent();
         setHasText(false);
         notifications.show({ message: `Sent to ${agent}`, color: "teal" });
-        return;
+        return true;
       }
 
       setSending(true);
       try {
         if (shared) {
-          // The server reads the pending CRDT blocks, so the editor must stay
-          // populated until the POST returns. Its tombstone clears the draft.
-          const result = await sendDraft(threadId, delivery);
-          // A successful send is visible in the timeline; only queueing, which
-          // changes when the agent sees the message, is worth announcing.
-          if (result.delivery === "queued") {
-            notifications.show({
-              message: "Queued for the next turn",
-              color: "teal",
-            });
-          }
-          // Allocate the next draft block before the editor clears, so the
-          // cleared text does not allocate a second empty block.
-          markDraftSent();
-          editor.commands.clearContent();
-          setHasText(false);
+          // The server consumes the shared CRDT draft and clears it for every
+          // open composer, so the editor empties through the collaboration
+          // update instead of a local command.
+          await sendDraft(threadId, delivery, attachmentIds);
         } else {
           editor.commands.clearContent();
           setHasText(false);
-          const result = await sendMessage(threadId, text, delivery);
-          if (result.delivery === "queued") {
-            notifications.show({
-              message: "Queued for the next turn",
-              color: "teal",
-            });
-          }
+          await sendMessage(threadId, text, delivery, attachmentIds);
         }
         onSent?.();
         // The send started the adapter, so its options can now be read
@@ -165,15 +146,18 @@ export function useComposerSession({
         void queryClient.invalidateQueries({
           queryKey: ["agent-config", threadId],
         });
+        return true;
       } catch (cause) {
-        editor.commands.setContent(text);
-        setHasText(true);
-        if (shared) mirrorDraft(text);
+        if (!shared) {
+          editor.commands.setContent(text);
+          setHasText(true);
+        }
         notifications.show({
           message:
             cause instanceof Error ? cause.message : "Could not send message",
           color: "red",
         });
+        return false;
       } finally {
         setSending(false);
       }
@@ -183,8 +167,6 @@ export function useComposerSession({
       delivery,
       draft.active,
       draft.synced,
-      markDraftSent,
-      mirrorDraft,
       onSent,
       queryClient,
       sending,
@@ -193,11 +175,6 @@ export function useComposerSession({
     ],
   );
 
-  const authorName = (authorId: string) =>
-    draft.remoteEditors.find((peer) => peer.id === authorId)?.name ?? "Teammate";
-  const authorAccent = (authorId: string) =>
-    draft.remoteEditors.find((peer) => peer.id === authorId)?.color ??
-    colorForUser(authorId);
   const editingNames = Array.from(
     new Set(draft.remoteEditors.map((peer) => peer.name)),
   );
@@ -222,7 +199,6 @@ export function useComposerSession({
     delivery,
     setDelivery,
     draft,
-    mirrorDraft,
     setDraftEditing,
     send,
     ensureConfig,
@@ -234,8 +210,6 @@ export function useComposerSession({
     currentUserId,
     currentUserName,
     currentUserAvatar,
-    authorName,
-    authorAccent,
     liveLabel,
     sendBlocked,
     sendLabel,

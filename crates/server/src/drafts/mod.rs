@@ -14,7 +14,7 @@ use room::DraftRoom;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
-use threadbase_draft::{DraftBlock, DraftDoc};
+use threadbase_draft::DraftDoc;
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 
 #[derive(Clone)]
@@ -135,11 +135,14 @@ impl DraftHub {
         self.send_locks.lock(thread_id).await
     }
 
-    /// Non-destructive read of pending draft blocks.
-    pub async fn peek_blocks(&self, thread_id: &str) -> Result<Vec<DraftBlock>, anyhow::Error> {
+    /// Non-destructive read of the shared draft: text plus editor ids.
+    pub async fn peek_draft(
+        &self,
+        thread_id: &str,
+    ) -> Result<(String, Vec<String>), anyhow::Error> {
         let room = self.room(thread_id).await?;
-        let blocks = room.lock().await.peek_blocks();
-        Ok(blocks)
+        let draft = room.lock().await.peek_draft();
+        Ok(draft)
     }
 
     /// Drop a room so the next access reloads from persisted state.
@@ -156,14 +159,17 @@ impl DraftHub {
             .is_some_and(|current| Arc::ptr_eq(current, room))
     }
 
-    pub async fn take_blocks(&self, thread_id: &str) -> Result<Vec<DraftBlock>, anyhow::Error> {
+    pub async fn take_draft(
+        &self,
+        thread_id: &str,
+    ) -> Result<(String, Vec<String>), anyhow::Error> {
         let room = self.room(thread_id).await?;
-        let blocks = {
+        let taken = {
             let mut room = room.lock().await;
-            room.take_blocks()
+            room.take_draft()
         };
-        if blocks.is_empty() {
-            return Ok(blocks);
+        if taken.0.is_empty() && taken.1.is_empty() {
+            return Ok(taken);
         }
         let max_seq: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(seq), 0) FROM draft_updates WHERE thread_id = ?",
@@ -173,7 +179,7 @@ impl DraftHub {
         .await?;
         self.snapshot(thread_id, u64::try_from(max_seq).unwrap_or(0))
             .await?;
-        Ok(blocks)
+        Ok(taken)
     }
 }
 
@@ -199,9 +205,7 @@ mod tests {
         let (mut rx, initial) = {
             let mut room = room.lock().await;
             let rx = room.subscribe();
-            room.draft_mut()
-                .append_block("b1", "u1", "hello", 1)
-                .unwrap();
+            threadbase_draft::seed_text(room.draft_mut(), "u1", &["hello"]).unwrap();
             (rx, room.initial())
         };
         assert!(!initial.is_empty());
@@ -212,7 +216,7 @@ mod tests {
         assert!(!broadcast.is_empty());
 
         let mut other = DraftDoc::new();
-        other.append_block("b2", "u2", "world", 2).unwrap();
+        threadbase_draft::seed_text(&mut other, "u2", &["world"]).unwrap();
         let update = other.encode_full();
         let applied = {
             let mut room = room.lock().await;
@@ -228,29 +232,25 @@ mod tests {
 
         let restarted = DraftHub::new(pool);
         let room = restarted.room(thread.as_str()).await.unwrap();
-        let blocks = room.lock().await.blocks();
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[1].text, "world");
+        let (text, authors) = {
+            let room = room.lock().await;
+            room.peek_draft()
+        };
+        // Concurrent root inserts integrate in client-id order, so the two
+        // replicas converge on one order but not necessarily their seed order.
+        let lines: Vec<&str> = text.split('\n').collect();
+        assert!(
+            lines.contains(&"hello") && lines.contains(&"world"),
+            "{text}"
+        );
+        assert_eq!(authors, vec!["u1".to_owned(), "u2".to_owned()]);
     }
 
-    fn oversized_block_update(text_len: usize) -> Vec<u8> {
-        use yrs::{Array, Map, MapPrelim, ReadTxn, Text, TextPrelim, TextRef, Transact};
-        let doc = yrs::Doc::new();
-        let blocks = doc.get_or_insert_array("blocks");
-        let mut txn = doc.transact_mut();
-        let map = blocks.insert(
-            &mut txn,
-            0,
-            MapPrelim::<i32>::from(std::collections::HashMap::new()),
-        );
-        map.insert(&mut txn, "id", "big".to_owned());
-        map.insert(&mut txn, "author", "u1".to_owned());
-        map.insert(&mut txn, "createdAt", 1_i64);
-        let body: TextRef = map.insert(&mut txn, "text", TextPrelim::new(""));
-        body.push(&mut txn, &"x".repeat(text_len));
-        drop(txn);
-        let read = doc.transact();
-        read.encode_state_as_update_v1(&yrs::StateVector::default())
+    fn oversized_update(text_len: usize) -> Vec<u8> {
+        let mut doc = DraftDoc::new();
+        let line = "x".repeat(text_len);
+        threadbase_draft::seed_text(&mut doc, "u1", &[&line]).unwrap();
+        doc.encode_full()
     }
 
     #[tokio::test]
@@ -264,7 +264,7 @@ mod tests {
             room.subscribe()
         };
 
-        let update = oversized_block_update(threadbase_draft::MAX_BLOCK_BYTES + 1);
+        let update = oversized_update(threadbase_draft::MAX_THREAD_DRAFT_BYTES + 1);
         let applied = {
             let mut room = room.lock().await;
             room.apply(&update_message(update))
@@ -284,18 +284,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_clears_all_blocks() {
+    async fn take_clears_the_shared_draft() {
         let pool = db::connect_memory().await.unwrap();
         let (_, _, thread) = seed_thread(&pool).await;
         let hub = DraftHub::new(pool);
         let room = hub.room(thread.as_str()).await.unwrap();
         {
             let mut room = room.lock().await;
-            room.draft_mut()
-                .append_block("b1", "u1", "hello", 1)
-                .unwrap();
-            room.draft_mut().reset();
-            assert!(room.blocks().is_empty());
+            threadbase_draft::seed_text(room.draft_mut(), "u1", &["hello"]).unwrap();
+            let (text, authors) = room.take_draft();
+            assert_eq!(text, "hello");
+            assert_eq!(authors, vec!["u1".to_owned()]);
+            assert!(room.peek_draft().0.is_empty());
         }
     }
 

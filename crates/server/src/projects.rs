@@ -162,16 +162,16 @@ pub async fn delete(pool: &SqlitePool, project_id: &str) -> Result<(), ServerErr
             .fetch_all(pool)
             .await?;
     for (_, worktree, branch) in threads {
-        if let Some(worktree) = worktree.as_deref() {
-            let path = PathBuf::from(worktree);
-            if path.exists() {
-                let _ = threadbase_workspace::git::remove_worktree(
-                    Path::new(&project.path),
-                    &path,
-                    true,
-                )
-                .await;
-            }
+        let Some(worktree) = worktree.as_deref() else {
+            // Threads without a worktree run on the project branch; deleting
+            // that branch would delete the user's own branch.
+            continue;
+        };
+        let path = PathBuf::from(worktree);
+        if path.exists() {
+            let _ =
+                threadbase_workspace::git::remove_worktree(Path::new(&project.path), &path, true)
+                    .await;
         }
         let _ =
             threadbase_workspace::git::delete_branch(Path::new(&project.path), &branch, true).await;

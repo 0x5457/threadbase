@@ -45,6 +45,7 @@ pub fn user_message(
     text: &str,
     turn_id: Option<TurnId>,
     authors: &[UserBrief],
+    attachments: &[threadbase_shared::AttachmentDto],
 ) -> MessageDto {
     MessageDto {
         id: MessageId::new(),
@@ -57,6 +58,7 @@ pub fn user_message(
         model: None,
         streaming: false,
         created_at: now_ms(),
+        attachments: attachments.to_vec(),
     }
 }
 
@@ -197,5 +199,6 @@ pub fn message_dto(
         model: None,
         streaming: false,
         created_at: now_ms(),
+        attachments: Vec::new(),
     }
 }

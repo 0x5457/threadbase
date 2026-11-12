@@ -9,9 +9,11 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import {
+  IconGitBranch,
   IconInbox,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
+  IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconMoon,
   IconSearch,
@@ -34,6 +36,13 @@ interface TitleBarProps {
   /** Unread inbox items; the red dot is rendered only when this is non-zero. */
   unreadCount: number;
   canOpenChanges: boolean;
+  /** Thread has its own git worktree; the badge and merge actions need it. */
+  hasWorktree: boolean;
+  branch: string;
+  baseBranch: string;
+  /** Desktop changes panel is hidden; the toggle reveals it again. */
+  asideCollapsed: boolean;
+  onToggleAside: () => void;
   navOpened: boolean;
   navCollapsed: boolean;
   onToggleNav: () => void;
@@ -47,7 +56,6 @@ interface TitleBarProps {
   onOpenChanges: () => void;
   onReviews: () => void;
   onMerge: () => void;
-  onShare: () => void;
   canManage: boolean;
   isPinned: boolean;
   onRename: () => void;
@@ -64,6 +72,11 @@ export function TitleBar({
   onlineUserIds,
   unreadCount,
   canOpenChanges,
+  hasWorktree,
+  branch,
+  baseBranch,
+  asideCollapsed,
+  onToggleAside,
   navOpened,
   navCollapsed,
   onToggleNav,
@@ -76,7 +89,6 @@ export function TitleBar({
   onOpenChanges,
   onReviews,
   onMerge,
-  onShare,
   canManage,
   isPinned,
   onRename,
@@ -168,17 +180,37 @@ export function TitleBar({
             Read-only
           </Badge>
         ) : null}
+        {hasWorktree ? (
+          <Tooltip
+            label={`Isolated worktree · ${branch} (base ${baseBranch})`}
+          >
+            <Badge
+              variant="light"
+              color="gray"
+              leftSection={<IconGitBranch size={9} stroke={1.5} />}
+              style={{ textTransform: "none" }}
+            >
+              worktree
+            </Badge>
+          </Tooltip>
+        ) : (
+          <Tooltip label="Runs directly in the project working tree; changes are live">
+            <Badge variant="light" color="gray" style={{ textTransform: "none" }}>
+              project tree
+            </Badge>
+          </Tooltip>
+        )}
         <Participants
           participants={participants}
           onlineUserIds={onlineUserIds}
         />
         <TitleActions
-          visible={canOpenChanges && !navOpened}
+          visible={canManage && !navOpened}
           canManage={canManage}
+          hasWorktree={hasWorktree}
           isPinned={isPinned}
           onReviews={onReviews}
           onMerge={onMerge}
-          onShare={onShare}
           onRename={onRename}
           onTogglePin={onTogglePin}
           onFork={onFork}
@@ -189,23 +221,40 @@ export function TitleBar({
 
       <div className="header-right">
         {canOpenChanges && !navOpened ? (
-          <Tooltip label="Changes">
-            <ActionIcon
-              aria-label="Open changes"
-              hiddenFrom="lg"
-              onClick={onOpenChanges}
+          <>
+            <Tooltip
+              label={asideCollapsed ? "Show changes  ⌘⇧B" : "Hide changes  ⌘⇧B"}
             >
-              <IconLayoutSidebarRightExpand size={16} stroke={1.5} />
-            </ActionIcon>
-          </Tooltip>
+              <ActionIcon
+                aria-label={asideCollapsed ? "Show changes" : "Hide changes"}
+                visibleFrom="lg"
+                onClick={onToggleAside}
+              >
+                {asideCollapsed ? (
+                  <IconLayoutSidebarRightExpand size={16} stroke={1.5} />
+                ) : (
+                  <IconLayoutSidebarRightCollapse size={16} stroke={1.5} />
+                )}
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="Changes">
+              <ActionIcon
+                aria-label="Open changes"
+                hiddenFrom="lg"
+                onClick={onOpenChanges}
+              >
+                <IconLayoutSidebarRightExpand size={16} stroke={1.5} />
+              </ActionIcon>
+            </Tooltip>
+          </>
         ) : null}
         {!navOpened ? (
           <Box hiddenFrom="md">
             <ThreadMenu
               canManage={canManage}
+              hasWorktree={hasWorktree}
               isPinned={isPinned}
-              onShare={onShare}
-              onMerge={onMerge}
+                  onMerge={onMerge}
               onReviews={onReviews}
               onRename={onRename}
               onTogglePin={onTogglePin}

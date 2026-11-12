@@ -23,15 +23,15 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use threadbase_agent::{
-    all_profiles, find_profile, AcpHarness, Harness, LaunchCtx, NewSession, SessionId,
+    all_profiles, find_profile, AcpHarness, Harness, LaunchCtx, NewSession, PromptPart, SessionId,
     SteeringOutcome, TurnHandle,
 };
 use threadbase_core::state::{ApprovalAction, SubagentMachine, ThreadAction};
 use threadbase_core::{resolve_delivery, DeliveryContext, SendAction};
 use threadbase_shared::api::{DeliveryMode, SendMessageResponse};
 use threadbase_shared::{
-    now_ms, Actor, ApprovalDecision as SharedDecision, Delivery, ElicitationAction, MessageId,
-    ThreadEvent, ThreadId, ThreadStatus, TurnId, UserBrief,
+    now_ms, Actor, ApiError, ApprovalDecision as SharedDecision, AttachmentDto, Delivery,
+    ElicitationAction, MessageId, ThreadEvent, ThreadId, ThreadStatus, TurnId, UserBrief,
 };
 use threadbase_workspace::git;
 use tokio::sync::{mpsc, Mutex};
@@ -60,6 +60,7 @@ pub(crate) struct TurnStart<'a> {
     pub authors: &'a [UserBrief],
     pub prompt: &'a str,
     pub delivery: Delivery,
+    pub attachments: &'a [AttachmentDto],
 }
 
 impl AgentManager {
@@ -217,7 +218,7 @@ impl AgentManager {
         delivery: Option<DeliveryMode>,
     ) -> Result<SendMessageResponse, ServerError> {
         let author = user_brief(user);
-        self.send_with_authors(thread_id, user, text, delivery, &[author])
+        self.send_with_authors(thread_id, user, text, delivery, &[author], &[])
             .await
     }
 
@@ -229,9 +230,15 @@ impl AgentManager {
         text: &str,
         delivery: Option<DeliveryMode>,
         authors: &[UserBrief],
+        attachments: &[AttachmentDto],
     ) -> Result<SendMessageResponse, ServerError> {
         self.ensure_started(thread_id).await?;
         let session = self.session(thread_id).await?;
+        if !attachments.is_empty() && !session.capabilities.images {
+            return Err(ServerError(ApiError::validation(
+                "this agent does not accept images",
+            )));
+        }
         let status = threads::status(&self.inner.pool, thread_id).await?;
         let running = session
             .observe_running(status == ThreadStatus::Running)
@@ -244,19 +251,31 @@ impl AgentManager {
             },
         );
         match action {
-            SendAction::Queue => self.queue(thread_id, user, text, authors).await,
+            SendAction::Queue => {
+                self.queue(thread_id, user, text, authors, attachments)
+                    .await
+            }
             SendAction::Inject => {
+                let mut parts = vec![PromptPart::text(text)];
+                parts
+                    .extend(crate::attachments::prompt_parts(&self.inner.pool, attachments).await?);
                 let outcome = {
                     let mut harness = session.harness.lock().await;
-                    harness.steer(vec![text.to_owned()]).await
+                    harness.steer(parts).await
                 }
                 .map_err(mapping::agent_error)?;
                 match outcome {
                     SteeringOutcome::Injected | SteeringOutcome::StartedNewTurn => {
                         let author = user_brief(user);
                         let turn_id = self.inner.current_turn(thread_id).await.unwrap_or_default();
-                        let message =
-                            mapping::user_message(thread_id, &author, text, Some(turn_id), authors);
+                        let message = mapping::user_message(
+                            thread_id,
+                            &author,
+                            text,
+                            Some(turn_id),
+                            authors,
+                            attachments,
+                        );
                         self.inner
                             .events
                             .append(
@@ -278,7 +297,8 @@ impl AgentManager {
                         })
                     }
                     SteeringOutcome::PromptRequired => {
-                        self.queue(thread_id, user, text, authors).await
+                        self.queue(thread_id, user, text, authors, attachments)
+                            .await
                     }
                     SteeringOutcome::Failed { reason } => {
                         tracing::warn!(?reason, "steering failed; dropping input");
@@ -302,6 +322,7 @@ impl AgentManager {
                         authors,
                         prompt: text,
                         delivery: Delivery::StoppedAndSent,
+                        attachments,
                     },
                     user,
                     text,
@@ -318,6 +339,7 @@ impl AgentManager {
                         authors,
                         prompt: text,
                         delivery: Delivery::Injected,
+                        attachments,
                     },
                     user,
                     text,
@@ -328,14 +350,107 @@ impl AgentManager {
         }
     }
 
+    /// Deliver an already-queued input into the running turn. Unlike
+    /// [`Self::send_with_authors`] this never enqueues: the caller owns the
+    /// queue row, so a rejection surfaces as an error instead of a duplicate.
+    pub async fn steer_queued(
+        &self,
+        thread_id: &str,
+        author: &UserBrief,
+        text: &str,
+        authors: &[UserBrief],
+        attachments: &[AttachmentDto],
+    ) -> Result<(), ServerError> {
+        let Some(session) = self.inner.session(thread_id).await else {
+            return Err(ServerError(ApiError::conflict(
+                "no turn is running; the message stays queued",
+            )));
+        };
+        let status = threads::status(&self.inner.pool, thread_id).await?;
+        let running = session
+            .observe_running(status == ThreadStatus::Running)
+            .await;
+        if !running {
+            return Err(ServerError(ApiError::conflict(
+                "no turn is running; the message stays queued",
+            )));
+        }
+        if !session.capabilities.steering {
+            return Err(ServerError(ApiError::conflict(
+                "this agent cannot take steering input; the message stays queued",
+            )));
+        }
+        if !attachments.is_empty() && !session.capabilities.images {
+            return Err(ServerError(ApiError::conflict(
+                "this agent does not accept images; the message stays queued",
+            )));
+        }
+        let mut parts = vec![PromptPart::text(text)];
+        parts.extend(crate::attachments::prompt_parts(&self.inner.pool, attachments).await?);
+        let outcome = {
+            let mut harness = session.harness.lock().await;
+            harness.steer(parts).await
+        }
+        .map_err(mapping::agent_error)?;
+        match outcome {
+            SteeringOutcome::Injected | SteeringOutcome::StartedNewTurn => {
+                let turn_id = self.inner.current_turn(thread_id).await.unwrap_or_default();
+                let message = mapping::user_message(
+                    thread_id,
+                    author,
+                    text,
+                    Some(turn_id),
+                    authors,
+                    attachments,
+                );
+                self.inner
+                    .events
+                    .append(
+                        &ThreadId::from(thread_id.to_owned()),
+                        Actor::user(author),
+                        ThreadEvent::MessageCompleted { message },
+                        EventMeta {
+                            delivery: Some(Delivery::Injected),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                Ok(())
+            }
+            SteeringOutcome::PromptRequired => Err(ServerError(ApiError::conflict(
+                "the agent asked for a new turn; the message stays queued",
+            ))),
+            SteeringOutcome::Failed { reason } => {
+                tracing::warn!(?reason, "steering a queued message failed");
+                Err(ServerError(ApiError::conflict(
+                    "the agent rejected the steering input",
+                )))
+            }
+        }
+    }
+
     async fn queue(
         &self,
         thread_id: &str,
         user: &CurrentUser,
         text: &str,
         authors: &[UserBrief],
+        attachments: &[AttachmentDto],
     ) -> Result<SendMessageResponse, ServerError> {
-        let position = enqueue(&self.inner.pool, thread_id, user, text, authors).await?;
+        let attachments_json = if attachments.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(attachments).unwrap_or_default())
+        };
+        let position = enqueue(
+            &self.inner.pool,
+            thread_id,
+            user,
+            text,
+            authors,
+            attachments_json.as_deref(),
+        )
+        .await?;
         let _ = queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
         Ok(SendMessageResponse {
             delivery: Delivery::Queued,
@@ -355,7 +470,9 @@ impl AgentManager {
         let delivery = start.delivery;
         let thread_id = start.thread_id;
         let Some(claim) = session.claim_start().await else {
-            return self.queue(thread_id, user, text, authors).await;
+            return self
+                .queue(thread_id, user, text, authors, start.attachments)
+                .await;
         };
         let (_, message_id) = begin_turn(&self.inner, claim, start).await?;
         Ok(SendMessageResponse {
@@ -566,6 +683,9 @@ async fn prepare_and_prompt(
     // Git, title and event preparation happens before any harness lock.
     lifecycle::auto_title(&inner.pool, &inner.events, start.thread_id, start.prompt).await;
     snapshot_worktree(inner, start.thread_id).await;
+    // Read the attached images up front: a missing file must fail before the
+    // turn is recorded, not leave a turn with no prompt behind.
+    let image_parts = crate::attachments::prompt_parts(&inner.pool, start.attachments).await?;
     let turn_id = TurnId::new();
     let message_id = MessageId::new();
     inner
@@ -579,6 +699,7 @@ async fn prepare_and_prompt(
                 author: start.author.clone(),
                 authors: start.authors.to_vec(),
                 prompt: start.prompt.to_owned(),
+                attachments: start.attachments.to_vec(),
             },
             EventMeta {
                 delivery: Some(start.delivery),
@@ -598,9 +719,10 @@ async fn prepare_and_prompt(
         run.reset();
         run.turn_id = Some(turn_id);
     }
-    let mut parts = vec![start.prompt.to_owned()];
+    let mut parts = vec![PromptPart::text(start.prompt)];
+    parts.extend(image_parts);
     if let Some(summary) = inner.projection.summary(start.thread_id).await {
-        parts.push(summary);
+        parts.push(PromptPart::text(summary));
     }
     // Mark the thread Running before the prompt is issued: any completion event
     // from the harness then necessarily arrives after the Prompt transition.
@@ -685,6 +807,7 @@ async fn enqueue(
     user: &CurrentUser,
     text: &str,
     authors: &[UserBrief],
+    attachments_json: Option<&str>,
 ) -> Result<u32, ServerError> {
     let authors_json = serde_json::to_string(authors).unwrap_or_else(|_| "[]".to_owned());
     queue::enqueue(
@@ -694,6 +817,7 @@ async fn enqueue(
             author_id: user.user.id.as_str(),
             text,
             authors_json: Some(&authors_json),
+            attachments_json,
             created_at: now_ms(),
         },
     )

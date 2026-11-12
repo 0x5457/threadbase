@@ -39,8 +39,9 @@ pub async fn insert(pool: &SqlitePool, item: InboxItem<'_>) -> Result<(), Server
     Ok(())
 }
 
-/// Notify every thread member. A failure to write one inbox row must not lose
-/// the originating event, so callers use the result only for logging.
+/// Notify every account: every thread is visible to the whole workspace, so
+/// there is no smaller audience. A failure to write one inbox row must not
+/// lose the originating event, so callers use the result only for logging.
 pub async fn notify_members(
     pool: &SqlitePool,
     thread_id: &str,
@@ -49,11 +50,9 @@ pub async fn notify_members(
     elicitation_id: Option<&str>,
     summary: &str,
 ) -> Result<(), ServerError> {
-    let members: Vec<String> =
-        sqlx::query_scalar("SELECT user_id FROM thread_members WHERE thread_id = ?")
-            .bind(thread_id)
-            .fetch_all(pool)
-            .await?;
+    let members: Vec<String> = sqlx::query_scalar("SELECT id FROM users")
+        .fetch_all(pool)
+        .await?;
     for user_id in members {
         insert(
             pool,

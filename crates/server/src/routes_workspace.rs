@@ -119,7 +119,7 @@ struct ThreadListQuery {
 
 async fn list_threads(
     State(state): State<AppState>,
-    user: CurrentUser,
+    _user: CurrentUser,
     Path(project_id): Path<String>,
     Query(query): Query<ThreadListQuery>,
 ) -> Result<Json<ThreadsResponse>, ServerError> {
@@ -127,7 +127,6 @@ async fn list_threads(
         threads: threads::list(
             &state.pool,
             &project_id,
-            &user,
             query.include_archived.unwrap_or(false),
         )
         .await?,
@@ -167,12 +166,11 @@ async fn create_thread(
 
 async fn list_all_threads(
     State(state): State<AppState>,
-    user: CurrentUser,
+    _user: CurrentUser,
     Query(query): Query<ThreadListQuery>,
 ) -> Result<Json<ThreadsResponse>, ServerError> {
     Ok(Json(ThreadsResponse {
-        threads: threads::list_all(&state.pool, &user, query.include_archived.unwrap_or(false))
-            .await?,
+        threads: threads::list_all(&state.pool, query.include_archived.unwrap_or(false)).await?,
     }))
 }
 

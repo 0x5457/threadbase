@@ -7,4 +7,9 @@ export type CreateThreadRequest = {
   effort: string | null;
   baseBranch: string | null;
   initialPrompt: string | null;
+  /**
+   * Give the thread its own git worktree and branch (default true). When
+   * false the agent works directly in the project directory.
+   */
+  worktree: boolean | null;
 };

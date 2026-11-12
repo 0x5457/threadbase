@@ -8,13 +8,12 @@ import {
   IconListCheck,
   IconPencil,
   IconPin,
-  IconShare,
 } from "@tabler/icons-react";
 
 export function ThreadMenu({
   canManage,
+  hasWorktree,
   isPinned,
-  onShare,
   onMerge,
   onReviews,
   onRename,
@@ -24,8 +23,9 @@ export function ThreadMenu({
   onArchive,
 }: {
   canManage: boolean;
+  /** Merge / reviews / revert need a thread worktree to diff against. */
+  hasWorktree: boolean;
   isPinned: boolean;
-  onShare: () => void;
   onMerge: () => void;
   onReviews: () => void;
   onRename: () => void;
@@ -43,19 +43,23 @@ export function ThreadMenu({
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Item leftSection={<IconShare size={13} />} onClick={onShare}>
-          Share
-        </Menu.Item>
-        <Menu.Item leftSection={<IconGitMerge size={13} />} onClick={onMerge}>
-          Merge
-        </Menu.Item>
-        <Menu.Item
-          leftSection={<IconListCheck size={13} />}
-          onClick={onReviews}
-        >
-          Reviews
-        </Menu.Item>
-        <Menu.Divider />
+        {hasWorktree ? (
+          <>
+            <Menu.Item
+              leftSection={<IconGitMerge size={13} />}
+              onClick={onMerge}
+            >
+              Apply changes
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconListCheck size={13} />}
+              onClick={onReviews}
+            >
+              Reviews
+            </Menu.Item>
+            <Menu.Divider />
+          </>
+        ) : null}
         <Menu.Item leftSection={<IconPencil size={13} />} onClick={onRename}>
           Rename
         </Menu.Item>
@@ -66,12 +70,14 @@ export function ThreadMenu({
         <Menu.Item leftSection={<IconGitFork size={13} />} onClick={onFork}>
           Fork thread
         </Menu.Item>
-        <Menu.Item
-          leftSection={<IconArrowBackUp size={13} />}
-          onClick={onRevert}
-        >
-          Revert changes
-        </Menu.Item>
+        {hasWorktree ? (
+          <Menu.Item
+            leftSection={<IconArrowBackUp size={13} />}
+            onClick={onRevert}
+          >
+            Revert changes
+          </Menu.Item>
+        ) : null}
         <Menu.Divider />
         <Menu.Item
           color="red"

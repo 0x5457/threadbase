@@ -12,7 +12,7 @@ use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use threadbase_core::state::{ThreadAction, ThreadMachine};
 use threadbase_shared::api::{CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest};
-use threadbase_shared::{now_ms, ApiError, ShareLevel, ThreadDto, ThreadStatus};
+use threadbase_shared::{now_ms, ApiError, ThreadDto, ThreadStatus};
 use threadbase_workspace::git;
 use ulid::Ulid;
 
@@ -27,10 +27,9 @@ pub struct NewThread<'a> {
     pub branch: &'a str,
     pub base_branch: &'a str,
     pub base_sha: &'a str,
-    pub worktree_path: &'a str,
+    pub worktree_path: Option<&'a str>,
     pub created_by: &'a str,
     pub created_at: i64,
-    pub share_level: &'a str,
 }
 
 pub async fn status(pool: &SqlitePool, thread_id: &str) -> Result<ThreadStatus, ServerError> {
@@ -66,8 +65,8 @@ async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, 
     sqlx::query(
         "INSERT INTO threads(id, project_id, parent_thread_id, title, status, agent, model, effort,
             branch, base_branch, base_sha, last_turn_sha, worktree_path, created_by, created_at,
-            updated_at, share_level)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(row.id)
     .bind(row.project_id)
@@ -85,7 +84,6 @@ async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, 
     .bind(row.created_by)
     .bind(row.created_at)
     .bind(row.created_at)
-    .bind(row.share_level)
     .execute(pool)
     .await?;
     Ok(status)
@@ -125,8 +123,13 @@ pub async fn create(
         return Err(ServerError(ApiError::validation("agent id is too long")));
     }
     let thread_id = Ulid::new().to_string();
-    let branch = format!("threadbase/{thread_id}");
-    let worktree = data_dir.join("worktrees").join(&thread_id);
+    let use_worktree = request.worktree.unwrap_or(true);
+    let branch = if use_worktree {
+        format!("threadbase/{thread_id}")
+    } else {
+        base_branch.clone()
+    };
+    let worktree = use_worktree.then(|| data_dir.join("worktrees").join(&thread_id));
     let title = request
         .title
         .as_deref()
@@ -135,7 +138,9 @@ pub async fn create(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| "New thread".to_owned());
     let now = now_ms();
-    let worktree_path = worktree.to_string_lossy().to_string();
+    let worktree_path = worktree
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
     insert(
         pool,
         &NewThread {
@@ -149,34 +154,29 @@ pub async fn create(
             branch: &branch,
             base_branch: &base_branch,
             base_sha: &base_sha,
-            worktree_path: &worktree_path,
+            worktree_path: worktree_path.as_deref(),
             created_by: user.user.id.as_str(),
             created_at: now,
-            share_level: ShareLevel::InviteOnly.as_str(),
         },
     )
     .await?;
 
-    if let Err(error) = git::create_worktree(&project_root, &worktree, &branch, &base_sha).await {
-        sqlx::query("DELETE FROM threads WHERE id = ?")
-            .bind(&thread_id)
-            .execute(pool)
-            .await?;
-        let _ = tokio::fs::remove_dir_all(&worktree).await;
-        return Err(ServerError(ApiError::validation(format!(
-            "could not create worktree: {error}"
-        ))));
+    if let Some(worktree) = worktree.as_deref() {
+        if let Err(error) = git::create_worktree(&project_root, worktree, &branch, &base_sha).await
+        {
+            sqlx::query("DELETE FROM threads WHERE id = ?")
+                .bind(&thread_id)
+                .execute(pool)
+                .await?;
+            let _ = tokio::fs::remove_dir_all(worktree).await;
+            return Err(ServerError(ApiError::validation(format!(
+                "could not create worktree: {error}"
+            ))));
+        }
     }
 
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'owner', ?)",
-    )
-    .bind(&thread_id)
-    .bind(user.user.id.as_str())
-    .bind(now)
-    .execute(pool)
-    .await?;
-    bindings::insert(pool, &thread_id, &agent, &worktree_path, now).await?;
+    let agent_cwd = worktree_path.as_deref().unwrap_or(&project.path);
+    bindings::insert(pool, &thread_id, &agent, agent_cwd, now).await?;
     transition(pool, projection, &thread_id, ThreadAction::StartSucceeded).await?;
 
     if let Some(prompt) = request
@@ -192,6 +192,7 @@ pub async fn create(
                 author_id: user.user.id.as_str(),
                 text: prompt,
                 authors_json: None,
+                attachments_json: None,
                 created_at: now,
             },
         )
@@ -220,7 +221,7 @@ pub async fn update(
     if request.title.is_some() || request.pinned.is_some() {
         authz::require_write_role(pool, thread_id, user).await?;
     }
-    if request.archived.is_some() || request.share_level.is_some() {
+    if request.archived.is_some() {
         authz::require_manage_role(pool, thread_id, user).await?;
     }
     if let Some(title) = request.title.as_deref() {
@@ -277,9 +278,6 @@ pub async fn update(
             .await?;
         }
     }
-    if let Some(share) = request.share_level {
-        set_share_level(pool, thread_id, share).await?;
-    }
     get(pool, thread_id, user).await
 }
 
@@ -332,10 +330,9 @@ pub async fn fork(
             branch: &branch,
             base_branch: &source.branch,
             base_sha: &head,
-            worktree_path: &worktree_path,
+            worktree_path: Some(&worktree_path),
             created_by: user.user.id.as_str(),
             created_at: now,
-            share_level: &source.share_level,
         },
     )
     .await?;
@@ -363,24 +360,6 @@ pub async fn fork(
             }
         }
     }
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at)
-         SELECT ?, user_id, role, ? FROM thread_members WHERE thread_id = ?",
-    )
-    .bind(&new_id)
-    .bind(now)
-    .bind(&source.id)
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "INSERT OR IGNORE INTO thread_members(thread_id, user_id, role, joined_at)
-         VALUES(?, ?, 'owner', ?)",
-    )
-    .bind(&new_id)
-    .bind(user.user.id.as_str())
-    .bind(now)
-    .execute(pool)
-    .await?;
     bindings::copy(pool, &new_id, &worktree_path, &source.id, now).await?;
     transition(pool, projection, &new_id, ThreadAction::StartSucceeded).await?;
     audit(
@@ -416,7 +395,9 @@ pub async fn delete(
                 })?;
         }
     }
-    let _ = git::delete_branch(Path::new(&project.path), &row.branch, true).await;
+    if row.worktree_path.is_some() {
+        let _ = git::delete_branch(Path::new(&project.path), &row.branch, true).await;
+    }
     sqlx::query("DELETE FROM threads WHERE id = ?")
         .bind(thread_id)
         .execute(pool)
@@ -431,20 +412,6 @@ pub async fn delete(
         None,
     )
     .await;
-    Ok(())
-}
-
-pub async fn set_share_level(
-    pool: &SqlitePool,
-    thread_id: &str,
-    level: ShareLevel,
-) -> Result<(), ServerError> {
-    sqlx::query("UPDATE threads SET share_level = ?, updated_at = ? WHERE id = ?")
-        .bind(level.as_str())
-        .bind(now_ms())
-        .bind(thread_id)
-        .execute(pool)
-        .await?;
     Ok(())
 }
 

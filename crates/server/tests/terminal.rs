@@ -94,19 +94,6 @@ async fn fixture(terminal: bool) -> Fixture {
     .await
     .unwrap();
 
-    for (member_id, role) in [(&member, "editor"), (&read_only, "viewer")] {
-        sqlx::query(
-            "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?,?,?,?)",
-        )
-        .bind(&thread_id)
-        .bind(member_id)
-        .bind(role)
-        .bind(now)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-
     Fixture {
         socket,
         app,

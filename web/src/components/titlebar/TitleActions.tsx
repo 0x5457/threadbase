@@ -1,18 +1,14 @@
 import { Button, Group } from "@mantine/core";
-import {
-  IconGitMerge,
-  IconListCheck,
-  IconShare,
-} from "@tabler/icons-react";
+import { IconGitMerge, IconListCheck } from "@tabler/icons-react";
 import { ThreadMenu } from "./ThreadMenu";
 
 interface TitleActionsProps {
   visible: boolean;
   canManage: boolean;
+  hasWorktree: boolean;
   isPinned: boolean;
   onReviews: () => void;
   onMerge: () => void;
-  onShare: () => void;
   onRename: () => void;
   onTogglePin: () => void;
   onFork: () => void;
@@ -23,10 +19,10 @@ interface TitleActionsProps {
 export function TitleActions({
   visible,
   canManage,
+  hasWorktree,
   isPinned,
   onReviews,
   onMerge,
-  onShare,
   onRename,
   onTogglePin,
   onFork,
@@ -41,37 +37,32 @@ export function TitleActions({
       visibleFrom="md"
       display={visible ? undefined : "none"}
     >
-      <Button
-        variant="subtle"
-        size="compact-xs"
-        color="gray"
-        leftSection={<IconListCheck size={13} stroke={1.5} />}
-        onClick={onReviews}
-      >
-        Reviews
-      </Button>
-      <Button
-        variant="subtle"
-        size="compact-xs"
-        color="gray"
-        leftSection={<IconGitMerge size={13} stroke={1.5} />}
-        onClick={onMerge}
-      >
-        Merge
-      </Button>
-      <Button
-        variant="subtle"
-        size="compact-xs"
-        color="gray"
-        leftSection={<IconShare size={13} stroke={1.5} />}
-        onClick={onShare}
-      >
-        Share
-      </Button>
+      {hasWorktree ? (
+        <>
+          <Button
+            variant="subtle"
+            size="compact-xs"
+            color="gray"
+            leftSection={<IconListCheck size={13} stroke={1.5} />}
+            onClick={onReviews}
+          >
+            Reviews
+          </Button>
+          <Button
+            variant="subtle"
+            size="compact-xs"
+            color="gray"
+            leftSection={<IconGitMerge size={13} stroke={1.5} />}
+            onClick={onMerge}
+          >
+            Apply changes
+          </Button>
+        </>
+      ) : null}
       <ThreadMenu
         canManage={canManage}
+        hasWorktree={hasWorktree}
         isPinned={isPinned}
-        onShare={onShare}
         onMerge={onMerge}
         onReviews={onReviews}
         onRename={onRename}

@@ -2,8 +2,8 @@
 
 use crate::ids::{ApprovalId, ElicitationId, MessageId, SubagentId, ThreadId, ToolCallId, TurnId};
 use crate::model::{
-    ApprovalDecision, ApprovalDto, ApprovalScope, ChangeStats, CommentDto, DiffSummary,
-    ElicitationAction, ElicitationDto, MessageRole, PlanEntry, ShareLevel, SubagentDto,
+    ApprovalDecision, ApprovalDto, ApprovalScope, AttachmentDto, ChangeStats, CommentDto,
+    DiffSummary, ElicitationAction, ElicitationDto, MessageRole, PlanEntry, SubagentDto,
     ThreadStatus, ToolKind, ToolLocation, ToolStatus, Usage, UserBrief,
 };
 use serde::{Deserialize, Serialize};
@@ -94,6 +94,10 @@ pub struct MessageDto {
     pub model: Option<String>,
     pub streaming: bool,
     pub created_at: i64,
+    /// Images the author attached. Absent in events written before images
+    /// existed, so old logs still deserialize.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -140,6 +144,8 @@ pub enum ThreadEvent {
         #[serde(default)]
         authors: Vec<UserBrief>,
         prompt: String,
+        #[serde(default)]
+        attachments: Vec<AttachmentDto>,
     },
     MessageDelta {
         message_id: MessageId,
@@ -216,10 +222,6 @@ pub enum ThreadEvent {
     CommentUpdated {
         comment: CommentDto,
     },
-    MembersChanged {
-        member: crate::model::ThreadMemberDto,
-        action: String,
-    },
     QueueUpdated {
         items: Vec<crate::model::QueueItemDto>,
     },
@@ -227,7 +229,6 @@ pub enum ThreadEvent {
         title: Option<String>,
         status: Option<ThreadStatus>,
         pinned: Option<bool>,
-        share_level: Option<ShareLevel>,
     },
     AgentMessage {
         direction: AgentMessageDirection,
@@ -276,7 +277,6 @@ impl ThreadEvent {
             Self::ChangesUpdated { .. } => "changes_updated",
             Self::CommentAdded { .. } => "comment_added",
             Self::CommentUpdated { .. } => "comment_updated",
-            Self::MembersChanged { .. } => "members_changed",
             Self::QueueUpdated { .. } => "queue_updated",
             Self::ThreadUpdated { .. } => "thread_updated",
             Self::AgentMessage { .. } => "agent_message",

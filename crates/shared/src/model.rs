@@ -1,8 +1,8 @@
 //! Domain and API model shared by the server and the web client.
 
 use crate::ids::{
-    ApprovalId, CommentId, ElicitationId, InviteId, ProjectId, QueueItemId, SubagentId, ThreadId,
-    ToolCallId, UserId,
+    ApprovalId, CommentId, ElicitationId, ProjectId, QueueItemId, SubagentId, ThreadId, ToolCallId,
+    UserId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -410,34 +410,6 @@ pub enum CommentStatus {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 #[ts(export)]
-pub enum ShareLevel {
-    InviteOnly,
-    Workspace,
-}
-
-impl ShareLevel {
-    #[must_use]
-    pub fn parse(value: &str) -> Self {
-        value.parse().unwrap_or(Self::InviteOnly)
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    TS,
-    Display,
-    EnumString,
-    IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-#[ts(export)]
 pub enum BaselineKind {
     BaseBranch,
     LastCommit,
@@ -627,8 +599,6 @@ pub enum InboxKind {
     Approval,
     Elicitation,
     Mention,
-    Invite,
-    Access,
     Error,
 }
 
@@ -752,18 +722,8 @@ pub struct ThreadDto {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
     pub pinned: bool,
-    pub share_level: ShareLevel,
     pub participants: Vec<Participant>,
     pub pending_approvals: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ThreadMemberDto {
-    pub user: UserBrief,
-    pub role: Role,
-    pub joined_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -913,20 +873,18 @@ pub struct QueueItemDto {
     pub superseded: bool,
 }
 
+/// A stored file a user attached to a message. Bytes live on disk; the DTO is
+/// what events carry so a cold reload can still render the image.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct InviteDto {
-    pub id: InviteId,
-    pub thread_id: ThreadId,
-    pub role: Role,
-    pub email: Option<String>,
-    pub created_at: i64,
-    pub expires_at: i64,
-    pub accepted_at: Option<i64>,
+pub struct AttachmentDto {
+    pub id: String,
+    pub mime_type: String,
+    pub byte_size: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct InboxItemDto {
@@ -1090,17 +1048,6 @@ pub struct DoctorReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct ShareStateDto {
-    pub thread_id: ThreadId,
-    pub share_level: ShareLevel,
-    pub members: Vec<ThreadMemberDto>,
-    pub pending_invites: Vec<InviteDto>,
-    pub share_token: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct AuthMeDto {
     pub user: UserDto,
     pub auth_method: String,
@@ -1200,7 +1147,6 @@ pub struct DirectoryListingDto {
 impl_as_str!(
     Role,
     UserAccess,
-    ShareLevel,
     ThreadStatus,
     SubagentStatus,
     Delivery,
@@ -1223,8 +1169,6 @@ mod tests {
         assert_eq!(UserAccess::parse("unknown"), UserAccess::Pending);
         assert_eq!(Role::Owner.as_str(), "owner");
         assert_eq!(Role::parse("unknown"), Role::Viewer);
-        assert_eq!(ShareLevel::Workspace.as_str(), "workspace");
-        assert_eq!(ShareLevel::parse("unknown"), ShareLevel::InviteOnly);
         assert_eq!(ThreadStatus::RequiresAction.as_str(), "requires_action");
         assert_eq!(Delivery::StoppedAndSent.as_str(), "stopped_and_sent");
         assert_eq!(

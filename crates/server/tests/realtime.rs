@@ -268,7 +268,7 @@ async fn draft_websocket_syncs_updates() {
     assert!(!initial.is_empty());
 
     let mut client = DraftDoc::new();
-    client.append_block("b1", "u1", "shared text", 1).unwrap();
+    threadbase_draft::seed_text(&mut client, "u1", &["shared text"]).unwrap();
     let update = SyncEnvelope::Sync(SyncMessage::Update(client.encode_full())).encode_v1();
     socket.send(WsMessage::Binary(update.into())).await.unwrap();
     let broadcast = next_binary(&mut socket).await;
@@ -280,7 +280,7 @@ async fn draft_websocket_syncs_updates() {
     };
     let mut server_doc = DraftDoc::new();
     server_doc.apply_update(&update).unwrap();
-    assert_eq!(server_doc.blocks()[0].text, "shared text");
+    assert_eq!(server_doc.text(), "shared text");
 }
 
 #[tokio::test]

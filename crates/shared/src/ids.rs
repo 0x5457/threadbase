@@ -63,4 +63,3 @@ id_type!(ApprovalId);
 id_type!(ElicitationId);
 id_type!(CommentId);
 id_type!(QueueItemId);
-id_type!(InviteId);

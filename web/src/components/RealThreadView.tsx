@@ -19,6 +19,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import {
   Fragment,
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -40,7 +41,9 @@ import {
   respondElicitation,
   restoreQueueItem,
   sendComment,
+  steerQueueItem,
   updateComment,
+  updateQueueItem,
   updateThread,
   type Approval,
   type Comment,
@@ -60,7 +63,7 @@ import { CommentThread } from "./thread/CommentThread";
 import { ElicitationCard } from "./thread/ElicitationCard";
 import { EmptyThread } from "./thread/EmptyThread";
 import { Message, Notice, Thinking } from "./thread/Message";
-import { timeOf } from "./thread/format";
+import { formatDuration, timeOf } from "./thread/format";
 import { QueueBar } from "./thread/QueueBar";
 import { SubagentList } from "./thread/SubagentList";
 import { Tool } from "./thread/Tool";
@@ -71,6 +74,9 @@ import { Tool } from "./thread/Tool";
 /// A row is either a single reducer item or a run of consecutive tool calls,
 /// which Delta-style collapses into one "ran N tools" line.
 type ToolItem = Extract<ViewItem, { kind: "tool" }>;
+
+/** Tools rendered inline before a run collapses the rest behind a toggle. */
+const PREVIEW_TOOLS = 3;
 type TimelineRowItem =
   | ViewItem
   | { kind: "tools"; id: string; tools: ToolItem[] }
@@ -94,11 +100,16 @@ function TimelineRow({
   renderComment,
   editing,
   editor,
+  expanded,
+  onToggleExpanded,
   onComment,
   onMessageLongPress,
 }: {
   item: TimelineRowItem;
   active: boolean;
+  /** Group/row keys whose collapsible body is open; survives virtualization. */
+  expanded: Set<string>;
+  onToggleExpanded: (key: string) => void;
   comments: Comment[];
   commentsForTool: (toolCallId: string) => Comment[];
   threadKey: string | null;
@@ -112,7 +123,11 @@ function TimelineRow({
 }) {
   const toolRow = (tool: ToolItem) => (
     <Fragment key={tool.call.id}>
-      <Tool item={tool} />
+      <Tool
+        item={tool}
+        expanded={expanded.has(`d:${tool.call.id}`)}
+        onToggleExpanded={() => onToggleExpanded(`d:${tool.call.id}`)}
+      />
       <CommentThread
         comments={commentsForTool(tool.call.id)}
         threadKey={`t:${tool.call.id}`}
@@ -128,35 +143,86 @@ function TimelineRow({
     </Fragment>
   );
 
+  // A run shows its opening tools inline: a collapsed summary alone said that
+  // the agent ran tools, never what it was doing. The rest stays one click away.
+  // Total tool time says more than the count alone; wall-clock spans would
+  // include user idle time between turns.
+  const toolDuration = (tools: ToolItem[]) =>
+    tools.reduce(
+      (total, tool) =>
+        total +
+        (tool.call.status === "pending"
+          ? 0
+          : Math.max(0, tool.call.updatedAt - tool.call.createdAt)),
+      0,
+    );
+
+  const groupTools = (tools: ToolItem[], key: string) => {
+    const preview = tools.slice(0, PREVIEW_TOOLS);
+    const rest = tools.slice(PREVIEW_TOOLS);
+    const open = expanded.has(`g:${key}`);
+    return (
+      <>
+        {preview.map(toolRow)}
+        {rest.length > 0 ? (
+          <details
+            className="run-more"
+            open={open}
+            onToggle={(event) => {
+              // Keep the open state in React so a row that Virtuoso unmounts
+              // does not silently collapse and shift the scroll height.
+              if (event.currentTarget.open !== open) onToggleExpanded(`g:${key}`);
+            }}
+          >
+            <summary>
+              <span>
+                {rest.length} more {rest.length === 1 ? "tool" : "tools"}
+              </span>
+              <IconChevronDown size={11} stroke={1.5} className="chevron" />
+            </summary>
+            {open ? <div className="run-body">{rest.map(toolRow)}</div> : null}
+          </details>
+        ) : null}
+      </>
+    );
+  };
+
   if (item.kind === "run") {
     const count = item.thinking.count;
     const thought = count > 1 ? `Thought ${count} times` : "Thought once";
+    const elapsed = toolDuration(item.tools);
     const ran = ` · ran ${item.tools.length} ${
       item.tools.length === 1 ? "tool" : "tools"
-    }`;
+    }${elapsed > 0 ? ` · ${formatDuration(elapsed)}` : ""}`;
     return (
-      <details className="run">
-        <summary title={item.thinking.text.trim().slice(0, 240)}>
+      <div className="run">
+        <div
+          className="run-head"
+          title={item.thinking.text.trim().slice(0, 240)}
+        >
           <span>
             {thought}
             {ran}
           </span>
-          <IconChevronDown size={11} stroke={1.5} />
-        </summary>
-        <div className="run-body">{item.tools.map(toolRow)}</div>
-      </details>
+        </div>
+        {groupTools(item.tools, item.id)}
+      </div>
     );
   }
 
   if (item.kind === "tools" && item.tools.length > 1) {
     return (
-      <details className="tool-group">
-        <summary>
-          <span>ran {item.tools.length} tools</span>
-          <IconChevronDown size={11} stroke={1.5} />
-        </summary>
-        <div className="tool-group-body">{item.tools.map(toolRow)}</div>
-      </details>
+      <div className="tool-group">
+        <div className="run-head">
+          <span>
+            ran {item.tools.length} tools
+            {toolDuration(item.tools) > 0
+              ? ` · ${formatDuration(toolDuration(item.tools))}`
+              : ""}
+          </span>
+        </div>
+        {groupTools(item.tools, item.id)}
+      </div>
     );
   }
 
@@ -196,7 +262,13 @@ function TimelineRow({
     case "tools":
       return (
         <>
-          <Tool item={item.tools[0]} />
+          <Tool
+            item={item.tools[0]}
+            expanded={expanded.has(`d:${item.tools[0].call.id}`)}
+            onToggleExpanded={() =>
+              onToggleExpanded(`d:${item.tools[0].call.id}`)
+            }
+          />
           {thread}
         </>
       );
@@ -218,7 +290,12 @@ const TimelineList = forwardRef<HTMLDivElement, { style?: React.CSSProperties; c
 );
 TimelineList.displayName = "TimelineList";
 
-export function RealThreadView({
+/**
+ * Memoized: shell chrome (the nav drawer, theme toggles) re-renders App on every
+ * change, and re-rendering the virtualized transcript there is what made the
+ * phone sidebar feel stiff. The props here are stable, so it can skip those.
+ */
+export const RealThreadView = memo(function RealThreadView({
   threadId,
   onPresence,
   presencePanel = "transcript",
@@ -231,7 +308,7 @@ export function RealThreadView({
   const queryClient = useQueryClient();
   const [deciding, setDeciding] = useState<string | null>(null);
   const [responding, setResponding] = useState<string | null>(null);
-  const [dropping, setDropping] = useState<string | null>(null);
+  const [queueBusy, setQueueBusy] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [commentBusy, setCommentBusy] = useState<string | null>(null);
   const [commentFor, setCommentFor] = useState<string | null>(null);
@@ -244,7 +321,19 @@ export function RealThreadView({
   // A long session can hold thousands of blocks; Virtuoso mounts only what is
   // visible, so a 10k-event transcript costs the same as a short one.
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+  // Expansion lives in React state: Virtuoso unmounts off-screen rows, and DOM
+  // `<details>` state would collapse with them, shifting the scroll height.
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
+  const toggleExpandedRow = useCallback((key: string) => {
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
   const [openComments, setOpenComments] = useState<Set<string>>(new Set());
   const toggleComments = (key: string) =>
     setOpenComments((current) => {
@@ -296,7 +385,7 @@ export function RealThreadView({
     [onPresence],
   );
 
-  const { items, diagnostics } = useMemo(
+  const { items, diagnostics, usage } = useMemo(
     () =>
       reduceEvents(
         live.events.filter((event) => !event.subagentId),
@@ -324,6 +413,8 @@ export function RealThreadView({
   const comments = bundle?.comments ?? [];
   const queue = bundle?.queue ?? [];
   const subagents = bundle?.subagents ?? [];
+  const canWrite = bundle?.role === "owner" || bundle?.role === "editor";
+  const running = bundle?.thread.status === "running";
 
   // One pass over comments instead of a filter per timeline row.
   const commentsByAnchor = useMemo(() => {
@@ -388,7 +479,30 @@ export function RealThreadView({
 
   useEffect(() => {
     setStickToBottom(true);
+    setExpandedRows(new Set());
   }, [threadId]);
+
+  // History arrives after mount, so `initialTopMostItemIndex` cannot land on
+  // the last row; jump there once the first batch renders. A second pass after
+  // the tail rows are measured corrects the estimate.
+  const scrolledFor = useRef<string | null>(null);
+  // `scrollToIndex(LAST, align: "end")` stops at the last row, leaving the
+  // footer below the fold. Scrolling the element itself lands on the true end.
+  const scrollToLatest = useCallback((behavior: "auto" | "smooth" = "auto") => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+  }, []);
+  useEffect(() => {
+    if (rows.length === 0) return;
+    if (scrolledFor.current === threadId) return;
+    scrolledFor.current = threadId;
+    // No cleanup on row changes: the corrective pass must survive the first
+    // measurement flush, otherwise the footer is left below the fold.
+    scrollToLatest();
+    window.setTimeout(() => scrollToLatest(), 300);
+    window.setTimeout(() => scrollToLatest(), 900);
+  }, [rows.length, threadId, scrollToLatest]);
 
 
   useEffect(() => {
@@ -438,7 +552,6 @@ export function RealThreadView({
     setDeciding(approval.id);
     try {
       await decideApproval(approval.id, kind);
-      notifications.show({ message: "Decision recorded", color: "teal" });
       refresh();
     } catch (cause) {
       reportFailure(cause, "Could not record decision");
@@ -460,7 +573,6 @@ export function RealThreadView({
         action,
         Object.keys(values).length ? values : null,
       );
-      notifications.show({ message: "Response recorded", color: "teal" });
       refresh();
     } catch (cause) {
       reportFailure(cause, "Could not respond");
@@ -473,7 +585,6 @@ export function RealThreadView({
     setCancelling(subagent.id);
     try {
       await cancelSubagent(threadId, subagent.id);
-      notifications.show({ message: "Subagent cancelled", color: "teal" });
       refresh();
     } catch (cause) {
       reportFailure(cause, "Could not cancel subagent");
@@ -486,14 +597,39 @@ export function RealThreadView({
     try {
       await restoreQueueItem(threadId, itemId);
       refresh();
-      notifications.show({ message: "Message restored", color: "teal" });
     } catch (cause) {
       reportFailure(cause, "Could not restore message");
     }
   };
 
+  const steer = async (itemId: string) => {
+    setQueueBusy(`steer:${itemId}`);
+    try {
+      await steerQueueItem(threadId, itemId);
+    } catch (cause) {
+      reportFailure(cause, "Could not send the message now");
+    } finally {
+      setQueueBusy(null);
+      refresh();
+    }
+  };
+
+  const edit = async (itemId: string, text: string) => {
+    setQueueBusy(`edit:${itemId}`);
+    try {
+      await updateQueueItem(threadId, itemId, text);
+      refresh();
+      return true;
+    } catch (cause) {
+      reportFailure(cause, "Could not edit the message");
+      return false;
+    } finally {
+      setQueueBusy(null);
+    }
+  };
+
   const drop = async (itemId: string) => {
-    setDropping(itemId);
+    setQueueBusy(`drop:${itemId}`);
     try {
       await dropQueueItem(threadId, itemId);
       refresh();
@@ -521,7 +657,7 @@ export function RealThreadView({
     } catch (cause) {
       reportFailure(cause, "Could not drop message");
     } finally {
-      setDropping(null);
+      setQueueBusy(null);
     }
   };
 
@@ -672,6 +808,9 @@ export function RealThreadView({
       >
         <Virtuoso
           ref={virtuosoRef}
+          scrollerRef={(element) => {
+            if (element instanceof HTMLElement) scrollerRef.current = element;
+          }}
           className="thread-scroll"
           data={rows}
           initialTopMostItemIndex={Math.max(0, rows.length - 1)}
@@ -729,6 +868,8 @@ export function RealThreadView({
               renderComment={commentCard}
               editing={commentFor}
               editor={commentEditor}
+              expanded={expandedRows}
+              onToggleExpanded={toggleExpandedRow}
               onComment={commentOnMessage}
               onMessageLongPress={openMessageSheet}
             />
@@ -738,10 +879,11 @@ export function RealThreadView({
         <UnstyledButton
           className="jump-latest"
           onClick={() => {
-            virtuosoRef.current?.scrollToIndex({
-              index: "LAST",
-              behavior: "smooth",
-            });
+            // The tail may still be unmeasured and rows above may have just
+            // changed height; correct the landing once more after the smooth
+            // scroll settles.
+            scrollToLatest("smooth");
+            window.setTimeout(() => scrollToLatest(), 400);
             setStickToBottom(true);
           }}
         >
@@ -795,13 +937,17 @@ export function RealThreadView({
         <AgentLog lines={diagnostics} />
         <QueueBar
           items={queue}
-          busy={dropping}
+          busy={queueBusy}
+          canWrite={canWrite}
+          canSteer={running}
           onDrop={(id) => void drop(id)}
+          onSteer={(id) => void steer(id)}
+          onEdit={edit}
           onReorder={(ids) => void reorder(ids)}
         />
         <Composer
           threadId={threadId}
-          canWrite={bundle?.role === "owner" || bundle?.role === "editor"}
+          canWrite={canWrite}
           projectId={bundle?.project.id}
           agentName={bundle?.thread.agent}
           modelName={bundle?.thread.model}
@@ -814,6 +960,7 @@ export function RealThreadView({
             applyConfig({ effort }, "Could not update effort")
           }
           onSent={refresh}
+          usage={usage}
           watching={
             live.presence.focuses.filter(
               (focus) => focus.threadId === threadId && !focus.hidden,
@@ -825,4 +972,4 @@ export function RealThreadView({
       </div>
     </>
   );
-}
+});

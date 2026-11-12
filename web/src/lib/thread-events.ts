@@ -1,4 +1,6 @@
 import type { ThreadEvent, ToolCallData } from "../api";
+import type { Usage } from "../api/types/Usage";
+import type { AttachmentDto } from "../api/types/AttachmentDto";
 import type { UserBrief } from "../api/types/UserBrief";
 
 /**
@@ -34,6 +36,7 @@ export type ViewItem =
       text: string;
       ts: number;
       streaming: boolean;
+      attachments: AttachmentDto[];
     }
   | {
       kind: "thinking";
@@ -64,9 +67,10 @@ function displayName(
 export function reduceEvents(
   events: ThreadEvent[],
   agentName = "Agent",
-): { items: ViewItem[]; diagnostics: DiagnosticLine[] } {
+): { items: ViewItem[]; diagnostics: DiagnosticLine[]; usage: Usage | null } {
   const items: ViewItem[] = [];
   const diagnostics: DiagnosticLine[] = [];
+  let usage: Usage | null = null;
   const messageRows = new Map<string, number>();
   const toolRows = new Map<string, number>();
   const thinkingRows = new Map<string, number>();
@@ -80,6 +84,7 @@ export function reduceEvents(
     chunk: string,
     ts: number,
     streaming: boolean,
+    attachments: AttachmentDto[] = [],
   ) => {
     const existing = messageRows.get(id);
     if (existing === undefined) {
@@ -94,6 +99,7 @@ export function reduceEvents(
         text: chunk,
         ts,
         streaming,
+        attachments,
       });
       return;
     }
@@ -107,6 +113,7 @@ export function reduceEvents(
           : row.text + chunk,
       streaming,
       ts,
+      attachments: attachments.length ? attachments : row.attachments,
     };
   };
 
@@ -145,6 +152,7 @@ export function reduceEvents(
           visiblePrompt,
           event.ts,
           false,
+          payload.attachments ?? [],
         );
         break;
       }
@@ -176,6 +184,7 @@ export function reduceEvents(
           message.text,
           message.createdAt,
           false,
+          message.attachments ?? [],
         );
         break;
       }
@@ -271,6 +280,10 @@ export function reduceEvents(
         });
         break;
       }
+      case "usage_updated": {
+        usage = payload.usage;
+        break;
+      }
       case "turn_ended": {
         for (let index = 0; index < items.length; index += 1) {
           const row = items[index];
@@ -297,5 +310,5 @@ export function reduceEvents(
     diagnostics.splice(0, diagnostics.length - DIAGNOSTIC_LIMIT);
   }
 
-  return { items, diagnostics };
+  return { items, diagnostics, usage };
 }

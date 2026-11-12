@@ -1,7 +1,7 @@
 /**
  * Reproducible behavior checks for the audit findings that are not visual:
  * real identity, live online indicators, default baseline, panel reset across
- * threads, Review/Share form reset, and no unreachable share-link control.
+ * threads and Review form reset.
  *
  * Run from web/: `pnpm smoke:behavior` while API 7800 + Vite 5173 are up.
  * Writes audit/behavior-smoke.json and exits 1 on any failed assertion.
@@ -176,17 +176,6 @@ async function main() {
     await openModal(page, "Reviews");
     const reviewValue = await page.getByLabel("Review note").inputValue();
     check("review form resets on reopen", reviewValue === "", reviewValue);
-    await closeModal(page);
-
-    await openModal(page, "Share");
-    const email = page.getByPlaceholder("name@example.com");
-    await email.fill("residue@example.com");
-    const copyLink = await page.getByText("Copy link", { exact: true }).count();
-    check("no unreachable share-link control", copyLink === 0, `${copyLink}`);
-    await closeModal(page);
-    await openModal(page, "Share");
-    const emailValue = await page.getByPlaceholder("name@example.com").inputValue();
-    check("share form resets on reopen", emailValue === "", emailValue);
     await closeModal(page);
 
     await patchSettings(page, { defaultBaseline: "base_branch" });

@@ -29,6 +29,12 @@ pub struct EventMeta {
     pub delivery: Option<Delivery>,
 }
 
+/// Turns a cold page reaches back, newest first.
+const HISTORY_TURNS: u32 = 20;
+/// Hard row cap for one cold page: a runaway turn must not turn a refresh into
+/// a multi-megabyte transfer.
+const HISTORY_ROWS: u32 = 20_000;
+
 #[derive(Clone)]
 pub struct EventStore {
     pool: SqlitePool,
@@ -124,6 +130,9 @@ impl EventStore {
         Ok(envelope)
     }
 
+    /// One page of the thread log. `after_seq == 0` (a cold load) and a stale
+    /// cursor both return a compacted tail, so a refresh restores the whole
+    /// conversation instead of the last few hundred token deltas.
     pub async fn page(
         &self,
         thread_id: &ThreadId,
@@ -140,30 +149,21 @@ impl EventStore {
         let oldest = u64::try_from(oldest).unwrap_or(0);
         let last = u64::try_from(last).unwrap_or(0);
         let resync = after_seq > 0 && oldest > 0 && after_seq + 1 < oldest;
-        let rows = if after_seq == 0 || resync {
-            sqlx::query_as::<_, EventRow>(
-                "SELECT * FROM (
-                    SELECT * FROM events WHERE thread_id = ? ORDER BY seq DESC LIMIT ?
-                 ) ORDER BY seq ASC",
-            )
-            .bind(thread_id.as_str())
-            .bind(i64::from(limit))
-            .fetch_all(&self.pool)
-            .await?
+        let events = if after_seq == 0 || resync {
+            self.history(thread_id).await?
         } else {
-            sqlx::query_as::<_, EventRow>(
+            let rows = sqlx::query_as::<_, EventRow>(
                 "SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?",
             )
             .bind(thread_id.as_str())
             .bind(i64::try_from(after_seq).unwrap_or(i64::MAX))
             .bind(i64::from(limit))
             .fetch_all(&self.pool)
-            .await?
+            .await?;
+            rows.into_iter()
+                .map(EventRow::into_envelope)
+                .collect::<Result<Vec<_>, _>>()?
         };
-        let events = rows
-            .into_iter()
-            .map(EventRow::into_envelope)
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(EventsPageDto {
             thread_id: thread_id.clone(),
             events,
@@ -171,6 +171,38 @@ impl EventStore {
             oldest_seq: oldest,
             resync,
         })
+    }
+
+    /// The tail of the log, reaching back over whole turns and with streaming
+    /// deltas folded into one event per message: a page that a cold load can
+    /// apply in one shot without shipping every token chunk ever written.
+    async fn history(&self, thread_id: &ThreadId) -> Result<Vec<EventEnvelope>, EventStoreError> {
+        let from: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(seq) FROM (
+                 SELECT seq FROM events WHERE thread_id = ? AND kind = 'turn_started'
+                 ORDER BY seq DESC LIMIT ?
+             )",
+        )
+        .bind(thread_id.as_str())
+        .bind(i64::from(HISTORY_TURNS))
+        .fetch_one(&self.pool)
+        .await?;
+        let rows = sqlx::query_as::<_, EventRow>(
+            "SELECT * FROM (
+                 SELECT * FROM events WHERE thread_id = ? AND seq >= ?
+                 ORDER BY seq DESC LIMIT ?
+             ) ORDER BY seq ASC",
+        )
+        .bind(thread_id.as_str())
+        .bind(from.unwrap_or(0))
+        .bind(i64::from(HISTORY_ROWS))
+        .fetch_all(&self.pool)
+        .await?;
+        let events = rows
+            .into_iter()
+            .map(EventRow::into_envelope)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(compact_history(events))
     }
 
     pub async fn last_seq(&self, thread_id: &ThreadId) -> Result<u64, EventStoreError> {
@@ -235,6 +267,118 @@ fn parse_actor_kind(value: &str) -> ActorKind {
         "agent" => ActorKind::Agent,
         _ => ActorKind::System,
     }
+}
+
+/// Fold streaming deltas for a cold page: one event per message carrying the
+/// accumulated text (in the first chunk's slot, so row order survives), one
+/// event per tool call (its last status), and only the newest usage and plan.
+fn compact_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
+    use std::collections::{HashMap, HashSet};
+
+    struct Stream {
+        at: usize,
+        text: String,
+    }
+
+    fn push(stream: &mut Stream, chunk: &str) {
+        // Deltas may be either incremental or cumulative; mirror the web
+        // reducer so the folded text matches what live streaming shows.
+        if chunk.starts_with(stream.text.as_str()) || stream.text.is_empty() {
+            stream.text = chunk.to_owned();
+        } else {
+            stream.text.push_str(chunk);
+        }
+    }
+
+    let mut completed: HashSet<String> = HashSet::new();
+    let mut messages: HashMap<String, Stream> = HashMap::new();
+    let mut message_slots: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut thoughts: HashMap<String, Stream> = HashMap::new();
+    let mut thought_slots: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut call_slots: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut usage_slots: Vec<usize> = Vec::new();
+    let mut plan_slots: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match &event.payload {
+            ThreadEvent::MessageCompleted { message } => {
+                completed.insert(message.id.0.clone());
+            }
+            ThreadEvent::MessageDelta {
+                message_id, text, ..
+            } => {
+                let stream = messages
+                    .entry(message_id.0.clone())
+                    .or_insert_with(|| Stream {
+                        at: index,
+                        text: String::new(),
+                    });
+                push(stream, text);
+                message_slots
+                    .entry(message_id.0.clone())
+                    .or_default()
+                    .push(index);
+            }
+            ThreadEvent::ThinkingDelta { message_id, text } => {
+                let stream = thoughts
+                    .entry(message_id.0.clone())
+                    .or_insert_with(|| Stream {
+                        at: index,
+                        text: String::new(),
+                    });
+                push(stream, text);
+                thought_slots
+                    .entry(message_id.0.clone())
+                    .or_default()
+                    .push(index);
+            }
+            ThreadEvent::ToolCallUpdate { call } => {
+                call_slots.entry(call.id.0.clone()).or_default().push(index);
+            }
+            ThreadEvent::UsageUpdated { .. } => usage_slots.push(index),
+            ThreadEvent::PlanUpdated { .. } => plan_slots.push(index),
+            _ => {}
+        }
+    }
+
+    let mut drop: HashSet<usize> = HashSet::new();
+    for (id, slots) in &message_slots {
+        // A completed message carries its final text: every chunk is superseded.
+        let first_kept = usize::from(!completed.contains(id));
+        drop.extend(slots.iter().skip(first_kept).copied());
+    }
+    for slots in thought_slots.values() {
+        drop.extend(slots.iter().skip(1).copied());
+    }
+    for slots in call_slots.values() {
+        drop.extend(slots.iter().rev().skip(1).copied());
+    }
+    drop.extend(usage_slots.iter().rev().skip(1).copied());
+    drop.extend(plan_slots.iter().rev().skip(1).copied());
+
+    let folded: HashMap<usize, &Stream> = messages
+        .values()
+        .chain(thoughts.values())
+        .map(|stream| (stream.at, stream))
+        .collect();
+
+    let mut out = Vec::with_capacity(events.len());
+    for (index, mut event) in events.into_iter().enumerate() {
+        if drop.contains(&index) {
+            continue;
+        }
+        if let Some(stream) = folded.get(&index) {
+            match &mut event.payload {
+                ThreadEvent::MessageDelta { text, .. }
+                | ThreadEvent::ThinkingDelta { text, .. } => {
+                    *text = stream.text.clone();
+                }
+                _ => {}
+            }
+        }
+        out.push(event);
+    }
+    out
 }
 
 fn origin_str(origin: Origin) -> &'static str {
@@ -446,13 +590,157 @@ mod tests {
         tx.commit().await.unwrap();
         let _ = user_id;
         let store = EventStore::new(pool);
+        // A cold load ignores the page size: it returns the whole retained
+        // tail (capped by HISTORY_ROWS) so a refresh can rebuild history.
         let page = store.page(&thread, 0, 200).await.unwrap();
-        assert_eq!(page.events.len(), 200);
-        assert_eq!(page.events[0].seq, 99_801);
+        assert_eq!(page.events.len(), usize::try_from(HISTORY_ROWS).unwrap());
+        assert_eq!(page.events[0].seq, 80_001);
         assert_eq!(page.last_seq, 100_000);
         assert!(!page.resync);
         let page = store.page(&thread, 99_900, 200).await.unwrap();
         assert_eq!(page.events.len(), 100);
         assert_eq!(page.events[0].seq, 99_901);
+    }
+
+    use threadbase_shared::{
+        MessageDto, MessageId, MessageRole, ToolCallData, ToolKind, ToolStatus, UserBrief,
+    };
+
+    fn brief() -> UserBrief {
+        UserBrief {
+            id: "u1".into(),
+            username: "ada".into(),
+            display_name: "Ada".into(),
+            avatar_url: None,
+            color: "#000".into(),
+        }
+    }
+
+    async fn store() -> (EventStore, ThreadId) {
+        let pool = db::connect_memory().await.unwrap();
+        let (_user, _project, thread) = test_support::seed_thread(&pool).await;
+        (EventStore::new(pool), thread)
+    }
+
+    async fn delta(store: &EventStore, thread: &ThreadId, id: &MessageId, text: &str) {
+        store
+            .append(
+                thread,
+                Actor::user(&brief()),
+                ThreadEvent::MessageDelta {
+                    message_id: id.clone(),
+                    role: MessageRole::Agent,
+                    text: text.to_owned(),
+                    author: None,
+                },
+                EventMeta::default(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cold_page_folds_streaming_deltas_into_one_event() {
+        let (store, thread) = store().await;
+        let message = MessageId::new();
+        for chunk in ["Hel", "lo", " world"] {
+            delta(&store, &thread, &message, chunk).await;
+        }
+
+        let page = store.page(&thread, 0, 500).await.unwrap();
+        assert_eq!(page.events.len(), 1);
+        let ThreadEvent::MessageDelta { text, .. } = &page.events[0].payload else {
+            panic!("expected a folded message delta");
+        };
+        assert_eq!(text, "Hello world");
+        // The folded event keeps the first chunk's slot so row order survives.
+        assert_eq!(page.events[0].seq, 1);
+
+        // An incremental page still ships raw deltas for live catch-up.
+        let tail = store.page(&thread, page.events[0].seq, 500).await.unwrap();
+        assert_eq!(tail.events.len(), 2);
+        assert!(tail
+            .events
+            .iter()
+            .all(|event| matches!(event.payload, ThreadEvent::MessageDelta { .. })));
+    }
+
+    #[tokio::test]
+    async fn cold_page_drops_deltas_of_completed_messages() {
+        let (store, thread) = store().await;
+        let message = MessageId::new();
+        delta(&store, &thread, &message, "partial").await;
+        store
+            .append(
+                &thread,
+                Actor::agent("Agent"),
+                ThreadEvent::MessageCompleted {
+                    message: MessageDto {
+                        id: message,
+                        thread_id: thread.clone(),
+                        turn_id: None,
+                        role: MessageRole::Agent,
+                        author: None,
+                        authors: Vec::new(),
+                        text: "the final answer".to_owned(),
+                        model: None,
+                        streaming: false,
+                        created_at: now_ms(),
+                        attachments: Vec::new(),
+                    },
+                },
+                EventMeta::default(),
+            )
+            .await
+            .unwrap();
+
+        let page = store.page(&thread, 0, 500).await.unwrap();
+        assert_eq!(page.events.len(), 1);
+        assert!(matches!(
+            page.events[0].payload,
+            ThreadEvent::MessageCompleted { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn cold_page_keeps_the_last_status_of_each_tool_call() {
+        let (store, thread) = store().await;
+        let call = |status| ToolCallData {
+            id: threadbase_shared::ToolCallId::from("call-1".to_owned()),
+            thread_id: thread.clone(),
+            title: "shell".into(),
+            kind: ToolKind::Execute,
+            status,
+            input: None,
+            output: None,
+            locations: Vec::new(),
+            diff: None,
+            terminal_id: None,
+            subagent_id: None,
+            created_at: now_ms(),
+            updated_at: now_ms(),
+        };
+        for status in [
+            ToolStatus::Pending,
+            ToolStatus::InProgress,
+            ToolStatus::Completed,
+        ] {
+            store
+                .append(
+                    &thread,
+                    Actor::agent("Agent"),
+                    ThreadEvent::ToolCallUpdate { call: call(status) },
+                    EventMeta::default(),
+                )
+                .await
+                .unwrap();
+        }
+
+        let page = store.page(&thread, 0, 500).await.unwrap();
+        assert_eq!(page.events.len(), 1);
+        let ThreadEvent::ToolCallUpdate { call } = &page.events[0].payload else {
+            panic!("expected the last tool update");
+        };
+        assert_eq!(call.status, ToolStatus::Completed);
     }
 }

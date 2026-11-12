@@ -51,9 +51,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return <SignIn />;
   }
 
-  // Invites create accounts with `pending` access, and revoked accounts keep a
-  // live session on purpose so the shell can explain itself. Both would
-  // otherwise render the workspace and fail every request with a 403.
+  // New sign-ups land on `pending` access, and revoked accounts keep a live
+  // session on purpose so the shell can explain itself. Both would otherwise
+  // render the workspace and fail every request with a 403.
   const access = me.data.user.access;
   if (access === "pending" || access === "disabled") {
     return <AccessScreen access={access} user={me.data.user} />;

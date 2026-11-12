@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、presence/跟随、分享与角色、CLI 与发布工作流。
+v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片粘贴、presence/跟随、CLI 与发布工作流。
 
 质量门由 `scripts/verify.sh` 统一执行；界面审计记录保留在 `web/audit/`。
 
@@ -154,11 +154,11 @@ server 按职责分模块：
 | --- | --- |
 | `app` | 进程级 `AppState`，只负责装配 |
 | `projection` | 线程状态读模型与 WebSocket 广播 |
-| `threads` | 线程生命周期、worktree、成员与 DTO |
+| `threads` | 线程生命周期、worktree 与 DTO |
 | `agents/` | `AgentManager` 门面、事件泵、队列 worker、生命周期副作用 |
 | `approvals` / `elicitations` | 审批与提问的持久化、状态迁移、规则 |
 | `queue` / `comments` / `subagents` / `bindings` | 各自实体的唯一写入点 |
-| `inbox` / `notify` | inbox 记录、webhook 与成员通知 |
+| `inbox` / `notify` | inbox 记录、webhook 与通知 |
 | `events` | 追加式事件日志（每线程顺序、跨线程并行） |
 | `diff` | 基线与审阅；线程列表不再触发任何 git 子进程 |
 | `routes_*` | HTTP 路由，只做鉴权、解析和调用领域模块 |

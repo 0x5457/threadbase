@@ -217,6 +217,31 @@
   margin-bottom: 2px;
 }
 
+/* Attached images sit above the words, capped so a screenshot never pushes the
+   conversation off screen. */
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 7px;
+}
+
+.message-image {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--code);
+  line-height: 0;
+}
+
+.message-image img {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 200px;
+  object-fit: contain;
+}
+
 .prose {
   color: var(--ink);
   font-size: 15px;
@@ -238,6 +263,14 @@
   padding-left: 18px;
 }
 
+.prose :is(h1, h2, h3, h4) {
+  margin: 16px 0 6px;
+}
+
+.prose :is(h1, h2, h3, h4):first-child {
+  margin-top: 0;
+}
+
 .prose code {
   padding: 0.5px 3px;
   border: 1px solid var(--line-soft);
@@ -245,6 +278,65 @@
   background: var(--code);
   font-family: var(--mono);
   font-size: 12.5px;
+}
+
+/* Fenced blocks are their own surface; the inline chip styling must not leak
+   into them. */
+.prose pre {
+  overflow-x: auto;
+  margin: 0 0 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  background: var(--code);
+  line-height: 1.55;
+}
+
+.prose pre code {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 12.5px;
+}
+
+.prose table {
+  width: 100%;
+  margin: 0 0 10px;
+  border-collapse: collapse;
+  font-family: var(--mantine-font-family);
+  font-size: 13.5px;
+}
+
+.prose :is(th, td) {
+  padding: 4px 9px;
+  border: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+.prose th {
+  background: var(--code);
+  font-weight: 600;
+}
+
+.prose hr {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.prose img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+.prose del {
+  color: var(--ink-muted);
+}
+
+.prose :is(ul, ol) :is(ul, ol) {
+  margin-bottom: 0;
 }
 
 .prose a {
@@ -314,6 +406,75 @@
   color: var(--ink-faint);
 }
 
+.tool-duration {
+  margin-left: auto;
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The opening lines of a tool call are visible by default: enough to see what
+   the agent is touching without opening the full input/output. */
+.tool-lines {
+  margin: 2px 0 7px;
+  padding-left: 2px;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.tool-line {
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-line.del {
+  color: color-mix(in srgb, var(--del) 72%, var(--ink));
+}
+
+.tool-line.add {
+  color: color-mix(in srgb, var(--add) 72%, var(--ink));
+}
+
+.tool-line.more {
+  color: var(--ink-faint);
+}
+
+/* Image tool results render as images; the base64 payload never reaches the
+   timeline. */
+.tool-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 8px;
+}
+
+.tool-image {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--code);
+  line-height: 0;
+}
+
+.tool-image img {
+  display: block;
+  max-width: min(100%, 420px);
+  max-height: 280px;
+  object-fit: contain;
+}
+
+.tool-caption {
+  margin: -2px 0 8px;
+  color: var(--ink-faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 /* ── Pierre diff surface ───────────────────────────────────── */
 
 .diff-wrap {
@@ -373,8 +534,8 @@
   margin: 2px 0;
 }
 
-.run > summary,
-.tool-group > summary {
+.run-head,
+.run-more > summary {
   display: flex;
   width: fit-content;
   height: 20px;
@@ -383,21 +544,31 @@
   color: var(--ink-muted);
   font-size: 12.5px;
   list-style: none;
+}
+
+.run-more > summary {
   cursor: pointer;
 }
 
-.run > summary::-webkit-details-marker,
-.tool-group > summary::-webkit-details-marker {
+.run-more > summary::-webkit-details-marker {
   display: none;
 }
 
-.run > summary:hover,
-.tool-group > summary:hover {
+.run-more > summary:hover {
   color: var(--ink);
 }
 
-.run-body,
-.tool-group-body {
+.tool-details .chevron,
+.run-more .chevron {
+  transition: transform 120ms ease;
+}
+
+.tool-details[open] > summary .chevron,
+.run-more[open] > summary .chevron {
+  transform: rotate(180deg);
+}
+
+.run-body {
   padding-left: 2px;
 }
 

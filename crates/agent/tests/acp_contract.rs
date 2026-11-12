@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde_json::Value;
 use threadbase_agent::{
     AcpHarness, AgentProfile, Capabilities, Harness, HarnessError, LaunchCtx, NewSession,
-    RawAgentEvent, SteeringOutcome,
+    PromptPart, RawAgentEvent, SteeringOutcome,
 };
 use threadbase_shared::{
     ApprovalDecision, ElicitationAction, PlanPriority, PlanStatus, SubagentStatus, ToolKind,
@@ -218,7 +218,7 @@ async fn prompt_streams_text_tools_plan_usage_and_completion() {
 
     let turn = test
         .harness
-        .prompt(vec!["stream".to_owned()])
+        .prompt(vec![PromptPart::Text("stream".to_owned())])
         .await
         .expect("prompt");
     assert_eq!(turn.turn_id, "turn-1");
@@ -363,7 +363,7 @@ async fn load_session_resumes_without_replaying_history() {
 
     // The first prompt re-opens the stream.
     test.harness
-        .prompt(vec!["stream".to_owned()])
+        .prompt(vec![PromptPart::Text("stream".to_owned())])
         .await
         .expect("prompt");
     let first = loop {
@@ -425,7 +425,7 @@ async fn permission_allow_selects_the_matching_option_kind() {
     let mut test = start(true).await;
     new_session(&mut test).await;
     test.harness
-        .prompt(vec!["permission".to_owned()])
+        .prompt(vec![PromptPart::Text("permission".to_owned())])
         .await
         .expect("prompt");
 
@@ -462,7 +462,7 @@ async fn permission_deny_selects_a_reject_option() {
     let mut test = start(true).await;
     new_session(&mut test).await;
     test.harness
-        .prompt(vec!["permission-deny".to_owned()])
+        .prompt(vec![PromptPart::Text("permission-deny".to_owned())])
         .await
         .expect("prompt");
 
@@ -495,7 +495,7 @@ async fn permission_deny_prefers_reject_once_when_present() {
     let mut test = start(true).await;
     new_session(&mut test).await;
     test.harness
-        .prompt(vec!["permission-reject".to_owned()])
+        .prompt(vec![PromptPart::Text("permission-reject".to_owned())])
         .await
         .expect("prompt");
 
@@ -528,7 +528,7 @@ async fn permission_without_matching_option_is_denied_by_default() {
     let mut test = start(true).await;
     new_session(&mut test).await;
     test.harness
-        .prompt(vec!["permission-none".to_owned()])
+        .prompt(vec![PromptPart::Text("permission-none".to_owned())])
         .await
         .expect("prompt");
 
@@ -557,7 +557,7 @@ async fn cancel_stops_the_running_turn() {
     let session = new_session(&mut test).await;
     let turn = test
         .harness
-        .prompt(vec!["slow".to_owned()])
+        .prompt(vec![PromptPart::Text("slow".to_owned())])
         .await
         .expect("prompt");
 
@@ -608,7 +608,7 @@ async fn steering_returns_each_documented_outcome() {
     for (input, expected) in cases {
         let outcome = test
             .harness
-            .steer(vec![input.to_owned()])
+            .steer(vec![PromptPart::Text(input.to_owned())])
             .await
             .expect("steer");
         assert_eq!(outcome, expected);
@@ -657,7 +657,7 @@ async fn elicitation_actions_map_to_protocol_responses() {
     ];
     for (action, values, expected) in cases {
         test.harness
-            .prompt(vec!["elicit".to_owned()])
+            .prompt(vec![PromptPart::Text("elicit".to_owned())])
             .await
             .expect("prompt");
         let event = expect_event(&mut test.events, |event| {
@@ -707,7 +707,7 @@ async fn nested_subagent_updates_upsert_and_only_declared_children_cancel() {
     let mut test = start(true).await;
     new_session(&mut test).await;
     test.harness
-        .prompt(vec!["subagents".to_owned()])
+        .prompt(vec![PromptPart::Text("subagents".to_owned())])
         .await
         .expect("prompt");
 
@@ -802,7 +802,7 @@ async fn malformed_json_rpc_emits_an_error_and_keeps_streaming() {
     let mut test = start(true).await;
     new_session(&mut test).await;
     test.harness
-        .prompt(vec!["malformed".to_owned()])
+        .prompt(vec![PromptPart::Text("malformed".to_owned())])
         .await
         .expect("prompt");
 
@@ -826,7 +826,7 @@ async fn process_crash_emits_process_exited_and_closes_the_event_channel() {
     let mut test = start(true).await;
     new_session(&mut test).await;
     test.harness
-        .prompt(vec!["crash".to_owned()])
+        .prompt(vec![PromptPart::Text("crash".to_owned())])
         .await
         .expect("prompt");
 
@@ -858,7 +858,7 @@ async fn inter_session_messages_map_to_agent_message_events() {
     let mut test = start(true).await;
     new_session(&mut test).await;
     test.harness
-        .prompt(vec!["agent-message".to_owned()])
+        .prompt(vec![PromptPart::Text("agent-message".to_owned())])
         .await
         .expect("prompt");
     let event = expect_event(&mut test.events, |event| {

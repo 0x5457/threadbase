@@ -18,7 +18,6 @@ import {
   IconCopy,
   IconHelp,
   IconInbox,
-  IconMail,
   IconMessage,
 } from "@tabler/icons-react";
 import { useRef, useState } from "react";
@@ -37,8 +36,6 @@ const kindLabel: Record<InboxItem["kind"], string> = {
   approval: "Approval",
   elicitation: "Question",
   mention: "Mention",
-  invite: "Invite",
-  access: "Access",
   error: "Error",
 };
 
@@ -48,8 +45,6 @@ function kindIcon(kind: InboxItem["kind"]) {
       return <IconClock size={14} stroke={1.5} />;
     case "elicitation":
       return <IconHelp size={14} stroke={1.5} />;
-    case "invite":
-      return <IconMail size={14} stroke={1.5} />;
     case "error":
       return <IconAlertTriangle size={14} stroke={1.5} />;
     default:

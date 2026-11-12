@@ -6,9 +6,7 @@ use crate::error::ServerError;
 use crate::projects;
 use sqlx::{FromRow, QueryBuilder, SqlitePool};
 use std::collections::HashMap;
-use threadbase_shared::{
-    ApiError, Participant, Role, ShareLevel, ThreadDto, ThreadMemberDto, ThreadStatus, UserBrief,
-};
+use threadbase_shared::{ApiError, Participant, Role, ThreadDto, ThreadStatus, UserBrief};
 
 #[derive(Debug, Clone, FromRow)]
 pub struct ThreadRow {
@@ -30,19 +28,13 @@ pub struct ThreadRow {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
     pub pinned: i64,
-    pub share_level: String,
     pub last_activity_at: Option<i64>,
 }
 
 const THREAD_COLUMNS: &str =
     "t.id, t.project_id, t.parent_thread_id, t.title, t.status, t.agent, t.model, t.effort,
      t.branch, t.base_branch, t.base_sha, t.last_turn_sha, t.worktree_path, t.created_by,
-     t.created_at, t.updated_at, t.archived_at, t.pinned, t.share_level, t.last_activity_at";
-
-const VISIBLE_TO_USER: &str = "(
-    ? = 1 OR t.created_by = ? OR t.share_level = 'workspace'
-    OR EXISTS(SELECT 1 FROM thread_members m WHERE m.thread_id = t.id AND m.user_id = ?)
-)";
+     t.created_at, t.updated_at, t.archived_at, t.pinned, t.last_activity_at";
 
 #[derive(Clone, Default)]
 struct Aggregate {
@@ -72,7 +64,6 @@ pub async fn get(
 pub async fn list(
     pool: &SqlitePool,
     project_id: &str,
-    user: &CurrentUser,
     include_archived: bool,
 ) -> Result<Vec<ThreadDto>, ServerError> {
     projects::row(pool, project_id).await?;
@@ -80,14 +71,10 @@ pub async fn list(
         "SELECT {THREAD_COLUMNS} FROM threads t
          WHERE t.project_id = ?
            AND (? = 1 OR t.archived_at IS NULL)
-           AND {VISIBLE_TO_USER}
          ORDER BY t.pinned DESC, COALESCE(t.last_activity_at, t.updated_at) DESC"
     ))
     .bind(project_id)
     .bind(i64::from(include_archived))
-    .bind(i64::from(user.is_admin()))
-    .bind(user.user.id.as_str())
-    .bind(user.user.id.as_str())
     .fetch_all(pool)
     .await?;
     dtos(pool, rows).await
@@ -95,19 +82,14 @@ pub async fn list(
 
 pub async fn list_all(
     pool: &SqlitePool,
-    user: &CurrentUser,
     include_archived: bool,
 ) -> Result<Vec<ThreadDto>, ServerError> {
     let rows = sqlx::query_as::<_, ThreadRow>(&format!(
         "SELECT {THREAD_COLUMNS} FROM threads t
          WHERE (? = 1 OR t.archived_at IS NULL)
-           AND {VISIBLE_TO_USER}
          ORDER BY t.pinned DESC, COALESCE(t.last_activity_at, t.updated_at) DESC"
     ))
     .bind(i64::from(include_archived))
-    .bind(i64::from(user.is_admin()))
-    .bind(user.user.id.as_str())
-    .bind(user.user.id.as_str())
     .fetch_all(pool)
     .await?;
     dtos(pool, rows).await
@@ -116,40 +98,31 @@ pub async fn list_all(
 pub async fn dto(pool: &SqlitePool, row: &ThreadRow) -> Result<ThreadDto, ServerError> {
     let ids = [row.id.as_str()];
     let aggregates = aggregates(pool, &ids).await?;
-    let mut participants = participants_by_thread(pool, &ids).await?;
-    if participants.get(&row.id).is_none_or(Vec::is_empty) {
-        if let Some(creator) = creator_participant(pool, &row.created_by, row.created_at).await {
-            participants.insert(row.id.clone(), vec![creator]);
-        }
-    }
+    let participants = creator_participant(pool, &row.created_by, row.created_at)
+        .await
+        .map(|creator| vec![creator])
+        .unwrap_or_default();
     Ok(to_dto(
         row,
         row.id.clone(),
         aggregates.get(&row.id).cloned().unwrap_or_default(),
-        participants.get(&row.id).cloned().unwrap_or_default(),
+        participants,
     ))
 }
 
 async fn dtos(pool: &SqlitePool, rows: Vec<ThreadRow>) -> Result<Vec<ThreadDto>, ServerError> {
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
     let aggregates = aggregates(pool, &ids).await?;
-    let mut participants = participants_by_thread(pool, &ids).await?;
-    for row in &rows {
-        if participants.get(&row.id).is_none_or(Vec::is_empty) {
-            if let Some(creator) = creator_participant(pool, &row.created_by, row.created_at).await
-            {
-                participants.insert(row.id.clone(), vec![creator]);
-            }
-        }
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let aggregate = aggregates.get(&row.id).cloned().unwrap_or_default();
+        let participants = creator_participant(pool, &row.created_by, row.created_at)
+            .await
+            .map(|creator| vec![creator])
+            .unwrap_or_default();
+        out.push(to_dto(&row, row.id.clone(), aggregate, participants));
     }
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let aggregate = aggregates.get(&row.id).cloned().unwrap_or_default();
-            let members = participants.get(&row.id).cloned().unwrap_or_default();
-            to_dto(&row, row.id.clone(), aggregate, members)
-        })
-        .collect())
+    Ok(out)
 }
 
 fn to_dto(
@@ -177,7 +150,6 @@ fn to_dto(
         updated_at: row.updated_at,
         archived_at: row.archived_at,
         pinned: row.pinned != 0,
-        share_level: ShareLevel::parse(&row.share_level),
         participants,
         pending_approvals: u32::try_from(aggregate.pending_approvals).unwrap_or(0),
     }
@@ -223,54 +195,6 @@ struct AggregateRow {
     pending_approvals: i64,
 }
 
-async fn participants_by_thread(
-    pool: &SqlitePool,
-    ids: &[&str],
-) -> Result<HashMap<String, Vec<Participant>>, ServerError> {
-    if ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let mut query = QueryBuilder::new(
-        "SELECT m.thread_id, u.id, u.username, u.display_name, u.avatar_url, m.role, m.joined_at
-         FROM thread_members m JOIN users u ON u.id = m.user_id
-         WHERE m.thread_id IN (",
-    );
-    let mut separated = query.separated(", ");
-    for id in ids {
-        separated.push_bind(*id);
-    }
-    separated.push_unseparated(") ORDER BY m.joined_at ASC");
-    let rows: Vec<MemberRow> = query.build_query_as().fetch_all(pool).await?;
-    let mut grouped: HashMap<String, Vec<Participant>> = HashMap::new();
-    for row in rows {
-        let color = threadbase_shared::user_color(&row.id).to_owned();
-        grouped.entry(row.thread_id).or_default().push(Participant {
-            user: UserBrief {
-                id: row.id.into(),
-                username: row.username,
-                display_name: row.display_name,
-                avatar_url: row.avatar_url,
-                color,
-            },
-            role: Role::parse(&row.role),
-            online: false,
-            last_seen_at: Some(row.joined_at),
-        });
-    }
-    Ok(grouped)
-}
-
-#[derive(FromRow)]
-struct MemberRow {
-    thread_id: String,
-    id: String,
-    username: String,
-    display_name: String,
-    avatar_url: Option<String>,
-    role: String,
-    joined_at: i64,
-}
-
 async fn creator_participant(
     pool: &SqlitePool,
     user_id: &str,
@@ -295,67 +219,4 @@ async fn creator_participant(
         online: false,
         last_seen_at: Some(joined_at),
     })
-}
-
-pub(crate) async fn members(
-    pool: &SqlitePool,
-    row: &ThreadRow,
-) -> Result<Vec<ThreadMemberDto>, ServerError> {
-    let rows: Vec<MemberRow> = sqlx::query_as(
-        "SELECT m.thread_id, u.id, u.username, u.display_name, u.avatar_url, m.role, m.joined_at
-         FROM thread_members m JOIN users u ON u.id = m.user_id
-         WHERE m.thread_id = ? ORDER BY m.joined_at ASC",
-    )
-    .bind(&row.id)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|member| ThreadMemberDto {
-            user: UserBrief {
-                id: member.id.clone().into(),
-                username: member.username,
-                display_name: member.display_name,
-                avatar_url: member.avatar_url,
-                color: threadbase_shared::user_color(&member.id).to_owned(),
-            },
-            role: Role::parse(&member.role),
-            joined_at: member.joined_at,
-        })
-        .collect())
-}
-
-pub(crate) async fn invites(
-    pool: &SqlitePool,
-    thread_id: &str,
-) -> Result<Vec<threadbase_shared::InviteDto>, ServerError> {
-    #[derive(FromRow)]
-    struct Row {
-        id: String,
-        thread_id: String,
-        role: String,
-        email: Option<String>,
-        created_at: i64,
-        expires_at: i64,
-        accepted_at: Option<i64>,
-    }
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, thread_id, role, email, created_at, expires_at, accepted_at
-         FROM invites WHERE thread_id = ? AND accepted_at IS NULL ORDER BY created_at DESC",
-    )
-    .bind(thread_id)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| threadbase_shared::InviteDto {
-            id: row.id.into(),
-            thread_id: row.thread_id.into(),
-            role: Role::parse(&row.role),
-            email: row.email,
-            created_at: row.created_at,
-            expires_at: row.expires_at,
-            accepted_at: row.accepted_at,
-        })
-        .collect())
 }

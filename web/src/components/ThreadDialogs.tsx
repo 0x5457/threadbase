@@ -144,8 +144,8 @@ export function MergeThreadDialog({
       const result = await mergeThread(thread.id);
       notifications.show({
         message: result.committed
-          ? `Merged ${result.commit?.slice(0, 7) ?? ""}`
-          : `Merged ${result.files.length} files`,
+          ? `Applied ${result.commit?.slice(0, 7) ?? ""}`
+          : `Applied ${result.files.length} files`,
         color: "teal",
       });
       onMerged(result);
@@ -158,18 +158,18 @@ export function MergeThreadDialog({
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Merge thread" size="md" centered>
+    <Modal opened={opened} onClose={onClose} title="Apply changes" size="md" centered>
       <Text size="sm" c="dimmed" mb="md">
-        Merge <strong>{thread?.title}</strong> back into{" "}
-        <strong>{thread?.baseBranch ?? "main"}</strong> and commit the worktree
-        changes.
+        Apply the worktree changes from <strong>{thread?.title}</strong> to the
+        project working tree on your <strong>currently checked-out branch</strong>{" "}
+        and commit them. Branches are not switched and nothing is pushed.
       </Text>
       <Group justify="flex-end" gap="xs">
         <Button variant="default" onClick={onClose}>
           Cancel
         </Button>
         <Button color="dark" loading={busy} onClick={() => void submit()}>
-          Merge
+          Apply
         </Button>
       </Group>
     </Modal>

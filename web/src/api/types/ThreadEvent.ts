@@ -4,6 +4,7 @@ import type { ApprovalDecision } from "./ApprovalDecision";
 import type { ApprovalDto } from "./ApprovalDto";
 import type { ApprovalId } from "./ApprovalId";
 import type { ApprovalScope } from "./ApprovalScope";
+import type { AttachmentDto } from "./AttachmentDto";
 import type { ChangeStats } from "./ChangeStats";
 import type { CommentDto } from "./CommentDto";
 import type { ElicitationAction } from "./ElicitationAction";
@@ -14,9 +15,7 @@ import type { MessageId } from "./MessageId";
 import type { MessageRole } from "./MessageRole";
 import type { PlanEntry } from "./PlanEntry";
 import type { QueueItemDto } from "./QueueItemDto";
-import type { ShareLevel } from "./ShareLevel";
 import type { SubagentDto } from "./SubagentDto";
-import type { ThreadMemberDto } from "./ThreadMemberDto";
 import type { ThreadStatus } from "./ThreadStatus";
 import type { ToolCallData } from "./ToolCallData";
 import type { TurnId } from "./TurnId";
@@ -37,6 +36,7 @@ export type ThreadEvent =
      */
     authors: Array<UserBrief>;
     prompt: string;
+    attachments: Array<AttachmentDto>;
   }
   | {
     "type": "message_delta";
@@ -81,14 +81,12 @@ export type ThreadEvent =
   | { "type": "changes_updated"; stats: ChangeStats }
   | { "type": "comment_added"; comment: CommentDto }
   | { "type": "comment_updated"; comment: CommentDto }
-  | { "type": "members_changed"; member: ThreadMemberDto; action: string }
   | { "type": "queue_updated"; items: Array<QueueItemDto> }
   | {
     "type": "thread_updated";
     title: string | null;
     status: ThreadStatus | null;
     pinned: boolean | null;
-    shareLevel: ShareLevel | null;
   }
   | {
     "type": "agent_message";

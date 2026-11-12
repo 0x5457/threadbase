@@ -40,9 +40,30 @@ pub struct NewSession {
     pub mcp_servers: Vec<Value>,
 }
 
+/// One block of a prompt. Images are gated on [`Capabilities::images`]; the
+/// server checks that before it builds a turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptPart {
+    Text(String),
+    Image { mime_type: String, data: String },
+}
+
+impl PromptPart {
+    #[must_use]
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text(text.into())
+    }
+
+    #[must_use]
+    pub fn has_image(parts: &[Self]) -> bool {
+        parts.iter().any(|part| matches!(part, Self::Image { .. }))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Capabilities {
     pub steering: bool,
+    pub images: bool,
     pub subagents: bool,
     pub elicitation_form: bool,
     pub elicitation_url: bool,
@@ -213,7 +234,7 @@ pub trait Harness: Send + Sync {
     async fn start(&mut self, ctx: LaunchCtx) -> HarnessResult<Capabilities>;
     async fn new_session(&mut self, req: NewSession) -> HarnessResult<SessionId>;
     async fn load_session(&mut self, id: &SessionId) -> HarnessResult<()>;
-    async fn prompt(&mut self, parts: Vec<String>) -> HarnessResult<TurnHandle>;
+    async fn prompt(&mut self, parts: Vec<PromptPart>) -> HarnessResult<TurnHandle>;
     async fn cancel(&mut self, turn: &TurnHandle) -> HarnessResult<()>;
     async fn decide(&mut self, request_id: &str, decision: ApprovalDecision) -> HarnessResult<()>;
     async fn respond_elicitation(
@@ -243,7 +264,7 @@ pub trait Harness: Send + Sync {
     ///
     /// Harnesses that do not implement the steering extension return
     /// [`HarnessError::Unavailable`].
-    async fn steer(&mut self, _parts: Vec<String>) -> HarnessResult<SteeringOutcome> {
+    async fn steer(&mut self, _parts: Vec<PromptPart>) -> HarnessResult<SteeringOutcome> {
         Err(HarnessError::Unavailable(
             "this harness does not support steering".to_owned(),
         ))

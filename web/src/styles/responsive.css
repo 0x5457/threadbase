@@ -262,6 +262,15 @@
     padding: 4px 14px 5px;
   }
 
+  .queue-item .queue-text {
+    font-size: 14px;
+  }
+
+  .queue-item .queue-author {
+    max-width: 96px;
+    font-size: 12px;
+  }
+
   .comment-menu {
     opacity: 1;
   }

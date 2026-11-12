@@ -34,7 +34,7 @@ async fn fixture() -> Fixture {
     )
     .await
     .unwrap();
-    let viewer_user = make_user(&pool, "bob", false).await;
+    let viewer_user = make_user(&pool, "bob", false, threadbase_shared::UserAccess::ReadOnly).await;
     let project = ProjectId::new();
     let thread = ThreadId::new();
     let now = now_ms();
@@ -61,18 +61,6 @@ async fn fixture() -> Fixture {
     .execute(&pool)
     .await
     .unwrap();
-    for (user, role) in [(&owner_user, "owner"), (&viewer_user, "viewer")] {
-        sqlx::query(
-            "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, ?, ?)",
-        )
-        .bind(thread.as_str())
-        .bind(user.id.as_str())
-        .bind(role)
-        .bind(now)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
     Fixture {
         events: EventStore::new(pool.clone()),
         pool,
@@ -89,7 +77,12 @@ async fn fixture() -> Fixture {
     }
 }
 
-async fn make_user(pool: &SqlitePool, name: &str, admin: bool) -> UserDto {
+async fn make_user(
+    pool: &SqlitePool,
+    name: &str,
+    admin: bool,
+    access: threadbase_shared::UserAccess,
+) -> UserDto {
     let id = Ulid::new().to_string();
     sqlx::query(
         "INSERT INTO users(id, username, display_name, is_admin, created_at) VALUES(?,?,?,?,?)",
@@ -108,7 +101,7 @@ async fn make_user(pool: &SqlitePool, name: &str, admin: bool) -> UserDto {
         display_name: name.into(),
         avatar_url: None,
         is_admin: admin,
-        access: threadbase_shared::UserAccess::Member,
+        access,
         hidden_presence: false,
         created_at: now_ms(),
     }

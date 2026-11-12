@@ -8,4 +8,8 @@ export type SendMessageRequest = {
    * Consume all trailing CRDT draft blocks instead of using `text`.
    */
   fromDraft: boolean | null;
+  /**
+   * Uploaded images to send with this message, in display order.
+   */
+  attachmentIds: Array<string> | null;
 };

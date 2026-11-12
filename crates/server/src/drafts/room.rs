@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use threadbase_draft::{DraftBlock, DraftDoc};
+use threadbase_draft::DraftDoc;
 use tokio::sync::broadcast;
 use y_sync::sync::{DefaultProtocol, Message as SyncMessageEnvelope, Protocol, SyncMessage};
 use yrs::encoding::read::Cursor;
@@ -61,12 +61,12 @@ impl DraftRoom {
         self.draft.encode_full()
     }
 
-    pub(crate) fn peek_blocks(&self) -> Vec<DraftBlock> {
-        self.draft.peek_blocks()
+    pub(crate) fn peek_draft(&self) -> (String, Vec<String>) {
+        (self.draft.text(), self.draft.authors())
     }
 
-    pub(crate) fn take_blocks(&mut self) -> Vec<DraftBlock> {
-        self.draft.take_trailing()
+    pub(crate) fn take_draft(&mut self) -> (String, Vec<String>) {
+        self.draft.take()
     }
 
     /// Apply an inbound sync frame. Doc updates are validated before they are
@@ -142,11 +142,6 @@ impl DraftRoom {
     #[cfg(test)]
     pub(crate) fn draft_mut(&mut self) -> &mut DraftDoc {
         &mut self.draft
-    }
-
-    #[cfg(test)]
-    pub(crate) fn blocks(&self) -> Vec<DraftBlock> {
-        self.draft.blocks()
     }
 }
 

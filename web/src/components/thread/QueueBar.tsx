@@ -1,5 +1,11 @@
 import { ActionIcon, Group, Text } from "@mantine/core";
-import { IconGripVertical, IconStack2, IconX } from "@tabler/icons-react";
+import {
+  IconGripVertical,
+  IconPencil,
+  IconSend,
+  IconStack2,
+  IconX,
+} from "@tabler/icons-react";
 import {
   useEffect,
   useRef,
@@ -14,33 +20,65 @@ const SWIPE_MAX = 120;
 function QueueRow({
   item,
   busy,
+  canWrite,
+  canSteer,
+  showAuthor,
   dragging,
   onDrop,
+  onSteer,
+  onEdit,
   onReorderStart,
   onReorderMove,
   onReorderEnd,
 }: {
   item: QueueItem;
   busy: string | null;
+  canWrite: boolean;
+  canSteer: boolean;
+  /** False when the previous row was written by the same author. */
+  showAuthor: boolean;
   dragging: boolean;
   onDrop: (id: string) => void;
+  onSteer: (id: string) => void;
+  onEdit: (id: string, text: string) => Promise<boolean>;
   onReorderStart: (event: ReactPointerEvent, id: string) => void;
   onReorderMove: (event: ReactPointerEvent) => void;
   onReorderEnd: () => void;
 }) {
-  const actionable = item.status === "queued";
+  const actionable = canWrite && item.status === "queued";
   const [dx, setDx] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.text);
   const swipe = useRef<{ x: number; y: number; active: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!editing) setDraft(item.text);
+  }, [editing, item.text]);
 
   const resetSwipe = () => {
     swipe.current = null;
     setDx(0);
   };
 
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft(item.text);
+  };
+
+  const saveEdit = async () => {
+    const next = draft.trim();
+    if (next.length === 0 || next === item.text) {
+      cancelEdit();
+      return;
+    }
+    if (await onEdit(item.id, next)) setEditing(false);
+  };
+
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === "mouse" || !actionable) return;
+    if (event.pointerType === "mouse" || !actionable || editing) return;
     const target = event.target;
-    if (target instanceof Element && target.closest("button")) return;
+    if (target instanceof Element && target.closest("button, input, textarea"))
+      return;
     swipe.current = { x: event.clientX, y: event.clientY, active: false };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -96,21 +134,75 @@ function QueueRow({
         >
           <IconGripVertical size={12} stroke={1.5} />
         </button>
-        <Text size="xs" fw={500}>
-          {item.author.displayName}
-        </Text>
-        <Text size="xs" c="dimmed" className="queue-text">
-          {item.text}
-        </Text>
+        {showAuthor ? (
+          <Text size="xs" className="queue-author">
+            {item.author.displayName}
+          </Text>
+        ) : null}
+        {editing ? (
+          <input
+            className="queue-edit"
+            value={draft}
+            autoFocus
+            aria-label="Edit queued message"
+            onChange={(event) => setDraft(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void saveEdit();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                cancelEdit();
+              }
+            }}
+            onBlur={() => {
+              if (busy !== `edit:${item.id}`) cancelEdit();
+            }}
+          />
+        ) : (
+          <Text className="queue-text">{item.text}</Text>
+        )}
         {actionable ? (
-          <ActionIcon
-            size={18}
-            aria-label="Drop queued message"
-            loading={busy === item.id}
-            onClick={() => onDrop(item.id)}
-          >
-            <IconX size={12} stroke={1.5} />
-          </ActionIcon>
+          <Group gap={0} wrap="nowrap" className="queue-actions">
+            <ActionIcon
+              size={16}
+              variant="subtle"
+              color="gray"
+              aria-label="Send queued message now"
+              title={
+                canSteer
+                  ? "Send now — steer into the running turn"
+                  : "Steering needs a running turn"
+              }
+              loading={busy === `steer:${item.id}`}
+              disabled={editing || !canSteer}
+              onClick={() => onSteer(item.id)}
+            >
+              <IconSend size={11} stroke={1.5} />
+            </ActionIcon>
+            <ActionIcon
+              size={16}
+              variant="subtle"
+              color="gray"
+              aria-label="Edit queued message"
+              title="Edit"
+              disabled={busy !== null && busy !== `edit:${item.id}`}
+              onClick={() => setEditing(true)}
+            >
+              <IconPencil size={11} stroke={1.5} />
+            </ActionIcon>
+            <ActionIcon
+              size={16}
+              variant="subtle"
+              color="gray"
+              aria-label="Drop queued message"
+              title="Drop"
+              loading={busy === `drop:${item.id}`}
+              onClick={() => onDrop(item.id)}
+            >
+              <IconX size={12} stroke={1.5} />
+            </ActionIcon>
+          </Group>
         ) : null}
       </div>
     </div>
@@ -120,12 +212,20 @@ function QueueRow({
 export function QueueBar({
   items,
   busy,
+  canWrite,
+  canSteer,
   onDrop,
+  onSteer,
+  onEdit,
   onReorder,
 }: {
   items: QueueItem[];
   busy: string | null;
+  canWrite: boolean;
+  canSteer: boolean;
   onDrop: (id: string) => void;
+  onSteer: (id: string) => void;
+  onEdit: (id: string, text: string) => Promise<boolean>;
   onReorder: (ids: string[]) => void;
 }) {
   const [order, setOrder] = useState<string[]>([]);
@@ -204,19 +304,24 @@ export function QueueBar({
 
   return (
     <div className="queue-bar">
-      <Group gap={4}>
+      <Group gap={4} className="queue-head">
         <IconStack2 size={11} stroke={1.5} />
         <Text size="xs" c="dimmed">
           {items.length} queued
         </Text>
       </Group>
-      {visible.map((item) => (
+      {visible.map((item, index) => (
         <QueueRow
           key={item.id}
           item={item}
           busy={busy}
+          canWrite={canWrite}
+          canSteer={canSteer}
+          showAuthor={index === 0 || visible[index - 1].author.id !== item.author.id}
           dragging={draggingId === item.id}
           onDrop={onDrop}
+          onSteer={onSteer}
+          onEdit={onEdit}
           onReorderStart={startDrag}
           onReorderMove={moveDrag}
           onReorderEnd={endDrag}

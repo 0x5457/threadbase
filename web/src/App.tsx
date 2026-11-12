@@ -53,7 +53,6 @@ import { RealThreadView } from "./components/RealThreadView";
 import { ReviewDialog } from "./components/ReviewDialog";
 import { SettingsView } from "./components/SettingsView";
 import { TerminalDrawer } from "./components/terminal/TerminalDrawer";
-import { ShareDialog } from "./components/ShareDialog";
 import { SheetGrabber } from "./components/SheetGrabber";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -126,13 +125,21 @@ function Workspace() {
   const [navOpened, nav] = useDisclosure(false);
   const [changesOpened, changes] = useDisclosure(false);
   const [mergeOpened, merge] = useDisclosure(false);
-  const [shareOpened, share] = useDisclosure(false);
   const [renameOpened, rename] = useDisclosure(false);
   const [revertOpened, revert] = useDisclosure(false);
   const [reviewOpened, review] = useDisclosure(false);
   const [navCollapsed, setNavCollapsed] = useState(() => {
     try {
       return window.localStorage.getItem("threadbase.nav-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [asideCollapsed, setAsideCollapsed] = useState(() => {
+    try {
+      return (
+        window.localStorage.getItem("threadbase.aside-collapsed") === "1"
+      );
     } catch {
       return false;
     }
@@ -218,7 +225,6 @@ function Workspace() {
   useOverlayBack(navOpened, nav.close);
   useOverlayBack(changesOpened, changes.close);
   useOverlayBack(mergeOpened, merge.close);
-  useOverlayBack(shareOpened, share.close);
   useOverlayBack(renameOpened, rename.close);
   useOverlayBack(revertOpened, revert.close);
   useOverlayBack(reviewOpened, review.close);
@@ -302,8 +308,29 @@ function Workspace() {
     };
   }, []);
 
+  const setAsideOpen = (open: boolean) => {
+    setAsideCollapsed(!open);
+    try {
+      window.localStorage.setItem(
+        "threadbase.aside-collapsed",
+        open ? "0" : "1",
+      );
+    } catch {
+      // Private mode: the preference simply does not persist.
+    }
+  };
+
+  const collapseAside = () => setAsideOpen(false);
+  const toggleAside = () => setAsideOpen(asideCollapsed);
+
   const openChanges = () => {
+    if (!hasWorktree) return;
     blurActiveInput();
+    // The desktop panel is persistent, not a drawer: reveal it in place.
+    if (wide) {
+      setAsideOpen(true);
+      return;
+    }
     changes.open();
   };
 
@@ -397,6 +424,31 @@ function Workspace() {
   }, [routeThreadId, allThreads.data]);
 
   const showAside = view === "thread" && selectedThread !== null;
+  const hasWorktree = Boolean(selectedThread?.worktreePath);
+
+  // ⌘/Ctrl+Shift+B hides or reveals the changes panel without leaving the
+  // thread; the preference persists like the nav width.
+  useEffect(() => {
+    if (!showAside) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+      if (event.key.toLowerCase() !== "b") return;
+      event.preventDefault();
+      setAsideCollapsed((current) => {
+        try {
+          window.localStorage.setItem(
+            "threadbase.aside-collapsed",
+            current ? "0" : "1",
+          );
+        } catch {
+          // Private mode: the preference simply does not persist.
+        }
+        return !current;
+      });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showAside]);
   const title =
     view === "inbox"
       ? "Inbox"
@@ -617,7 +669,10 @@ function Workspace() {
         aside={{
           width: 420,
           breakpoint: "lg",
-          collapsed: { mobile: true, desktop: !showAside },
+          collapsed: {
+            mobile: true,
+            desktop: !showAside || !hasWorktree || asideCollapsed,
+          },
         }}
         footer={{
           height: { base: 56, sm: 26 },
@@ -636,7 +691,12 @@ function Workspace() {
           participants={participants}
           onlineUserIds={onlineUserIds}
           unreadCount={inboxUnread.data?.unread ?? 0}
-          canOpenChanges={showAside}
+          canOpenChanges={showAside && hasWorktree}
+          asideCollapsed={asideCollapsed}
+          onToggleAside={toggleAside}
+          hasWorktree={hasWorktree}
+          branch={selectedThread?.branch ?? ""}
+          baseBranch={selectedThread?.baseBranch ?? ""}
           canManage={Boolean(selectedThread) && route.kind === "thread"}
           isPinned={selectedThread?.pinned ?? false}
           navOpened={navOpened}
@@ -658,16 +718,6 @@ function Workspace() {
               return;
             }
             review.open();
-          }}
-          onShare={() => {
-            if (!selectedThread) {
-              notifications.show({
-                message: "Open a thread before sharing",
-                color: "yellow",
-              });
-              return;
-            }
-            share.open();
           }}
           onMerge={() => {
             if (!selectedThread) {
@@ -762,18 +812,20 @@ function Workspace() {
         </AppShell.Main>
         {wide ? (
           <AppShell.Aside p={0} className="aside">
-            {selectedThread ? (
+            {selectedThread && hasWorktree ? (
               asideTab === "changes" ? (
                 <RealChangesPanel
                   key={selectedThread.id}
                   threadId={selectedThread.id}
                   onShowFiles={() => setAsideTab("files")}
+                  onClose={collapseAside}
                 />
               ) : (
                 <FilesPanel
                   key={selectedThread.id}
                   threadId={selectedThread.id}
                   onShowChanges={() => setAsideTab("changes")}
+                  onClose={collapseAside}
                 />
               )
             ) : null}
@@ -784,7 +836,7 @@ function Workspace() {
             view={view}
             unreadCount={inboxUnread.data?.unread ?? 0}
             threadsOpened={navOpened}
-            changesEnabled={Boolean(selectedThread)}
+            changesEnabled={Boolean(selectedThread) && hasWorktree}
             onInbox={openInbox}
             onThreads={toggleNav}
             onChanges={openChangesFromTabs}
@@ -814,7 +866,7 @@ function Workspace() {
         ) : null}
       </AppShell>
 
-      {!wide && showAside ? (
+      {!wide && showAside && hasWorktree ? (
         <Drawer
           opened={changesOpened}
           onClose={changes.close}
@@ -892,12 +944,6 @@ function Workspace() {
           // own; otherwise the drawer can be dismissed by the review's back.
           window.setTimeout(openChanges, 0);
         }}
-      />
-
-      <ShareDialog
-        threadId={selectedThread?.id ?? null}
-        opened={shareOpened}
-        onClose={share.close}
       />
 
       <Spotlight

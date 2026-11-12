@@ -1,42 +1,32 @@
-import { diffChars } from "diff";
-import { useCallback, useEffect, useRef, useState } from "react";
-import truncateUtf8Bytes from "truncate-utf8-bytes";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Collaborative per-thread drafts over the y-protocols WebSocket in
  * `crates/server/src/drafts.rs`.
  *
- * Wire schema (must match `crates/draft/src/lib.rs`):
+ * One Y.Doc per open thread, shared by everyone:
  *
  *   Y.Doc
- *   └─ Y.Array "blocks": Y.Map
- *      ├─ "id":        string  (crypto.randomUUID)
- *      ├─ "author":    string  (users.id — the Rust `briefs_by_ids` lookup)
- *      ├─ "createdAt": number  (Date.now(); yrs reads it as i64 when < 2^53)
- *      ├─ "text":      Y.Text  (`cast::<TextRef>()`; never a string)
- *      └─ "sentAt":    boolean (server-only tombstone flag)
+ *   ├─ XmlFragment "content"  y-prosemirror document edited by every Tiptap
+ *   │                         instance (see `useComposerEditor`)
+ *   └─ Map "editors"          user id → last local edit timestamp; the server
+ *                             turns those ids into the prompt's authors
  *
- * Rules the Rust reader imposes on this client:
- * - blocks are never removed from the array (deleting an array parent while a
- *   peer edits it leaves dangling updates); a send only empties `text` and
- *   sets `sentAt`, so pending = present and not `sentAt`.
- * - every write goes to an unsent block. Text written into a tombstoned block
- *   is invisible to `peek_blocks` and never reaches the agent.
- * - per-block and thread-wide UTF-8 byte caps are enforced here before the
- *   write: exceeding them makes the server drop the room and close sockets.
- *
- * Only the author's own block is mirrored into the composer editor; other
- * authors' pending blocks are rendered read-only. The Tiptap document is never
- * overwritten by remote text, so Tiptap's local undo history cannot touch a
- * teammate's characters.
+ * The server reads the plain text of `content` when a draft is sent and clears
+ * both roots in the same transaction, so every open composer empties at once.
+ * Real-time text and carets are rendered by `@tiptap/extension-collaboration`
+ * and `@tiptap/extension-collaboration-caret`; this module only owns the
+ * document, the socket and presence state.
  */
 
-/** `MAX_BLOCK_BYTES` / `MAX_THREAD_DRAFT_BYTES` in crates/draft/src/lib.rs. */
-const MAX_BLOCK_BYTES = 16 * 1024;
-const MAX_THREAD_BYTES = 200 * 1024;
-const BLOCKS_ARRAY = "blocks";
+/** Root type holding the shared composer document; mirrors `threadbase_draft`. */
+export const DRAFT_FIELD = "content";
+/** Root map of user ids that edited the pending draft. */
+export const EDITORS_MAP = "editors";
+/** Byte cap the server enforces on the shared draft. */
+export const MAX_THREAD_DRAFT_BYTES = 200 * 1024;
 
 export type DraftStatus = "idle" | "connecting" | "connected" | "disconnected";
 
@@ -45,66 +35,43 @@ export interface DraftAuthor {
   name: string;
 }
 
-/** A non-empty, unsent block — the text `sendDraft` will deliver. */
-export interface DraftPendingBlock {
-  id: string;
-  author: string;
-  createdAt: number;
-  text: string;
-}
-
-/** An awareness entry for a peer that is focused on a block. */
+/** A peer currently focused on the draft. */
 export interface DraftEditor {
   id: string;
   name: string;
   color: string;
-  blockId: string | null;
   typing: boolean;
 }
 
 export interface DraftSession {
-  /** A socket exists for this thread; false in the design-preview composer. */
+  /** A document exists for this thread; false in the design-preview composer. */
   active: boolean;
-  /** The initial sync round-trip finished; safe to send. */
+  /** The provider finished its first sync round-trip. */
   synced: boolean;
   status: DraftStatus;
   connected: boolean;
-  /** Pending blocks written by other authors, in `(createdAt, id)` order. */
-  remoteBlocks: DraftPendingBlock[];
-  /** Peers currently focused on a block or typing. */
+  /** Shared CRDT document; bind the Tiptap collaboration extension to this. */
+  document: Y.Doc | null;
+  /** Awareness source for collaboration carets; null while connecting. */
+  provider: WebsocketProvider | null;
+  /** Peers currently editing the draft. */
   remoteEditors: DraftEditor[];
-  /** This author's pending text at the first sync, for editor restore. */
-  restoredText: string | null;
-  /** Mirror the editor's plain text into this author's block. */
-  setMyText: (text: string) => void;
-  /** Called after a successful send: start a fresh block for the next turn. */
-  markSent: () => void;
   /** Publish focus/typing presence for this author. */
   setEditing: (active: boolean) => void;
 }
 
-type DraftSessionState = Omit<
-  DraftSession,
-  "setMyText" | "markSent" | "setEditing"
->;
-
-interface BlockRecord {
-  id: string;
-  author: string;
-  createdAt: number;
-  text: string;
-  sent: boolean;
-  body: Y.Text | null;
+interface DraftSessionState {
+  synced: boolean;
+  status: DraftStatus;
+  connected: boolean;
+  remoteEditors: DraftEditor[];
 }
 
 const IDLE_STATE: DraftSessionState = {
-  active: false,
   synced: false,
   status: "idle",
   connected: false,
-  remoteBlocks: [],
   remoteEditors: [],
-  restoredText: null,
 };
 
 /** Mirrors `user_color` in crates/shared/src/lib.rs: the same eight-color
@@ -136,116 +103,6 @@ function draftSocketUrl(): string {
   return `${protocol}//${window.location.host}/ws/drafts`;
 }
 
-function byteLength(value: string): number {
-  return textEncoder.encode(value).length;
-}
-
-/** Trim to a UTF-8 byte budget without splitting a code point. */
-function truncateToBytes(value: string, limit: number): string {
-  return truncateUtf8Bytes(value, limit);
-}
-
-function readBlocks(blocks: Y.Array<Y.Map<unknown>>): BlockRecord[] {
-  const records: BlockRecord[] = [];
-  blocks.forEach((block) => {
-    const body = block.get("text");
-    const id = block.get("id");
-    const author = block.get("author");
-    const createdAt = block.get("createdAt");
-    const text = body instanceof Y.Text ? body.toString() : "";
-    records.push({
-      id: typeof id === "string" ? id : "",
-      author: typeof author === "string" ? author : "",
-      createdAt: typeof createdAt === "number" ? createdAt : 0,
-      text,
-      sent: block.has("sentAt"),
-      body: body instanceof Y.Text ? body : null,
-    });
-  });
-  return records;
-}
-
-/** Deterministic display order; the server sorts by `(createdAt, id)` too. */
-function byOrder(left: BlockRecord, right: BlockRecord): number {
-  if (left.createdAt !== right.createdAt) {
-    return left.createdAt - right.createdAt;
-  }
-  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
-}
-
-/** Apply `next` to `body` as one diff transaction. */
-function spliceText(doc: Y.Doc, body: Y.Text, next: string): void {
-  const current = body.toString();
-  if (current === next) return;
-
-  // Trim the common prefix and suffix first. Typical typing then diffs a few
-  // characters; a wholesale replacement is applied as one delete/insert and
-  // never runs Myers over the whole 16 KB block.
-  let start = 0;
-  const shortest = Math.min(current.length, next.length);
-  while (start < shortest && current[start] === next[start]) start += 1;
-  // Never cut a surrogate pair in half.
-  if (start > 0 && isHighSurrogate(current.charCodeAt(start - 1))) start -= 1;
-
-  let currentEnd = current.length;
-  let nextEnd = next.length;
-  while (currentEnd > start && nextEnd > start) {
-    const previous = current.charCodeAt(currentEnd - 1);
-    const candidate = next.charCodeAt(nextEnd - 1);
-    if (previous !== candidate) break;
-    if (
-      isLowSurrogate(previous) &&
-      currentEnd - 2 >= start &&
-      nextEnd - 2 >= start &&
-      isHighSurrogate(current.charCodeAt(currentEnd - 2)) &&
-      isHighSurrogate(next.charCodeAt(nextEnd - 2))
-    ) {
-      currentEnd -= 2;
-      nextEnd -= 2;
-      continue;
-    }
-    currentEnd -= 1;
-    nextEnd -= 1;
-  }
-
-  const middleCurrent = current.slice(start, currentEnd);
-  const middleNext = next.slice(start, nextEnd);
-  const replaceWholeMiddle = () => {
-    doc.transact(() => {
-      if (middleCurrent.length > 0) body.delete(start, middleCurrent.length);
-      if (middleNext.length > 0) body.insert(start, middleNext);
-    });
-  };
-
-  if (middleCurrent.length + middleNext.length > 2048) {
-    replaceWholeMiddle();
-    return;
-  }
-
-  const changes = diffChars(middleCurrent, middleNext);
-  doc.transact(() => {
-    let index = start;
-    for (const change of changes) {
-      if (change.removed) {
-        body.delete(index, change.value.length);
-      } else if (change.added) {
-        body.insert(index, change.value);
-        index += change.value.length;
-      } else {
-        index += change.value.length;
-      }
-    }
-  });
-}
-
-function isHighSurrogate(code: number): boolean {
-  return code >= 0xd800 && code <= 0xdbff;
-}
-
-function isLowSurrogate(code: number): boolean {
-  return code >= 0xdc00 && code <= 0xdfff;
-}
-
 interface AwarenessUser {
   id?: unknown;
   displayName?: unknown;
@@ -260,15 +117,14 @@ function readEditors(
   awareness.getStates().forEach((state, clientId) => {
     if (clientId === selfClientId) return;
     const user = state.user as AwarenessUser | undefined;
-    const blockId = typeof state.blockId === "string" ? state.blockId : null;
     const typing = state.typing === true;
-    if (!blockId && !typing) return;
+    // Focus is announced with `typing`; peers browsing can stay silent.
+    if (!typing) return;
     const id = typeof user?.id === "string" ? user.id : `client-${clientId}`;
     editors.push({
       id,
       name: typeof user?.displayName === "string" ? user.displayName : "Teammate",
       color: typeof user?.color === "string" ? user.color : userColor(id),
-      blockId,
       typing,
     });
   });
@@ -280,179 +136,98 @@ export function useDraftSession(
   threadId: string | null,
   user: DraftAuthor | null,
 ): DraftSession {
+  const document = useMemo(() => (threadId ? new Y.Doc() : null), [threadId]);
+  const [provider, setProvider] = useState<WebsocketProvider | null>(null);
   const [state, setState] = useState<DraftSessionState>(IDLE_STATE);
-  const controller = useRef<{
-    setMyText: (text: string) => void;
-    markSent: () => void;
-    setEditing: (active: boolean) => void;
-  } | null>(null);
+  const editingRef = useRef<((active: boolean) => void) | null>(null);
 
   const userId = user?.id ?? null;
   const userName = user?.name ?? null;
 
+  // The document outlives provider reconnects but not a thread switch.
+  useEffect(
+    () => () => {
+      document?.destroy();
+    },
+    [document],
+  );
+
   useEffect(() => {
-    controller.current = null;
-    if (!threadId || !userId || !userName) {
+    editingRef.current = null;
+    if (!document || !threadId || !userId || !userName) {
+      setProvider(null);
       setState(IDLE_STATE);
       return;
     }
 
-    const authorId = userId;
-    setState(IDLE_STATE);
-    const doc = new Y.Doc();
-    const blocks = doc.getArray<Y.Map<unknown>>(BLOCKS_ARRAY);
-    const provider = new WebsocketProvider(draftSocketUrl(), threadId, doc, {
-      connect: true,
-    });
-
     let disposed = false;
-    let myBlockId: string | null = null;
-    let restoredText: string | null = null;
+    let synced = false;
     let status: DraftStatus = "connecting";
     let lastSignature = "";
 
-    const createBlock = (): BlockRecord => {
-      const map = new Y.Map<unknown>();
-      const body = new Y.Text();
-      const id = crypto.randomUUID();
-      const createdAt = Date.now();
-      doc.transact(() => {
-        map.set("id", id);
-        map.set("author", authorId);
-        map.set("createdAt", createdAt);
-        map.set("text", body);
-        blocks.push([map]);
-      });
-      return { id, author: authorId, createdAt, text: "", sent: false, body };
-    };
-
-    /** The single block this tab edits. Extra empty own blocks are peers'. */
-    const ensureMyBlock = (): BlockRecord | null => {
-      const own = readBlocks(blocks).filter(
-        (block) => block.author === authorId && !block.sent && block.body !== null,
-      );
-      if (myBlockId) {
-        const current = own.find((block) => block.id === myBlockId);
-        if (current) return current;
-      }
-      // After a reload the draft to continue is the author's non-empty block.
-      const candidate = own.filter((block) => block.text.length > 0).sort(byOrder)[0];
-      const target = candidate ?? createBlock();
-      myBlockId = target.id;
-      return target;
-    };
+    const next = new WebsocketProvider(draftSocketUrl(), threadId, document, {
+      connect: true,
+    });
 
     const publish = () => {
       if (disposed) return;
-      const records = readBlocks(blocks);
-      const pending = records
-        .filter((block) => !block.sent && block.text.trim().length > 0)
-        .sort(byOrder);
-      const next: DraftSessionState = {
-        active: true,
-        synced: provider.synced,
+      const snapshot: DraftSessionState = {
+        synced,
         status,
         connected: status === "connected",
-        remoteBlocks: pending
-          .filter((block) => block.author !== authorId)
-          .map(({ id, author, createdAt, text }) => ({
-            id,
-            author,
-            createdAt,
-            text,
-          })),
-        remoteEditors: readEditors(provider.awareness, doc.clientID),
-        restoredText,
+        remoteEditors: readEditors(next.awareness, document.clientID),
       };
-      // Doc updates fire per keystroke; only re-render on visible changes.
-      const signature = JSON.stringify(next);
+      const signature = JSON.stringify(snapshot);
       if (signature === lastSignature) return;
       lastSignature = signature;
-      setState(next);
+      setState(snapshot);
     };
 
-    const setMyText = (text: string) => {
-      const target = ensureMyBlock();
-      if (!target?.body) return;
-      const others = readBlocks(blocks).reduce(
-        (total, block) =>
-          block.id === target.id ? total : total + byteLength(block.text),
-        0,
-      );
-      const budget = Math.max(
-        0,
-        Math.min(MAX_BLOCK_BYTES, MAX_THREAD_BYTES - others),
-      );
-      spliceText(doc, target.body, truncateToBytes(text, budget));
-    };
-
-    const markSent = () => {
-      // The server tombstones every block it just sent. Allocate the next block
-      // immediately instead of adopting one, so the editor's clear lands in a
-      // live block even before the tombstone update arrives.
-      myBlockId = createBlock().id;
+    const onSync = (isSynced: boolean) => {
+      synced = isSynced;
       publish();
     };
-
-    const setEditing = (active: boolean) => {
-      const current = provider.awareness.getLocalState() ?? {};
-      provider.awareness.setLocalState({
-        ...current,
-        blockId: active ? (myBlockId ?? null) : null,
-        typing: active,
-      });
-    };
-
-    const onSync = (synced: boolean) => {
-      if (disposed) return;
-      if (synced) {
-        const mine = ensureMyBlock();
-        if (restoredText === null && mine) {
-          restoredText = mine.text;
-        }
-      }
-      publish();
-    };
-
     const onStatus = (event: { status: DraftStatus }) => {
-      if (disposed) return;
       status = event.status;
       publish();
     };
 
-    provider.awareness.setLocalStateField("user", {
-      id: authorId,
+    next.awareness.setLocalStateField("user", {
+      id: userId,
       displayName: userName,
-      color: userColor(authorId),
+      color: userColor(userId),
     });
-    provider.on("sync", onSync);
-    provider.on("status", onStatus);
-    blocks.observeDeep(publish);
-    provider.awareness.on("change", publish);
-    controller.current = { setMyText, markSent, setEditing };
+    next.on("sync", onSync);
+    next.on("status", onStatus);
+    next.awareness.on("change", publish);
+    editingRef.current = (active: boolean) => {
+      const current = next.awareness.getLocalState() ?? {};
+      next.awareness.setLocalState({ ...current, typing: active });
+    };
+    setProvider(next);
     publish();
 
     return () => {
       disposed = true;
-      controller.current = null;
-      blocks.unobserveDeep(publish);
-      provider.awareness.off("change", publish);
-      provider.off("sync", onSync);
-      provider.off("status", onStatus);
-      provider.destroy();
-      doc.destroy();
+      editingRef.current = null;
+      next.awareness.off("change", publish);
+      next.off("sync", onSync);
+      next.off("status", onStatus);
+      next.destroy();
+      setProvider(null);
+      setState(IDLE_STATE);
     };
-  }, [threadId, userId, userName]);
+  }, [document, threadId, userId, userName]);
 
-  const setMyText = useCallback((text: string) => {
-    controller.current?.setMyText(text);
-  }, []);
-  const markSent = useCallback(() => {
-    controller.current?.markSent();
-  }, []);
   const setEditing = useCallback((active: boolean) => {
-    controller.current?.setEditing(active);
+    editingRef.current?.(active);
   }, []);
 
-  return { ...state, setMyText, markSent, setEditing };
+  return {
+    active: document !== null,
+    document,
+    provider,
+    setEditing,
+    ...state,
+  };
 }

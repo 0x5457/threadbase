@@ -119,6 +119,7 @@ async fn real_codex_streams_a_reply() {
             effort: None,
             base_branch: Some("main".into()),
             initial_prompt: None,
+            worktree: None,
         },
     )
     .await
