@@ -4,6 +4,8 @@
 //! home. We read the frontmatter from each `SKILL.md` so the picker can show a
 //! name and a one-line description.
 
+use gray_matter::engine::YAML;
+use gray_matter::{Matter, Pod};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use threadbase_shared::SkillDto;
@@ -127,31 +129,26 @@ fn parse_skill(file: &Path, directory: &Path, source: &str) -> Option<SkillDto> 
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "skill".to_owned());
-    let mut name = fallback_name;
-    let mut description = String::new();
-    let mut body: Vec<&str> = Vec::new();
 
-    let mut lines = content.lines();
-    let first = lines.next();
-    if first.is_some_and(|line| line.trim() == "---") {
-        let mut frontmatter = Vec::new();
-        for line in lines.by_ref() {
-            if line.trim() == "---" {
-                break;
-            }
-            frontmatter.push(line);
-        }
-        body.extend(lines);
-        parse_frontmatter(&frontmatter, &mut name, &mut description);
-    } else {
-        body.extend(first);
-        body.extend(lines);
+    let (frontmatter, body) = match Matter::<YAML>::new().parse::<Pod>(&content) {
+        Ok(parsed) => (parsed.data, parsed.content),
+        Err(_) => (None, content),
+    };
+    let name = frontmatter_value(&frontmatter, "name")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback_name);
+    let mut description = frontmatter_value(&frontmatter, "description")
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default();
+    if description.contains('\n') {
+        description = description.split_whitespace().collect::<Vec<_>>().join(" ");
     }
 
     if description.is_empty() {
         let mut first_heading = None;
         let mut first_line = None;
-        for line in &body {
+        for line in body.lines() {
             let trimmed = line.trim();
             if first_heading.is_none() {
                 if let Some(heading) = trimmed.strip_prefix("# ") {
@@ -184,38 +181,52 @@ fn parse_skill(file: &Path, directory: &Path, source: &str) -> Option<SkillDto> 
     })
 }
 
-fn parse_frontmatter(lines: &[&str], name: &mut String, description: &mut String) {
-    let mut description_lines: Option<Vec<String>> = None;
+fn frontmatter_value(frontmatter: &Option<Pod>, key: &str) -> Option<String> {
+    frontmatter
+        .as_ref()?
+        .as_hashmap()
+        .ok()?
+        .get(key)?
+        .as_string()
+        .ok()
+}
 
-    for line in lines {
-        let trimmed = line.trim();
-        if line.starts_with(' ') || line.starts_with('\t') {
-            if let Some(block) = description_lines.as_mut() {
-                if !trimmed.is_empty() {
-                    block.push(trimmed.to_owned());
-                }
-                continue;
-            }
-        } else if let Some(block) = description_lines.take() {
-            *description = block.join(" ");
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        if let Some(value) = trimmed.strip_prefix("name:") {
-            let value = value.trim().trim_matches(['"', '\'']);
-            if !value.is_empty() {
-                *name = value.to_owned();
-            }
-        } else if let Some(value) = trimmed.strip_prefix("description:") {
-            let value = value.trim().trim_matches(['"', '\'']);
-            if value == ">" || value == "|" {
-                description_lines = Some(Vec::new());
-            } else if !value.is_empty() {
-                *description = value.to_owned();
-            }
-        }
+    fn skill(content: &str) -> (tempfile::TempDir, SkillDto) {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("my-skill");
+        std::fs::create_dir(&directory).unwrap();
+        let file = directory.join("SKILL.md");
+        std::fs::write(&file, content).unwrap();
+        let skill = parse_skill(&file, &directory, "project").unwrap();
+        (temp, skill)
     }
 
-    if let Some(block) = description_lines.take() {
-        *description = block.join(" ");
+    #[test]
+    fn yaml_frontmatter_sets_name_and_description() {
+        let (_temp, skill) = skill(
+            "---\nname: yaml-skill\ndescription: >\n  line one\n  line two\n---\n# Heading\nBody\n",
+        );
+        assert_eq!(skill.name, "yaml-skill");
+        assert_eq!(skill.description, "line one line two");
+        assert_eq!(skill.source, "project");
+        assert!(skill.path.ends_with("SKILL.md"));
+    }
+
+    #[test]
+    fn frontmatter_falls_back_to_directory_and_heading() {
+        let (_temp, skill) = skill("---\nfoo: bar\n---\n# Heading\nBody\n");
+        assert_eq!(skill.name, "my-skill");
+        assert_eq!(skill.description, "Heading");
+    }
+
+    #[test]
+    fn missing_frontmatter_uses_first_paragraph_line() {
+        let (_temp, skill) = skill("Plain text without frontmatter.\n\nMore.\n");
+        assert_eq!(skill.name, "my-skill");
+        assert_eq!(skill.description, "Plain text without frontmatter.");
     }
 }

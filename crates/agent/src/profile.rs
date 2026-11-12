@@ -1,7 +1,7 @@
 //! Built-in adapter profiles. Adding an ACP agent must not require changing
 //! the thread event model or the UI.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentProfile {
@@ -125,42 +125,7 @@ pub fn resolve(profile: &AgentProfile) -> ResolvedProfile {
 
 #[must_use]
 pub fn find_in_path(command: &str) -> Option<PathBuf> {
-    if command.contains('/') {
-        let path = Path::new(command);
-        return path.is_file().then(|| path.to_path_buf());
-    }
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
-        let candidate = directory.join(command);
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-        #[cfg(windows)]
-        {
-            let candidate = directory.join(format!("{command}.exe"));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn is_executable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        path.metadata()
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    which::which(command).ok()
 }
 
 #[cfg(test)]

@@ -6,10 +6,39 @@ use crate::ids::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use strum::{Display, EnumString, IntoStaticStr};
 use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Inherent `as_str` for wire enums whose `strum::IntoStaticStr` string is the
+/// canonical wire value.
+macro_rules! impl_as_str {
+    ($($ty:ident),* $(,)?) => {
+        $(
+            impl $ty {
+                #[must_use]
+                pub fn as_str(self) -> &'static str {
+                    self.into()
+                }
+            }
+        )*
+    };
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum Role {
     Owner,
@@ -17,8 +46,21 @@ pub enum Role {
     Viewer,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum UserAccess {
     /// Signed in, but an administrator has not approved the account yet.
@@ -42,34 +84,17 @@ impl UserAccess {
         matches!(self, Self::Member)
     }
 
+    /// Parse a persisted value; unknown values fall back to `Pending`.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::ReadOnly => "read_only",
-            Self::Member => "member",
-            Self::Disabled => "disabled",
-        }
+    pub fn parse(value: &str) -> Self {
+        value.parse().unwrap_or(Self::Pending)
     }
 }
 
 impl Role {
     #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Owner => "owner",
-            Self::Editor => "editor",
-            Self::Viewer => "viewer",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Self {
-        match value {
-            "owner" => Self::Owner,
-            "editor" => Self::Editor,
-            _ => Self::Viewer,
-        }
+        value.parse().unwrap_or(Self::Viewer)
     }
 
     #[must_use]
@@ -92,8 +117,21 @@ impl Role {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ThreadStatus {
     Preparing,
@@ -105,8 +143,21 @@ pub enum ThreadStatus {
     Archived,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum SubagentStatus {
     Running,
@@ -116,8 +167,21 @@ pub enum SubagentStatus {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum Delivery {
     Injected,
@@ -126,8 +190,21 @@ pub enum Delivery {
     Dropped,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum QueueStatus {
     Queued,
@@ -137,8 +214,21 @@ pub enum QueueStatus {
     Dropped,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ApprovalKind {
     Command,
@@ -148,8 +238,21 @@ pub enum ApprovalKind {
     Other,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ApprovalStatus {
     Pending,
@@ -158,8 +261,21 @@ pub enum ApprovalStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ApprovalScope {
     Once,
@@ -167,8 +283,21 @@ pub enum ApprovalScope {
     Thread,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ApprovalDecision {
     AllowOnce,
@@ -177,8 +306,21 @@ pub enum ApprovalDecision {
     Deny,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ElicitationAction {
     Accept,
@@ -186,16 +328,42 @@ pub enum ElicitationAction {
     Cancel,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ElicitationMode {
     Form,
     Url,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ElicitationStatus {
     Pending,
@@ -204,8 +372,21 @@ pub enum ElicitationStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum CommentStatus {
     Pending,
@@ -213,8 +394,21 @@ pub enum CommentStatus {
     Resolved,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ShareLevel {
     InviteOnly,
@@ -223,24 +417,26 @@ pub enum ShareLevel {
 
 impl ShareLevel {
     #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::InviteOnly => "invite_only",
-            Self::Workspace => "workspace",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Self {
-        match value {
-            "workspace" => Self::Workspace,
-            _ => Self::InviteOnly,
-        }
+        value.parse().unwrap_or(Self::InviteOnly)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum BaselineKind {
     BaseBranch,
@@ -249,8 +445,21 @@ pub enum BaselineKind {
     Commit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum FileStatus {
     Added,
@@ -260,8 +469,21 @@ pub enum FileStatus {
     Untracked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum DiffLineKind {
     Context,
@@ -269,16 +491,42 @@ pub enum DiffLineKind {
     Delete,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum MessageRole {
     User,
     Agent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ToolKind {
     Read,
@@ -292,8 +540,21 @@ pub enum ToolKind {
     Other,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum ToolStatus {
     Pending,
@@ -302,8 +563,21 @@ pub enum ToolStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum PlanPriority {
     High,
@@ -311,8 +585,21 @@ pub enum PlanPriority {
     Low,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum PlanStatus {
     Pending,
@@ -320,8 +607,21 @@ pub enum PlanStatus {
     Completed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum InboxKind {
     Approval,
@@ -332,8 +632,21 @@ pub enum InboxKind {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum Panel {
     Transcript,
@@ -883,4 +1196,41 @@ pub struct DirectoryListingDto {
     pub parent: Option<String>,
     pub is_git: bool,
     pub entries: Vec<DirectoryEntryDto>,
+}
+
+impl_as_str!(
+    Role,
+    UserAccess,
+    ShareLevel,
+    ThreadStatus,
+    SubagentStatus,
+    Delivery,
+    QueueStatus,
+    ApprovalStatus,
+    ApprovalDecision,
+    ElicitationStatus,
+    CommentStatus,
+);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wire_enums_use_snake_case_strings() {
+        assert_eq!(UserAccess::ReadOnly.as_str(), "read_only");
+        assert_eq!("read_only".parse::<UserAccess>(), Ok(UserAccess::ReadOnly));
+        assert!("unknown".parse::<UserAccess>().is_err());
+        assert_eq!(UserAccess::parse("unknown"), UserAccess::Pending);
+        assert_eq!(Role::Owner.as_str(), "owner");
+        assert_eq!(Role::parse("unknown"), Role::Viewer);
+        assert_eq!(ShareLevel::Workspace.as_str(), "workspace");
+        assert_eq!(ShareLevel::parse("unknown"), ShareLevel::InviteOnly);
+        assert_eq!(ThreadStatus::RequiresAction.as_str(), "requires_action");
+        assert_eq!(Delivery::StoppedAndSent.as_str(), "stopped_and_sent");
+        assert_eq!(
+            serde_json::to_string(&UserAccess::ReadOnly).unwrap(),
+            "\"read_only\""
+        );
+    }
 }
