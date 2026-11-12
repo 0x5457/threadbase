@@ -11,8 +11,8 @@ use threadbase_core::state::{
 };
 use threadbase_shared::api::{CreateCommentRequest, UpdateCommentRequest};
 use threadbase_shared::{
-    now_ms, Actor, ApiError, BaselineDto, BaselineKind, CommentAnchor, CommentDto, CommentStatus,
-    ThreadEvent, ThreadId, UserBrief,
+    now_ms, Actor, ApiError, CommentAnchor, CommentDto, CommentStatus, ThreadEvent, ThreadId,
+    UserBrief,
 };
 use ulid::Ulid;
 
@@ -57,13 +57,14 @@ pub async fn pending_for_thread(
     pool: &SqlitePool,
     thread_id: &str,
 ) -> Result<Vec<CommentDto>, ServerError> {
-    let mut rows = sqlx::query_as::<_, CommentRow>(&format!(
+    let rows = sqlx::query_as::<_, CommentRow>(&format!(
         "{SELECT} WHERE c.thread_id = ? AND c.status = 'pending' ORDER BY c.created_at ASC"
     ))
     .bind(thread_id)
     .fetch_all(pool)
     .await?;
-    reconcile_anchors(pool, thread_id, &mut rows).await;
+    // The send path only needs the stored anchors to build the prompt, so it
+    // does not reconcile them; that cost belongs to the thread list read.
     Ok(rows.into_iter().map(to_dto).collect())
 }
 
@@ -362,8 +363,8 @@ async fn set_delivered(
 }
 
 /// A diff comment stores both the hunk id and a hash of the hunk text. Hunk
-/// ids are positional and shift when an earlier hunk changes. On every read we
-/// re-resolve the hash: if the same hunk content exists under a new id we move
+/// ids are positional and shift when an earlier hunk changes. `list_for_thread`
+/// re-resolves the hash: if the same hunk content exists under a new id we move
 /// the anchor; otherwise we degrade it to a file-level anchor and persist that
 /// fact so the UI can explain the loss of precision.
 async fn reconcile_anchors(pool: &SqlitePool, thread_id: &str, rows: &mut [CommentRow]) {
@@ -382,12 +383,11 @@ async fn reconcile_anchors(pool: &SqlitePool, thread_id: &str, rows: &mut [Comme
     let Ok(thread) = crate::threads::load_row(pool, thread_id).await else {
         return;
     };
-    let baseline = BaselineDto {
-        kind: BaselineKind::BaseBranch,
-        commit: None,
+    let Ok(base) = crate::diff::anchor_base(&thread) else {
+        return;
     };
     for (path, indices) in by_path {
-        let Ok(diff) = crate::diff::file_diff(&thread, &baseline, &path).await else {
+        let Ok(hunks) = crate::diff::hunk_index(&base, &path).await else {
             continue;
         };
         for index in indices {
@@ -401,13 +401,11 @@ async fn reconcile_anchors(pool: &SqlitePool, thread_id: &str, rows: &mut [Comme
             else {
                 continue;
             };
-            let found = context_hash
-                .as_deref()
-                .and_then(|hash| diff.hunks.iter().find(|hunk| hunk.context_hash == hash));
+            let found = context_hash.as_deref().and_then(|hash| hunks.get(hash));
             let next = match found {
-                Some(hunk) => CommentAnchor::Diff {
+                Some(hunk_id) => CommentAnchor::Diff {
                     path,
-                    hunk_id: hunk.id.clone(),
+                    hunk_id: hunk_id.clone(),
                     line,
                     context_hash,
                 },

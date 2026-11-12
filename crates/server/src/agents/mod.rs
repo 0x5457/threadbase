@@ -11,6 +11,7 @@ mod lifecycle;
 mod mapping;
 mod pump;
 mod queue_worker;
+mod session;
 
 use crate::auth::CurrentUser;
 use crate::error::ServerError;
@@ -22,8 +23,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use threadbase_agent::{
-    all_profiles, find_profile, AcpHarness, Capabilities, Harness, LaunchCtx, NewSession,
-    SessionId, SteeringOutcome, TurnHandle,
+    all_profiles, find_profile, AcpHarness, Harness, LaunchCtx, NewSession, SessionId,
+    SteeringOutcome, TurnHandle,
 };
 use threadbase_core::state::{ApprovalAction, SubagentMachine, ThreadAction};
 use threadbase_core::{resolve_delivery, DeliveryContext, SendAction};
@@ -36,6 +37,7 @@ use threadbase_workspace::git;
 use tokio::sync::{mpsc, Mutex};
 
 pub use mapping::{briefs_by_ids, user_brief};
+pub(crate) use session::{RunState, Session, TurnInstall, TurnStartClaim};
 
 #[derive(Clone)]
 pub struct AgentManager {
@@ -46,30 +48,9 @@ pub(crate) struct Inner {
     pub(crate) pool: SqlitePool,
     pub(crate) events: EventStore,
     pub(crate) projection: Projection,
-    pub(crate) sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
+    pub(crate) sessions: Mutex<HashMap<String, Arc<Session>>>,
     pub(crate) starts: crate::locks::KeyedLocks,
     pub(crate) queue_tx: mpsc::UnboundedSender<String>,
-}
-
-pub(crate) struct Session {
-    pub(crate) harness: Box<dyn Harness>,
-    pub(crate) capabilities: Capabilities,
-    pub(crate) turn: Option<TurnHandle>,
-    pub(crate) run: Arc<Mutex<RunState>>,
-}
-
-#[derive(Default)]
-pub(crate) struct RunState {
-    pub(crate) turn_id: Option<TurnId>,
-    pub(crate) agent_message_id: Option<MessageId>,
-    pub(crate) thinking_id: Option<MessageId>,
-    pub(crate) agent_text: String,
-}
-
-impl RunState {
-    fn reset(&mut self) {
-        *self = Self::default();
-    }
 }
 
 /// Everything needed to start one turn, whichever input path produced it.
@@ -100,8 +81,8 @@ impl AgentManager {
     pub async fn restart(&self, thread_id: &str) -> Result<(), ServerError> {
         let session = self.inner.sessions.lock().await.remove(thread_id);
         if let Some(session) = session {
-            let mut session = session.lock().await;
-            let _ = session.harness.shutdown().await;
+            let mut harness = session.harness.lock().await;
+            let _ = harness.shutdown().await;
         }
         threads::transition(
             &self.inner.pool,
@@ -202,12 +183,7 @@ impl AgentManager {
                 .await;
         }
         let run = Arc::new(Mutex::new(RunState::default()));
-        let session = Arc::new(Mutex::new(Session {
-            harness,
-            capabilities,
-            turn: None,
-            run: run.clone(),
-        }));
+        let session = Arc::new(Session::new(harness, capabilities, run.clone()));
         pump::spawn(
             self.inner.clone(),
             thread_id.to_owned(),
@@ -256,12 +232,10 @@ impl AgentManager {
     ) -> Result<SendMessageResponse, ServerError> {
         self.ensure_started(thread_id).await?;
         let session = self.session(thread_id).await?;
-        let mut session = session.lock().await;
         let status = threads::status(&self.inner.pool, thread_id).await?;
-        let running = session.turn.is_some() && status == ThreadStatus::Running;
-        if !running {
-            session.turn = None;
-        }
+        let running = session
+            .observe_running(status == ThreadStatus::Running)
+            .await;
         let action = resolve_delivery(
             delivery.unwrap_or(DeliveryMode::Auto),
             DeliveryContext {
@@ -272,11 +246,11 @@ impl AgentManager {
         match action {
             SendAction::Queue => self.queue(thread_id, user, text, authors).await,
             SendAction::Inject => {
-                let outcome = session
-                    .harness
-                    .steer(vec![text.to_owned()])
-                    .await
-                    .map_err(mapping::agent_error)?;
+                let outcome = {
+                    let mut harness = session.harness.lock().await;
+                    harness.steer(vec![text.to_owned()]).await
+                }
+                .map_err(mapping::agent_error)?;
                 match outcome {
                     SteeringOutcome::Injected | SteeringOutcome::StartedNewTurn => {
                         let author = user_brief(user);
@@ -317,11 +291,11 @@ impl AgentManager {
                 }
             }
             SendAction::StopAndSend => {
-                if let Some(turn) = session.turn.take() {
-                    let _ = session.harness.cancel(&turn).await;
+                if let Some(turn) = session.take_turn().await {
+                    let _ = session.harness.lock().await.cancel(&turn).await;
                 }
                 self.start_turn(
-                    &mut session,
+                    &session,
                     TurnStart {
                         thread_id,
                         author: &user_brief(user),
@@ -329,12 +303,15 @@ impl AgentManager {
                         prompt: text,
                         delivery: Delivery::StoppedAndSent,
                     },
+                    user,
+                    text,
+                    authors,
                 )
                 .await
             }
             SendAction::Prompt => {
                 self.start_turn(
-                    &mut session,
+                    &session,
                     TurnStart {
                         thread_id,
                         author: &user_brief(user),
@@ -342,6 +319,9 @@ impl AgentManager {
                         prompt: text,
                         delivery: Delivery::Injected,
                     },
+                    user,
+                    text,
+                    authors,
                 )
                 .await
             }
@@ -366,11 +346,18 @@ impl AgentManager {
 
     async fn start_turn(
         &self,
-        session: &mut Session,
+        session: &Session,
         start: TurnStart<'_>,
+        user: &CurrentUser,
+        text: &str,
+        authors: &[UserBrief],
     ) -> Result<SendMessageResponse, ServerError> {
         let delivery = start.delivery;
-        let (_, message_id) = begin_turn(&self.inner, session, start).await?;
+        let thread_id = start.thread_id;
+        let Some(claim) = session.claim_start().await else {
+            return self.queue(thread_id, user, text, authors).await;
+        };
+        let (_, message_id) = begin_turn(&self.inner, claim, start).await?;
         Ok(SendMessageResponse {
             delivery,
             queue_position: None,
@@ -383,8 +370,8 @@ impl AgentManager {
         thread_id: &str,
     ) -> Result<Vec<threadbase_shared::AgentConfigOptionDto>, ServerError> {
         let session = self.session(thread_id).await?;
-        let session = session.lock().await;
-        Ok(session.harness.config_options())
+        let harness = session.harness.lock().await;
+        Ok(harness.config_options())
     }
 
     pub async fn set_config(
@@ -394,9 +381,8 @@ impl AgentManager {
         effort: Option<&str>,
     ) -> Result<(), ServerError> {
         let session = self.session(thread_id).await?;
-        let mut session = session.lock().await;
-        session
-            .harness
+        let mut harness = session.harness.lock().await;
+        harness
             .set_config(model, effort)
             .await
             .map_err(mapping::agent_error)
@@ -404,11 +390,12 @@ impl AgentManager {
 
     pub async fn cancel(&self, thread_id: &str) -> Result<(), ServerError> {
         let session = self.session(thread_id).await?;
-        let mut session = session.lock().await;
-        let turn = session.turn.take();
+        let turn = session.take_turn_for_cancel().await;
         if let Some(turn) = &turn {
             session
                 .harness
+                .lock()
+                .await
                 .cancel(turn)
                 .await
                 .map_err(mapping::agent_error)?;
@@ -440,13 +427,16 @@ impl AgentManager {
         decision: SharedDecision,
     ) -> Result<(), ServerError> {
         let session = self.session(thread_id).await?;
-        let mut session = session.lock().await;
-        session
-            .harness
-            .decide(approval_id, decision)
-            .await
-            .map_err(mapping::agent_error)?;
-        let turn_active = session.turn.is_some();
+        // Approval decisions contend only on harness IPC, never on turn
+        // preparation or the session map.
+        {
+            let mut harness = session.harness.lock().await;
+            harness
+                .decide(approval_id, decision)
+                .await
+                .map_err(mapping::agent_error)?;
+        }
+        let turn_active = self.inner.current_turn(thread_id).await.is_some();
         let remaining = approvals::count_pending_items(&self.inner.pool, thread_id).await?;
         threads::transition(
             &self.inner.pool,
@@ -469,18 +459,20 @@ impl AgentManager {
         values: Option<serde_json::Value>,
     ) -> Result<(), ServerError> {
         let session = self.session(thread_id).await?;
-        let mut session = session.lock().await;
         let mapped = match action {
             threadbase_shared::ElicitationAction::Accept => ElicitationAction::Accept,
             threadbase_shared::ElicitationAction::Decline => ElicitationAction::Decline,
             threadbase_shared::ElicitationAction::Cancel => ElicitationAction::Cancel,
         };
-        session
-            .harness
-            .respond_elicitation(elicitation_id, mapped, values)
-            .await
-            .map_err(mapping::agent_error)?;
-        let turn_active = session.turn.is_some();
+        // Like approvals, elicitation responses take only the harness lock.
+        {
+            let mut harness = session.harness.lock().await;
+            harness
+                .respond_elicitation(elicitation_id, mapped, values)
+                .await
+                .map_err(mapping::agent_error)?;
+        }
+        let turn_active = self.inner.current_turn(thread_id).await.is_some();
         let remaining = approvals::count_pending_items(&self.inner.pool, thread_id).await?;
         threads::transition(
             &self.inner.pool,
@@ -507,15 +499,14 @@ impl AgentManager {
             )));
         }
         let session = self.session(thread_id).await?;
-        let mut session = session.lock().await;
-        session
-            .harness
+        let mut harness = session.harness.lock().await;
+        harness
             .cancel_subagent(subagent_id)
             .await
             .map_err(mapping::agent_error)
     }
 
-    async fn session(&self, thread_id: &str) -> Result<Arc<Mutex<Session>>, ServerError> {
+    async fn session(&self, thread_id: &str) -> Result<Arc<Session>, ServerError> {
         self.inner
             .session(thread_id)
             .await
@@ -524,7 +515,7 @@ impl AgentManager {
 }
 
 impl Inner {
-    pub(crate) async fn session(&self, thread_id: &str) -> Option<Arc<Mutex<Session>>> {
+    pub(crate) async fn session(&self, thread_id: &str) -> Option<Arc<Session>> {
         self.sessions.lock().await.get(thread_id).cloned()
     }
 
@@ -532,7 +523,7 @@ impl Inner {
     /// session before the completion events are published.
     pub(crate) async fn clear_turn(&self, thread_id: &str) {
         if let Some(session) = self.session(thread_id).await {
-            session.lock().await.turn = None;
+            session.clear_turn().await;
         }
     }
 
@@ -550,12 +541,29 @@ impl Inner {
 
 /// Persist the start of a turn, then ask the harness to run it. Every input
 /// path (direct send, stop-and-send, queued) goes through this function so the
-/// event log and the in-memory run state cannot disagree.
+/// event log and the in-memory run state cannot disagree. The caller holds the
+/// turn-start claim so preparation can run without the turn or harness lock.
 pub(crate) async fn begin_turn(
     inner: &Inner,
-    session: &mut Session,
+    claim: TurnStartClaim<'_>,
     start: TurnStart<'_>,
 ) -> Result<(TurnHandle, MessageId), ServerError> {
+    let session = claim.session();
+    match prepare_and_prompt(inner, session, start).await {
+        Ok(started) => Ok(started),
+        Err(error) => {
+            claim.release().await;
+            Err(error)
+        }
+    }
+}
+
+async fn prepare_and_prompt(
+    inner: &Inner,
+    session: &Session,
+    start: TurnStart<'_>,
+) -> Result<(TurnHandle, MessageId), ServerError> {
+    // Git, title and event preparation happens before any harness lock.
     lifecycle::auto_title(&inner.pool, &inner.events, start.thread_id, start.prompt).await;
     snapshot_worktree(inner, start.thread_id).await;
     let turn_id = TurnId::new();
@@ -594,7 +602,21 @@ pub(crate) async fn begin_turn(
     if let Some(summary) = inner.projection.summary(start.thread_id).await {
         parts.push(summary);
     }
-    let handle = match session.harness.prompt(parts).await {
+    // Mark the thread Running before the prompt is issued: any completion event
+    // from the harness then necessarily arrives after the Prompt transition.
+    threads::transition(
+        &inner.pool,
+        &inner.projection,
+        start.thread_id,
+        ThreadAction::Prompt,
+    )
+    .await?;
+    // Harness IPC only. The turn lock stays free while the prompt is issued.
+    let prompt_result = {
+        let mut harness = session.harness.lock().await;
+        harness.prompt(parts).await
+    };
+    let handle = match prompt_result {
         Ok(handle) => handle,
         Err(error) => {
             session.run.lock().await.reset();
@@ -624,14 +646,15 @@ pub(crate) async fn begin_turn(
             return Err(mapping::agent_error(error));
         }
     };
-    session.turn = Some(handle.clone());
-    threads::transition(
-        &inner.pool,
-        &inner.projection,
-        start.thread_id,
-        ThreadAction::Prompt,
-    )
-    .await?;
+    let cancel_requested = match session.install_turn(handle.clone()).await {
+        TurnInstall::Running { cancel_requested } => cancel_requested,
+        TurnInstall::AlreadyFinished => {
+            return Ok((handle, message_id));
+        }
+    };
+    if cancel_requested {
+        let _ = session.harness.lock().await.cancel(&handle).await;
+    }
     Ok((handle, message_id))
 }
 

@@ -337,15 +337,14 @@ impl Pump {
             &rule,
         )
         .await?;
-        let turn_active = {
-            let mut session = session.lock().await;
-            session
-                .harness
+        {
+            let mut harness = session.harness.lock().await;
+            harness
                 .decide(approval.id.as_str(), ApprovalDecision::AllowOnce)
                 .await
                 .map_err(mapping::agent_error)?;
-            session.turn.is_some()
-        };
+        }
+        let turn_active = self.inner.current_turn(&self.thread_id).await.is_some();
         let remaining = approvals::count_pending_items(&self.inner.pool, &self.thread_id).await?;
         self.transition(ThreadAction::ApprovalResolved {
             turn_active,

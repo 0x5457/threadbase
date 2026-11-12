@@ -467,6 +467,129 @@ async fn git_stdout(path: &Path, args: &[&str]) -> String {
 }
 
 #[tokio::test]
+async fn diff_comment_hunk_ids_are_reresolved_then_degrade() {
+    let fixture = fixture().await;
+    let base_text = (0..60)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    tokio::fs::write(fixture.repo.path().join("hunks.txt"), &base_text)
+        .await
+        .unwrap();
+    git(fixture.repo.path(), &["add", "hunks.txt"]);
+    git(fixture.repo.path(), &["commit", "-m", "hunks base"]);
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    let worktree = Path::new(thread.worktree_path.as_deref().unwrap());
+    let write_hunks = |changes: &[usize]| {
+        let mut lines: Vec<String> = (0..60).map(|index| format!("line {index}")).collect();
+        for index in changes {
+            lines[*index] = format!("line {index} changed");
+        }
+        format!("{}\n", lines.join("\n"))
+    };
+    tokio::fs::write(worktree.join("hunks.txt"), write_hunks(&[2, 20]))
+        .await
+        .unwrap();
+    let row = threads::load_row(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let base = BaselineDto {
+        kind: BaselineKind::BaseBranch,
+        commit: None,
+    };
+    let file = diff::file_diff(&row, &base, "hunks.txt").await.unwrap();
+    let hunk = file
+        .hunks
+        .iter()
+        .find(|hunk| {
+            hunk.lines
+                .iter()
+                .any(|line| line.content == "line 20 changed")
+        })
+        .expect("a hunk for the anchored line");
+    assert_eq!(hunk.id, "h2");
+    let original_hash = hunk.context_hash.clone();
+
+    let events = EventStore::new(fixture.pool.clone());
+    let comment = comments::create(
+        &fixture.pool,
+        &events,
+        thread.id.as_str(),
+        &fixture.current,
+        &CreateCommentRequest {
+            body: "Keep this line".into(),
+            anchor: CommentAnchor::Diff {
+                path: "hunks.txt".into(),
+                hunk_id: hunk.id.clone(),
+                line: 21,
+                context_hash: Some(original_hash.clone()),
+            },
+            parent_id: None,
+            send: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    // A new change earlier in the file shifts the anchored hunk from h2 to h3
+    // without touching its own header or contents, so its context hash stays
+    // the same.
+    tokio::fs::write(worktree.join("hunks.txt"), write_hunks(&[2, 12, 20]))
+        .await
+        .unwrap();
+    let shifted = diff::file_diff(&row, &base, "hunks.txt").await.unwrap();
+    let shifted_hunk = shifted
+        .hunks
+        .iter()
+        .find(|hunk| hunk.context_hash == original_hash)
+        .expect("the anchored hunk is still present");
+    assert_eq!(shifted_hunk.id, "h3");
+
+    // The send path reads pending comments without reconciling anchors.
+    let pending = comments::pending_for_thread(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let unsent = pending.iter().find(|entry| entry.id == comment.id).unwrap();
+    match &unsent.anchor {
+        CommentAnchor::Diff { hunk_id, .. } => assert_eq!(hunk_id, "h2"),
+        other => panic!("send path should keep the stored anchor: {other:?}"),
+    }
+
+    let listed = comments::list_for_thread(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let resolved = listed.iter().find(|entry| entry.id == comment.id).unwrap();
+    assert!(!resolved.anchor_changed);
+    match &resolved.anchor {
+        CommentAnchor::Diff { hunk_id, .. } => assert_eq!(hunk_id, "h3"),
+        other => panic!("anchor should be re-resolved to the diff hunk: {other:?}"),
+    }
+
+    // Reverting the anchored line removes its hunk, so the anchor degrades to
+    // a file anchor and records that it changed.
+    tokio::fs::write(worktree.join("hunks.txt"), write_hunks(&[2, 12]))
+        .await
+        .unwrap();
+    let listed = comments::list_for_thread(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let degraded = listed.iter().find(|entry| entry.id == comment.id).unwrap();
+    assert!(degraded.anchor_changed);
+    assert!(matches!(degraded.anchor, CommentAnchor::File { .. }));
+
+    // Reconciliation is idempotent: a second read leaves the persisted flag
+    // and anchor in place.
+    let listed = comments::list_for_thread(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let stable = listed.iter().find(|entry| entry.id == comment.id).unwrap();
+    assert!(stable.anchor_changed);
+    assert!(matches!(stable.anchor, CommentAnchor::File { .. }));
+}
+
+#[tokio::test]
 async fn diff_comment_drift_and_revert_to_base() {
     let fixture = fixture().await;
     let project = create_project(&fixture).await;

@@ -21,25 +21,30 @@ async fn process(inner: &Arc<Inner>, thread_id: &str) -> Result<(), ServerError>
     let Some(session) = inner.session(thread_id).await else {
         return Err(ServerError::internal("agent is not running"));
     };
-    let mut session = session.lock().await;
     let status = threads::status(&inner.pool, thread_id).await?;
-    if session.turn.is_some() && status == ThreadStatus::Running {
+    if session
+        .observe_running(status == ThreadStatus::Running)
+        .await
+    {
         return Ok(());
-    }
-    if status != ThreadStatus::Running {
-        session.turn = None;
     }
     let Some((id, author_id, text, authors_json)) = queue::head(&inner.pool, thread_id).await?
     else {
         return Ok(());
     };
-    queue::dispatch(&inner.pool, &inner.projection, thread_id, &id).await?;
     let author = author_brief(inner, &author_id).await;
     let authors = authors_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<Vec<UserBrief>>(json).ok())
         .filter(|authors| !authors.is_empty())
         .unwrap_or_else(|| vec![author.clone()]);
+    let Some(claim) = session.claim_start().await else {
+        return Ok(());
+    };
+    if let Err(error) = queue::dispatch(&inner.pool, &inner.projection, thread_id, &id).await {
+        claim.release().await;
+        return Err(error);
+    }
     let start = TurnStart {
         thread_id,
         author: &author,
@@ -47,7 +52,7 @@ async fn process(inner: &Arc<Inner>, thread_id: &str) -> Result<(), ServerError>
         prompt: &text,
         delivery: Delivery::Queued,
     };
-    match begin_turn(inner, &mut session, start).await {
+    match begin_turn(inner, claim, start).await {
         Ok((handle, _)) => {
             queue::complete(
                 &inner.pool,

@@ -10,7 +10,7 @@ use crate::auth::CurrentUser;
 use crate::error::ServerError;
 use crate::threads::ThreadRow;
 use sqlx::SqlitePool;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use threadbase_core::state::ReadRules;
 use threadbase_shared::{
@@ -171,44 +171,13 @@ pub async fn file_diff(
         .any(|line| line == path);
     if untracked {
         let content = tokio::fs::read(&full).await.unwrap_or_default();
-        let binary = content.contains(&0);
-        let hunks = if binary {
-            Vec::new()
-        } else {
-            let text = String::from_utf8_lossy(&content);
-            let lines: Vec<DiffLineDto> = text
-                .lines()
-                .enumerate()
-                .map(|(index, line)| DiffLineDto {
-                    kind: DiffLineKind::Add,
-                    old_line: None,
-                    new_line: Some(u32::try_from(index + 1).unwrap_or(u32::MAX)),
-                    content: line.to_owned(),
-                })
-                .collect();
-            if lines.is_empty() {
-                Vec::new()
-            } else {
-                let context_hash = hash_text(&format!("untracked:{path}"));
-                vec![DiffHunkDto {
-                    id: "h1".to_owned(),
-                    header: format!("@@ -0,0 +1,{} @@", lines.len()),
-                    context_hash,
-                    old_start: 0,
-                    old_lines: 0,
-                    new_start: 1,
-                    new_lines: u32::try_from(lines.len()).unwrap_or(u32::MAX),
-                    lines,
-                }]
-            }
-        };
         return Ok(FileDiffDto {
             path: path.to_owned(),
             old_path: None,
             status: FileStatus::Untracked,
             language: language_for(path).map(ToOwned::to_owned),
-            binary,
-            hunks,
+            binary: content.contains(&0),
+            hunks: untracked_hunks(path, &content),
         });
     }
     let patch = git_stdout(
@@ -239,6 +208,106 @@ pub async fn file_diff(
         binary,
         hunks,
     })
+}
+
+/// Untracked files have no base version, so they are presented as one synthetic
+/// hunk. Anchor reconciliation reuses this definition to keep the same context
+/// hash and hunk id that `file_diff` exposes to clients.
+fn untracked_hunks(path: &str, content: &[u8]) -> Vec<DiffHunkDto> {
+    if content.contains(&0) {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(content);
+    let lines: Vec<DiffLineDto> = text
+        .lines()
+        .enumerate()
+        .map(|(index, line)| DiffLineDto {
+            kind: DiffLineKind::Add,
+            old_line: None,
+            new_line: Some(u32::try_from(index + 1).unwrap_or(u32::MAX)),
+            content: line.to_owned(),
+        })
+        .collect();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    vec![DiffHunkDto {
+        id: "h1".to_owned(),
+        header: format!("@@ -0,0 +1,{} @@", lines.len()),
+        context_hash: hash_text(&format!("untracked:{path}")),
+        old_start: 0,
+        old_lines: 0,
+        new_start: 1,
+        new_lines: u32::try_from(lines.len()).unwrap_or(u32::MAX),
+        lines,
+    }]
+}
+
+/// The worktree and base-branch reference used to reconcile diff comment
+/// anchors. Both come from the thread row, so resolving this costs no git
+/// subprocess; `list_for_thread` builds it once for all anchored paths.
+pub(crate) struct AnchorBase {
+    worktree: PathBuf,
+    reference: String,
+}
+
+pub(crate) fn anchor_base(row: &ThreadRow) -> Result<AnchorBase, ServerError> {
+    Ok(AnchorBase {
+        worktree: worktree(row)?,
+        reference: base_reference(row),
+    })
+}
+
+/// Map each current hunk's context hash to its positional id. Comment anchors
+/// only need hunk identity, so this spends one `git diff` and probes untracked
+/// status only when that diff is empty.
+pub(crate) async fn hunk_index(
+    base: &AnchorBase,
+    path: &str,
+) -> Result<HashMap<String, String>, ServerError> {
+    let full = ensure_within(&base.worktree, Path::new(path)).map_err(|_| {
+        ServerError(ApiError::new(
+            threadbase_shared::ErrorCode::PathOutsideWorkspace,
+            "file path is outside the thread worktree",
+        ))
+    })?;
+    let patch = git_stdout(
+        &base.worktree,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "-U3",
+            &base.reference,
+            "--",
+            path,
+        ],
+    )
+    .await?;
+    if !patch.is_empty() {
+        return Ok(hunk_index_of(parse_hunks(path, &patch)));
+    }
+    let untracked = git_stdout(
+        &base.worktree,
+        &["ls-files", "--others", "--exclude-standard"],
+    )
+    .await
+    .unwrap_or_default()
+    .lines()
+    .any(|line| line == path);
+    if !untracked {
+        return Ok(HashMap::new());
+    }
+    let content = tokio::fs::read(&full).await.unwrap_or_default();
+    Ok(hunk_index_of(untracked_hunks(path, &content)))
+}
+
+fn hunk_index_of(hunks: impl IntoIterator<Item = DiffHunkDto>) -> HashMap<String, String> {
+    let mut index = HashMap::new();
+    for hunk in hunks {
+        index.entry(hunk.context_hash).or_insert(hunk.id);
+    }
+    index
 }
 
 /// Reset the thread worktree to its base commit. This is the explicit
@@ -403,13 +472,7 @@ async fn resolve_baseline(
     requested: &BaselineDto,
 ) -> Result<ResolvedBaseline, ServerError> {
     let (reference, label) = match requested.kind {
-        BaselineKind::BaseBranch => {
-            let reference = row
-                .base_sha
-                .clone()
-                .unwrap_or_else(|| row.base_branch.clone());
-            (reference, row.base_branch.clone())
-        }
+        BaselineKind::BaseBranch => (base_reference(row), row.base_branch.clone()),
         BaselineKind::LastCommit => ("HEAD".to_owned(), "Last commit".to_owned()),
         BaselineKind::LastTurn => {
             let reference = row
@@ -482,6 +545,12 @@ async fn current_hash(worktree: &Path, path: &str) -> String {
         Ok(bytes) => hash_bytes(&bytes),
         Err(_) => "deleted".to_owned(),
     }
+}
+
+fn base_reference(row: &ThreadRow) -> String {
+    row.base_sha
+        .clone()
+        .unwrap_or_else(|| row.base_branch.clone())
 }
 
 fn worktree(row: &ThreadRow) -> Result<PathBuf, ServerError> {
