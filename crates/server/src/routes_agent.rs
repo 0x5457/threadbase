@@ -4,7 +4,10 @@ use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::authz;
 use crate::error::ServerError;
-use axum::extract::{Path, Query, State};
+use axum::body::Bytes;
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::Json;
 use axum::Router;
@@ -35,6 +38,13 @@ pub fn router() -> Router<AppState> {
             "/api/threads/{thread_id}/queue/{item_id}/steer",
             post(steer_queue_item),
         )
+        .route(
+            "/api/threads/{thread_id}/attachments",
+            post(upload_attachment).layer(DefaultBodyLimit::max(
+                crate::attachments::MAX_IMAGE_BYTES + 1,
+            )),
+        )
+        .route("/api/attachments/{attachment_id}", get(read_attachment))
 }
 
 async fn send_message(
@@ -45,6 +55,7 @@ async fn send_message(
 ) -> Result<Json<SendMessageResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
     let from_draft = request.from_draft.unwrap_or(false);
+    let attachment_ids = request.attachment_ids.clone().unwrap_or_default();
     // Serialize peek → send → take so two senders cannot consume the same
     // blocks, and a failed send never loses the draft.
     let _send_guard = if from_draft {
@@ -71,7 +82,7 @@ async fn send_message(
     } else {
         request.text.trim().to_owned()
     };
-    if text.is_empty() {
+    if text.is_empty() && attachment_ids.is_empty() {
         let message = if from_draft {
             "draft already sent"
         } else {
@@ -101,9 +112,17 @@ async fn send_message(
     } else {
         draft_authors
     };
+    let attachments = crate::attachments::resolve(&state.pool, &thread_id, &attachment_ids).await?;
     let response = state
         .agents
-        .send_with_authors(&thread_id, &user, text.as_str(), request.delivery, &authors)
+        .send_with_authors(
+            &thread_id,
+            &user,
+            text.as_str(),
+            request.delivery,
+            &authors,
+            &attachments,
+        )
         .await?;
     if from_draft {
         state
@@ -257,12 +276,17 @@ async fn steer_queue_item(
         .and_then(|json| serde_json::from_str::<Vec<threadbase_shared::UserBrief>>(json).ok())
         .filter(|authors| !authors.is_empty())
         .unwrap_or_else(|| vec![author.clone()]);
+    let attachments = item
+        .attachments_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Vec<threadbase_shared::AttachmentDto>>(json).ok())
+        .unwrap_or_default();
     // Claim the row before steering so the queue worker cannot also dispatch
     // it; a failed injection puts it back where it was.
     crate::queue::dispatch(&state.pool, &state.projection, &thread_id, &item_id).await?;
     match state
         .agents
-        .steer_queued(&thread_id, &author, &item.text, &authors)
+        .steer_queued(&thread_id, &author, &item.text, &authors, &attachments)
         .await
     {
         Ok(()) => {
@@ -281,6 +305,60 @@ async fn steer_queue_item(
             Err(error)
         }
     }
+}
+
+/// Store one pasted image. The body is the raw image; the content type names
+/// the format. Uploads are scoped to the thread and gated on write access.
+async fn upload_attachment(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    headers: HeaderMap,
+    bytes: Bytes,
+) -> Result<Json<threadbase_shared::AttachmentDto>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let mime_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    if mime_type.trim().is_empty() {
+        return Err(ServerError(ApiError::validation("image type is required")));
+    }
+    let attachment = crate::attachments::create(
+        &state.pool,
+        &state.config.data_dir,
+        &thread_id,
+        user.user.id.as_str(),
+        &mime_type,
+        &bytes,
+    )
+    .await?;
+    Ok(Json(attachment))
+}
+
+/// Serve a stored image to anyone who can read its thread.
+async fn read_attachment(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(attachment_id): Path<String>,
+) -> Result<impl IntoResponse, ServerError> {
+    let stored = crate::attachments::stored(&state.pool, &attachment_id).await?;
+    authz::require_read(&state.pool, &stored.thread_id, &user).await?;
+    let bytes = tokio::fs::read(&stored.path)
+        .await
+        .map_err(|error| ServerError::internal(format!("could not read attachment: {error}")))?;
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, stored.dto.mime_type),
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable".to_owned(),
+            ),
+        ],
+        bytes,
+    ))
 }
 
 #[derive(Deserialize)]

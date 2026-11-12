@@ -4,6 +4,7 @@ import type { ApprovalDecision } from "./ApprovalDecision";
 import type { ApprovalDto } from "./ApprovalDto";
 import type { ApprovalId } from "./ApprovalId";
 import type { ApprovalScope } from "./ApprovalScope";
+import type { AttachmentDto } from "./AttachmentDto";
 import type { ChangeStats } from "./ChangeStats";
 import type { CommentDto } from "./CommentDto";
 import type { ElicitationAction } from "./ElicitationAction";
@@ -35,6 +36,7 @@ export type ThreadEvent =
      */
     authors: Array<UserBrief>;
     prompt: string;
+    attachments: Array<AttachmentDto>;
   }
   | {
     "type": "message_delta";

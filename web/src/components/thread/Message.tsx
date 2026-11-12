@@ -56,6 +56,24 @@ export const Message = memo(function Message({
         >
           <IconMessagePlus size={12} stroke={1.5} />
         </ActionIcon>
+        {item.attachments.length ? (
+          <div className="message-images">
+            {item.attachments.map((attachment) => {
+              const url = `/api/attachments/${attachment.id}`;
+              return (
+                <a
+                  key={attachment.id}
+                  className="message-image"
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <img src={url} alt="" loading="lazy" />
+                </a>
+              );
+            })}
+          </div>
+        ) : null}
         <div className={streaming ? "prose streaming" : "prose"}>
           {agent ? (
             <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>

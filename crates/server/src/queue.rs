@@ -53,6 +53,7 @@ pub struct NewQueuedInput<'a> {
     pub author_id: &'a str,
     pub text: &'a str,
     pub authors_json: Option<&'a str>,
+    pub attachments_json: Option<&'a str>,
     pub created_at: i64,
 }
 
@@ -66,15 +67,16 @@ pub async fn enqueue(pool: &SqlitePool, input: NewQueuedInput<'_>) -> Result<u32
     .await?;
     let status = queue_status_str(QueueStatus::Queued);
     sqlx::query(
-        "INSERT INTO queued_inputs(id, thread_id, author_id, text, authors_json, status,
-            position, created_at, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO queued_inputs(id, thread_id, author_id, text, authors_json, attachments_json,
+            status, position, created_at, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(Ulid::new().to_string())
     .bind(input.thread_id)
     .bind(input.author_id)
     .bind(input.text)
     .bind(input.authors_json)
+    .bind(input.attachments_json)
     .bind(status)
     .bind(position)
     .bind(input.created_at)
@@ -98,9 +100,9 @@ pub async fn status_of(pool: &SqlitePool, item_id: &str) -> Result<QueueStatus, 
 pub async fn head(
     pool: &SqlitePool,
     thread_id: &str,
-) -> Result<Option<(String, String, String, Option<String>)>, ServerError> {
+) -> Result<Option<(String, String, String, Option<String>, Option<String>)>, ServerError> {
     let row = sqlx::query_as(
-        "SELECT id, author_id, text, authors_json FROM queued_inputs
+        "SELECT id, author_id, text, authors_json, attachments_json FROM queued_inputs
          WHERE thread_id = ? AND status = ? AND superseded = 0
          ORDER BY position ASC LIMIT 1",
     )
@@ -217,7 +219,17 @@ pub struct QueuedInput {
     pub author_id: String,
     pub text: String,
     pub authors_json: Option<String>,
+    pub attachments_json: Option<String>,
     pub status: QueueStatus,
+}
+
+#[derive(Debug, FromRow)]
+struct ItemRow {
+    author_id: String,
+    text: String,
+    authors_json: Option<String>,
+    attachments_json: Option<String>,
+    status: String,
 }
 
 /// Load one item, scoped to its thread so a mismatched id reads as missing.
@@ -226,22 +238,23 @@ pub async fn item(
     thread_id: &str,
     item_id: &str,
 ) -> Result<QueuedInput, ServerError> {
-    let row: Option<(String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT author_id, text, authors_json, status FROM queued_inputs
+    let row: Option<ItemRow> = sqlx::query_as(
+        "SELECT author_id, text, authors_json, attachments_json, status FROM queued_inputs
          WHERE id = ? AND thread_id = ?",
     )
     .bind(item_id)
     .bind(thread_id)
     .fetch_optional(pool)
     .await?;
-    let Some((author_id, text, authors_json, status)) = row else {
+    let Some(row) = row else {
         return Err(ServerError(ApiError::not_found("queued message not found")));
     };
     Ok(QueuedInput {
-        author_id,
-        text,
-        authors_json,
-        status: parse_queue_status(&status).unwrap_or(QueueStatus::Queued),
+        author_id: row.author_id,
+        text: row.text,
+        authors_json: row.authors_json,
+        attachments_json: row.attachments_json,
+        status: parse_queue_status(&row.status).unwrap_or(QueueStatus::Queued),
     })
 }
 
@@ -541,6 +554,7 @@ mod tests {
                     author_id: user.as_str(),
                     text,
                     authors_json: None,
+                    attachments_json: None,
                     created_at: now_ms(),
                 },
             )

@@ -872,6 +872,17 @@ pub struct QueueItemDto {
     pub superseded: bool,
 }
 
+/// A stored file a user attached to a message. Bytes live on disk; the DTO is
+/// what events carry so a cold reload can still render the image.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AttachmentDto {
+    pub id: String,
+    pub mime_type: String,
+    pub byte_size: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

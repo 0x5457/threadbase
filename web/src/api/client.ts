@@ -15,6 +15,15 @@ export class ApiError extends Error {
   }
 }
 
+async function failure(response: Response): Promise<never> {
+  const body = (await response.json().catch(() => null)) as ErrorBody | null;
+  throw new ApiError(
+    body?.error?.message ?? `Request failed (${response.status})`,
+    response.status,
+    body?.error?.code ?? null,
+  );
+}
+
 export async function request<T>(
   path: string,
   init?: RequestInit,
@@ -29,14 +38,24 @@ export async function request<T>(
     },
   });
 
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as ErrorBody | null;
-    throw new ApiError(
-      body?.error?.message ?? `Request failed (${response.status})`,
-      response.status,
-      body?.error?.code ?? null,
-    );
-  }
+  if (!response.ok) return failure(response);
+
+  return (await response.json()) as T;
+}
+
+/** POST raw bytes (an image) and parse the JSON reply. */
+export async function binaryRequest<T>(path: string, body: Blob): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "x-requested-with": "threadbase",
+      "content-type": body.type || "application/octet-stream",
+    },
+    body,
+  });
+
+  if (!response.ok) return failure(response);
 
   return (await response.json()) as T;
 }

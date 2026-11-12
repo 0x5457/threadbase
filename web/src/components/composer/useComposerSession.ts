@@ -108,16 +108,19 @@ export function useComposerSession({
       editor: Editor | null,
       setHasText: (value: boolean) => void,
       resetSuggestion: () => void,
-    ) => {
-      if (!editor || sending || !writable) return;
-      if (editor.getText().trim().length === 0) return;
+      attachmentIds: string[] = [],
+    ): Promise<boolean> => {
+      if (!editor || sending || !writable) return false;
+      if (editor.getText().trim().length === 0 && attachmentIds.length === 0) {
+        return false;
+      }
       const shared = Boolean(threadId) && draft.active;
       if (shared && !draft.synced) {
         notifications.show({
           message: "Draft is still syncing with the thread",
           color: "yellow",
         });
-        return;
+        return false;
       }
       resetSuggestion();
       const text = editor.getText().trim();
@@ -126,7 +129,7 @@ export function useComposerSession({
         editor.commands.clearContent();
         setHasText(false);
         notifications.show({ message: `Sent to ${agent}`, color: "teal" });
-        return;
+        return true;
       }
 
       setSending(true);
@@ -136,7 +139,7 @@ export function useComposerSession({
           // populated until the POST returns. Its tombstone clears the draft.
           // Queued sends stay silent: the queue bar above the composer already
           // lists them, and the delivery mode is the caller's own choice.
-          await sendDraft(threadId, delivery);
+          await sendDraft(threadId, delivery, attachmentIds);
           // Allocate the next draft block before the editor clears, so the
           // cleared text does not allocate a second empty block.
           markDraftSent();
@@ -145,7 +148,7 @@ export function useComposerSession({
         } else {
           editor.commands.clearContent();
           setHasText(false);
-          await sendMessage(threadId, text, delivery);
+          await sendMessage(threadId, text, delivery, attachmentIds);
         }
         onSent?.();
         // The send started the adapter, so its options can now be read
@@ -153,6 +156,7 @@ export function useComposerSession({
         void queryClient.invalidateQueries({
           queryKey: ["agent-config", threadId],
         });
+        return true;
       } catch (cause) {
         editor.commands.setContent(text);
         setHasText(true);
@@ -162,6 +166,7 @@ export function useComposerSession({
             cause instanceof Error ? cause.message : "Could not send message",
           color: "red",
         });
+        return false;
       } finally {
         setSending(false);
       }

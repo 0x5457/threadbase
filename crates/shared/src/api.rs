@@ -100,6 +100,8 @@ pub struct SendMessageRequest {
     pub delivery: Option<DeliveryMode>,
     /// Consume all trailing CRDT draft blocks instead of using `text`.
     pub from_draft: Option<bool>,
+    /// Uploaded images to send with this message, in display order.
+    pub attachment_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

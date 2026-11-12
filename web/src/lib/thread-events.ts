@@ -1,4 +1,5 @@
 import type { ThreadEvent, ToolCallData } from "../api";
+import type { AttachmentDto } from "../api/types/AttachmentDto";
 import type { UserBrief } from "../api/types/UserBrief";
 
 /**
@@ -34,6 +35,7 @@ export type ViewItem =
       text: string;
       ts: number;
       streaming: boolean;
+      attachments: AttachmentDto[];
     }
   | {
       kind: "thinking";
@@ -80,6 +82,7 @@ export function reduceEvents(
     chunk: string,
     ts: number,
     streaming: boolean,
+    attachments: AttachmentDto[] = [],
   ) => {
     const existing = messageRows.get(id);
     if (existing === undefined) {
@@ -94,6 +97,7 @@ export function reduceEvents(
         text: chunk,
         ts,
         streaming,
+        attachments,
       });
       return;
     }
@@ -107,6 +111,7 @@ export function reduceEvents(
           : row.text + chunk,
       streaming,
       ts,
+      attachments: attachments.length ? attachments : row.attachments,
     };
   };
 
@@ -145,6 +150,7 @@ export function reduceEvents(
           visiblePrompt,
           event.ts,
           false,
+          payload.attachments ?? [],
         );
         break;
       }
@@ -176,6 +182,7 @@ export function reduceEvents(
           message.text,
           message.createdAt,
           false,
+          message.attachments ?? [],
         );
         break;
       }

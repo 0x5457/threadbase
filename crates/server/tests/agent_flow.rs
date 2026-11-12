@@ -838,6 +838,7 @@ async fn draft_send_preserves_multiple_authors() {
             "shared draft",
             None,
             &[ada, bob],
+            &[],
         )
         .await
         .unwrap();
@@ -1168,6 +1169,7 @@ async fn queued_turn_writes_current_turn() {
             "permission",
             Some(threadbase_shared::DeliveryMode::Queue),
             &[ada],
+            &[],
         )
         .await
         .unwrap();
@@ -1228,4 +1230,119 @@ async fn snapshot_revisions_are_monotonic() {
         first.revision,
         second.revision
     );
+}
+
+#[tokio::test]
+async fn pasted_images_upload_serve_and_reach_the_agent() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    fixture
+        .state
+        .agents
+        .ensure_started(fixture.thread.id.as_str())
+        .await
+        .unwrap();
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, 1).await;
+    let png: &[u8] = b"\x89PNG\r\n\x1a\nimage-bytes";
+
+    let mut upload = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{}/attachments", fixture.thread.id))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "image/png")
+        .header("cookie", format!("threadbase_session={session}"))
+        .body(Body::from(png.to_vec()))
+        .unwrap();
+    upload
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(upload).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let attachment: threadbase_shared::AttachmentDto = serde_json::from_slice(&body).unwrap();
+    assert_eq!(attachment.mime_type, "image/png");
+    assert_eq!(attachment.byte_size, i64::try_from(png.len()).unwrap());
+
+    let mut read = Request::builder()
+        .method("GET")
+        .uri(format!("/api/attachments/{}", attachment.id))
+        .header("host", "localhost")
+        .header("cookie", format!("threadbase_session={session}"))
+        .body(Body::empty())
+        .unwrap();
+    read.extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(read).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let served = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(served.as_ref(), png);
+
+    // The prompt must carry the image block to the agent, and the turn event
+    // must remember the attachment so a reload still renders it.
+    let after = max_seq(&fixture.state.pool, fixture.thread.id.as_str()).await;
+    let author = threadbase_server::agents::user_brief(&fixture.user);
+    let attachments = threadbase_server::attachments::resolve(
+        &fixture.state.pool,
+        fixture.thread.id.as_str(),
+        &[attachment.id],
+    )
+    .await
+    .unwrap();
+    fixture
+        .state
+        .agents
+        .send_with_authors(
+            fixture.thread.id.as_str(),
+            &fixture.user,
+            "image",
+            None,
+            &[author],
+            &attachments,
+        )
+        .await
+        .unwrap();
+
+    let started = wait_for_after(
+        &fixture.state.pool,
+        fixture.thread.id.as_str(),
+        after,
+        |event| matches!(event, ThreadEvent::TurnStarted { .. }),
+    )
+    .await;
+    let ThreadEvent::TurnStarted { attachments, .. } = started else {
+        unreachable!();
+    };
+    assert_eq!(attachments.len(), 1);
+
+    let reply = wait_for_after(
+        &fixture.state.pool,
+        fixture.thread.id.as_str(),
+        after,
+        |event| matches!(event, ThreadEvent::MessageDelta { text, .. } if text.contains("images:")),
+    )
+    .await;
+    let ThreadEvent::MessageDelta { text, .. } = reply else {
+        unreachable!();
+    };
+    assert_eq!(text, "images:1");
 }

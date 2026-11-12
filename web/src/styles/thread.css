@@ -217,6 +217,31 @@
   margin-bottom: 2px;
 }
 
+/* Attached images sit above the words, capped so a screenshot never pushes the
+   conversation off screen. */
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 7px;
+}
+
+.message-image {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--code);
+  line-height: 0;
+}
+
+.message-image img {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 200px;
+  object-fit: contain;
+}
+
 .prose {
   color: var(--ink);
   font-size: 15px;

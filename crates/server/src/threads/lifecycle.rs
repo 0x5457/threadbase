@@ -181,6 +181,7 @@ pub async fn create(
                 author_id: user.user.id.as_str(),
                 text: prompt,
                 authors_json: None,
+                attachments_json: None,
                 created_at: now,
             },
         )

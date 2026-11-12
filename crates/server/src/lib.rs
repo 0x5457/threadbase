@@ -4,6 +4,7 @@ pub mod agents;
 pub mod app;
 pub mod approvals;
 pub mod assets;
+pub mod attachments;
 pub mod auth;
 pub mod auth_github;
 pub mod auth_session;

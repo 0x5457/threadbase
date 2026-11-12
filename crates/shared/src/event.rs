@@ -2,9 +2,9 @@
 
 use crate::ids::{ApprovalId, ElicitationId, MessageId, SubagentId, ThreadId, ToolCallId, TurnId};
 use crate::model::{
-    ApprovalDecision, ApprovalDto, ApprovalScope, ChangeStats, CommentDto, DiffSummary,
-    ElicitationAction, ElicitationDto, MessageRole, PlanEntry, SubagentDto, ThreadStatus, ToolKind,
-    ToolLocation, ToolStatus, Usage, UserBrief,
+    ApprovalDecision, ApprovalDto, ApprovalScope, AttachmentDto, ChangeStats, CommentDto,
+    DiffSummary, ElicitationAction, ElicitationDto, MessageRole, PlanEntry, SubagentDto,
+    ThreadStatus, ToolKind, ToolLocation, ToolStatus, Usage, UserBrief,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -94,6 +94,10 @@ pub struct MessageDto {
     pub model: Option<String>,
     pub streaming: bool,
     pub created_at: i64,
+    /// Images the author attached. Absent in events written before images
+    /// existed, so old logs still deserialize.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -140,6 +144,8 @@ pub enum ThreadEvent {
         #[serde(default)]
         authors: Vec<UserBrief>,
         prompt: String,
+        #[serde(default)]
+        attachments: Vec<AttachmentDto>,
     },
     MessageDelta {
         message_id: MessageId,

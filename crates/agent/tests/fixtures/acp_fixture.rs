@@ -47,6 +47,19 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
     }
 }
 
+fn prompt_images(params: &Value) -> usize {
+    params
+        .get("prompt")
+        .and_then(Value::as_array)
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
 fn prompt_text(params: &Value) -> String {
     // The first text block is the user prompt; any trailing blocks are
     // server-injected state summaries and must not change scenario dispatch.
@@ -231,7 +244,7 @@ impl Fixture {
                         "agentCapabilities": {
                             "loadSession": true,
                             "promptCapabilities": {
-                                "image": false,
+                                "image": true,
                                 "audio": false,
                                 "embeddedContext": false,
                             },
@@ -324,6 +337,10 @@ impl Fixture {
                 process::exit(7);
             }
             "slow" => self.slow(reader, out, id, &session),
+            "image" => {
+                self.chunk(out, &session, &format!("images:{}", prompt_images(params)))?;
+                self.respond(out, id, json!({"stopReason": "end_turn"}))
+            }
             _ => self.respond(out, id, json!({"stopReason": "end_turn"})),
         }
     }

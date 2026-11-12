@@ -686,6 +686,7 @@ mod tests {
                         model: None,
                         streaming: false,
                         created_at: now_ms(),
+                        attachments: Vec::new(),
                     },
                 },
                 EventMeta::default(),

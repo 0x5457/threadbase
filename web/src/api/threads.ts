@@ -1,4 +1,5 @@
-import { jsonRequest, request } from "./client";
+import { binaryRequest, jsonRequest, request } from "./client";
+import type { AttachmentDto } from "./types/AttachmentDto";
 import type { ChangesDto } from "./types/ChangesDto";
 import type { CreateThreadRequest } from "./types/CreateThreadRequest";
 import type { DeliveryMode } from "./types/DeliveryMode";
@@ -22,6 +23,7 @@ export type { MergeBackResponse } from "./types/MergeBackResponse";
 export type FileChange = FileChangeDto;
 export type FileDiff = FileDiffDto;
 export type ThreadEvent = EventEnvelope;
+export type ThreadAttachment = AttachmentDto;
 
 export type UpdateThreadPatch = Partial<
   Pick<
@@ -110,20 +112,43 @@ export function sendMessage(
   threadId: string,
   text: string,
   delivery?: DeliveryMode,
+  attachmentIds?: string[],
 ) {
   return jsonRequest<SendMessageResponse>(
     `/api/threads/${threadId}/messages`,
     "POST",
-    { text, delivery: delivery ?? null, fromDraft: false },
+    {
+      text,
+      delivery: delivery ?? null,
+      fromDraft: false,
+      attachmentIds: attachmentIds?.length ? attachmentIds : null,
+    },
   );
 }
 
-/** Send the accumulated CRDT draft blocks. */
-export function sendDraft(threadId: string, delivery?: DeliveryMode) {
+/** Upload one pasted image; the prompt references it by id. */
+export function uploadAttachment(threadId: string, file: Blob) {
+  return binaryRequest<ThreadAttachment>(
+    `/api/threads/${threadId}/attachments`,
+    file,
+  );
+}
+
+/** Send the accumulated CRDT draft blocks, plus any attached images. */
+export function sendDraft(
+  threadId: string,
+  delivery?: DeliveryMode,
+  attachmentIds?: string[],
+) {
   return jsonRequest<SendMessageResponse>(
     `/api/threads/${threadId}/messages`,
     "POST",
-    { text: "", delivery: delivery ?? null, fromDraft: true },
+    {
+      text: "",
+      delivery: delivery ?? null,
+      fromDraft: true,
+      attachmentIds: attachmentIds?.length ? attachmentIds : null,
+    },
   );
 }
 
