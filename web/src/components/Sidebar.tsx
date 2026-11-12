@@ -229,7 +229,13 @@ export function Sidebar({
             @{currentUser?.username ?? "you"}
           </Text>
         </Box>
-        <ActionIcon aria-label="Settings" onClick={onOpenSettings}>
+        <ActionIcon
+          aria-label="Settings"
+          onClick={() => {
+            onOpenSettings();
+            onNavigate();
+          }}
+        >
           <IconSettings size={14} stroke={1.5} />
         </ActionIcon>
         <ActionIcon
@@ -256,6 +262,7 @@ export function Sidebar({
           void queryClient.invalidateQueries({ queryKey: ["projects"] });
           void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
           onSelectThread(thread);
+          onNavigate();
           setNewThreadProject(null);
         }}
       />

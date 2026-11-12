@@ -8,20 +8,74 @@ import {
   Stack,
   Text,
 } from "@mantine/core";
-import { useQuery } from "@tanstack/react-query";
+import { notifications } from "@mantine/notifications";
+import { useMediaQuery } from "@mantine/hooks";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  IconArrowUpRight,
+  IconCopy,
   IconDots,
   IconFolder,
   IconMessage,
+  IconPin,
+  IconPinFilled,
   IconPlus,
   IconSettings,
   IconTrash,
 } from "@tabler/icons-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { listThreads, type Project, type ThreadSummary } from "../../api";
+import {
+  listThreads,
+  updateThread,
+  type Project,
+  type ThreadSummary,
+} from "../../api";
 import { deleteProject } from "../../api/projects";
-import { navigate } from "../../lib/router";
+import { navigate, pathFor } from "../../lib/router";
+import { useLongPress } from "../../lib/use-long-press";
+import { useOverlayBack } from "../../lib/overlay-back";
+import { ActionSheet } from "../ActionSheet";
+
+
+function ThreadRow({
+  thread,
+  selected,
+  onOpen,
+  onLongPress,
+}: {
+  thread: ThreadSummary;
+  selected: boolean;
+  onOpen: (thread: ThreadSummary) => void;
+  onLongPress: (thread: ThreadSummary) => void;
+}) {
+  const press = useLongPress(() => onLongPress(thread));
+
+  return (
+    <NavLink
+      component="button"
+      className="side-nav"
+      label={thread.title}
+      active={selected}
+      onClick={() => onOpen(thread)}
+      leftSection={<IconMessage size={12} stroke={1.5} />}
+      rightSection={
+        thread.pendingApprovals || thread.status === "running" ? (
+          <Group gap={5} wrap="nowrap">
+            {thread.pendingApprovals ? (
+              <Text size="xs" className="approval-count">
+                {thread.pendingApprovals}
+              </Text>
+            ) : null}
+            {thread.status === "running" ? (
+              <span className="dot running" />
+            ) : null}
+          </Group>
+        ) : null
+      }
+      {...press}
+    />
+  );
+}
 
 export function ProjectNode({
   project,
@@ -43,10 +97,51 @@ export function ProjectNode({
   onSettings: (project: Project) => void;
 }) {
   const active = activeProjectId === project.id;
+  // On a phone the nav is the thread browser, not a route picker: expanding a
+  // project must not navigate away from the current screen, otherwise the
+  // drawer's history entry points at the old route.
+  const phone = useMediaQuery("(max-width: 47.99em)");
   const [opened, setOpened] = useState(active);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [projectSheet, setProjectSheet] = useState(false);
+  const [threadSheet, setThreadSheet] = useState<ThreadSummary | null>(null);
+  const projectPress = useLongPress(() => setProjectSheet(true));
   const queryClient = useQueryClient();
+  useOverlayBack(removeOpen, () => setRemoveOpen(false));
+
+  const pinThread = async (thread: ThreadSummary) => {
+    try {
+      await updateThread(thread.id, { pinned: !thread.pinned });
+      void queryClient.invalidateQueries({ queryKey: ["threads", project.id] });
+      void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      notifications.show({
+        message: thread.pinned ? "Thread unpinned" : "Thread pinned",
+        color: "teal",
+      });
+    } catch (cause) {
+      notifications.show({
+        message:
+          cause instanceof Error ? cause.message : "Could not update thread",
+        color: "red",
+      });
+    }
+  };
+
+  const copyThreadLink = (thread: ThreadSummary) => {
+    const url = `${window.location.origin}${pathFor({
+      kind: "thread",
+      projectId: project.id,
+      threadId: thread.id,
+    })}`;
+    void navigator.clipboard
+      ?.writeText(url)
+      .then(() => notifications.show({ message: "Link copied", color: "teal" }))
+      .catch(() =>
+        notifications.show({ message: "Could not copy link", color: "red" }),
+      );
+  };
   const remove = async () => {
     setRemoving(true);
     try {
@@ -55,7 +150,10 @@ export function ProjectNode({
       void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
       setRemoveOpen(false);
-      if (active) navigate("/inbox");
+      if (active) {
+        navigate("/inbox");
+        onNavigate();
+      }
     } finally {
       setRemoving(false);
     }
@@ -81,9 +179,10 @@ export function ProjectNode({
           opened={opened || active}
           onChange={(next) => {
             setOpened(next);
-            if (next) onProjectOpen(project.id);
+            if (next && !phone) onProjectOpen(project.id);
           }}
           childrenOffset={12}
+          {...projectPress}
         >
           {threads.isPending ? (
             <NavLink
@@ -94,31 +193,15 @@ export function ProjectNode({
             />
           ) : null}
           {threads.data?.threads.map((thread) => (
-            <NavLink
+            <ThreadRow
               key={thread.id}
-              component="button"
-              className="side-nav"
-              label={thread.title}
-              active={thread.id === selectedThreadId}
-              onClick={() => {
-                onSelectThread(thread);
+              thread={thread}
+              selected={thread.id === selectedThreadId}
+              onOpen={(next) => {
+                onSelectThread(next);
                 onNavigate();
               }}
-              leftSection={<IconMessage size={12} stroke={1.5} />}
-              rightSection={
-                thread.pendingApprovals || thread.status === "running" ? (
-                  <Group gap={5} wrap="nowrap">
-                    {thread.pendingApprovals ? (
-                      <Text size="xs" className="approval-count">
-                        {thread.pendingApprovals}
-                      </Text>
-                    ) : null}
-                    {thread.status === "running" ? (
-                      <span className="dot running" />
-                    ) : null}
-                  </Group>
-                ) : null
-              }
+              onLongPress={setThreadSheet}
             />
           ))}
           {threads.data && threads.data.threads.length === 0 ? (
@@ -160,6 +243,66 @@ export function ProjectNode({
             </Menu.Item>
           </Menu.Dropdown>
         </Menu>
+
+        <ActionSheet
+          opened={projectSheet}
+          onClose={() => setProjectSheet(false)}
+          title={project.name}
+          subtitle={project.path}
+          actions={[
+            {
+              label: "New thread",
+              icon: <IconPlus size={17} stroke={1.5} />,
+              onSelect: () => onNewThread(project),
+            },
+            {
+              label: "Project settings",
+              icon: <IconSettings size={17} stroke={1.5} />,
+              onSelect: () => onSettings(project),
+            },
+            {
+              label: "Remove project",
+              icon: <IconTrash size={17} stroke={1.5} />,
+              destructive: true,
+              onSelect: () => setRemoveOpen(true),
+            },
+          ]}
+        />
+
+        <ActionSheet
+          opened={threadSheet !== null}
+          onClose={() => setThreadSheet(null)}
+          title={threadSheet?.title}
+          subtitle={project.name}
+          actions={
+            threadSheet
+              ? [
+                  {
+                    label: "Open thread",
+                    icon: <IconArrowUpRight size={17} stroke={1.5} />,
+                    onSelect: () => {
+                      onSelectThread(threadSheet);
+                      onNavigate();
+                    },
+                  },
+                  {
+                    label: threadSheet.pinned ? "Unpin thread" : "Pin thread",
+                    icon: threadSheet.pinned ? (
+                      <IconPinFilled size={17} stroke={1.5} />
+                    ) : (
+                      <IconPin size={17} stroke={1.5} />
+                    ),
+                    onSelect: () => void pinThread(threadSheet),
+                  },
+                  {
+                    label: "Copy link",
+                    icon: <IconCopy size={17} stroke={1.5} />,
+                    onSelect: () => copyThreadLink(threadSheet),
+                  },
+                ]
+              : []
+          }
+        />
 
         <Modal
           opened={removeOpen}

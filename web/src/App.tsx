@@ -166,10 +166,10 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [navOpened]);
 
-  // An in-app navigation makes the overlays stale; close them as the route
-  // changes so a drawer never survives into the next screen.
+  // A route change invalidates the changes drawer. The nav is different: it
+  // doubles as the project/thread browser on phones, so opening a project must
+  // keep it open to reveal that project's threads.
   useEffect(() => {
-    nav.close();
     changes.close();
   }, [route.kind, routeThreadId]);
 
@@ -327,12 +327,14 @@ export function App() {
     setSelectedThread(null);
     setOnlineUserIds([]);
     changes.close();
+    nav.close();
     navigate(pathFor({ kind: "inbox" }));
   };
 
   const openSettings = () => {
     setSelectedThread(null);
     changes.close();
+    nav.close();
     navigate(pathFor({ kind: "settings" }));
   };
 
@@ -647,7 +649,6 @@ export function App() {
             view={view}
             unreadCount={inboxUnread.data?.unread ?? 0}
             threadsOpened={navOpened}
-            changesOpened={changesOpened}
             changesEnabled={Boolean(selectedThread)}
             onInbox={openInbox}
             onThreads={toggleNav}

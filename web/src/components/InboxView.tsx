@@ -11,14 +11,25 @@ import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconAlertTriangle,
+  IconArrowUpRight,
+  IconCheck,
   IconClock,
+  IconCopy,
   IconHelp,
   IconInbox,
   IconMail,
   IconMessage,
 } from "@tabler/icons-react";
 import { useState } from "react";
-import { listInbox, markAllInboxRead, type InboxItem } from "../api";
+import {
+  listInbox,
+  markAllInboxRead,
+  markInboxRead,
+  type InboxItem,
+} from "../api";
+import { pathFor } from "../lib/router";
+import { useLongPress } from "../lib/use-long-press";
+import { ActionSheet, type ActionSheetAction } from "./ActionSheet";
 import { EmptyState } from "./EmptyState";
 
 const kindLabel: Record<InboxItem["kind"], string> = {
@@ -53,12 +64,58 @@ function timeOf(ts: number) {
   })} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+function InboxRow({
+  item,
+  onOpen,
+  onLongPress,
+}: {
+  item: InboxItem;
+  onOpen: (item: InboxItem) => void;
+  onLongPress: (item: InboxItem) => void;
+}) {
+  const longPress = useLongPress(() => onLongPress(item));
+
+  return (
+    <UnstyledButton
+      className={`inbox-row${item.read ? "" : " unread"}`}
+      onClick={() => onOpen(item)}
+      {...longPress}
+    >
+      <Box className="inbox-icon">{kindIcon(item.kind)}</Box>
+      <Box className="inbox-body">
+        <Group gap={6} wrap="nowrap">
+          <Text
+            size="sm"
+            fw={item.read ? 400 : 500}
+            className="inbox-summary"
+          >
+            {item.summary}
+          </Text>
+          {item.read ? null : <span className="dot" />}
+        </Group>
+        <Group gap={6} wrap="nowrap">
+          <Text size="xs" c="dimmed" className="inbox-thread">
+            {item.threadTitle}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {kindLabel[item.kind]}
+          </Text>
+        </Group>
+      </Box>
+      <Text size="xs" c="dimmed" className="inbox-time">
+        {timeOf(item.createdAt)}
+      </Text>
+    </UnstyledButton>
+  );
+}
+
 export function InboxView({
   onOpenThread,
 }: {
   onOpenThread: (item: InboxItem) => void;
 }) {
   const [filter, setFilter] = useState<"unread" | "all">("unread");
+  const [sheetItem, setSheetItem] = useState<InboxItem | null>(null);
   const queryClient = useQueryClient();
   const inbox = useQuery({
     queryKey: ["inbox", filter],
@@ -68,6 +125,59 @@ export function InboxView({
   });
   const items = inbox.data?.items ?? [];
   const unread = inbox.data?.unread ?? 0;
+
+  const markRead = (item: InboxItem) => {
+    void markInboxRead(item.threadId)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+        notifications.show({ message: "Marked read", color: "teal" });
+      })
+      .catch((cause: unknown) =>
+        notifications.show({
+          message:
+            cause instanceof Error ? cause.message : "Could not mark read",
+          color: "red",
+        }),
+      );
+  };
+
+  const copyLink = (item: InboxItem) => {
+    const url = `${window.location.origin}${pathFor({
+      kind: "thread",
+      projectId: item.projectId,
+      threadId: item.threadId,
+    })}`;
+    void navigator.clipboard
+      ?.writeText(url)
+      .then(() => notifications.show({ message: "Link copied", color: "teal" }))
+      .catch(() =>
+        notifications.show({ message: "Could not copy link", color: "red" }),
+      );
+  };
+
+  const sheetActions: ActionSheetAction[] = sheetItem
+    ? [
+        {
+          label: "Open thread",
+          icon: <IconArrowUpRight size={17} stroke={1.5} />,
+          onSelect: () => onOpenThread(sheetItem),
+        },
+        ...(!sheetItem.read
+          ? [
+              {
+                label: "Mark read",
+                icon: <IconCheck size={17} stroke={1.5} />,
+                onSelect: () => markRead(sheetItem),
+              },
+            ]
+          : []),
+        {
+          label: "Copy link",
+          icon: <IconCopy size={17} stroke={1.5} />,
+          onSelect: () => copyLink(sheetItem),
+        },
+      ]
+    : [];
 
   return (
     <div className="inbox-view">
@@ -141,39 +251,27 @@ export function InboxView({
           </EmptyState>
         ) : (
           items.map((item) => (
-            <UnstyledButton
+            <InboxRow
               key={item.id}
-              className={`inbox-row${item.read ? "" : " unread"}`}
-              onClick={() => onOpenThread(item)}
-            >
-              <Box className="inbox-icon">{kindIcon(item.kind)}</Box>
-              <Box className="inbox-body">
-                <Group gap={6} wrap="nowrap">
-                  <Text
-                    size="sm"
-                    fw={item.read ? 400 : 500}
-                    className="inbox-summary"
-                  >
-                    {item.summary}
-                  </Text>
-                  {item.read ? null : <span className="dot" />}
-                </Group>
-                <Group gap={6} wrap="nowrap">
-                  <Text size="xs" c="dimmed" className="inbox-thread">
-                    {item.threadTitle}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {kindLabel[item.kind]}
-                  </Text>
-                </Group>
-              </Box>
-              <Text size="xs" c="dimmed" className="inbox-time">
-                {timeOf(item.createdAt)}
-              </Text>
-            </UnstyledButton>
+              item={item}
+              onOpen={onOpenThread}
+              onLongPress={setSheetItem}
+            />
           ))
         )}
       </ScrollArea>
+
+      <ActionSheet
+        opened={sheetItem !== null}
+        onClose={() => setSheetItem(null)}
+        title={sheetItem?.summary}
+        subtitle={
+          sheetItem
+            ? `${sheetItem.threadTitle} · ${kindLabel[sheetItem.kind]}`
+            : undefined
+        }
+        actions={sheetActions}
+      />
     </div>
   );
 }
