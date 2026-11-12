@@ -1,11 +1,9 @@
 import {
   Box,
-  Center,
   Button,
   Group,
   Loader,
   ScrollArea,
-  Stack,
   Text,
   UnstyledButton,
 } from "@mantine/core";
@@ -21,6 +19,7 @@ import {
 } from "@tabler/icons-react";
 import { useState } from "react";
 import { listInbox, markAllInboxRead, type InboxItem } from "../api";
+import { EmptyState } from "./EmptyState";
 
 const kindLabel: Record<InboxItem["kind"], string> = {
   approval: "Approval",
@@ -134,17 +133,12 @@ export function InboxView({
             <Loader size="sm" />
           </Group>
         ) : items.length === 0 ? (
-          <Center h={300}>
-            <Stack align="center" gap={6}>
-              <IconInbox size={22} stroke={1.5} color="var(--ink-faint)" />
-              <Text size="md" fw={500}>
-                {filter === "unread" ? "You're all caught up" : "Nothing here"}
-              </Text>
-              <Text size="sm" c="dimmed">
-                New approvals and questions will appear here.
-              </Text>
-            </Stack>
-          </Center>
+          <EmptyState
+            icon={<IconInbox size={16} stroke={1.5} />}
+            title={filter === "unread" ? "All clear" : "Nothing here"}
+          >
+            Approvals and questions waiting on you show up in this list.
+          </EmptyState>
         ) : (
           items.map((item) => (
             <UnstyledButton

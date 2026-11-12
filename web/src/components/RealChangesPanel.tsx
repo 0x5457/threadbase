@@ -151,7 +151,7 @@ export function RealChangesPanel({
         <Text size="sm" fw={500}>
           Changes
         </Text>
-        <Group gap={4} wrap="nowrap">
+        <Group gap={4} wrap="nowrap" className="changes-baseline">
           <IconGitBranch size={11} stroke={1.5} />
           <Text size="sm" c="dimmed">
             Since {changes?.baseLabel ?? "base"}
@@ -163,7 +163,7 @@ export function RealChangesPanel({
         <Text size="sm" className="stat-del">
           −{changes?.stats.deletions ?? 0}
         </Text>
-        <Box style={{ flex: 1 }} />
+        <Box className="changes-head-gap" />
         <Text size="xs" c="dimmed">
           {changes?.files.length ?? 0}{" "}
           {(changes?.files.length ?? 0) === 1 ? "file" : "files"}

@@ -48,6 +48,26 @@
   flex: none;
 }
 
+/* The baseline label is the only elastic item: a long branch name truncates
+   instead of pushing the file count and the close button off a phone. */
+.changes-baseline {
+  overflow: hidden;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.changes-baseline .mantine-Text-root {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-head-gap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .changes-head > .mantine-Text-root,
 .changes-head .mantine-Group-root .mantine-Text-root {
   overflow: hidden;
@@ -215,5 +235,55 @@
 .changes-drawer .mantine-Drawer-body {
   height: 100%;
   padding: 0;
+}
+
+/* ── phone bottom sheet ────────────────────────────────────── */
+
+.changes-sheet .mantine-Drawer-content {
+  overflow: hidden;
+  border-radius: 14px 14px 0 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.sheet-stack {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.sheet-stack > .changes {
+  height: auto;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.sheet-grabber {
+  display: grid;
+  width: 100%;
+  height: 36px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+.sheet-grabber::before {
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  content: "";
+}
+
+.sheet-grabber:active {
+  cursor: grabbing;
+}
+
+.sheet-grabber:focus-visible {
+  outline-offset: -2px !important;
 }
 

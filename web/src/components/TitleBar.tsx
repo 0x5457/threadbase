@@ -10,6 +10,8 @@ import {
 } from "@mantine/core";
 import {
   IconInbox,
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
   IconLayoutSidebarRightExpand,
   IconMoon,
   IconSearch,
@@ -32,7 +34,9 @@ interface TitleBarProps {
   unreadCount: number;
   canOpenChanges: boolean;
   navOpened: boolean;
+  navCollapsed: boolean;
   onToggleNav: () => void;
+  onToggleNavCollapsed: () => void;
   onOpenPalette: () => void;
   onOpenInbox: () => void;
   onOpenChanges: () => void;
@@ -56,7 +60,9 @@ export function TitleBar({
   unreadCount,
   canOpenChanges,
   navOpened,
+  navCollapsed,
   onToggleNav,
+  onToggleNavCollapsed,
   onOpenPalette,
   onOpenInbox,
   onOpenChanges,
@@ -83,13 +89,35 @@ export function TitleBar({
   return (
     <AppShell.Header className="header">
       <div className="header-left">
-        <Burger
-          opened={navOpened}
-          onClick={onToggleNav}
-          size="sm"
-          hiddenFrom="sm"
-          aria-label="Toggle navigation"
-        />
+        <Box className="burger-slot" hiddenFrom="sm">
+          <Burger
+            opened={navOpened}
+            onClick={onToggleNav}
+            size="sm"
+            aria-label={
+              unreadCount > 0
+                ? `Toggle navigation, ${unreadCount} unread`
+                : "Toggle navigation"
+            }
+          />
+          {unreadCount > 0 ? <span className="icon-dot burger-dot" /> : null}
+        </Box>
+        <Tooltip
+          label={navCollapsed ? "Show navigation" : "Hide navigation"}
+        >
+          <ActionIcon
+            aria-label={navCollapsed ? "Show navigation" : "Hide navigation"}
+            visibleFrom="sm"
+            hiddenFrom="lg"
+            onClick={onToggleNavCollapsed}
+          >
+            {navCollapsed ? (
+              <IconLayoutSidebarLeftExpand size={15} stroke={1.5} />
+            ) : (
+              <IconLayoutSidebarLeftCollapse size={15} stroke={1.5} />
+            )}
+          </ActionIcon>
+        </Tooltip>
         <Tooltip label="Search  ⌘K">
           <ActionIcon aria-label="Search" onClick={onOpenPalette}>
             <IconSearch size={15} stroke={1.5} />
@@ -132,7 +160,7 @@ export function TitleBar({
           onlineUserIds={onlineUserIds}
         />
         <TitleActions
-          visible={canOpenChanges}
+          visible={canOpenChanges && !navOpened}
           canManage={canManage}
           isPinned={isPinned}
           onReviews={onReviews}
@@ -147,7 +175,7 @@ export function TitleBar({
       </div>
 
       <div className="header-right">
-        {canOpenChanges ? (
+        {canOpenChanges && !navOpened ? (
           <Tooltip label="Changes">
             <ActionIcon
               aria-label="Open changes"
@@ -158,20 +186,22 @@ export function TitleBar({
             </ActionIcon>
           </Tooltip>
         ) : null}
-        <Box hiddenFrom="md">
-          <ThreadMenu
-            canManage={canManage}
-            isPinned={isPinned}
-            onShare={onShare}
-            onMerge={onMerge}
-            onReviews={onReviews}
-            onRename={onRename}
-            onTogglePin={onTogglePin}
-            onFork={onFork}
-            onRevert={onRevert}
-            onArchive={onArchive}
-          />
-        </Box>
+        {!navOpened ? (
+          <Box hiddenFrom="md">
+            <ThreadMenu
+              canManage={canManage}
+              isPinned={isPinned}
+              onShare={onShare}
+              onMerge={onMerge}
+              onReviews={onReviews}
+              onRename={onRename}
+              onTogglePin={onTogglePin}
+              onFork={onFork}
+              onRevert={onRevert}
+              onArchive={onArchive}
+            />
+          </Box>
+        ) : null}
         <Tooltip label={dark ? "Light mode" : "Dark mode"}>
           <ActionIcon aria-label="Toggle theme" onClick={toggleColorScheme}>
             {dark ? (
