@@ -40,7 +40,9 @@ import {
   respondElicitation,
   restoreQueueItem,
   sendComment,
+  steerQueueItem,
   updateComment,
+  updateQueueItem,
   updateThread,
   type Approval,
   type Comment,
@@ -227,7 +229,7 @@ export function RealThreadView({
   const queryClient = useQueryClient();
   const [deciding, setDeciding] = useState<string | null>(null);
   const [responding, setResponding] = useState<string | null>(null);
-  const [dropping, setDropping] = useState<string | null>(null);
+  const [queueBusy, setQueueBusy] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [commentBusy, setCommentBusy] = useState<string | null>(null);
   const [commentFor, setCommentFor] = useState<string | null>(null);
@@ -306,6 +308,8 @@ export function RealThreadView({
   const comments = bundle?.comments ?? [];
   const queue = bundle?.queue ?? [];
   const subagents = bundle?.subagents ?? [];
+  const canWrite = bundle?.role === "owner" || bundle?.role === "editor";
+  const running = bundle?.thread.status === "running";
 
   // One pass over comments instead of a filter per timeline row.
   const commentsByAnchor = useMemo(() => {
@@ -420,7 +424,6 @@ export function RealThreadView({
     setDeciding(approval.id);
     try {
       await decideApproval(approval.id, kind);
-      notifications.show({ message: "Decision recorded", color: "teal" });
       refresh();
     } catch (cause) {
       reportFailure(cause, "Could not record decision");
@@ -442,7 +445,6 @@ export function RealThreadView({
         action,
         Object.keys(values).length ? values : null,
       );
-      notifications.show({ message: "Response recorded", color: "teal" });
       refresh();
     } catch (cause) {
       reportFailure(cause, "Could not respond");
@@ -455,7 +457,6 @@ export function RealThreadView({
     setCancelling(subagent.id);
     try {
       await cancelSubagent(threadId, subagent.id);
-      notifications.show({ message: "Subagent cancelled", color: "teal" });
       refresh();
     } catch (cause) {
       reportFailure(cause, "Could not cancel subagent");
@@ -468,14 +469,39 @@ export function RealThreadView({
     try {
       await restoreQueueItem(threadId, itemId);
       refresh();
-      notifications.show({ message: "Message restored", color: "teal" });
     } catch (cause) {
       reportFailure(cause, "Could not restore message");
     }
   };
 
+  const steer = async (itemId: string) => {
+    setQueueBusy(`steer:${itemId}`);
+    try {
+      await steerQueueItem(threadId, itemId);
+    } catch (cause) {
+      reportFailure(cause, "Could not send the message now");
+    } finally {
+      setQueueBusy(null);
+      refresh();
+    }
+  };
+
+  const edit = async (itemId: string, text: string) => {
+    setQueueBusy(`edit:${itemId}`);
+    try {
+      await updateQueueItem(threadId, itemId, text);
+      refresh();
+      return true;
+    } catch (cause) {
+      reportFailure(cause, "Could not edit the message");
+      return false;
+    } finally {
+      setQueueBusy(null);
+    }
+  };
+
   const drop = async (itemId: string) => {
-    setDropping(itemId);
+    setQueueBusy(`drop:${itemId}`);
     try {
       await dropQueueItem(threadId, itemId);
       refresh();
@@ -503,7 +529,7 @@ export function RealThreadView({
     } catch (cause) {
       reportFailure(cause, "Could not drop message");
     } finally {
-      setDropping(null);
+      setQueueBusy(null);
     }
   };
 
@@ -777,13 +803,17 @@ export function RealThreadView({
         <AgentLog lines={diagnostics} />
         <QueueBar
           items={queue}
-          busy={dropping}
+          busy={queueBusy}
+          canWrite={canWrite}
+          canSteer={running}
           onDrop={(id) => void drop(id)}
+          onSteer={(id) => void steer(id)}
+          onEdit={edit}
           onReorder={(ids) => void reorder(ids)}
         />
         <Composer
           threadId={threadId}
-          canWrite={bundle?.role === "owner" || bundle?.role === "editor"}
+          canWrite={canWrite}
           projectId={bundle?.project.id}
           agentName={bundle?.thread.agent}
           modelName={bundle?.thread.model}

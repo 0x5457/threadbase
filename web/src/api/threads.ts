@@ -141,6 +141,23 @@ export function restoreQueueItem(threadId: string, itemId: string) {
   );
 }
 
+/** Rewrite a message that is still waiting; sent rows are immutable. */
+export function updateQueueItem(threadId: string, itemId: string, text: string) {
+  return jsonRequest<OkResponse>(
+    `/api/threads/${threadId}/queue/${itemId}`,
+    "PATCH",
+    { text },
+  );
+}
+
+/** Deliver a queued message into the running turn instead of waiting. */
+export function steerQueueItem(threadId: string, itemId: string) {
+  return jsonRequest<OkResponse>(
+    `/api/threads/${threadId}/queue/${itemId}/steer`,
+    "POST",
+  );
+}
+
 export function reorderQueue(threadId: string, itemIds: string[]) {
   return jsonRequest<OkResponse>(
     `/api/threads/${threadId}/queue/order`,

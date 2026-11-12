@@ -112,6 +112,14 @@ pub struct SendMessageResponse {
     pub message_id: Option<String>,
 }
 
+/// Rewrite a message that is still waiting in the thread's input queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpdateQueuedInputRequest {
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

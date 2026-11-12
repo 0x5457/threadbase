@@ -25,11 +25,15 @@ pub fn router() -> Router<AppState> {
         .route("/api/threads/{thread_id}/queue/order", post(reorder_queue))
         .route(
             "/api/threads/{thread_id}/queue/{item_id}",
-            delete(drop_queue_item),
+            delete(drop_queue_item).patch(update_queue_item),
         )
         .route(
             "/api/threads/{thread_id}/queue/{item_id}/restore",
             post(restore_queue_item),
+        )
+        .route(
+            "/api/threads/{thread_id}/queue/{item_id}/steer",
+            post(steer_queue_item),
         )
 }
 
@@ -206,6 +210,77 @@ async fn restore_queue_item(
     crate::queue::restore(&state.pool, &state.projection, &thread_id, &item_id).await?;
     let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
     Ok(Json(OkResponse { ok: true }))
+}
+
+/// Rewrite a queued message in place, so it can be fixed without dropping it
+/// and losing its queue slot.
+async fn update_queue_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, item_id)): Path<(String, String)>,
+    Json(request): Json<threadbase_shared::api::UpdateQueuedInputRequest>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let text = request.text.trim();
+    if text.is_empty() {
+        return Err(ServerError(ApiError::validation("message cannot be empty")));
+    }
+    if text.len() > 64 * 1024 {
+        return Err(ServerError(ApiError::validation("message is too long")));
+    }
+    crate::queue::update_text(&state.pool, &state.projection, &thread_id, &item_id, text).await?;
+    let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// Deliver a queued message into the running turn instead of waiting for the
+/// next one. A rejection returns it to the queue unchanged.
+async fn steer_queue_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, item_id)): Path<(String, String)>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let item = crate::queue::item(&state.pool, &thread_id, &item_id).await?;
+    if item.status != threadbase_shared::QueueStatus::Queued {
+        return Err(ServerError(ApiError::not_found(
+            "queued message not found or already sent",
+        )));
+    }
+    let author = crate::agents::briefs_by_ids(&state.pool, std::slice::from_ref(&item.author_id))
+        .await
+        .pop()
+        .ok_or_else(|| ServerError::internal("queue author vanished"))?;
+    let authors = item
+        .authors_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Vec<threadbase_shared::UserBrief>>(json).ok())
+        .filter(|authors| !authors.is_empty())
+        .unwrap_or_else(|| vec![author.clone()]);
+    // Claim the row before steering so the queue worker cannot also dispatch
+    // it; a failed injection puts it back where it was.
+    crate::queue::dispatch(&state.pool, &state.projection, &thread_id, &item_id).await?;
+    match state
+        .agents
+        .steer_queued(&thread_id, &author, &item.text, &authors)
+        .await
+    {
+        Ok(()) => {
+            crate::queue::complete(&state.pool, &state.projection, &thread_id, &item_id, None)
+                .await?;
+            let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
+            Ok(Json(OkResponse { ok: true }))
+        }
+        Err(error) => {
+            if let Err(release) =
+                crate::queue::release(&state.pool, &state.projection, &thread_id, &item_id).await
+            {
+                tracing::warn!(%release, thread_id, item_id, "could not requeue a steered message");
+            }
+            let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
+            Err(error)
+        }
+    }
 }
 
 #[derive(Deserialize)]

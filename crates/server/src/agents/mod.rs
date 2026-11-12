@@ -30,8 +30,8 @@ use threadbase_core::state::{ApprovalAction, SubagentMachine, ThreadAction};
 use threadbase_core::{resolve_delivery, DeliveryContext, SendAction};
 use threadbase_shared::api::{DeliveryMode, SendMessageResponse};
 use threadbase_shared::{
-    now_ms, Actor, ApprovalDecision as SharedDecision, Delivery, ElicitationAction, MessageId,
-    ThreadEvent, ThreadId, ThreadStatus, TurnId, UserBrief,
+    now_ms, Actor, ApiError, ApprovalDecision as SharedDecision, Delivery, ElicitationAction,
+    MessageId, ThreadEvent, ThreadId, ThreadStatus, TurnId, UserBrief,
 };
 use threadbase_workspace::git;
 use tokio::sync::{mpsc, Mutex};
@@ -324,6 +324,71 @@ impl AgentManager {
                     authors,
                 )
                 .await
+            }
+        }
+    }
+
+    /// Deliver an already-queued input into the running turn. Unlike
+    /// [`Self::send_with_authors`] this never enqueues: the caller owns the
+    /// queue row, so a rejection surfaces as an error instead of a duplicate.
+    pub async fn steer_queued(
+        &self,
+        thread_id: &str,
+        author: &UserBrief,
+        text: &str,
+        authors: &[UserBrief],
+    ) -> Result<(), ServerError> {
+        let Some(session) = self.inner.session(thread_id).await else {
+            return Err(ServerError(ApiError::conflict(
+                "no turn is running; the message stays queued",
+            )));
+        };
+        let status = threads::status(&self.inner.pool, thread_id).await?;
+        let running = session
+            .observe_running(status == ThreadStatus::Running)
+            .await;
+        if !running {
+            return Err(ServerError(ApiError::conflict(
+                "no turn is running; the message stays queued",
+            )));
+        }
+        if !session.capabilities.steering {
+            return Err(ServerError(ApiError::conflict(
+                "this agent cannot take steering input; the message stays queued",
+            )));
+        }
+        let outcome = {
+            let mut harness = session.harness.lock().await;
+            harness.steer(vec![text.to_owned()]).await
+        }
+        .map_err(mapping::agent_error)?;
+        match outcome {
+            SteeringOutcome::Injected | SteeringOutcome::StartedNewTurn => {
+                let turn_id = self.inner.current_turn(thread_id).await.unwrap_or_default();
+                let message =
+                    mapping::user_message(thread_id, author, text, Some(turn_id), authors);
+                self.inner
+                    .events
+                    .append(
+                        &ThreadId::from(thread_id.to_owned()),
+                        Actor::user(author),
+                        ThreadEvent::MessageCompleted { message },
+                        EventMeta {
+                            delivery: Some(Delivery::Injected),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                Ok(())
+            }
+            SteeringOutcome::PromptRequired => Err(ServerError(ApiError::conflict(
+                "the agent asked for a new turn; the message stays queued",
+            ))),
+            SteeringOutcome::Failed { reason } => {
+                tracing::warn!(?reason, "steering a queued message failed");
+                Err(ServerError(ApiError::conflict(
+                    "the agent rejected the steering input",
+                )))
             }
         }
     }

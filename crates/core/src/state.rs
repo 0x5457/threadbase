@@ -342,6 +342,9 @@ pub enum QueueAction {
     Dispatch,
     PromptSucceeded,
     PromptFailed,
+    /// Hand a claimed item back to the queue: steering it failed, so it waits
+    /// for the next turn instead of being dropped.
+    Release,
     Supersede,
     Delete,
     Restore,
@@ -369,6 +372,10 @@ impl QueueMachine {
             QueueAction::PromptFailed => match current {
                 QueueStatus::Sending => QueueStatus::Dropped,
                 _ => return Err(illegal(Self::ENTITY, current, "prompt_failed")),
+            },
+            QueueAction::Release => match current {
+                QueueStatus::Sending => QueueStatus::Queued,
+                _ => return Err(illegal(Self::ENTITY, current, "release")),
             },
             QueueAction::Supersede => match current {
                 QueueStatus::Queued => QueueStatus::Superseded,
@@ -865,6 +872,10 @@ mod tests {
         assert_eq!(
             QueueMachine::transition(QueueStatus::Sending, &QueueAction::PromptFailed).unwrap(),
             QueueStatus::Dropped
+        );
+        assert_eq!(
+            QueueMachine::transition(QueueStatus::Sending, &QueueAction::Release).unwrap(),
+            QueueStatus::Queued
         );
         assert_eq!(
             QueueMachine::transition(QueueStatus::Queued, &QueueAction::Supersede).unwrap(),
