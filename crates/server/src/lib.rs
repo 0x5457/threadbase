@@ -39,7 +39,6 @@ pub mod routes_skills;
 pub mod routes_workspace;
 pub mod service;
 pub mod settings;
-pub mod sharing;
 pub mod skills;
 pub mod subagents;
 pub mod threads;

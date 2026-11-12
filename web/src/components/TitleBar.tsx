@@ -42,7 +42,6 @@ interface TitleBarProps {
   onOpenChanges: () => void;
   onReviews: () => void;
   onMerge: () => void;
-  onShare: () => void;
   canManage: boolean;
   isPinned: boolean;
   onRename: () => void;
@@ -68,7 +67,6 @@ export function TitleBar({
   onOpenChanges,
   onReviews,
   onMerge,
-  onShare,
   canManage,
   isPinned,
   onRename,
@@ -170,7 +168,6 @@ export function TitleBar({
           isPinned={isPinned}
           onReviews={onReviews}
           onMerge={onMerge}
-          onShare={onShare}
           onRename={onRename}
           onTogglePin={onTogglePin}
           onFork={onFork}
@@ -196,8 +193,7 @@ export function TitleBar({
             <ThreadMenu
               canManage={canManage}
               isPinned={isPinned}
-              onShare={onShare}
-              onMerge={onMerge}
+                  onMerge={onMerge}
               onReviews={onReviews}
               onRename={onRename}
               onTogglePin={onTogglePin}

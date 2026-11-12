@@ -1,13 +1,13 @@
-//! Single-thread read model and membership.
+//! Single-thread read model.
 
-use super::query::{dto, invites, load_row, members, ThreadRow};
+use super::query::{dto, load_row, ThreadRow};
 use crate::auth::CurrentUser;
 use crate::authz;
 use crate::error::ServerError;
 use crate::projects;
 use crate::{queue, subagents};
 use sqlx::SqlitePool;
-use threadbase_shared::{ChangeStats, ChangesDto, ShareStateDto, ThreadBundleDto, ThreadId};
+use threadbase_shared::{ChangeStats, ChangesDto, ThreadBundleDto};
 
 pub async fn bundle(
     pool: &SqlitePool,
@@ -35,15 +35,6 @@ pub async fn bundle(
     )
     .await
     .unwrap_or_else(|_| empty_changes(&row));
-    let members = members(pool, &row).await?;
-    let invites = invites(pool, thread_id).await?;
-    let share = ShareStateDto {
-        thread_id: ThreadId::from(thread_id.to_owned()),
-        share_level: thread.share_level,
-        members: members.clone(),
-        pending_invites: invites,
-        share_token: None,
-    };
     Ok(ThreadBundleDto {
         thread,
         project,
@@ -54,7 +45,6 @@ pub async fn bundle(
         queue,
         comments,
         changes,
-        share,
     })
 }
 

@@ -101,12 +101,6 @@ async function main() {
       await desktop.waitForTimeout(600);
       await closeModal(desktop);
     });
-    await step("desktop share", async () => {
-      await desktop.getByRole("button", { name: "Share", exact: true }).click();
-      await desktop.getByRole("dialog").waitFor();
-      await desktop.waitForTimeout(600);
-      await closeModal(desktop);
-    });
     await step("desktop settings", async () => {
       await desktop.getByRole("button", { name: "Settings", exact: true }).first().click();
       await desktop.waitForTimeout(700);
@@ -133,12 +127,6 @@ async function main() {
     await step("phone thread", () => openThread(phone, true));
     await step("phone thread menu review", async () => {
       await openThreadMenuAction(phone, "Reviews");
-      await phone.getByRole("dialog").waitFor();
-      await phone.waitForTimeout(600);
-      await closeModal(phone);
-    });
-    await step("phone thread menu share", async () => {
-      await openThreadMenuAction(phone, "Share");
       await phone.getByRole("dialog").waitFor();
       await phone.waitForTimeout(600);
       await closeModal(phone);

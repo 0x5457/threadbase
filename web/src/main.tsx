@@ -21,7 +21,6 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { AuthGate } from "./components/AuthGate";
-import { InviteAcceptPage } from "./components/InviteAcceptPage";
 import { installVisualViewportSync } from "./lib/viewport";
 import "./styles/base.css";
 import "./styles/header.css";
@@ -139,10 +138,6 @@ const colorSchemeManager = localStorageColorSchemeManager({
   key: "threadbase.theme",
 });
 
-function inviteToken() {
-  return /^\/invite\/([^/]+)\/?$/.exec(window.location.pathname)?.[1] ?? null;
-}
-
 installVisualViewportSync();
 
 /** Toasts sit over the composer on phones; keep them at the top instead. */
@@ -163,11 +158,7 @@ createRoot(root).render(
     >
       <QueryClientProvider client={queryClient}>
         <AuthGate>
-          {inviteToken() ? (
-            <InviteAcceptPage token={inviteToken() as string} />
-          ) : (
-            <App />
-          )}
+          <App />
         </AuthGate>
         <NotificationHost />
       </QueryClientProvider>

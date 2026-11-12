@@ -48,7 +48,6 @@ import { RealChangesPanel } from "./components/RealChangesPanel";
 import { RealThreadView } from "./components/RealThreadView";
 import { ReviewDialog } from "./components/ReviewDialog";
 import { SettingsView } from "./components/SettingsView";
-import { ShareDialog } from "./components/ShareDialog";
 import { SheetGrabber } from "./components/SheetGrabber";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -118,7 +117,6 @@ function Workspace() {
   const [navOpened, nav] = useDisclosure(false);
   const [changesOpened, changes] = useDisclosure(false);
   const [mergeOpened, merge] = useDisclosure(false);
-  const [shareOpened, share] = useDisclosure(false);
   const [renameOpened, rename] = useDisclosure(false);
   const [revertOpened, revert] = useDisclosure(false);
   const [reviewOpened, review] = useDisclosure(false);
@@ -183,7 +181,6 @@ function Workspace() {
   useOverlayBack(navOpened, nav.close);
   useOverlayBack(changesOpened, changes.close);
   useOverlayBack(mergeOpened, merge.close);
-  useOverlayBack(shareOpened, share.close);
   useOverlayBack(renameOpened, rename.close);
   useOverlayBack(revertOpened, revert.close);
   useOverlayBack(reviewOpened, review.close);
@@ -588,16 +585,6 @@ function Workspace() {
             }
             review.open();
           }}
-          onShare={() => {
-            if (!selectedThread) {
-              notifications.show({
-                message: "Open a thread before sharing",
-                color: "yellow",
-              });
-              return;
-            }
-            share.open();
-          }}
           onMerge={() => {
             if (!selectedThread) {
               notifications.show({
@@ -797,12 +784,6 @@ function Workspace() {
           // own; otherwise the drawer can be dismissed by the review's back.
           window.setTimeout(openChanges, 0);
         }}
-      />
-
-      <ShareDialog
-        threadId={selectedThread?.id ?? null}
-        opened={shareOpened}
-        onClose={share.close}
       />
 
       <Spotlight

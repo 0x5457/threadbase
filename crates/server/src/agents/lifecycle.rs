@@ -50,7 +50,6 @@ pub async fn auto_title(
                 title: Some(next),
                 status: None,
                 pinned: None,
-                share_level: None,
             },
             EventMeta::default(),
         )

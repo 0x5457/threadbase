@@ -43,10 +43,3 @@ export async function logout(): Promise<void> {
     },
   });
 }
-
-export function acceptInvite(token: string) {
-  return jsonRequest<import("./types/ThreadMemberDto").ThreadMemberDto>(
-    `/api/invites/${encodeURIComponent(token)}/accept`,
-    "POST",
-  );
-}

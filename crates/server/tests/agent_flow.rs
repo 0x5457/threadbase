@@ -448,23 +448,15 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
-    let viewer = auth::ensure_identity_user(
+    // A fresh GitHub account lands on `pending` access, which authz clamps to
+    // viewer: no thread-level grant is needed to read, and none can raise it.
+    auth::ensure_identity_user(
         &fixture.state.pool,
         &auth::Identity::github(3, "viewer", Some("Viewer"), None),
         &[],
     )
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'viewer', ?)",
-    )
-    .bind(fixture.thread.id.as_str())
-    .bind(viewer.id.as_str())
-    .bind(threadbase_shared::now_ms())
-    .execute(&fixture.state.pool)
-    .await
-    .unwrap();
-
     fixture
         .state
         .agents
@@ -882,16 +874,6 @@ async fn draft_route_preserves_multiple_authors() {
     )
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'editor', ?)",
-    )
-    .bind(fixture.thread.id.as_str())
-    .bind(bob.id.as_str())
-    .bind(threadbase_shared::now_ms())
-    .execute(&fixture.state.pool)
-    .await
-    .unwrap();
-
     // Seed the draft with two per-author blocks via the persisted snapshot.
     let mut draft = threadbase_draft::DraftDoc::new();
     draft
@@ -977,16 +959,6 @@ async fn queued_draft_route_preserves_multiple_authors() {
     )
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'editor', ?)",
-    )
-    .bind(fixture.thread.id.as_str())
-    .bind(bob.id.as_str())
-    .bind(threadbase_shared::now_ms())
-    .execute(&fixture.state.pool)
-    .await
-    .unwrap();
-
     let mut draft = threadbase_draft::DraftDoc::new();
     draft
         .append_block("b1", fixture.user.user.id.as_str(), "ada part", 1)

@@ -12,7 +12,7 @@ use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use threadbase_core::state::{ThreadAction, ThreadMachine};
 use threadbase_shared::api::{CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest};
-use threadbase_shared::{now_ms, ApiError, ShareLevel, ThreadDto, ThreadStatus};
+use threadbase_shared::{now_ms, ApiError, ThreadDto, ThreadStatus};
 use threadbase_workspace::git;
 use ulid::Ulid;
 
@@ -30,7 +30,6 @@ pub struct NewThread<'a> {
     pub worktree_path: &'a str,
     pub created_by: &'a str,
     pub created_at: i64,
-    pub share_level: &'a str,
 }
 
 pub async fn status(pool: &SqlitePool, thread_id: &str) -> Result<ThreadStatus, ServerError> {
@@ -66,8 +65,8 @@ async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, 
     sqlx::query(
         "INSERT INTO threads(id, project_id, parent_thread_id, title, status, agent, model, effort,
             branch, base_branch, base_sha, last_turn_sha, worktree_path, created_by, created_at,
-            updated_at, share_level)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(row.id)
     .bind(row.project_id)
@@ -85,7 +84,6 @@ async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, 
     .bind(row.created_by)
     .bind(row.created_at)
     .bind(row.created_at)
-    .bind(row.share_level)
     .execute(pool)
     .await?;
     Ok(status)
@@ -152,7 +150,6 @@ pub async fn create(
             worktree_path: &worktree_path,
             created_by: user.user.id.as_str(),
             created_at: now,
-            share_level: ShareLevel::InviteOnly.as_str(),
         },
     )
     .await?;
@@ -168,14 +165,6 @@ pub async fn create(
         ))));
     }
 
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, 'owner', ?)",
-    )
-    .bind(&thread_id)
-    .bind(user.user.id.as_str())
-    .bind(now)
-    .execute(pool)
-    .await?;
     bindings::insert(pool, &thread_id, &agent, &worktree_path, now).await?;
     transition(pool, projection, &thread_id, ThreadAction::StartSucceeded).await?;
 
@@ -220,7 +209,7 @@ pub async fn update(
     if request.title.is_some() || request.pinned.is_some() {
         authz::require_write_role(pool, thread_id, user).await?;
     }
-    if request.archived.is_some() || request.share_level.is_some() {
+    if request.archived.is_some() {
         authz::require_manage_role(pool, thread_id, user).await?;
     }
     if let Some(title) = request.title.as_deref() {
@@ -277,9 +266,6 @@ pub async fn update(
             .await?;
         }
     }
-    if let Some(share) = request.share_level {
-        set_share_level(pool, thread_id, share).await?;
-    }
     get(pool, thread_id, user).await
 }
 
@@ -335,7 +321,6 @@ pub async fn fork(
             worktree_path: &worktree_path,
             created_by: user.user.id.as_str(),
             created_at: now,
-            share_level: &source.share_level,
         },
     )
     .await?;
@@ -363,24 +348,6 @@ pub async fn fork(
             }
         }
     }
-    sqlx::query(
-        "INSERT INTO thread_members(thread_id, user_id, role, joined_at)
-         SELECT ?, user_id, role, ? FROM thread_members WHERE thread_id = ?",
-    )
-    .bind(&new_id)
-    .bind(now)
-    .bind(&source.id)
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "INSERT OR IGNORE INTO thread_members(thread_id, user_id, role, joined_at)
-         VALUES(?, ?, 'owner', ?)",
-    )
-    .bind(&new_id)
-    .bind(user.user.id.as_str())
-    .bind(now)
-    .execute(pool)
-    .await?;
     bindings::copy(pool, &new_id, &worktree_path, &source.id, now).await?;
     transition(pool, projection, &new_id, ThreadAction::StartSucceeded).await?;
     audit(
@@ -431,20 +398,6 @@ pub async fn delete(
         None,
     )
     .await;
-    Ok(())
-}
-
-pub async fn set_share_level(
-    pool: &SqlitePool,
-    thread_id: &str,
-    level: ShareLevel,
-) -> Result<(), ServerError> {
-    sqlx::query("UPDATE threads SET share_level = ?, updated_at = ? WHERE id = ?")
-        .bind(level.as_str())
-        .bind(now_ms())
-        .bind(thread_id)
-        .execute(pool)
-        .await?;
     Ok(())
 }
 

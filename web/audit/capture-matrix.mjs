@@ -1,10 +1,10 @@
 /**
  * Capture the final UI matrix for the goal evidence:
- * 1440/820/390 x light/dark x inbox/thread/changes/files/review/share/
- * settings/preview/invite.
+ * 1440/820/390 x light/dark x inbox/thread/changes/files/review/
+ * settings/preview.
  *
  * Requires API 7800 + Vite 5173 and the fixture thread data described in
- * web/audit/final.md. Invite token is created through the same-origin API.
+ * web/audit/final.md.
  *
  * Run from web/: `pnpm capture:matrix`.
  */
@@ -111,7 +111,6 @@ async function main() {
     args: ["--disable-gpu"],
   });
   const consoles = [];
-  let invite = null;
   try {
     for (const theme of themes) {
       for (const size of sizes) {
@@ -146,22 +145,6 @@ async function main() {
         await page.waitForTimeout(1600);
         await shot("inbox");
 
-        if (!invite) {
-          invite = await page.evaluate(async (threadId) => {
-            const response = await fetch(`/api/threads/${threadId}/invites`, {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                "x-requested-with": "threadbase",
-              },
-              body: JSON.stringify({ role: "viewer", email: null }),
-            });
-            if (!response.ok) return null;
-            const body = await response.json();
-            return { token: body.token ?? null, id: body.invite?.id ?? null };
-          }, THREAD);
-        }
-
         await openThread(page, phone);
         await shot("thread");
 
@@ -173,10 +156,6 @@ async function main() {
 
         await openModal(page, compact, "Reviews");
         await shot("review");
-        await closeModal(page);
-
-        await openModal(page, compact, "Share");
-        await shot("share");
         await closeModal(page);
 
         await ensureNavOpen(page, phone);
@@ -199,26 +178,6 @@ async function main() {
         await shot("preview-changes");
         await closeDrawer(page, drawer, "changes");
 
-        if (invite?.token) {
-          await page.goto(`${baseUrl}/invite/${invite.token}`, {
-            waitUntil: "domcontentloaded",
-          });
-          await page.waitForTimeout(1300);
-          await shot("invite");
-          if (invite.id) {
-            await page.evaluate(
-              async ({ threadId, inviteId }) => {
-                await fetch(`/api/threads/${threadId}/invites/${inviteId}`, {
-                  method: "DELETE",
-                  headers: { "x-requested-with": "threadbase" },
-                });
-              },
-              { threadId: THREAD, inviteId: invite.id },
-            );
-          }
-          invite = null;
-        }
-
         await context.close();
       }
     }
@@ -236,11 +195,9 @@ async function main() {
       "changes",
       "files",
       "review",
-      "share",
       "settings",
       "preview",
       "preview-changes",
-      "invite",
     ],
     consoles,
   };

@@ -21,7 +21,6 @@ included in the screenshots.)
 | Files | `1440-files.png` | `1440-files.png` | `820-files-drawer.png` | `390-files-drawer.png` |
 | Settings | `1440-settings.png` | `1440-settings.png` | `820-settings.png` | `390-settings.png` |
 | Review | `1440-review.png` | `1440-review.png` | — | — |
-| Share | `1440-share.png` | `1440-share.png` | — | — |
 | Project settings | `1440-project-settings.png` | `1440-project-settings.png` | — | — |
 | Spotlight | `1440-spotlight.png` | `1440-spotlight.png` | — | — |
 
@@ -36,11 +35,9 @@ included in the screenshots.)
 5. **Files** — breadcrumbs, folder navigation, file read, Pierre file view, close.
 6. **Settings** — appearance, defaults, presence/notifications, save.
 7. **Review** — changes summary, approvals, comments, verdict, submit.
-8. **Share** — share level, members/roles/remove, add member, email invite, pending invites, copy links.
 9. **Project settings** — name, directory, branch, remote, save.
 10. **Project / thread creation** — add project directory browser, new thread form.
 11. **Spotlight** — Inbox, Settings, real threads, theme.
-12. **Invite accept** — `/invite/{token}` accept page.
 13. **Shell** — title bar actions, theme toggle, sidebar tree/project menu, status bar,
    mobile nav drawer, changes drawer.
 

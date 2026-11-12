@@ -1,9 +1,5 @@
 import { Button, Group } from "@mantine/core";
-import {
-  IconGitMerge,
-  IconListCheck,
-  IconShare,
-} from "@tabler/icons-react";
+import { IconGitMerge, IconListCheck } from "@tabler/icons-react";
 import { ThreadMenu } from "./ThreadMenu";
 
 interface TitleActionsProps {
@@ -12,7 +8,6 @@ interface TitleActionsProps {
   isPinned: boolean;
   onReviews: () => void;
   onMerge: () => void;
-  onShare: () => void;
   onRename: () => void;
   onTogglePin: () => void;
   onFork: () => void;
@@ -26,7 +21,6 @@ export function TitleActions({
   isPinned,
   onReviews,
   onMerge,
-  onShare,
   onRename,
   onTogglePin,
   onFork,
@@ -59,19 +53,9 @@ export function TitleActions({
       >
         Merge
       </Button>
-      <Button
-        variant="subtle"
-        size="compact-xs"
-        color="gray"
-        leftSection={<IconShare size={13} stroke={1.5} />}
-        onClick={onShare}
-      >
-        Share
-      </Button>
       <ThreadMenu
         canManage={canManage}
         isPinned={isPinned}
-        onShare={onShare}
         onMerge={onMerge}
         onReviews={onReviews}
         onRename={onRename}

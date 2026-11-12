@@ -169,7 +169,6 @@ async fn project_validation_and_thread_lifecycle() {
             title: None,
             pinned: None,
             archived: Some(true),
-            share_level: None,
             model: None,
             effort: None,
         },
@@ -177,11 +176,11 @@ async fn project_validation_and_thread_lifecycle() {
     .await
     .unwrap();
     assert_eq!(archived.status, ThreadStatus::Archived);
-    let active = threads::list(&fixture.pool, project.id.as_str(), &fixture.current, false)
+    let active = threads::list(&fixture.pool, project.id.as_str(), false)
         .await
         .unwrap();
     assert!(active.is_empty());
-    let all = threads::list(&fixture.pool, project.id.as_str(), &fixture.current, true)
+    let all = threads::list(&fixture.pool, project.id.as_str(), true)
         .await
         .unwrap();
     assert_eq!(all.len(), 1);
@@ -195,7 +194,6 @@ async fn project_validation_and_thread_lifecycle() {
             title: None,
             pinned: None,
             archived: Some(false),
-            share_level: None,
             model: None,
             effort: None,
         },

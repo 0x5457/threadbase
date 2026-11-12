@@ -5,8 +5,8 @@ use crate::ids::{CommentId, ProjectId, ThreadId};
 use crate::model::{
     ApprovalDecision, ApprovalDto, AuthStatusDto, BaselineDto, ChangesDto, CommentAnchor,
     CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto, FileContentDto,
-    FileEntryDto, InboxItemDto, InviteDto, ProjectDto, QueueItemDto, Role, SettingsDto, ShareLevel,
-    ShareStateDto, SubagentDto, ThreadDto, UserAccess, UserBrief, UserDto,
+    FileEntryDto, InboxItemDto, ProjectDto, QueueItemDto, Role, SettingsDto, SubagentDto,
+    ThreadDto, UserAccess, UserBrief, UserDto,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -71,7 +71,6 @@ pub struct UpdateThreadRequest {
     pub title: Option<String>,
     pub pinned: Option<bool>,
     pub archived: Option<bool>,
-    pub share_level: Option<ShareLevel>,
     pub model: Option<String>,
     pub effort: Option<String>,
 }
@@ -158,46 +157,6 @@ pub struct UpdateCommentRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct AddMemberRequest {
-    pub login: String,
-    pub role: Role,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct UpdateShareRequest {
-    pub share_level: ShareLevel,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct UpdateMemberRequest {
-    pub role: Role,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct CreateInviteRequest {
-    pub email: Option<String>,
-    pub username: Option<String>,
-    pub role: Option<Role>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct InviteResponse {
-    pub invite: InviteDto,
-    /// Returned only once, when the invite is created.
-    pub token: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct SeenRequest {
     pub paths: Vec<String>,
     pub seen: bool,
@@ -263,7 +222,6 @@ pub struct ThreadBundleDto {
     pub queue: Vec<QueueItemDto>,
     pub comments: Vec<CommentDto>,
     pub changes: ChangesDto,
-    pub share: ShareStateDto,
 }
 
 /// Single read model shared by the web UI and the agent summary.

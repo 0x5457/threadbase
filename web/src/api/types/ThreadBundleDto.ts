@@ -6,7 +6,6 @@ import type { ElicitationDto } from "./ElicitationDto";
 import type { ProjectDto } from "./ProjectDto";
 import type { QueueItemDto } from "./QueueItemDto";
 import type { Role } from "./Role";
-import type { ShareStateDto } from "./ShareStateDto";
 import type { SubagentDto } from "./SubagentDto";
 import type { ThreadDto } from "./ThreadDto";
 
@@ -23,5 +22,4 @@ export type ThreadBundleDto = {
   queue: Array<QueueItemDto>;
   comments: Array<CommentDto>;
   changes: ChangesDto;
-  share: ShareStateDto;
 };

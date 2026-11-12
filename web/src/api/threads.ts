@@ -26,7 +26,7 @@ export type ThreadEvent = EventEnvelope;
 export type UpdateThreadPatch = Partial<
   Pick<
     UpdateThreadRequest,
-    "title" | "pinned" | "archived" | "shareLevel" | "model" | "effort"
+    "title" | "pinned" | "archived" | "model" | "effort"
   >
 >;
 

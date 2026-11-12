@@ -8,13 +8,11 @@ import {
   IconListCheck,
   IconPencil,
   IconPin,
-  IconShare,
 } from "@tabler/icons-react";
 
 export function ThreadMenu({
   canManage,
   isPinned,
-  onShare,
   onMerge,
   onReviews,
   onRename,
@@ -25,7 +23,6 @@ export function ThreadMenu({
 }: {
   canManage: boolean;
   isPinned: boolean;
-  onShare: () => void;
   onMerge: () => void;
   onReviews: () => void;
   onRename: () => void;
@@ -43,9 +40,6 @@ export function ThreadMenu({
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Item leftSection={<IconShare size={13} />} onClick={onShare}>
-          Share
-        </Menu.Item>
         <Menu.Item leftSection={<IconGitMerge size={13} />} onClick={onMerge}>
           Merge
         </Menu.Item>

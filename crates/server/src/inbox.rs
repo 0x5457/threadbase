@@ -121,47 +121,11 @@ pub async fn clear_for_approval(pool: &SqlitePool, approval_id: &str) -> Result<
     Ok(())
 }
 
-/// Ask every editor/owner of a thread for edit access.
-pub async fn request_access(
-    pool: &SqlitePool,
-    thread_id: &str,
-    user: &CurrentUser,
-) -> Result<(), ServerError> {
-    let members: Vec<(String, String)> =
-        sqlx::query_as("SELECT user_id, role FROM thread_members WHERE thread_id = ?")
-            .bind(thread_id)
-            .fetch_all(pool)
-            .await?;
-    let actor = UserBrief::from_user(&user.user);
-    for (user_id, role) in members {
-        if user_id == user.user.id.as_str() || role == "viewer" {
-            continue;
-        }
-        crate::notify::insert(
-            pool,
-            crate::notify::InboxItem {
-                user_id: &user_id,
-                kind: "access",
-                thread_id,
-                actor_id: Some(user.user.id.as_str()),
-                approval_id: None,
-                elicitation_id: None,
-                comment_id: None,
-                summary: &format!("{} requested edit access", actor.display_name),
-            },
-        )
-        .await?;
-    }
-    Ok(())
-}
-
 fn parse_kind(value: &str) -> InboxKind {
     match value {
         "approval" => InboxKind::Approval,
         "elicitation" => InboxKind::Elicitation,
         "mention" => InboxKind::Mention,
-        "invite" => InboxKind::Invite,
-        "access" => InboxKind::Access,
         _ => InboxKind::Error,
     }
 }

@@ -3,8 +3,8 @@
 use crate::ids::{ApprovalId, ElicitationId, MessageId, SubagentId, ThreadId, ToolCallId, TurnId};
 use crate::model::{
     ApprovalDecision, ApprovalDto, ApprovalScope, ChangeStats, CommentDto, DiffSummary,
-    ElicitationAction, ElicitationDto, MessageRole, PlanEntry, ShareLevel, SubagentDto,
-    ThreadStatus, ToolKind, ToolLocation, ToolStatus, Usage, UserBrief,
+    ElicitationAction, ElicitationDto, MessageRole, PlanEntry, SubagentDto, ThreadStatus, ToolKind,
+    ToolLocation, ToolStatus, Usage, UserBrief,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -216,10 +216,6 @@ pub enum ThreadEvent {
     CommentUpdated {
         comment: CommentDto,
     },
-    MembersChanged {
-        member: crate::model::ThreadMemberDto,
-        action: String,
-    },
     QueueUpdated {
         items: Vec<crate::model::QueueItemDto>,
     },
@@ -227,7 +223,6 @@ pub enum ThreadEvent {
         title: Option<String>,
         status: Option<ThreadStatus>,
         pinned: Option<bool>,
-        share_level: Option<ShareLevel>,
     },
     AgentMessage {
         direction: AgentMessageDirection,
@@ -276,7 +271,6 @@ impl ThreadEvent {
             Self::ChangesUpdated { .. } => "changes_updated",
             Self::CommentAdded { .. } => "comment_added",
             Self::CommentUpdated { .. } => "comment_updated",
-            Self::MembersChanged { .. } => "members_changed",
             Self::QueueUpdated { .. } => "queue_updated",
             Self::ThreadUpdated { .. } => "thread_updated",
             Self::AgentMessage { .. } => "agent_message",
