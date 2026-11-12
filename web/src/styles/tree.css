@@ -1,1 +1,43 @@
-/* tree: owned by one workstream during the Delta alignment pass. */
+/* tree: sidebar nesting gets a guide line and node dots, Delta style. */
+
+.side-project .mantine-NavLink-children {
+  position: relative;
+  padding-left: 6px;
+}
+
+.side-project .mantine-NavLink-children::before {
+  position: absolute;
+  top: 2px;
+  bottom: 6px;
+  left: 22px;
+  width: 1px;
+  background: var(--line-soft);
+  content: "";
+}
+
+.side-project .mantine-NavLink-children .side-nav {
+  position: relative;
+  padding-left: 18px;
+}
+
+.side-project .mantine-NavLink-children .side-nav::before {
+  position: absolute;
+  top: 50%;
+  left: 19px;
+  width: 5px;
+  height: 5px;
+  transform: translateY(-50%);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  content: "";
+}
+
+.side-project .mantine-NavLink-children .side-nav[data-active]::before {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+
+.side-project .mantine-NavLink-children .side-nav:hover::before {
+  border-color: var(--ink-faint);
+}

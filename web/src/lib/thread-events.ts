@@ -34,7 +34,14 @@ export type ViewItem =
       ts: number;
       streaming: boolean;
     }
-  | { kind: "thinking"; id: string; text: string; ts: number; count: number }
+  | {
+      kind: "thinking";
+      id: string;
+      text: string;
+      ts: number;
+      count: number;
+      tools: number;
+    }
   | { kind: "tool"; call: ToolCallData; ts: number }
   | { kind: "notice"; level: "info" | "error"; text: string; ts: number }
   | { kind: "turn"; label: string; ts: number };
@@ -182,11 +189,12 @@ export function reduceEvents(
               text,
               ts: event.ts,
               count: previous.count + 1,
+              tools: previous.tools,
             };
             break;
           }
           thinkingRows.set(id, items.length);
-          items.push({ kind: "thinking", id, text, ts: event.ts, count: 1 });
+          items.push({ kind: "thinking", id, text, ts: event.ts, count: 1, tools: 0 });
         } else {
           const row = items[existing];
           if (row.kind === "thinking") {
@@ -206,6 +214,10 @@ export function reduceEvents(
         const call = payload.call as ToolCallData;
         const existing = toolRows.get(call.id);
         if (existing === undefined) {
+          const last = items[items.length - 1];
+          if (last?.kind === "thinking") {
+            items[items.length - 1] = { ...last, tools: last.tools + 1 };
+          }
           toolRows.set(call.id, items.length);
           items.push({ kind: "tool", call, ts: event.ts });
         } else {

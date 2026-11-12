@@ -1,1 +1,47 @@
-/* diff: owned by one workstream during the Delta alignment pass. */
+/* diff: Delta-style panel chrome - flat surfaces, tabular counts, muted
+   baseline, and a quiet separator instead of stacked borders. */
+
+.changes-head {
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-head .mantine-Group-root svg {
+  color: var(--ink-faint);
+}
+
+.changes-head .mantine-Group-root .mantine-Text-root {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+}
+
+.changes-head .stat-add {
+  color: var(--add);
+  font-weight: 500;
+}
+
+.changes-head .stat-del {
+  color: var(--del);
+  font-weight: 500;
+}
+
+.changes-head .mantine-Button-root {
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11.5px;
+}
+
+.diff-wrap {
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0;
+}
+
+.diff-wrap :where(code, pre, .line-number, [class*="line-number"]) {
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-wrap [class*="line-number"] {
+  color: var(--ink-faint);
+  user-select: none;
+}

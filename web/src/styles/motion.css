@@ -1,1 +1,78 @@
-/* motion: owned by one workstream during the Delta alignment pass. */
+/* motion: restrained transitions so state changes read as motion, not jumps.
+   Durations stay under 200ms; anything decorative is disabled for users who
+   ask for reduced motion. */
+
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 170ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes timeline-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes panel-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.timeline-doc > * {
+  animation: timeline-enter var(--motion-base) var(--ease-out) both;
+}
+
+.side-nav,
+.inbox-row,
+.approval-card,
+.model-picker,
+.jump-latest,
+.comment-thread-trigger {
+  transition:
+    background-color var(--motion-fast) ease-out,
+    color var(--motion-fast) ease-out,
+    border-color var(--motion-fast) ease-out,
+    opacity var(--motion-fast) ease-out;
+}
+
+details > summary svg,
+.comment-thread-trigger svg {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+details[open] > summary svg,
+.comment-thread-trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.changes-head button,
+.changes-head .mantine-Button-root {
+  transition:
+    background-color var(--motion-fast) ease-out,
+    color var(--motion-fast) ease-out;
+}
+
+.agent-log {
+  animation: panel-fade var(--motion-base) ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

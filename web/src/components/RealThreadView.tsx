@@ -37,6 +37,7 @@ import { AgentLog } from "./AgentLog";
 import { Composer } from "./Composer";
 import { ApprovalCard } from "./thread/ApprovalCard";
 import { CommentCard, CommentEditor } from "./thread/CommentCard";
+import { CommentThread } from "./thread/CommentThread";
 import { ElicitationCard } from "./thread/ElicitationCard";
 import { EmptyThread } from "./thread/EmptyThread";
 import { Message, Notice, Thinking } from "./thread/Message";
@@ -53,38 +54,58 @@ function TimelineRow({
   item,
   active,
   comments,
-  commentKey,
+  threadKey,
+  openComments,
+  onToggleComments,
+  renderComment,
   editing,
   editor,
   onComment,
 }: {
   item: ViewItem;
   active: boolean;
-  comments: ReactNode[];
-  commentKey: string | null;
+  comments: Comment[];
+  threadKey: string | null;
+  openComments: Set<string>;
+  onToggleComments: (key: string) => void;
+  renderComment: (comment: Comment) => ReactNode;
   editing: string | null;
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
 }) {
+  const thread =
+    threadKey === null ? null : (
+      <CommentThread
+        comments={comments}
+        threadKey={threadKey}
+        expanded={openComments.has(threadKey)}
+        onToggle={onToggleComments}
+        renderCard={renderComment}
+        editing={editing === threadKey}
+        editor={
+          item.kind === "message"
+            ? editor({ kind: "message", messageId: item.id })
+            : null
+        }
+      />
+    );
+
   if (item.kind === "message") {
     return (
       <>
         <Message item={item} active={active} onComment={onComment} />
-        {comments}
-        {editing === commentKey
-          ? editor({ kind: "message", messageId: item.id })
-          : null}
+        {thread}
       </>
     );
   }
   switch (item.kind) {
     case "thinking":
-      return <Thinking count={item.count} />;
+      return <Thinking count={item.count} tools={item.tools} text={item.text} />;
     case "tool":
       return (
         <>
           <Tool item={item} />
-          {comments}
+          {thread}
         </>
       );
     case "notice":
@@ -125,6 +146,14 @@ export function RealThreadView({
   // visible, so a 10k-event transcript costs the same as a short one.
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+  const [openComments, setOpenComments] = useState<Set<string>>(new Set());
+  const toggleComments = (key: string) =>
+    setOpenComments((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const notifiedApprovals = useRef<Set<string>>(new Set());
 
   const bundleQuery = useQuery({
@@ -503,8 +532,17 @@ export function RealThreadView({
                   : item.kind === "tool"
                     ? item.call.id
                     : "",
-              ).map(commentCard)}
-              commentKey={item.kind === "message" ? `m:${item.id}` : null}
+              )}
+              threadKey={
+                item.kind === "message"
+                  ? `m:${item.id}`
+                  : item.kind === "tool"
+                    ? `t:${item.call.id}`
+                    : null
+              }
+              openComments={openComments}
+              onToggleComments={toggleComments}
+              renderComment={commentCard}
               editing={commentFor}
               editor={commentEditor}
               onComment={commentOnMessage}
