@@ -100,6 +100,39 @@
   position: relative;
 }
 
+/* Who is speaking should be readable before the words are: the assistant keeps
+   the plain serif document column, a person gets a tinted bubble in the UI sans
+   face. Surfaces plus typeface carry the separation, so a long thread never
+   reads as one undifferentiated wall of text. */
+.message-user {
+  margin-top: 20px;
+}
+
+.message-user .block-body {
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 13px 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 4.5%, var(--paper));
+}
+
+.message-user .prose {
+  font-family: var(--mantine-font-family);
+  font-size: 14.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.message-user .msg-comment-btn {
+  top: 4px;
+  right: 5px;
+}
+
+.message-agent {
+  margin-top: 10px;
+}
+
 .msg-comment-btn {
   position: absolute;
   top: -1px;
@@ -132,8 +165,11 @@
   background: var(--paper);
 }
 
+/* The bar scrolls instead of squeezing rows: flex children default to
+   shrink, which used to clip every row as soon as the queue outgrew the bar. */
 .queue-item {
   height: 22px;
+  flex: none;
 }
 
 .queue-edit {

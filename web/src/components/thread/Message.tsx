@@ -31,7 +31,9 @@ export const Message = memo(function Message({
   const streaming = item.streaming && active && item.text.trim().length > 0;
 
   return (
-    <div className="block message-block">
+    <div
+      className={`block message-block ${agent ? "message-agent" : "message-user"}`}
+    >
       <div className="block-gutter" {...press}>
         <Avatar
           size={16}
