@@ -1,11 +1,11 @@
 //! HTTP router. Routes are grouped by domain as the implementation grows.
 
+use crate::app::AppState;
 use crate::assets;
 use crate::auth::{needs_admin, CurrentUser};
 use crate::authz;
 use crate::error::ServerError;
 use crate::middleware::{csrf_guard, security_headers};
-use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, Uri};
 use axum::middleware::{from_fn, from_fn_with_state};
@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::routes_comments::router())
         .merge(crate::routes_files::router())
         .merge(crate::routes_fs::router())
+        .merge(crate::routes_skills::router())
         .merge(crate::sharing::router())
         .route("/api/health", get(health))
         .route("/ws", get(crate::ws::handler))

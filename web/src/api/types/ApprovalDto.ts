@@ -28,6 +28,6 @@ export type ApprovalDto = {
   decision: ApprovalDecision | null;
   scope: ApprovalScope | null;
   decidedBy: UserBrief | null;
-  decidedAt: bigint | null;
-  createdAt: bigint;
+  decidedAt: number | null;
+  createdAt: number;
 };

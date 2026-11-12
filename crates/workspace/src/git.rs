@@ -112,50 +112,6 @@ pub async fn validate_branch(root: &Path, branch: &str) -> Result<(), GitError> 
     }
 }
 
-pub async fn branches(root: &Path) -> Result<Vec<String>, GitError> {
-    let output = git(
-        root,
-        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
-    )
-    .await?;
-    Ok(output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
-        .collect())
-}
-
-pub async fn remote_branch(root: &Path) -> Result<Option<String>, GitError> {
-    let head = git_allow_failure(
-        root,
-        &[
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "refs/remotes/origin/HEAD",
-        ],
-    )
-    .await?;
-    Ok(head.filter(|value| !value.is_empty()))
-}
-
-pub async fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool, GitError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["merge-base", "--is-ancestor", ancestor, descendant])
-        .output()
-        .await?;
-    match output.status.code() {
-        Some(0) => Ok(true),
-        Some(1) => Ok(false),
-        _ => Err(GitError::Message(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        )),
-    }
-}
-
 pub async fn head_sha(root: &Path) -> Result<String, GitError> {
     git(root, &["rev-parse", "HEAD"]).await
 }
@@ -214,28 +170,12 @@ pub async fn delete_branch(project_root: &Path, branch: &str, force: bool) -> Re
         .map(|_| ())
 }
 
-pub async fn add_all(root: &Path) -> Result<(), GitError> {
+async fn add_all(root: &Path) -> Result<(), GitError> {
     git(root, &["add", "-A"]).await.map(|_| ())
 }
 
 pub async fn reset_index(root: &Path) -> Result<(), GitError> {
     git(root, &["reset"]).await.map(|_| ())
-}
-
-/// Produce a binary patch from `base_sha` to the current worktree content,
-/// including untracked files. The worktree index is left as it was.
-pub async fn patch_from_base(worktree: &Path, base_sha: &str) -> Result<String, GitError> {
-    add_all(worktree).await?;
-    let patch = git_raw(
-        worktree,
-        &["diff", "--cached", "--binary", "--no-color", base_sha],
-    )
-    .await;
-    let reset = reset_index(worktree).await;
-    match (patch, reset) {
-        (Ok(patch), Ok(())) => Ok(String::from_utf8_lossy(&patch).to_string()),
-        (Err(error), _) | (_, Err(error)) => Err(error),
-    }
 }
 
 /// Patch containing committed changes since `base_sha` plus uncommitted work.

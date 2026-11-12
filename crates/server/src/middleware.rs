@@ -1,7 +1,7 @@
 //! CSRF and response hardening middleware.
 
+use crate::app::AppState;
 use crate::error::ServerError;
-use crate::state::AppState;
 use axum::extract::{Request, State};
 use axum::http::header::{HOST, ORIGIN};
 use axum::http::Method;

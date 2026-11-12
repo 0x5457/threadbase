@@ -5,12 +5,11 @@
 //! action targets the current state.
 //!
 //! The authoritative persistence stays in SQLite; these tables are the single
-//! source of truth for *which* transitions are legal. See `docs/08`.
+//! source of truth for *which* transitions are legal.
 
-use crate::delivery::{resolve_delivery, DeliveryContext, SendAction};
 use threadbase_shared::{
-    ApprovalDecision, ApprovalStatus, CommentStatus, Delivery, DeliveryMode, ElicitationStatus,
-    QueueStatus, SubagentStatus, ThreadStatus,
+    ApprovalDecision, ApprovalStatus, CommentStatus, Delivery, ElicitationStatus, QueueStatus,
+    SubagentStatus, ThreadStatus,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -393,113 +392,6 @@ impl QueueMachine {
 }
 
 // ---------------------------------------------------------------------------
-// Agent session
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionState {
-    NotStarted,
-    Preparing,
-    Ready,
-    Running,
-    Stopped,
-    Failed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionAction {
-    Start,
-    StartSucceeded,
-    StartFailed,
-    Prompt,
-    TurnEnded,
-    TurnError,
-    ProcessExited,
-    Shutdown,
-    Restart,
-}
-
-pub struct AgentSessionMachine;
-
-impl AgentSessionMachine {
-    pub const ENTITY: &'static str = "agent_session";
-
-    pub fn transition(
-        current: SessionState,
-        action: &SessionAction,
-    ) -> Result<SessionState, TransitionError> {
-        let next = match action {
-            SessionAction::Start => match current {
-                SessionState::NotStarted | SessionState::Stopped | SessionState::Failed => {
-                    SessionState::Preparing
-                }
-                _ => return Err(illegal(Self::ENTITY, current, "start")),
-            },
-            SessionAction::StartSucceeded => match current {
-                SessionState::Preparing => SessionState::Ready,
-                _ => return Err(illegal(Self::ENTITY, current, "start_succeeded")),
-            },
-            SessionAction::StartFailed => match current {
-                SessionState::Preparing => SessionState::Failed,
-                _ => return Err(illegal(Self::ENTITY, current, "start_failed")),
-            },
-            SessionAction::Prompt => match current {
-                SessionState::Ready | SessionState::Running => SessionState::Running,
-                _ => return Err(illegal(Self::ENTITY, current, "prompt")),
-            },
-            SessionAction::TurnEnded => match current {
-                SessionState::Running => SessionState::Ready,
-                SessionState::Ready => SessionState::Ready,
-                _ => return Err(illegal(Self::ENTITY, current, "turn_ended")),
-            },
-            SessionAction::TurnError => match current {
-                SessionState::Running | SessionState::Ready => SessionState::Failed,
-                SessionState::Failed => SessionState::Failed,
-                _ => return Err(illegal(Self::ENTITY, current, "turn_error")),
-            },
-            SessionAction::ProcessExited => match current {
-                SessionState::Running | SessionState::Ready | SessionState::Preparing => {
-                    SessionState::Stopped
-                }
-                SessionState::Stopped => SessionState::Stopped,
-                _ => return Err(illegal(Self::ENTITY, current, "process_exited")),
-            },
-            SessionAction::Shutdown => match current {
-                SessionState::NotStarted => SessionState::NotStarted,
-                _ => SessionState::NotStarted,
-            },
-            SessionAction::Restart => match current {
-                SessionState::Failed | SessionState::Stopped | SessionState::Ready => {
-                    SessionState::Preparing
-                }
-                _ => return Err(illegal(Self::ENTITY, current, "restart")),
-            },
-        };
-        Ok(next)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Delivery
-// ---------------------------------------------------------------------------
-
-pub struct DeliveryMachine;
-
-impl DeliveryMachine {
-    pub fn resolve(mode: DeliveryMode, ctx: DeliveryContext) -> SendAction {
-        resolve_delivery(mode, ctx)
-    }
-
-    pub fn delivery_for(action: SendAction) -> Delivery {
-        match action {
-            SendAction::Prompt | SendAction::Inject => Delivery::Injected,
-            SendAction::StopAndSend => Delivery::StoppedAndSent,
-            SendAction::Queue => Delivery::Queued,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Comment
 // ---------------------------------------------------------------------------
 
@@ -515,21 +407,6 @@ pub struct CommentMachine;
 
 impl CommentMachine {
     pub const ENTITY: &'static str = "comment";
-
-    pub fn transition_to(
-        current: CommentStatus,
-        target: CommentStatus,
-    ) -> Result<CommentStatus, TransitionError> {
-        if current == target {
-            return Ok(current);
-        }
-        let action = match target {
-            CommentStatus::Delivered => CommentAction::Deliver,
-            CommentStatus::Resolved => CommentAction::Resolve,
-            _ => return Err(illegal(Self::ENTITY, current, "target")),
-        };
-        Self::transition(current, &action)
-    }
 
     pub fn transition(
         current: CommentStatus,
@@ -737,116 +614,6 @@ impl ReadRules {
     /// A file is seen while its content hash matches the stored seen hash.
     pub fn seen(seen_hash: Option<&str>, content_hash: &str) -> bool {
         seen_hash == Some(content_hash)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Presence / connection rules
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PresenceState {
-    Disconnected,
-    Connecting,
-    Connected,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PresenceAction {
-    Connect,
-    Handshake,
-    Disconnect,
-}
-
-pub struct PresenceMachine;
-
-impl PresenceMachine {
-    pub const ENTITY: &'static str = "presence";
-
-    pub fn transition(
-        current: PresenceState,
-        action: &PresenceAction,
-    ) -> Result<PresenceState, TransitionError> {
-        let next = match action {
-            PresenceAction::Connect => match current {
-                PresenceState::Disconnected => PresenceState::Connecting,
-                _ => return Err(illegal(Self::ENTITY, current, "connect")),
-            },
-            PresenceAction::Handshake => match current {
-                PresenceState::Connecting => PresenceState::Connected,
-                _ => return Err(illegal(Self::ENTITY, current, "handshake")),
-            },
-            PresenceAction::Disconnect => PresenceState::Disconnected,
-        };
-        Ok(next)
-    }
-
-    /// Hidden users stay online; hiding only suppresses focus broadcast.
-    pub fn is_online(connected: PresenceState, _hidden: bool) -> bool {
-        connected == PresenceState::Connected
-    }
-
-    pub fn should_broadcast_focus(hidden: bool) -> bool {
-        !hidden
-    }
-
-    /// A follow target is stale after 30 seconds without a heartbeat.
-    pub fn follow_is_stale(updated_at: i64, now: i64) -> bool {
-        now.saturating_sub(updated_at) > 30_000
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Draft rules
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DraftProviderState {
-    Connecting,
-    Connected,
-    Synced,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DraftAction {
-    Connect,
-    Sync,
-    Disconnect,
-    Send,
-    DeleteBlock,
-}
-
-pub struct DraftMachine;
-
-impl DraftMachine {
-    pub const ENTITY: &'static str = "draft";
-
-    pub fn transition(
-        current: DraftProviderState,
-        action: &DraftAction,
-    ) -> Result<DraftProviderState, TransitionError> {
-        let next = match action {
-            DraftAction::Connect => match current {
-                DraftProviderState::Connecting => DraftProviderState::Connected,
-                _ => return Err(illegal(Self::ENTITY, current, "connect")),
-            },
-            DraftAction::Sync => match current {
-                DraftProviderState::Connected => DraftProviderState::Synced,
-                _ => return Err(illegal(Self::ENTITY, current, "sync")),
-            },
-            DraftAction::Disconnect => DraftProviderState::Connecting,
-            // Sending and deleting blocks do not change provider state.
-            DraftAction::Send | DraftAction::DeleteBlock => current,
-        };
-        Ok(next)
-    }
-
-    pub fn can_send(state: DraftProviderState) -> bool {
-        state == DraftProviderState::Synced
-    }
-
-    pub fn is_sent(sent_at: Option<i64>) -> bool {
-        sent_at.is_some()
     }
 }
 
@@ -1224,121 +991,6 @@ mod tests {
     // ----- agent session -----
 
     #[test]
-    fn session_lifecycle() {
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::NotStarted, &SessionAction::Start)
-                .unwrap(),
-            SessionState::Preparing
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(
-                SessionState::Preparing,
-                &SessionAction::StartSucceeded
-            )
-            .unwrap(),
-            SessionState::Ready
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Ready, &SessionAction::Prompt).unwrap(),
-            SessionState::Running
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Running, &SessionAction::TurnEnded)
-                .unwrap(),
-            SessionState::Ready
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Running, &SessionAction::TurnError)
-                .unwrap(),
-            SessionState::Failed
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Running, &SessionAction::ProcessExited)
-                .unwrap(),
-            SessionState::Stopped
-        );
-    }
-
-    #[test]
-    fn session_restart_and_shutdown() {
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Failed, &SessionAction::Restart).unwrap(),
-            SessionState::Preparing
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Stopped, &SessionAction::Restart)
-                .unwrap(),
-            SessionState::Preparing
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Ready, &SessionAction::Shutdown).unwrap(),
-            SessionState::NotStarted
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Running, &SessionAction::Shutdown)
-                .unwrap(),
-            SessionState::NotStarted
-        );
-    }
-
-    #[test]
-    fn session_guards() {
-        assert!(
-            AgentSessionMachine::transition(SessionState::Preparing, &SessionAction::Prompt)
-                .is_err()
-        );
-        assert!(
-            AgentSessionMachine::transition(SessionState::NotStarted, &SessionAction::Prompt)
-                .is_err()
-        );
-        assert!(
-            AgentSessionMachine::transition(SessionState::Ready, &SessionAction::StartFailed)
-                .is_err()
-        );
-        assert!(
-            AgentSessionMachine::transition(SessionState::Running, &SessionAction::Restart)
-                .is_err()
-        );
-    }
-
-    // ----- delivery -----
-
-    #[test]
-    fn delivery_machine_resolves_modes() {
-        let idle = DeliveryContext::idle();
-        assert_eq!(
-            DeliveryMachine::resolve(DeliveryMode::Auto, idle),
-            SendAction::Prompt
-        );
-        assert_eq!(
-            DeliveryMachine::resolve(DeliveryMode::Queue, idle),
-            SendAction::Queue
-        );
-        let running = DeliveryContext {
-            turn_running: true,
-            steering_supported: true,
-        };
-        assert_eq!(
-            DeliveryMachine::resolve(DeliveryMode::Auto, running),
-            SendAction::Inject
-        );
-        assert_eq!(
-            DeliveryMachine::delivery_for(SendAction::Inject),
-            Delivery::Injected
-        );
-        assert_eq!(
-            DeliveryMachine::delivery_for(SendAction::StopAndSend),
-            Delivery::StoppedAndSent
-        );
-        assert_eq!(
-            DeliveryMachine::delivery_for(SendAction::Queue),
-            Delivery::Queued
-        );
-    }
-
-    // ----- comment -----
-
-    #[test]
     fn comment_lifecycle() {
         assert_eq!(
             CommentMachine::transition(CommentStatus::Pending, &CommentAction::CreatePending)
@@ -1367,54 +1019,6 @@ mod tests {
         );
         assert!(
             CommentMachine::transition(CommentStatus::Delivered, &CommentAction::Deliver).is_err()
-        );
-    }
-
-    #[test]
-    fn comment_transition_to() {
-        assert_eq!(
-            CommentMachine::transition_to(CommentStatus::Pending, CommentStatus::Delivered)
-                .unwrap(),
-            CommentStatus::Delivered
-        );
-        assert_eq!(
-            CommentMachine::transition_to(CommentStatus::Delivered, CommentStatus::Resolved)
-                .unwrap(),
-            CommentStatus::Resolved
-        );
-        assert_eq!(
-            CommentMachine::transition_to(CommentStatus::Pending, CommentStatus::Pending).unwrap(),
-            CommentStatus::Pending
-        );
-        assert!(
-            CommentMachine::transition_to(CommentStatus::Resolved, CommentStatus::Delivered)
-                .is_err()
-        );
-    }
-
-    // ----- read rules -----
-
-    #[test]
-    fn session_idempotent_actions() {
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::NotStarted, &SessionAction::Shutdown)
-                .unwrap(),
-            SessionState::NotStarted
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Ready, &SessionAction::TurnEnded)
-                .unwrap(),
-            SessionState::Ready
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Failed, &SessionAction::TurnError)
-                .unwrap(),
-            SessionState::Failed
-        );
-        assert_eq!(
-            AgentSessionMachine::transition(SessionState::Stopped, &SessionAction::ProcessExited)
-                .unwrap(),
-            SessionState::Stopped
         );
     }
 
@@ -1501,49 +1105,6 @@ mod tests {
     }
 
     #[test]
-    fn delivery_and_read_idempotent() {
-        // Delivery resolution is pure: same input -> same output.
-        assert_eq!(
-            DeliveryMachine::resolve(DeliveryMode::Auto, DeliveryContext::idle()),
-            SendAction::Prompt
-        );
-        assert_eq!(
-            DeliveryMachine::delivery_for(SendAction::Queue),
-            Delivery::Queued
-        );
-        // Read rules are idempotent.
-        assert!(!ReadRules::thread_unread(5, 5));
-        assert!(!ReadRules::inbox_unread(Some(1)));
-        assert!(ReadRules::seen(Some("a"), "a"));
-    }
-
-    #[test]
-    fn presence_idempotent_actions() {
-        assert_eq!(
-            PresenceMachine::transition(PresenceState::Disconnected, &PresenceAction::Disconnect)
-                .unwrap(),
-            PresenceState::Disconnected
-        );
-        assert!(
-            PresenceMachine::transition(PresenceState::Connecting, &PresenceAction::Connect)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn draft_idempotent_actions() {
-        assert_eq!(
-            DraftMachine::transition(DraftProviderState::Synced, &DraftAction::Send).unwrap(),
-            DraftProviderState::Synced
-        );
-        assert_eq!(
-            DraftMachine::transition(DraftProviderState::Synced, &DraftAction::DeleteBlock)
-                .unwrap(),
-            DraftProviderState::Synced
-        );
-    }
-
-    #[test]
     fn read_rules() {
         assert!(ReadRules::thread_unread(4, 5));
         assert!(!ReadRules::thread_unread(5, 5));
@@ -1552,58 +1113,5 @@ mod tests {
         assert!(ReadRules::seen(Some("abc"), "abc"));
         assert!(!ReadRules::seen(Some("abc"), "def"));
         assert!(!ReadRules::seen(None, "abc"));
-    }
-
-    #[test]
-    fn presence_rules() {
-        assert_eq!(
-            PresenceMachine::transition(PresenceState::Disconnected, &PresenceAction::Connect)
-                .unwrap(),
-            PresenceState::Connecting
-        );
-        assert_eq!(
-            PresenceMachine::transition(PresenceState::Connecting, &PresenceAction::Handshake)
-                .unwrap(),
-            PresenceState::Connected
-        );
-        assert_eq!(
-            PresenceMachine::transition(PresenceState::Connected, &PresenceAction::Disconnect)
-                .unwrap(),
-            PresenceState::Disconnected
-        );
-        assert!(
-            PresenceMachine::transition(PresenceState::Connected, &PresenceAction::Handshake)
-                .is_err()
-        );
-        assert!(PresenceMachine::is_online(PresenceState::Connected, true));
-        assert!(!PresenceMachine::is_online(
-            PresenceState::Disconnected,
-            false
-        ));
-        assert!(PresenceMachine::should_broadcast_focus(false));
-        assert!(!PresenceMachine::should_broadcast_focus(true));
-        assert!(PresenceMachine::follow_is_stale(100, 30_101));
-        assert!(!PresenceMachine::follow_is_stale(100, 30_000));
-    }
-
-    #[test]
-    fn draft_rules() {
-        assert_eq!(
-            DraftMachine::transition(DraftProviderState::Connecting, &DraftAction::Connect)
-                .unwrap(),
-            DraftProviderState::Connected
-        );
-        assert_eq!(
-            DraftMachine::transition(DraftProviderState::Connected, &DraftAction::Sync).unwrap(),
-            DraftProviderState::Synced
-        );
-        assert!(DraftMachine::can_send(DraftProviderState::Synced));
-        assert!(!DraftMachine::can_send(DraftProviderState::Connected));
-        assert!(DraftMachine::is_sent(Some(1)));
-        assert!(!DraftMachine::is_sent(None));
-        assert_eq!(
-            DraftMachine::transition(DraftProviderState::Synced, &DraftAction::Send).unwrap(),
-            DraftProviderState::Synced
-        );
     }
 }

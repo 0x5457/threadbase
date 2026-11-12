@@ -13,5 +13,5 @@ export type ApprovalRuleDto = {
   commandPrefix: string | null;
   scope: ApprovalScope;
   createdBy: UserBrief;
-  createdAt: bigint;
+  createdAt: number;
 };

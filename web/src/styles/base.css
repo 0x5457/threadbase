@@ -1,0 +1,102 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+*:focus-visible {
+  outline-color: var(--ink) !important;
+  outline-offset: 1px !important;
+  outline-width: 1px !important;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--chrome);
+  font-family: var(--mantine-font-family);
+}
+
+/* ── palette ───────────────────────────────────────────────── */
+
+/* `Text c="dimmed"` is used for every secondary label in the app, and Mantine
+   maps it to gray-6, which measures 1.6-1.9:1 on our light surfaces. */
+/* Mantine scopes these on `:root[data-mantine-color-scheme=...]`, so the
+   override needs the same specificity to win: `dimmed` is the colour behind
+   every secondary label in the app, and `placeholder` behind empty inputs. */
+:root[data-mantine-color-scheme="light"],
+:root[data-mantine-color-scheme="dark"] {
+  --mantine-color-dimmed: var(--ink-faint);
+  --mantine-color-placeholder: var(--ink-faint);
+}
+
+:root {
+  --paper: #f7f7f4;
+  --chrome: #e7e8e5;
+  --raised: #fbfbf8;
+  --line: #ced1cb;
+  --line-soft: #dcddd7;
+  --ink: #242529;
+  /* Secondary text is graded by contrast, not by guessing: muted lands around
+     7:1 and faint still clears AA 4.5:1 on paper, chrome and raised surfaces.
+     The old pair measured 3.9-4.7 and 2.2-2.7, which read as washed out. */
+  --ink-muted: #52555a;
+  --ink-faint: #64676c;
+  --hover: #e0e1dc;
+  --selected: #d7d8d3;
+  --code: #f1f1ed;
+  --brand: #d85540;
+  --comment: #b58de3;
+  --add: #2f7a3a;
+  --add-bg: #dfeadb;
+  --del: #b4453a;
+  --del-bg: #fbdfd9;
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+}
+
+[data-mantine-color-scheme="dark"] {
+  --paper: #131519;
+  --chrome: #171a1e;
+  --raised: #191c21;
+  --line: #30343a;
+  --line-soft: #25292e;
+  --ink: #acb2be;
+  --ink-muted: #9aa0aa;
+  --ink-faint: #828892;
+  --hover: #1f2227;
+  --selected: #292d33;
+  --code: #171a1e;
+  --brand: #e06a55;
+  --add: #a1c181;
+  --add-bg: #23301f;
+  --del: #d36151;
+  --del-bg: #35211f;
+}
+
+/* ── shell ─────────────────────────────────────────────────── */
+
+.auth-screen {
+  background: var(--chrome);
+}
+
+.shell {
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--chrome);
+}
+
+.main {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: var(--paper);
+}
+

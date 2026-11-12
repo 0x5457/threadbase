@@ -1,14 +1,12 @@
-//! Append-only event log with per-thread sequencing, replay and snapshots.
+//! Append-only event log with per-thread sequencing and replay.
 
 use sqlx::{FromRow, SqlitePool};
-use std::sync::Arc;
 use threadbase_core::state::{delivery_str, parse_delivery};
-use threadbase_core::TimelineState;
 use threadbase_shared::{
     now_ms, Actor, ActorKind, ApiError, Delivery, EventEnvelope, EventsPageDto, Origin,
     ThreadEvent, ThreadId,
 };
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EventStoreError {
@@ -34,7 +32,9 @@ pub struct EventMeta {
 #[derive(Clone)]
 pub struct EventStore {
     pool: SqlitePool,
-    append_lock: Arc<Mutex<()>>,
+    /// One writer per thread: sequence assignment and commit order stay aligned
+    /// while unrelated threads append in parallel.
+    append_locks: crate::locks::KeyedLocks,
     event_tx: broadcast::Sender<EventEnvelope>,
 }
 
@@ -44,7 +44,7 @@ impl EventStore {
         let (event_tx, _) = broadcast::channel(4096);
         Self {
             pool,
-            append_lock: Arc::new(Mutex::new(())),
+            append_locks: crate::locks::KeyedLocks::new(),
             event_tx,
         }
     }
@@ -66,7 +66,7 @@ impl EventStore {
         payload: ThreadEvent,
         meta: EventMeta,
     ) -> Result<EventEnvelope, EventStoreError> {
-        let _guard = self.append_lock.lock().await;
+        let _guard = self.append_locks.lock(thread_id.as_str()).await;
         let mut tx = self.pool.begin().await?;
         let seq: i64 = sqlx::query_scalar(
             "INSERT INTO thread_counters(thread_id, last_seq) VALUES(?, 1)
@@ -173,83 +173,6 @@ impl EventStore {
         })
     }
 
-    pub async fn all_events(
-        &self,
-        thread_id: &ThreadId,
-    ) -> Result<Vec<EventEnvelope>, EventStoreError> {
-        let rows = sqlx::query_as::<_, EventRow>(
-            "SELECT * FROM events WHERE thread_id = ? ORDER BY seq ASC",
-        )
-        .bind(thread_id.as_str())
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(EventRow::into_envelope)
-            .collect::<Result<Vec<_>, _>>()
-    }
-
-    /// Load the latest snapshot plus the events after it.
-    pub async fn load_state(&self, thread_id: &ThreadId) -> Result<TimelineState, EventStoreError> {
-        let snapshot: Option<SnapshotRow> =
-            sqlx::query_as("SELECT upto_seq, state_json FROM snapshots WHERE thread_id = ?")
-                .bind(thread_id.as_str())
-                .fetch_optional(&self.pool)
-                .await?;
-        let (mut state, upto_seq) = if let Some(snapshot) = snapshot {
-            let state: TimelineState = serde_json::from_str(&snapshot.state_json)
-                .map_err(|error| EventStoreError::Corrupt(error.to_string()))?;
-            (state, u64::try_from(snapshot.upto_seq).unwrap_or(0))
-        } else {
-            (TimelineState::default(), 0)
-        };
-        let rows = sqlx::query_as::<_, EventRow>(
-            "SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC",
-        )
-        .bind(thread_id.as_str())
-        .bind(i64::try_from(upto_seq).unwrap_or(0))
-        .fetch_all(&self.pool)
-        .await?;
-        for row in rows {
-            state.apply(&row.into_envelope()?);
-        }
-        Ok(state)
-    }
-
-    pub async fn save_snapshot(
-        &self,
-        thread_id: &ThreadId,
-    ) -> Result<TimelineState, EventStoreError> {
-        let state = self.load_state(thread_id).await?;
-        let state_json = serde_json::to_string(&state)?;
-        sqlx::query(
-            "INSERT INTO snapshots(thread_id, upto_seq, state_json, created_at)
-             VALUES(?, ?, ?, ?)
-             ON CONFLICT(thread_id) DO UPDATE SET
-                upto_seq = excluded.upto_seq,
-                state_json = excluded.state_json,
-                created_at = excluded.created_at",
-        )
-        .bind(thread_id.as_str())
-        .bind(i64::try_from(state.last_seq).unwrap_or(i64::MAX))
-        .bind(state_json)
-        .bind(now_ms())
-        .execute(&self.pool)
-        .await?;
-        Ok(state)
-    }
-
-    pub async fn maybe_snapshot(
-        &self,
-        thread_id: &ThreadId,
-        last_seq: u64,
-        turn_ended: bool,
-    ) -> Result<(), EventStoreError> {
-        if turn_ended || (last_seq > 0 && last_seq.is_multiple_of(500)) {
-            self.save_snapshot(thread_id).await?;
-        }
-        Ok(())
-    }
-
     pub async fn last_seq(&self, thread_id: &ThreadId) -> Result<u64, EventStoreError> {
         let last: i64 =
             sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM events WHERE thread_id = ?")
@@ -262,7 +185,6 @@ impl EventStore {
 
 #[derive(Debug, FromRow)]
 struct EventRow {
-    #[allow(dead_code)]
     thread_id: String,
     seq: i64,
     ts: i64,
@@ -274,8 +196,6 @@ struct EventRow {
     parent_subagent_id: Option<String>,
     tool_call_id: Option<String>,
     delivery: Option<String>,
-    #[allow(dead_code)]
-    kind: String,
     payload_json: String,
 }
 
@@ -299,12 +219,6 @@ impl EventRow {
             payload,
         })
     }
-}
-
-#[derive(Debug, FromRow)]
-struct SnapshotRow {
-    upto_seq: i64,
-    state_json: String,
 }
 
 fn actor_kind_str(kind: &ActorKind) -> &'static str {
@@ -405,7 +319,6 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use crate::db;
-    use sqlx::Row;
     use test_support::{notice, seed_thread};
 
     fn system_actor() -> Actor {
@@ -500,47 +413,6 @@ mod tests {
         assert!(page.resync);
         assert_eq!(page.events.first().map(|event| event.seq), Some(3));
         assert_eq!(page.oldest_seq, 3);
-    }
-
-    #[tokio::test]
-    async fn snapshot_restores_and_then_applies_new_events() {
-        let pool = db::connect_memory().await.unwrap();
-        let (_, _, thread) = seed_thread(&pool).await;
-        let store = EventStore::new(pool.clone());
-        for index in 0..5 {
-            store
-                .append(
-                    &thread,
-                    system_actor(),
-                    notice(&format!("n{index}")),
-                    EventMeta::default(),
-                )
-                .await
-                .unwrap();
-        }
-        let state = store.save_snapshot(&thread).await.unwrap();
-        assert_eq!(state.last_seq, 5);
-        for index in 5..8 {
-            store
-                .append(
-                    &thread,
-                    system_actor(),
-                    notice(&format!("n{index}")),
-                    EventMeta::default(),
-                )
-                .await
-                .unwrap();
-        }
-        let restored = store.load_state(&thread).await.unwrap();
-        assert_eq!(restored.last_seq, 8);
-        assert_eq!(restored.notices.len(), 8);
-        let upto: i64 = sqlx::query("SELECT upto_seq FROM snapshots WHERE thread_id = ?")
-            .bind(thread.as_str())
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .get("upto_seq");
-        assert_eq!(upto, 5);
     }
 
     #[tokio::test]

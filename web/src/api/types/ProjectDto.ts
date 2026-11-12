@@ -9,7 +9,7 @@ export type ProjectDto = {
   defaultBranch: string;
   activeThreads: number;
   waitingApprovals: number;
-  lastActivityAt: bigint | null;
+  lastActivityAt: number | null;
   available: boolean;
-  createdAt: bigint;
+  createdAt: number;
 };

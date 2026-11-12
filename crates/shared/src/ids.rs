@@ -64,7 +64,3 @@ id_type!(ElicitationId);
 id_type!(CommentId);
 id_type!(QueueItemId);
 id_type!(InviteId);
-id_type!(AttachmentId);
-id_type!(DraftId);
-id_type!(TerminalId);
-id_type!(NotificationId);

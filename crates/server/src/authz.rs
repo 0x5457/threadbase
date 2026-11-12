@@ -7,7 +7,29 @@ use threadbase_core::require_write;
 use threadbase_shared::{ApiError, Role, ShareLevel};
 
 /// Return the effective role for a user, or `None` when the thread is not visible.
+///
+/// A globally read-only account is clamped to `viewer` even when a thread row
+/// says `editor`: the thread grant cannot raise the account-wide ceiling.
 pub async fn role_for_user(
+    pool: &SqlitePool,
+    thread_id: &str,
+    user: &CurrentUser,
+) -> Result<Option<Role>, ServerError> {
+    let role = raw_role_for_user(pool, thread_id, user).await?;
+    Ok(role.map(|role| clamp_role(user, role)))
+}
+
+fn clamp_role(user: &CurrentUser, role: Role) -> Role {
+    if user.is_admin() {
+        return Role::Owner;
+    }
+    match user.user.access {
+        threadbase_shared::UserAccess::Member => role,
+        _ => Role::Viewer,
+    }
+}
+
+async fn raw_role_for_user(
     pool: &SqlitePool,
     thread_id: &str,
     user: &CurrentUser,
@@ -22,7 +44,7 @@ pub async fn role_for_user(
             .fetch_optional(pool)
             .await?;
     if let Some(role) = member {
-        return Ok(Some(parse_role(&role)));
+        return Ok(Some(Role::parse(&role)));
     }
     let row: Option<(String, String)> =
         sqlx::query_as("SELECT created_by, share_level FROM threads WHERE id = ?")
@@ -35,7 +57,7 @@ pub async fn role_for_user(
     if created_by == user.user.id.as_str() {
         return Ok(Some(Role::Owner));
     }
-    if parse_share_level(&share_level) == ShareLevel::Workspace {
+    if ShareLevel::parse(&share_level) == ShareLevel::Workspace {
         return Ok(Some(Role::Viewer));
     }
     Ok(None)
@@ -77,21 +99,6 @@ pub async fn require_manage_role(
     }
 }
 
-fn parse_role(value: &str) -> Role {
-    match value {
-        "owner" => Role::Owner,
-        "editor" => Role::Editor,
-        _ => Role::Viewer,
-    }
-}
-
-fn parse_share_level(value: &str) -> ShareLevel {
-    match value {
-        "workspace" => ShareLevel::Workspace,
-        _ => ShareLevel::InviteOnly,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,11 +127,11 @@ mod tests {
                 display_name: "User".into(),
                 avatar_url: None,
                 is_admin: admin,
-                tailscale_login: None,
+                access: threadbase_shared::UserAccess::Member,
                 hidden_presence: false,
                 created_at: now_ms(),
             },
-            method: "tailscale",
+            method: "github",
         }
     }
 

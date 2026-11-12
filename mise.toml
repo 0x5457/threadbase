@@ -21,9 +21,6 @@ sources = [
   "web/index.html",
   "web/vite.config.ts",
   "web/tsconfig.json",
-  "web/tsconfig.app.json",
-  "web/tsconfig.node.json",
-  "web/eslint.config.js",
   "web/src/**",
 ]
 outputs = ["web/dist/**"]

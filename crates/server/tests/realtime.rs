@@ -6,8 +6,8 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tempfile::TempDir;
 use threadbase_draft::DraftDoc;
+use threadbase_server::app::AppState;
 use threadbase_server::config::Config;
-use threadbase_server::state::AppState;
 use threadbase_server::{db, routes};
 use threadbase_shared::{now_ms, EventEnvelope, ThreadEvent, ThreadId};
 use tokio::net::TcpListener;
@@ -20,6 +20,7 @@ use yrs::updates::encoder::Encode;
 
 struct Server {
     addr: String,
+    token: String,
     state: AppState,
     user_id: String,
     project_id: String,
@@ -33,10 +34,7 @@ async fn start() -> Server {
         data_dir: dir.path().to_path_buf(),
         db_path: dir.path().join("threadbase.db"),
         bind: "127.0.0.1:0".parse().unwrap(),
-        public_origin: None,
-        tailscale_admins: Vec::new(),
-        dev_identity: None,
-        log_json: false,
+        ..Config::default()
     };
     let pool = db::connect_memory().await.unwrap();
     let state = AppState::new(config, pool);
@@ -51,16 +49,18 @@ async fn start() -> Server {
         .await
         .unwrap();
     });
-    let user = threadbase_server::auth::ensure_tailscale_user(
+    let user = threadbase_server::auth::ensure_identity_user(
         &state.pool,
-        "ada@example.com",
-        Some("Ada"),
-        None,
+        &threadbase_server::auth::Identity::github("ada", Some("Ada"), None),
         &[],
     )
     .await
     .unwrap();
     let user_id = user.id.to_string();
+    let token =
+        threadbase_server::auth_session::create(&state.pool, &user_id, "github", None, None, 3600)
+            .await
+            .unwrap();
     let project_id = ulid::Ulid::new().to_string();
     let thread_id = ulid::Ulid::new().to_string();
     let now = now_ms();
@@ -90,6 +90,7 @@ async fn start() -> Server {
     .unwrap();
     Server {
         addr: addr.to_string(),
+        token,
         state,
         user_id,
         project_id,
@@ -105,9 +106,12 @@ async fn connect(
     let mut request = format!("ws://{}{path}", server.addr)
         .into_client_request()
         .unwrap();
-    request
-        .headers_mut()
-        .insert("tailscale-user-login", "ada@example.com".parse().unwrap());
+    request.headers_mut().insert(
+        "cookie",
+        format!("threadbase_session={}", server.token)
+            .parse()
+            .unwrap(),
+    );
     connect_async(request).await.unwrap().0
 }
 

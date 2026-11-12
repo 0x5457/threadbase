@@ -1,9 +1,9 @@
 //! Approval, elicitation and inbox routes.
 
+use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::authz;
 use crate::error::ServerError;
-use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::routing::{delete, get, post};
 use axum::Json;
@@ -40,7 +40,7 @@ async fn list_approvals(
     authz::require_read(&state.pool, &thread_id, &user).await?;
     Ok(Json(ApprovalsPageDto {
         approvals: crate::approvals::list_pending_for_thread(&state.pool, &thread_id).await?,
-        elicitations: crate::approvals::list_elicitations(&state.pool, &thread_id).await?,
+        elicitations: crate::elicitations::list_for_thread(&state.pool, &thread_id).await?,
     }))
 }
 
@@ -78,7 +78,7 @@ async fn decide_impl(
     // anything reaches the agent. A viewer must not be able to unblock a tool.
     let approval = crate::approvals::decide(
         &state.pool,
-        &state.state_store,
+        &state.projection,
         &state.events,
         approval_id,
         user,
@@ -132,9 +132,9 @@ async fn respond_elicitation(
     Path(elicitation_id): Path<String>,
     Json(request): Json<ElicitationResponseRequest>,
 ) -> Result<Json<ElicitationResolvedResponse>, ServerError> {
-    let elicitation = crate::approvals::respond_elicitation(
+    let elicitation = crate::elicitations::respond_for_user(
         &state.pool,
-        &state.state_store,
+        &state.projection,
         &state.events,
         &elicitation_id,
         &user,
@@ -169,7 +169,7 @@ async fn list_inbox(
 ) -> Result<Json<InboxPageDto>, ServerError> {
     let unread_only = query.filter.as_deref() == Some("unread");
     Ok(Json(
-        crate::approvals::list_inbox(&state.pool, &user, unread_only).await?,
+        crate::inbox::list(&state.pool, &user, unread_only).await?,
     ))
 }
 
@@ -178,7 +178,7 @@ async fn read_inbox(
     user: CurrentUser,
     Json(request): Json<InboxReadRequest>,
 ) -> Result<Json<OkResponse>, ServerError> {
-    crate::approvals::mark_inbox_read(
+    crate::inbox::mark_read(
         &state.pool,
         &user,
         request.thread_id.as_ref().map(|id| id.as_str()),

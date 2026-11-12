@@ -1,0 +1,283 @@
+/* ── sidebar ───────────────────────────────────────────────── */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: var(--chrome);
+  user-select: none;
+}
+
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar-inner {
+  padding: 6px 0 12px;
+}
+
+.brand-row {
+  height: 30px;
+  padding: 0 10px 0 12px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border-radius: 3px;
+  background: var(--brand);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.side-nav {
+  width: calc(100% - 8px);
+  height: 27px;
+  margin: 0 4px;
+  padding: 0 8px;
+  border-radius: 3px;
+  color: var(--ink);
+  --nl-hover: var(--hover);
+  --nl-color: var(--ink-muted);
+}
+
+.side-nav:hover {
+  background: var(--hover);
+}
+
+.side-nav[data-active] {
+  background: var(--selected);
+  color: var(--ink);
+}
+
+.side-nav .mantine-NavLink-body {
+  min-width: 0;
+}
+
+.side-nav .mantine-NavLink-label {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-nav .mantine-NavLink-section {
+  flex: none;
+}
+
+.side-nav .mantine-NavLink-section {
+  color: var(--ink-muted);
+}
+
+.side-nav[data-active] .mantine-NavLink-section {
+  color: var(--ink);
+}
+
+.side-nav .mantine-NavLink-chevron {
+  color: var(--ink-faint);
+}
+
+.side-nav:has(.mantine-NavLink-description) {
+  height: auto;
+  min-height: 36px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.side-nav .mantine-NavLink-description {
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mantine-TextInput-input:focus,
+.mantine-Select-input:focus,
+.mantine-Textarea-input:focus {
+  border-color: var(--ink);
+}
+
+.side-project {
+  position: relative;
+}
+
+.side-project .project-menu {
+  position: absolute;
+  top: 3px;
+  right: 24px;
+  opacity: 0;
+  color: var(--ink-muted);
+}
+
+.side-project:hover .project-menu,
+.side-project:focus-within .project-menu {
+  opacity: 1;
+}
+
+.approval-count {
+  color: #b8860b;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.inbox-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.avatar-stack .mantine-Indicator-root + .mantine-Indicator-root {
+  margin-left: -4px;
+}
+
+.side-nav .mantine-NavLink-children {
+  position: relative;
+}
+
+.side-nav .mantine-NavLink-children::before {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 18px;
+  border-left: 1px solid var(--line);
+  content: "";
+}
+
+.side-nav.add-project .mantine-NavLink-label {
+  color: var(--ink-muted);
+}
+
+.picker-path {
+  overflow: hidden;
+  flex: 1;
+  font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-row {
+  width: 100%;
+  height: auto;
+  min-height: 32px;
+  margin: 0;
+}
+
+.picker-row .mantine-NavLink-label {
+  font-size: 14px;
+}
+
+.picker-row .mantine-NavLink-description {
+  font-size: 11.5px;
+}
+
+.section {
+  margin-top: 14px;
+}
+
+.section-head {
+  height: 18px;
+  padding: 0 12px 4px;
+}
+
+.section-head .mantine-ActionIcon-root {
+  color: var(--ink-muted);
+  opacity: 0;
+}
+
+.section:hover .section-head .mantine-ActionIcon-root {
+  opacity: 1;
+}
+
+.dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--brand);
+}
+
+.dot.waiting {
+  background: #d19e04;
+}
+
+.dot.running,
+.dot.completed {
+  background: #3f8f4f;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #3f8f4f 16%, transparent);
+}
+
+.dot.failed {
+  background: var(--del);
+}
+
+.dot.idle {
+  background: var(--ink-faint);
+  box-shadow: none;
+}
+
+.dot.in_progress {
+  background: #3b82f6;
+}
+
+.dot.pending {
+  background: #d19e04;
+}
+
+.status-inline {
+  flex: none;
+}
+
+.watching-label {
+  margin-right: 4px;
+  color: var(--ink-muted);
+}
+
+.live-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  flex: none;
+  margin-right: 3px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+
+.live-dot.online {
+  background: #3f8f4f;
+}
+
+.live-dot.syncing {
+  background: #d19e04;
+}
+
+.mantine-Badge-root {
+  text-transform: none;
+}
+
+.sidebar-footer {
+  height: 44px;
+  flex: none;
+  border-top: 1px solid var(--line);
+  padding: 0 8px;
+}
+
+.sidebar-footer .meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.sidebar-footer .mantine-Text-root {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

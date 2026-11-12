@@ -1,0 +1,57 @@
+/* ── header ────────────────────────────────────────────────── */
+
+.header {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr) auto;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome);
+  user-select: none;
+}
+
+.header-left,
+.header-right {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 1px;
+  padding: 0 7px;
+}
+
+.header-left {
+  padding-left: 9px;
+}
+
+.header-center {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.doc-title {
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-right {
+  justify-content: flex-end;
+}
+
+.inbox-button {
+  position: relative;
+}
+
+.icon-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--brand);
+}
+

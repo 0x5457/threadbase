@@ -14,7 +14,7 @@ export type CommentDto = {
   anchor: CommentAnchor;
   anchorChanged: boolean;
   status: CommentStatus;
-  createdAt: bigint;
-  updatedAt: bigint;
-  deliveredSeq: bigint | null;
+  createdAt: number;
+  updatedAt: number;
+  deliveredSeq: number | null;
 };

@@ -8,9 +8,9 @@ import type { ThreadId } from "./ThreadId";
 import type { ToolCallId } from "./ToolCallId";
 
 export type EventEnvelope = {
-  seq: bigint;
+  seq: number;
   threadId: ThreadId;
-  ts: bigint;
+  ts: number;
   actor: Actor;
   origin: Origin;
   subagentId: SubagentId | null;

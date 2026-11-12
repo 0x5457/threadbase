@@ -2,4 +2,4 @@
 import type { Role } from "./Role";
 import type { UserBrief } from "./UserBrief";
 
-export type ThreadMemberDto = { user: UserBrief; role: Role; joinedAt: bigint };
+export type ThreadMemberDto = { user: UserBrief; role: Role; joinedAt: number };

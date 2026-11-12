@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Run the repository quality gates in parallel and print a one-line summary.
-# Usage: scripts/verify.sh [--with-e2e]
+# Usage: scripts/verify.sh
+#
+# The frontend gate is `tsc --noEmit && vite build` (`pnpm build` already runs
+# both). eslint and the Playwright suite were dropped with the v2 frontend, so
+# there is no lint or e2e target to call here; the audit scripts under web/audit
+# stay manual.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-
-WITH_E2E=0
-if [[ "${1:-}" == "--with-e2e" ]]; then
-  WITH_E2E=1
-fi
 
 pids=()
 names=()
@@ -27,11 +27,7 @@ run fmt cargo fmt --all --check
 run clippy env MBX_BLAZE=false cargo clippy --workspace --all-targets -- -D warnings
 run nextest env MBX_BLAZE=false cargo nextest run --workspace
 run typecheck pnpm --dir web typecheck
-run lint pnpm --dir web lint
 run build pnpm --dir web build
-if [[ "$WITH_E2E" -eq 1 ]]; then
-  run e2e pnpm --dir web exec playwright test
-fi
 
 for index in "${!pids[@]}"; do
   if wait "${pids[$index]}"; then

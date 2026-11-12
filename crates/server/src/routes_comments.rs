@@ -1,9 +1,9 @@
 //! Comment routes.
 
+use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::authz;
 use crate::error::ServerError;
-use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::routing::{get, patch, post};
 use axum::Json;
@@ -44,7 +44,7 @@ async fn create_comment(
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
     let comment = crate::comments::create(
         &state.pool,
-        &state.state_store,
+        &state.projection,
         &state.events,
         &thread_id,
         &user,
@@ -72,7 +72,7 @@ async fn update_comment(
     Ok(Json(CommentResponse {
         comment: crate::comments::update(
             &state.pool,
-            &state.state_store,
+            &state.projection,
             &state.events,
             &comment_id,
             &user,
@@ -119,7 +119,7 @@ async fn send_comment(
     Ok(Json(CommentResponse {
         comment: crate::comments::mark_delivered(
             &state.pool,
-            &state.state_store,
+            &state.projection,
             &state.events,
             &comment_id,
             &user,

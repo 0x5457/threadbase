@@ -1,13 +1,12 @@
 //! API level request and response envelopes.
 
 use crate::event::EventEnvelope;
-use crate::ids::{ApprovalId, CommentId, ElicitationId, ProjectId, QueueItemId, ThreadId};
+use crate::ids::{CommentId, ProjectId, ThreadId};
 use crate::model::{
-    ApprovalDecision, ApprovalDto, AuthStatusDto, BaselineDto, ChangeStats, ChangesDto,
-    CommentAnchor, CommentDto, CommentStatus, Delivery, DoctorReport, ElicitationAction,
-    ElicitationDto, FileChangeDto, FileContentDto, FileEntryDto, InboxItemDto, InviteDto,
-    ProjectDto, ProjectOverviewDto, QueueItemDto, Role, SearchResultDto, SettingsDto, ShareLevel,
-    ShareStateDto, SubagentDto, ThreadDto, ThreadMemberDto, UserBrief, UserDto,
+    ApprovalDecision, ApprovalDto, AuthStatusDto, BaselineDto, ChangesDto, CommentAnchor,
+    CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto, FileContentDto,
+    FileEntryDto, InboxItemDto, InviteDto, ProjectDto, QueueItemDto, Role, SettingsDto, ShareLevel,
+    ShareStateDto, SubagentDto, ThreadDto, ThreadMemberDto, UserAccess, UserBrief, UserDto,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,6 +17,7 @@ use ts_rs::TS;
 #[ts(export)]
 pub struct UpdateUserRequest {
     pub is_admin: bool,
+    pub access: UserAccess,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -217,14 +217,6 @@ pub struct MergeBackResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct QueueMutationRequest {
-    pub item_id: QueueItemId,
-    pub before_id: Option<QueueItemId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct SettingsPatch {
     pub theme: Option<String>,
     pub text_width: Option<String>,
@@ -255,6 +247,8 @@ pub struct EventsPageDto {
 pub struct ThreadBundleDto {
     pub thread: ThreadDto,
     pub project: ProjectDto,
+    /// Effective role of the caller in this thread; drives read-only UI.
+    pub role: Role,
     pub subagents: Vec<SubagentDto>,
     pub approvals: Vec<ApprovalDto>,
     pub elicitations: Vec<ElicitationDto>,
@@ -281,7 +275,6 @@ pub struct ThreadState {
     pub pending_elicitations: u32,
     pub queued_inputs: u32,
     pub active_subagents: u32,
-    pub diverged: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -303,24 +296,9 @@ pub struct InboxPageDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct SearchResponseDto {
-    pub results: Vec<SearchResultDto>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct FilesResponseDto {
     pub path: String,
     pub entries: Vec<FileEntryDto>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ChangesListResponseDto {
-    pub changes: ChangesDto,
-    pub files: Vec<FileChangeDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -417,13 +395,6 @@ pub struct ApiErrorBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct DoctorResponse {
-    pub report: DoctorReport,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct UserListResponse {
     pub users: Vec<UserDto>,
 }
@@ -441,15 +412,6 @@ pub struct ApprovalResolvedResponse {
 pub struct StateResponse {
     pub settings: SettingsDto,
     pub user: UserDto,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct BaselineResponse {
-    pub baseline: BaselineDto,
-    pub label: String,
-    pub stats: ChangeStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -508,20 +470,6 @@ pub struct CommentsResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct MembersResponse {
-    pub members: Vec<ThreadMemberDto>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct SubagentsResponse {
-    pub subagents: Vec<SubagentDto>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct ProjectResponse {
     pub project: ProjectDto,
 }
@@ -531,13 +479,6 @@ pub struct ProjectResponse {
 #[ts(export)]
 pub struct ProjectsResponse {
     pub projects: Vec<ProjectDto>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ProjectOverviewResponse {
-    pub overview: ProjectOverviewDto,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -564,13 +505,6 @@ pub struct ThreadsResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct FileDiffResponse {
-    pub diff: crate::model::FileDiffDto,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct QueueResponse {
     pub items: Vec<QueueItemDto>,
 }
@@ -585,13 +519,23 @@ pub struct ErrorResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct ApprovalIdPath {
-    pub approval_id: ApprovalId,
+pub struct FileSearchResponse {
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct ElicitationIdPath {
-    pub elicitation_id: ElicitationId,
+pub struct SkillDto {
+    pub name: String,
+    pub description: String,
+    pub source: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SkillsResponse {
+    pub skills: Vec<SkillDto>,
 }

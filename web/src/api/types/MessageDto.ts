@@ -15,5 +15,5 @@ export type MessageDto = {
   text: string;
   model: string | null;
   streaming: boolean;
-  createdAt: bigint;
+  createdAt: number;
 };

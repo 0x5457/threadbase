@@ -6,5 +6,5 @@ export type Participant = {
   user: UserBrief;
   role: Role;
   online: boolean;
-  lastSeenAt: bigint | null;
+  lastSeenAt: number | null;
 };

@@ -72,7 +72,6 @@ pub struct AcpHarness {
     cwd: Option<PathBuf>,
     model: Option<String>,
     effort: Option<String>,
-    config_options: Vec<agent_client_protocol::v1::schema::SessionConfigOption>,
     capabilities: Capabilities,
     agent_info: Option<AgentIdentity>,
     shutdown: Option<watch::Sender<bool>>,
@@ -92,7 +91,6 @@ impl AcpHarness {
             cwd: None,
             model: None,
             effort: None,
-            config_options: Vec::new(),
             capabilities: Capabilities::default(),
             agent_info: None,
             shutdown: None,
@@ -383,7 +381,10 @@ impl Harness for AcpHarness {
             .await
             .map_err(|error| HarnessError::Protocol(error.to_string()))?;
         let session = SessionId(response.session_id.0.to_string());
-        self.config_options = response.config_options.clone().unwrap_or_default();
+        {
+            let mut state = lock_state(&self.state);
+            state.config_options = response.config_options.clone().unwrap_or_default();
+        }
         reset_session(&mut lock_state(&self.state), &session.0);
         self.session = Some(session.clone());
         if let (Some(model), Some(option)) = (
@@ -445,7 +446,7 @@ impl Harness for AcpHarness {
     async fn load_session(&mut self, id: &SessionId) -> HarnessResult<()> {
         let connection = self.connection()?.clone();
         let cwd = self.cwd.clone().ok_or(HarnessError::NotRunning)?;
-        connection
+        let response = connection
             .send_request(LoadSessionRequest::new(
                 AcpSessionId::new(id.0.as_str()),
                 cwd,
@@ -454,12 +455,19 @@ impl Harness for AcpHarness {
             .await
             .map_err(|error| HarnessError::Protocol(error.to_string()))?;
         reset_session(&mut lock_state(&self.state), &id.0);
+        // `session/load` re-announces the session configuration; without this a
+        // resumed thread reported "does not advertise models" even though the
+        // agent advertised them moments earlier in `session/new`.
+        if let Some(options) = response.config_options {
+            lock_state(&self.state).config_options = options;
+        }
         self.session = Some(id.clone());
         Ok(())
     }
 
     fn config_options(&self) -> Vec<threadbase_shared::AgentConfigOptionDto> {
-        self.config_options
+        lock_state(&self.state)
+            .config_options
             .iter()
             .map(|option| {
                 use threadbase_shared::{AgentConfigOptionDto, AgentConfigValueDto};
@@ -520,8 +528,9 @@ impl Harness for AcpHarness {
     async fn set_config(&mut self, model: Option<&str>, effort: Option<&str>) -> HarnessResult<()> {
         let connection = self.connection()?.clone();
         let session = self.active_session()?.clone();
+        let advertised = lock_state(&self.state).config_options.clone();
         let set_one = |category: SessionConfigOptionCategory, value: &str| {
-            self.config_options
+            advertised
                 .iter()
                 .find(|option| matches!(option.category, Some(ref c) if *c == category))
                 .map(|option| (option.id.clone(), value.to_owned()))
@@ -545,8 +554,9 @@ impl Harness for AcpHarness {
                 });
             }
         }
+        let mut updated = None;
         for (id, value) in requests {
-            connection
+            let response = connection
                 .send_request(SetSessionConfigOptionRequest::new(
                     AcpSessionId::new(session.0.as_str()),
                     id,
@@ -555,6 +565,12 @@ impl Harness for AcpHarness {
                 .block_task()
                 .await
                 .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+            updated = Some(response.config_options);
+        }
+        if let Some(options) = updated {
+            if !options.is_empty() {
+                lock_state(&self.state).config_options = options;
+            }
         }
         Ok(())
     }
@@ -775,6 +791,10 @@ impl Drop for AcpHarness {
 #[derive(Default)]
 struct HarnessState {
     session_id: Option<String>,
+    /// Options the agent advertised for the current session. They arrive in the
+    /// `session/new` or `session/load` response and can be replaced at any time
+    /// by a `config_option_update` notification, so they are shared state.
+    config_options: Vec<agent_client_protocol::v1::schema::SessionConfigOption>,
     turn_seq: u64,
     request_seq: u64,
     running_turn: Option<String>,
@@ -1042,6 +1062,11 @@ fn handle_session_notification(
         }
         SessionUpdate::SubagentUpdate(update) => {
             handle_subagent_update(state, bus, &origin, &update);
+        }
+        SessionUpdate::ConfigOptionUpdate(update) => {
+            // Agents re-announce the full option set when the session is
+            // reloaded or a model changes underneath us.
+            lock_state(state).config_options = update.config_options;
         }
         SessionUpdate::SessionMessage(message) => {
             let text = message

@@ -44,6 +44,25 @@ pub async fn report(config: &Config) -> DoctorReport {
     if agents.iter().all(|agent| !agent.installed) {
         warnings.push("No agent adapter is installed".to_owned());
     }
+    if config.github.is_some() && config.public_origin.is_none() {
+        warnings.push(
+            "THREADBASE_GITHUB_CLIENT_ID is set but THREADBASE_PUBLIC_ORIGIN is missing; \
+             the OAuth callback cannot be built"
+                .to_owned(),
+        );
+    }
+    if config.github.is_none() {
+        warnings.push(
+            "GitHub sign-in is not configured; only THREADBASE_DEV_IDENTITY can sign in".to_owned(),
+        );
+    }
+    if config
+        .public_origin
+        .as_deref()
+        .is_some_and(|origin| !origin.starts_with("https://"))
+    {
+        warnings.push("THREADBASE_PUBLIC_ORIGIN must be an https origin".to_owned());
+    }
     let database_ok = match crate::db::connect(&config.db_path).await {
         Ok(pool) => {
             let _ = sqlx::query_scalar::<_, i64>("SELECT 1")

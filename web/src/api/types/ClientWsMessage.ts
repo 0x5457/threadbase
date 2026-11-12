@@ -5,7 +5,7 @@ import type { ProjectId } from "./ProjectId";
 import type { ThreadId } from "./ThreadId";
 
 export type ClientWsMessage =
-  | { "type": "subscribe"; threadId: ThreadId; afterSeq: bigint }
+  | { "type": "subscribe"; threadId: ThreadId; afterSeq: number }
   | { "type": "unsubscribe"; threadId: ThreadId }
   | {
     "type": "presence";

@@ -1,51 +1,35 @@
 /**
- * Keeps the app shell pinned to the *visible* viewport.
- *
- * `100dvh` tracks browser chrome, but on iOS the software keyboard changes
- * only the visual viewport: the layout viewport stays at full height and the
- * bottom composer would sit underneath the keyboard. Mirroring the visual
- * viewport height into `--tb-app-height` shrinks the shell — and with it the
- * timeline and composer — to exactly the area above the keyboard.
- *
- * The value is written from `visualViewport`, where supported, and the CSS
- * falls back to `100dvh` (and then `100%`) everywhere else.
+ * Keeps the app shell inside the visual viewport on phones, so the composer
+ * stays above the software keyboard. iOS does not resize the layout viewport
+ * when the keyboard opens; Android Chrome does (interactive-widget).
  */
-export function installVisualViewportSync(): () => void {
-  const root = document.documentElement;
+export function installVisualViewportSync() {
   const viewport = window.visualViewport;
+  if (!viewport) return;
 
-  if (!viewport) {
-    return () => {};
-  }
-
+  const root = document.documentElement;
+  const phone = window.matchMedia("(max-width: 48em)");
   let frame = 0;
 
-  const apply = () => {
-    frame = 0;
-    // A pinch-zoomed viewport reports only the zoomed-in slice. Shrinking the
-    // shell then would be wrong — the user zoomed in, the keyboard did not
-    // open. Keep the last keyboard-free height instead.
-    if (viewport.scale !== 1) {
-      return;
-    }
-    root.style.setProperty("--tb-app-height", `${viewport.height}px`);
+  const update = () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      if (!phone.matches) {
+        root.style.removeProperty("--app-height");
+        root.style.removeProperty("--app-offset");
+        return;
+      }
+      root.style.setProperty("--app-height", `${Math.round(viewport.height)}px`);
+      root.style.setProperty(
+        "--app-offset",
+        `${Math.round(viewport.offsetTop)}px`,
+      );
+    });
   };
 
-  const schedule = () => {
-    if (frame !== 0) {
-      return;
-    }
-    frame = window.requestAnimationFrame(apply);
-  };
-
-  viewport.addEventListener("resize", schedule);
-  viewport.addEventListener("scroll", schedule);
-  apply();
-
-  return () => {
-    window.cancelAnimationFrame(frame);
-    viewport.removeEventListener("resize", schedule);
-    viewport.removeEventListener("scroll", schedule);
-    root.style.removeProperty("--tb-app-height");
-  };
+  update();
+  viewport.addEventListener("resize", update);
+  viewport.addEventListener("scroll", update);
+  window.addEventListener("orientationchange", update);
+  phone.addEventListener("change", update);
 }

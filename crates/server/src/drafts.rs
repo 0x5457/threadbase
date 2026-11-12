@@ -1,7 +1,7 @@
 //! Per-thread collaborative draft rooms over the Yjs sync protocol.
 
+use crate::app::AppState;
 use crate::auth::CurrentUser;
-use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::response::Response;

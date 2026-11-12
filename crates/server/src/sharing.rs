@@ -3,7 +3,6 @@
 use crate::auth::{audit, CurrentUser};
 use crate::error::ServerError;
 use crate::events::EventStore;
-use crate::threads;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use threadbase_shared::api::{CreateInviteRequest, InviteResponse};
@@ -24,7 +23,6 @@ pub async fn add_member(
     let target = crate::auth::load_user_by_username(pool, username.trim())
         .await?
         .ok_or_else(|| ServerError(ApiError::not_found("user not found")))?;
-    let role_value = role_str(role);
     let now = now_ms();
     sqlx::query(
         "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, ?, ?)
@@ -32,7 +30,7 @@ pub async fn add_member(
     )
     .bind(thread_id)
     .bind(target.id.as_str())
-    .bind(role_value)
+    .bind(role.as_str())
     .bind(now)
     .execute(pool)
     .await?;
@@ -95,7 +93,7 @@ pub async fn update_member(
     }
     let result =
         sqlx::query("UPDATE thread_members SET role = ? WHERE thread_id = ? AND user_id = ?")
-            .bind(role_str(role))
+            .bind(role.as_str())
             .bind(thread_id)
             .bind(target_id)
             .execute(pool)
@@ -188,7 +186,7 @@ pub async fn create_invite(
         )
         .bind(thread_id)
         .bind(target.id.as_str())
-        .bind(role_str(role))
+        .bind(role.as_str())
         .bind(now)
         .execute(pool)
         .await?;
@@ -218,7 +216,7 @@ pub async fn create_invite(
     .bind(&id)
     .bind(thread_id)
     .bind(&hash)
-    .bind(role_str(role))
+    .bind(role.as_str())
     .bind(request.email.as_deref())
     .bind(actor.user.id.as_str())
     .bind(now)
@@ -270,14 +268,14 @@ pub async fn accept_invite(
     if expires_at < now_ms() {
         return Err(ServerError(ApiError::conflict("invite expired")));
     }
-    let role = parse_role(&role);
+    let role = threadbase_shared::Role::parse(&role);
     sqlx::query(
         "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, ?, ?)
          ON CONFLICT(thread_id, user_id) DO UPDATE SET role = excluded.role",
     )
     .bind(&thread_id)
     .bind(user.user.id.as_str())
-    .bind(role_str(role))
+    .bind(role.as_str())
     .bind(now_ms())
     .execute(pool)
     .await?;
@@ -325,28 +323,9 @@ fn actor_brief(user: &CurrentUser) -> UserBrief {
     brief(&user.user)
 }
 
-fn role_str(role: threadbase_shared::Role) -> &'static str {
-    match role {
-        threadbase_shared::Role::Owner => "owner",
-        threadbase_shared::Role::Editor => "editor",
-        threadbase_shared::Role::Viewer => "viewer",
-    }
-}
-
-fn parse_role(value: &str) -> threadbase_shared::Role {
-    match value {
-        "owner" => threadbase_shared::Role::Owner,
-        "editor" => threadbase_shared::Role::Editor,
-        _ => threadbase_shared::Role::Viewer,
-    }
-}
-
 fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
-
-#[allow(dead_code)]
-fn _unused(_: &threads::ThreadRow) {}
 
 use axum::extract::{Path, State};
 use axum::routing::{patch, post};
@@ -354,7 +333,7 @@ use axum::Json;
 use axum::Router;
 use threadbase_shared::api::{AddMemberRequest, UpdateMemberRequest, UpdateShareRequest};
 
-pub fn router() -> Router<crate::state::AppState> {
+pub fn router() -> Router<crate::app::AppState> {
     Router::new()
         .route("/api/threads/{thread_id}/members", post(add_member_route))
         .route(
@@ -378,7 +357,7 @@ pub fn router() -> Router<crate::state::AppState> {
 }
 
 async fn add_member_route(
-    State(state): State<crate::state::AppState>,
+    State(state): State<crate::app::AppState>,
     user: CurrentUser,
     Path(thread_id): Path<String>,
     Json(request): Json<AddMemberRequest>,
@@ -398,7 +377,7 @@ async fn add_member_route(
 }
 
 async fn update_member_route(
-    State(state): State<crate::state::AppState>,
+    State(state): State<crate::app::AppState>,
     user: CurrentUser,
     Path((thread_id, target_id)): Path<(String, String)>,
     Json(request): Json<UpdateMemberRequest>,
@@ -418,7 +397,7 @@ async fn update_member_route(
 }
 
 async fn remove_member_route(
-    State(state): State<crate::state::AppState>,
+    State(state): State<crate::app::AppState>,
     user: CurrentUser,
     Path((thread_id, target_id)): Path<(String, String)>,
 ) -> Result<Json<threadbase_shared::OkResponse>, ServerError> {
@@ -428,7 +407,7 @@ async fn remove_member_route(
 }
 
 async fn create_invite_route(
-    State(state): State<crate::state::AppState>,
+    State(state): State<crate::app::AppState>,
     user: CurrentUser,
     Path(thread_id): Path<String>,
     Json(request): Json<CreateInviteRequest>,
@@ -440,7 +419,7 @@ async fn create_invite_route(
 }
 
 async fn revoke_invite_route(
-    State(state): State<crate::state::AppState>,
+    State(state): State<crate::app::AppState>,
     user: CurrentUser,
     Path((thread_id, invite_id)): Path<(String, String)>,
 ) -> Result<Json<threadbase_shared::OkResponse>, ServerError> {
@@ -450,7 +429,7 @@ async fn revoke_invite_route(
 }
 
 async fn accept_invite_route(
-    State(state): State<crate::state::AppState>,
+    State(state): State<crate::app::AppState>,
     user: CurrentUser,
     Path(token): Path<String>,
 ) -> Result<Json<threadbase_shared::ThreadMemberDto>, ServerError> {
@@ -458,7 +437,7 @@ async fn accept_invite_route(
 }
 
 async fn set_share_route(
-    State(state): State<crate::state::AppState>,
+    State(state): State<crate::app::AppState>,
     user: CurrentUser,
     Path(thread_id): Path<String>,
     Json(request): Json<UpdateShareRequest>,
@@ -496,34 +475,12 @@ pub async fn revoke_invite(
 }
 
 async fn request_access_route(
-    State(state): State<crate::state::AppState>,
+    State(state): State<crate::app::AppState>,
     user: CurrentUser,
     Path(thread_id): Path<String>,
 ) -> Result<Json<threadbase_shared::OkResponse>, ServerError> {
     crate::authz::require_read(&state.pool, &thread_id, &user).await?;
-    let members: Vec<(String, String)> =
-        sqlx::query_as("SELECT user_id, role FROM thread_members WHERE thread_id = ?")
-            .bind(&thread_id)
-            .fetch_all(&state.pool)
-            .await?;
-    let actor = brief(&user.user);
-    for (user_id, role) in members {
-        if user_id == user.user.id.as_str() || role == "viewer" {
-            continue;
-        }
-        sqlx::query(
-            "INSERT INTO inbox(id, user_id, kind, thread_id, actor_id, summary, created_at)
-             VALUES(?, ?, 'access', ?, ?, ?, ?)",
-        )
-        .bind(Ulid::new().to_string())
-        .bind(&user_id)
-        .bind(&thread_id)
-        .bind(user.user.id.as_str())
-        .bind(format!("{} requested edit access", actor.display_name))
-        .bind(now_ms())
-        .execute(&state.pool)
-        .await?;
-    }
+    crate::inbox::request_access(&state.pool, &thread_id, &user).await?;
     Ok(Json(threadbase_shared::OkResponse { ok: true }))
 }
 
@@ -543,13 +500,11 @@ mod tests {
             .unwrap();
         let actor = CurrentUser {
             user: owner,
-            method: "tailscale",
+            method: "github",
         };
-        let target = crate::auth::ensure_tailscale_user(
+        let target = crate::auth::ensure_identity_user(
             &pool,
-            "invitee@example.com",
-            Some("Invitee"),
-            None,
+            &crate::auth::Identity::github("invitee", Some("Invitee"), None),
             &[],
         )
         .await
@@ -569,7 +524,7 @@ mod tests {
         assert!(!invite.token.is_empty());
         let invitee = CurrentUser {
             user: target.clone(),
-            method: "tailscale",
+            method: "github",
         };
         let member = accept_invite(&pool, &invite.token, &invitee).await.unwrap();
         assert_eq!(member.user.id, target.id);

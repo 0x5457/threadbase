@@ -11,6 +11,6 @@ export type QueueItemDto = {
   text: string;
   status: QueueStatus;
   position: number;
-  createdAt: bigint;
+  createdAt: number;
   superseded: boolean;
 };

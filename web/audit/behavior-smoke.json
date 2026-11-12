@@ -1,0 +1,66 @@
+{
+  "checkedAt": "2026-11-11T20:02:29.128Z",
+  "baseUrl": "http://127.0.0.1:5173",
+  "threadIds": {
+    "wire": "01M75KYCF0JDZ5E11C9BAZ44BZ",
+    "other": "01M75MKEATRSHM2WTGTCQMR7F3"
+  },
+  "checks": [
+    {
+      "name": "real account in sidebar footer",
+      "pass": true,
+      "detail": "A /  / ada@example.com /  / @ada"
+    },
+    {
+      "name": "real account in composer",
+      "pass": true,
+      "detail": "\"A\""
+    },
+    {
+      "name": "live online indicator in title bar",
+      "pass": true,
+      "detail": "1"
+    },
+    {
+      "name": "inbox dot reflects unread state",
+      "pass": true,
+      "detail": "unread=2 dots=1"
+    },
+    {
+      "name": "inbox dot clears after mark all read",
+      "pass": true,
+      "detail": "unread=0 dots=0"
+    },
+    {
+      "name": "terminal subagent has no Cancel action",
+      "pass": true,
+      "detail": "0"
+    },
+    {
+      "name": "default diff baseline applied",
+      "pass": true,
+      "detail": "Changes /  / Since Last turn / "
+    },
+    {
+      "name": "changes panel resets across threads",
+      "pass": true,
+      "detail": "Changes /  / Since Last turn / "
+    },
+    {
+      "name": "review form resets on reopen",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "no unreachable share-link control",
+      "pass": true,
+      "detail": "0"
+    },
+    {
+      "name": "share form resets on reopen",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "consoleErrors": []
+}

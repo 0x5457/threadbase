@@ -2,9 +2,11 @@
 //! is running right now.
 //!
 //! The command writes the unit, enables lingering so the service survives
-//! logout, starts it, and points `tailscale serve` at the loopback port. It
+//! logout, starts it, and points a Tailscale endpoint at the loopback port. It
 //! never builds, copies or downloads anything: `ExecStart` is the current
-//! executable.
+//! executable. GitHub OAuth needs a public HTTPS callback, so `--funnel` is what
+//! most deployments want; `tailscale serve` stays available for tailnet-only
+//! installs.
 
 use anyhow::{bail, Context};
 use std::path::{Component, Path, PathBuf};
@@ -21,6 +23,7 @@ pub struct Options {
     pub https_port: u16,
     pub admin: Option<String>,
     pub public_origin: Option<String>,
+    pub funnel: bool,
     pub skip_serve: bool,
     pub skip_start: bool,
     pub print_only: bool,
@@ -35,6 +38,7 @@ impl Default for Options {
             https_port: DEFAULT_HTTPS_PORT,
             admin: None,
             public_origin: None,
+            funnel: false,
             skip_serve: false,
             skip_start: false,
             print_only: false,
@@ -50,6 +54,7 @@ pub fn parse_args(mut args: impl Iterator<Item = String>) -> anyhow::Result<Opti
             "--print" | "--dry-run" => options.print_only = true,
             "--uninstall" => options.uninstall = true,
             "--no-serve" => options.skip_serve = true,
+            "--funnel" => options.funnel = true,
             "--no-start" => options.skip_start = true,
             "--unit" => options.unit = value(&mut args, "--unit")?,
             "--port" => {
@@ -84,20 +89,29 @@ pub fn print_help() {
         "\
 Usage: threadbase install [options]
 
-Configure a systemd user service for this binary and expose it on the tailnet.
+Configure a systemd user service for this binary and expose it over HTTPS.
 Nothing is built, copied or downloaded: the unit runs the current executable.
 
 Options:
   --port <port>          Loopback port the server binds (default 7777)
-  --https-port <port>    Port `tailscale serve` exposes (default 8443)
-  --admin <login>        Pin THREADBASE_TAILSCALE_ADMIN to this login
+  --https-port <port>    Port the Tailscale endpoint exposes (default 8443)
+  --funnel               Expose publicly with `tailscale funnel` (GitHub OAuth
+                         needs this); default is tailnet-only `tailscale serve`
+  --admin <login>        Pin THREADBASE_ADMINS to this GitHub login
   --public-origin <url>  Pin THREADBASE_PUBLIC_ORIGIN instead of deriving it
   --unit <name>          systemd unit name (default threadbase)
-  --no-serve             Do not touch `tailscale serve`
+  --no-serve             Do not touch `tailscale serve` / `tailscale funnel`
   --no-start             Write the unit but do not enable or start it
   --print                Print the unit and commands, change nothing
-  --uninstall            Stop and remove the unit, turn off `tailscale serve`
+  --uninstall            Stop and remove the unit, turn the endpoint off
   --help                 Print this help
+
+Secrets belong in ~/.config/threadbase/env (the unit loads it with
+EnvironmentFile= and never stores them itself):
+
+  THREADBASE_GITHUB_CLIENT_ID=...
+  THREADBASE_GITHUB_CLIENT_SECRET=...
+  THREADBASE_GITHUB_ALLOW=octocat,ada
 
 The unit is written to ~/.config/systemd/user/<unit>.service and enabled with
 lingering so it survives logout and reboot. Data is left untouched."
@@ -136,14 +150,14 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
         admin: options.admin.as_deref(),
         path_env: std::env::var("PATH").ok().as_deref(),
     });
-    let serve_args = serve_arguments(options.https_port, options.port);
+    let serve_args = expose_arguments(options.funnel, options.https_port, options.port);
 
     if options.print_only {
         println!("# {}", unit_path.display());
         print!("{unit}");
         println!();
         if !options.skip_serve {
-            println!("# tailnet exposure");
+            println!("# https exposure");
             println!("tailscale {}", serve_args.join(" "));
         }
         if !options.skip_start {
@@ -201,20 +215,30 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
     }
 
     if options.skip_serve {
-        println!("Skipped `tailscale serve` (--no-serve).");
+        println!("Skipped `tailscale serve` / `tailscale funnel` (--no-serve).");
     } else {
         let serve_refs: Vec<&str> = serve_args.iter().map(String::as_str).collect();
         match run_quiet("tailscale", &serve_refs) {
             Ok(()) => println!(
-                "Exposed on the tailnet: https://{}:{}",
+                "Exposed {}: https://{}:{}",
+                if options.funnel {
+                    "publicly with Tailscale Funnel"
+                } else {
+                    "on the tailnet"
+                },
                 tailnet_host
                     .as_deref()
                     .unwrap_or("<machine>.<tailnet>.ts.net"),
                 options.https_port
             ),
             Err(error) => {
-                eprintln!("warning: `tailscale serve` failed: {error}");
+                eprintln!("warning: `tailscale {}` failed: {error}", serve_args[0]);
                 eprintln!("         run: sudo tailscale {}", serve_args.join(" "));
+                if options.funnel {
+                    eprintln!(
+                        "         Funnel also needs the `funnel` node attribute in the tailscale ACL."
+                    );
+                }
             }
         }
     }
@@ -234,7 +258,8 @@ fn print_next_steps(options: &Options, public_origin: &Option<String>) {
             options.https_port
         ),
     }
-    println!("The first Tailscale identity to sign in becomes the administrator.");
+    println!("Sign in with GitHub. Set THREADBASE_GITHUB_ALLOW to control who may.");
+    println!("The first identity to sign in becomes the administrator.");
     println!("Logs: journalctl --user -u {} -f", options.unit);
     println!("Remove: threadbase install --uninstall");
 }
@@ -267,6 +292,7 @@ async fn uninstall(options: &Options, unit_path: &Path) -> anyhow::Result<()> {
         println!("rm {}", unit_path.display());
         println!("systemctl --user daemon-reload");
         if !options.skip_serve {
+            println!("tailscale funnel --https={} off", options.https_port);
             println!("tailscale serve --https={} off", options.https_port);
         }
         return Ok(());
@@ -280,12 +306,11 @@ async fn uninstall(options: &Options, unit_path: &Path) -> anyhow::Result<()> {
     }
     let _ = run_quiet("systemctl", &["--user", "daemon-reload"]);
     if !options.skip_serve {
-        let _ = run_quiet(
-            "tailscale",
-            &["serve", &format!("--https={}", options.https_port), "off"],
-        );
+        let port = format!("--https={}", options.https_port);
+        let _ = run_quiet("tailscale", &["funnel", &port, "off"]);
+        let _ = run_quiet("tailscale", &["serve", &port, "off"]);
         println!(
-            "Turned off `tailscale serve` on port {}",
+            "Turned off the Tailscale endpoint on port {}",
             options.https_port
         );
     }
@@ -324,8 +349,10 @@ fn render_unit(spec: &UnitSpec<'_>) -> String {
         unit.push_str(&format!("Environment=THREADBASE_PUBLIC_ORIGIN={origin}\n"));
     }
     if let Some(admin) = spec.admin {
-        unit.push_str(&format!("Environment=THREADBASE_TAILSCALE_ADMIN={admin}\n"));
+        unit.push_str(&format!("Environment=THREADBASE_ADMINS={admin}\n"));
     }
+    // Secrets stay out of the unit, which systemd reads as a world-readable file.
+    unit.push_str("EnvironmentFile=-%h/.config/threadbase/env\n");
     // Agent adapters usually live in PATH entries the login shell adds.
     if let Some(path) = spec.path_env {
         let mut seen: Vec<&str> = Vec::new();
@@ -346,9 +373,9 @@ fn render_unit(spec: &UnitSpec<'_>) -> String {
 }
 
 /// Full argv for `tailscale`, including the subcommand.
-fn serve_arguments(https_port: u16, port: u16) -> Vec<String> {
+fn expose_arguments(funnel: bool, https_port: u16, port: u16) -> Vec<String> {
     vec![
-        "serve".to_owned(),
+        if funnel { "funnel" } else { "serve" }.to_owned(),
         "--bg".to_owned(),
         format!("--https={https_port}"),
         format!("http://127.0.0.1:{port}"),
@@ -488,7 +515,8 @@ mod tests {
         assert!(unit.contains("Environment=THREADBASE_BIND=127.0.0.1:7777"));
         assert!(unit.contains("THREADBASE_DATA_DIR=/home/ada/.local/share/threadbase"));
         assert!(unit.contains("THREADBASE_PUBLIC_ORIGIN=https://machine.tailnet.ts.net:8443"));
-        assert!(unit.contains("THREADBASE_TAILSCALE_ADMIN=ada@example.com"));
+        assert!(unit.contains("THREADBASE_ADMINS=ada@example.com"));
+        assert!(unit.contains("EnvironmentFile=-%h/.config/threadbase/env"));
         assert!(unit.contains("\"PATH=/usr/local/bin:/usr/bin\""), "{unit}");
         assert!(unit.contains("WantedBy=default.target"));
         assert!(
@@ -508,16 +536,20 @@ mod tests {
             path_env: None,
         });
         assert!(!unit.contains("THREADBASE_PUBLIC_ORIGIN"));
-        assert!(!unit.contains("THREADBASE_TAILSCALE_ADMIN"));
+        assert!(!unit.contains("THREADBASE_ADMINS"));
         assert!(!unit.contains("PATH="));
         assert!(unit.contains("THREADBASE_BIND=127.0.0.1:7788"));
     }
 
     #[test]
-    fn serve_arguments_expose_the_loopback_port() {
+    fn expose_arguments_cover_serve_and_funnel() {
         assert_eq!(
-            serve_arguments(8443, 7777),
+            expose_arguments(false, 8443, 7777),
             vec!["serve", "--bg", "--https=8443", "http://127.0.0.1:7777"]
+        );
+        assert_eq!(
+            expose_arguments(true, 443, 7777),
+            vec!["funnel", "--bg", "--https=443", "http://127.0.0.1:7777"]
         );
     }
 
@@ -530,7 +562,8 @@ mod tests {
                 "--https-port",
                 "9443",
                 "--admin",
-                "ada@example.com",
+                "octocat",
+                "--funnel",
                 "--no-serve",
                 "--print",
             ]
@@ -540,7 +573,8 @@ mod tests {
         .unwrap();
         assert_eq!(options.port, 7788);
         assert_eq!(options.https_port, 9443);
-        assert_eq!(options.admin.as_deref(), Some("ada@example.com"));
+        assert_eq!(options.admin.as_deref(), Some("octocat"));
+        assert!(options.funnel);
         assert!(options.skip_serve);
         assert!(options.print_only);
         assert!(!options.uninstall);

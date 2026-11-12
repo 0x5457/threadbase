@@ -4,9 +4,9 @@ use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
+use threadbase_server::app::AppState;
 use threadbase_server::auth::CurrentUser;
 use threadbase_server::events::EventStore;
-use threadbase_server::state::AppState;
 use threadbase_server::{agents, auth, db, projects, threads};
 use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest};
 use threadbase_shared::{ApprovalDecision, ElicitationAction, ThreadEvent};
@@ -41,6 +41,25 @@ fn fixture_binary() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// Issues a real session cookie value for an identity created by `fixture`.
+async fn session_for(fixture: &Fixture, login: &str) -> String {
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE identity_key = ?")
+        .bind(format!("github:{login}"))
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+    threadbase_server::auth_session::create(
+        &fixture.state.pool,
+        &user_id,
+        "github",
+        None,
+        None,
+        3600,
+    )
+    .await
+    .unwrap()
+}
+
 async fn fixture() -> Option<Fixture> {
     let binary = fixture_binary()?;
     std::env::set_var("THREADBASE_ACP_COMMAND", &binary);
@@ -50,12 +69,16 @@ async fn fixture() -> Option<Fixture> {
     let journal_path = data.path().join("journal.log");
     std::env::set_var("FAKE_AGENT_JOURNAL", &journal_path);
     let pool = db::connect_memory().await.unwrap();
-    let user = auth::ensure_tailscale_user(&pool, "ada@example.com", Some("Ada"), None, &[])
-        .await
-        .unwrap();
+    let user = auth::ensure_identity_user(
+        &pool,
+        &auth::Identity::github("ada", Some("Ada"), None),
+        &[],
+    )
+    .await
+    .unwrap();
     let current = CurrentUser {
         user: user.clone(),
-        method: "tailscale",
+        method: "github",
     };
     let state = AppState::new(
         threadbase_server::config::Config {
@@ -63,9 +86,7 @@ async fn fixture() -> Option<Fixture> {
             db_path: data.path().join("threadbase.db"),
             bind: "127.0.0.1:7777".parse().unwrap(),
             public_origin: None,
-            tailscale_admins: Vec::new(),
-            dev_identity: None,
-            log_json: false,
+            ..threadbase_server::config::Config::default()
         },
         pool,
     );
@@ -81,7 +102,7 @@ async fn fixture() -> Option<Fixture> {
     .unwrap();
     let thread = threads::create(
         &state.pool,
-        &state.state_store,
+        &state.projection,
         data.path(),
         &current,
         project.id.as_str(),
@@ -234,7 +255,7 @@ async fn fake_agent_streams_tools_and_permissions() {
     };
     threadbase_server::approvals::decide(
         &fixture.state.pool,
-        &fixture.state.state_store,
+        &fixture.state.projection,
         &fixture.state.events,
         approval.id.as_str(),
         &fixture.user,
@@ -279,9 +300,9 @@ async fn fake_agent_streams_tools_and_permissions() {
     let ThreadEvent::ElicitationRequested { elicitation } = question else {
         unreachable!();
     };
-    threadbase_server::approvals::respond_elicitation(
+    threadbase_server::elicitations::respond_for_user(
         &fixture.state.pool,
-        &fixture.state.state_store,
+        &fixture.state.projection,
         &fixture.state.events,
         elicitation.id.as_str(),
         &fixture.user,
@@ -371,7 +392,7 @@ async fn fake_agent_streams_tools_and_permissions() {
     // A thread created with an initial prompt must actually start the agent and run it.
     let second = threads::create(
         &fixture.state.pool,
-        &fixture.state.state_store,
+        &fixture.state.projection,
         fixture.data.path(),
         &fixture.user,
         fixture.project.id.as_str(),
@@ -412,7 +433,7 @@ async fn fake_agent_streams_tools_and_permissions() {
     let _ = agents::AgentManager::new(
         fixture.state.pool.clone(),
         EventStore::new(fixture.state.pool.clone()),
-        fixture.state.state_store.clone(),
+        fixture.state.projection.clone(),
     );
 }
 
@@ -427,11 +448,9 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
-    let viewer = auth::ensure_tailscale_user(
+    let viewer = auth::ensure_identity_user(
         &fixture.state.pool,
-        "viewer@example.com",
-        Some("Viewer"),
-        None,
+        &auth::Identity::github("viewer", Some("Viewer"), None),
         &[],
     )
     .await
@@ -472,6 +491,7 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
     };
 
     let app = threadbase_server::routes::router(fixture.state.clone());
+    let viewer_session = session_for(&fixture, "viewer").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/approvals/{}/decide", approval.id))
@@ -479,7 +499,7 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
         .header("origin", "http://localhost")
         .header("x-requested-with", "threadbase")
         .header("content-type", "application/json")
-        .header("tailscale-user-login", "viewer@example.com")
+        .header("cookie", format!("threadbase_session={viewer_session}"))
         .body(Body::from(r#"{"decision":"allow_once","note":null}"#))
         .unwrap();
     request
@@ -563,7 +583,7 @@ async fn failed_session_restore_emits_a_context_reset_notice() {
     let manager = agents::AgentManager::new(
         fixture.state.pool.clone(),
         fixture.state.events.clone(),
-        fixture.state.state_store.clone(),
+        fixture.state.projection.clone(),
     );
     manager
         .ensure_started(fixture.thread.id.as_str())
@@ -640,7 +660,7 @@ async fn first_turn_replaces_the_default_thread_title() {
     };
     let thread = threads::create(
         &fixture.state.pool,
-        &fixture.state.state_store,
+        &fixture.state.projection,
         fixture.data.path(),
         &fixture.user,
         fixture.project.id.as_str(),
@@ -740,7 +760,7 @@ async fn agent_prompt_includes_state_summary_when_pending() {
     // Make the projection non-trivial so the summary is injected.
     threadbase_server::approvals::create(
         &fixture.state.pool,
-        &fixture.state.state_store,
+        &fixture.state.projection,
         &fixture.state.events,
         threadbase_server::approvals::NewApproval {
             id: ulid::Ulid::new().to_string(),
@@ -855,11 +875,9 @@ async fn draft_route_preserves_multiple_authors() {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
-    let bob = auth::ensure_tailscale_user(
+    let bob = auth::ensure_identity_user(
         &fixture.state.pool,
-        "bob@example.com",
-        Some("Bob"),
-        None,
+        &auth::Identity::github("bob", Some("Bob"), None),
         &[],
     )
     .await
@@ -902,6 +920,7 @@ async fn draft_route_preserves_multiple_authors() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -909,7 +928,7 @@ async fn draft_route_preserves_multiple_authors() {
         .header("origin", "http://localhost")
         .header("x-requested-with", "threadbase")
         .header("content-type", "application/json")
-        .header("tailscale-user-login", "ada@example.com")
+        .header("cookie", format!("threadbase_session={session}"))
         .body(Body::from(
             r#"{"text":"","delivery":"auto","fromDraft":true}"#,
         ))
@@ -951,11 +970,9 @@ async fn queued_draft_route_preserves_multiple_authors() {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
-    let bob = auth::ensure_tailscale_user(
+    let bob = auth::ensure_identity_user(
         &fixture.state.pool,
-        "bob@example.com",
-        Some("Bob"),
-        None,
+        &auth::Identity::github("bob", Some("Bob"), None),
         &[],
     )
     .await
@@ -997,6 +1014,7 @@ async fn queued_draft_route_preserves_multiple_authors() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1004,7 +1022,7 @@ async fn queued_draft_route_preserves_multiple_authors() {
         .header("origin", "http://localhost")
         .header("x-requested-with", "threadbase")
         .header("content-type", "application/json")
-        .header("tailscale-user-login", "ada@example.com")
+        .header("cookie", format!("threadbase_session={session}"))
         .body(Body::from(
             r#"{"text":"","delivery":"queue","fromDraft":true}"#,
         ))
@@ -1056,6 +1074,7 @@ async fn empty_draft_send_returns_already_sent() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1063,7 +1082,7 @@ async fn empty_draft_send_returns_already_sent() {
         .header("origin", "http://localhost")
         .header("x-requested-with", "threadbase")
         .header("content-type", "application/json")
-        .header("tailscale-user-login", "ada@example.com")
+        .header("cookie", format!("threadbase_session={session}"))
         .body(Body::from(
             r#"{"text":"","delivery":"auto","fromDraft":true}"#,
         ))
@@ -1117,6 +1136,7 @@ async fn failed_send_retains_draft() {
     .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1124,7 +1144,7 @@ async fn failed_send_retains_draft() {
         .header("origin", "http://localhost")
         .header("x-requested-with", "threadbase")
         .header("content-type", "application/json")
-        .header("tailscale-user-login", "ada@example.com")
+        .header("cookie", format!("threadbase_session={session}"))
         .body(Body::from(
             r#"{"text":"","delivery":"auto","fromDraft":true}"#,
         ))
@@ -1220,14 +1240,14 @@ async fn snapshot_revisions_are_monotonic() {
     };
     let first = fixture
         .state
-        .state_store
-        .snapshot_state(fixture.thread.id.as_str())
+        .projection
+        .snapshot(fixture.thread.id.as_str())
         .await
         .unwrap();
     let second = fixture
         .state
-        .state_store
-        .snapshot_state(fixture.thread.id.as_str())
+        .projection
+        .snapshot(fixture.thread.id.as_str())
         .await
         .unwrap();
     assert!(

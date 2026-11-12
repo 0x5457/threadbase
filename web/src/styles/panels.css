@@ -1,0 +1,219 @@
+/* ── changes panel ─────────────────────────────────────────── */
+
+.aside-tabs {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.aside-tab-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.aside-tab-panel[data-active] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.aside {
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.changes {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.changes-head {
+  display: flex;
+  height: 32px;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line-soft);
+  /* One row: the baseline label and the file count used to wrap inside the
+     32px header and print over the divider. */
+  white-space: nowrap;
+}
+
+.changes-head > * {
+  flex: none;
+}
+
+.changes-head > .mantine-Text-root,
+.changes-head .mantine-Group-root .mantine-Text-root {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.changes-head .mantine-Group-root {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.changes-head .mantine-Group-root .mantine-Text-root {
+  min-width: 0;
+}
+
+.changes-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.changes-tabs {
+  height: 32px;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  padding: 0 4px;
+}
+
+.changes-tabs .mantine-Tabs-tab {
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  color: var(--ink-muted);
+  font-size: 12.5px;
+}
+
+.changes-tabs .mantine-Tabs-tab:hover {
+  color: var(--ink);
+}
+
+.changes-tabs .mantine-Tabs-tab[data-active] {
+  border-bottom-color: var(--ink);
+  color: var(--ink);
+}
+
+.changes-tabs .mantine-ActionIcon-root {
+  margin-top: 4px;
+  color: var(--ink-muted);
+}
+
+.changes-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.changes-panel[data-active] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.changes-toolbar {
+  height: 32px;
+  flex: none;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.changes-toolbar .stat-add {
+  color: var(--add);
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-toolbar .stat-del {
+  color: var(--del);
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.file-block {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.file-head {
+  display: flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.file-head .dir {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes .diff-wrap {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.changes .diff-wrap {
+  --diffs-font-size: 12px;
+  --diffs-line-height: 20px;
+}
+
+/* ── status bar ────────────────────────────────────────────── */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  border-top: 1px solid var(--line);
+  background: var(--chrome);
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  user-select: none;
+}
+
+.statusbar .spacer {
+  flex: 1;
+}
+
+.statusbar .mantine-Divider-root {
+  height: 11px;
+}
+
+.status-divider {
+  border-color: var(--line);
+}
+
+.status-worktree {
+  overflow: hidden;
+  max-width: 280px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-add {
+  color: var(--add);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-del {
+  color: var(--del);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── overlays ──────────────────────────────────────────────── */
+
+.changes-drawer .mantine-Drawer-content {
+  background: var(--paper);
+}
+
+.changes-drawer .mantine-Drawer-body {
+  height: 100%;
+  padding: 0;
+}
+

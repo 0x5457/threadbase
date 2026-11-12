@@ -97,14 +97,6 @@ impl DraftDoc {
     }
 
     #[must_use]
-    pub fn encode_update(&self, state_vector: &[u8]) -> Vec<u8> {
-        let _ = self.awareness.doc().get_or_insert_array("blocks");
-        let txn = self.awareness.doc().transact();
-        let sv = yrs::StateVector::decode_v1(state_vector).unwrap_or_default();
-        txn.encode_state_as_update_v1(&sv)
-    }
-
-    #[must_use]
     pub fn encode_full(&self) -> Vec<u8> {
         let _ = self.awareness.doc().get_or_insert_array("blocks");
         let txn = self.awareness.doc().transact();

@@ -5,6 +5,7 @@ import type { CommentDto } from "./CommentDto";
 import type { ElicitationDto } from "./ElicitationDto";
 import type { ProjectDto } from "./ProjectDto";
 import type { QueueItemDto } from "./QueueItemDto";
+import type { Role } from "./Role";
 import type { ShareStateDto } from "./ShareStateDto";
 import type { SubagentDto } from "./SubagentDto";
 import type { ThreadDto } from "./ThreadDto";
@@ -13,6 +14,10 @@ import type { ThreadMemberDto } from "./ThreadMemberDto";
 export type ThreadBundleDto = {
   thread: ThreadDto;
   project: ProjectDto;
+  /**
+   * Effective role of the caller in this thread; drives read-only UI.
+   */
+  role: Role;
   subagents: Array<SubagentDto>;
   approvals: Array<ApprovalDto>;
   elicitations: Array<ElicitationDto>;

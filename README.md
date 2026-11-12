@@ -8,7 +8,7 @@
 
 v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、presence/跟随、分享与角色、CLI 与发布工作流。
 
-验证证据、版本审计、规格冲突裁决和逐项需求覆盖见 [docs/06-implementation-status.md](docs/06-implementation-status.md)。界面截图见 [docs/screenshots](docs/screenshots)。
+质量门由 `scripts/verify.sh` 统一执行；界面审计记录保留在 `web/audit/`。
 
 ## 快速开始
 
@@ -35,44 +35,52 @@ pnpm --dir web dev   # http://127.0.0.1:5173，/api 与 /ws 代理到 7777
 
 数据目录默认是平台数据目录下的 `threadbase/`（Linux 为 `~/.local/share/threadbase/`），可用 `THREADBASE_DATA_DIR` 覆盖。服务固定绑定回环地址，`THREADBASE_BIND` 只接受回环地址。
 
-## 部署模型：本机服务，tailnet 内访问
+## 部署模型：本机服务，GitHub 登录，HTTPS 隧道对外
 
-服务跑在开发机上，只监听回环地址；所有远程访问都由 `tailscale serve` 终结 TLS 并转发到 `127.0.0.1:7777`：
-
-```bash
-tailscale serve --bg 443 http://127.0.0.1:7777
-```
-
-其他设备访问 `https://<machine>.<tailnet>.ts.net`。Tailscale ACL 决定谁能连上机器，应用身份决定谁能读写哪条 thread。
-
-### 登录：只有 Tailscale 身份，没有密码
-
-- 应用不保存密码，也没有登录表单、注册或会话 Cookie。
-- 每个请求都带 `tailscale serve` 转发的身份头（`Tailscale-User-Login`、`-Name`、`-Profile-Pic`），服务只信任来自回环 peer 的这些头。
-- 首次出现的 tailnet 身份自动建号，并成为该实例的管理员；之后出现的身份都是普通成员。
-- 用 `THREADBASE_TAILSCALE_ADMIN` 指定管理员登录名（逗号分隔），可覆盖自动提升：
+服务跑在开发机上，只监听回环地址；对外由任意 HTTPS 隧道终结 TLS 并转发到 `127.0.0.1:7777`。Tailscale Funnel 是最省事的一种：
 
 ```bash
-THREADBASE_TAILSCALE_ADMIN=alice@example.com,bob@example.com cargo run -p threadbase
+tailscale funnel --bg --https=443 http://127.0.0.1:7777
 ```
 
-- 想撤销某人访问，改 Tailscale ACL 或从工作区移除成员；想重置本机开发环境，直接删 `threadbase.db`。
+其他设备（不需要装 Tailscale，也不需要加入 tailnet）访问 `https://<machine>.<tailnet>.ts.net`，用 GitHub 账号登录。
+
+### 登录：GitHub OAuth + 服务端会话
+
+- 应用不保存密码。浏览器通过 GitHub OAuth（授权码 + PKCE）登录，服务端在 `auth_sessions` 里存会话，只把哈希入库；浏览器拿到的 Cookie 是 `HttpOnly; SameSite=Lax`，生产环境再加 `Secure`。
+- **完全不信任任何身份请求头。** 之前 `Tailscale-User-Login` 那套已经删除，公网隧道上伪造请求头无法提权。
+- 需要在 GitHub 注册一个 **OAuth App**（不是 GitHub App）：`Settings → Developer settings → OAuth Apps → New OAuth App`，回调地址填 `https://<公开域名>/api/auth/github/callback`，权限不勾任何 scope。
+
+```bash
+export THREADBASE_PUBLIC_ORIGIN=https://machine.tailnet.ts.net
+export THREADBASE_GITHUB_CLIENT_ID=...
+export THREADBASE_GITHUB_CLIENT_SECRET=...
+export THREADBASE_GITHUB_ALLOW=octocat,ada      # 谁可以登录
+export THREADBASE_ADMINS=octocat                # 谁永远是管理员
+cargo run -p threadbase
+```
+
+- 登录策略：管理员名单 > 允许名单 > 已存在用户 > 实例尚未有管理员时自动放行第一个登录者（引导）。因此公开隧道不会变成「任何 GitHub 用户都能进」。
+- 首次登录的身份自动成为管理员；`THREADBASE_ADMINS` 可指定固定管理员。
+- 会话默认 30 天，边用边续期（`THREADBASE_SESSION_DAYS` 可改）；退出登录会撤销服务端会话。
+- 想撤销某人访问：从 `THREADBASE_GITHUB_ALLOW` 移除并在用户页取消管理员，或直接删 `auth_sessions` 里的会话；想重置本机开发环境，直接删 `threadbase.db`。
 
 ### 一键部署（systemd）
 
 在 Linux 主机上一条命令把**当前这个二进制**配置成 systemd user 服务：
 
 ```bash
-threadbase install --admin you@example.com
+threadbase install --funnel --admin octocat
 ```
 
 它会：
 
 - 写 `~/.config/systemd/user/threadbase.service`，`ExecStart` 就是当前进程的可执行文件路径（不拷贝、不构建、不下载）
-- `Environment` 里带上绑定地址、数据目录、`THREADBASE_PUBLIC_ORIGIN`（从 `tailscale status` 推导）与管理员登录名，以及去重后的 `PATH`（agent CLI 常在 mise/nvm 路径下）
+- `Environment` 里带上绑定地址、数据目录、`THREADBASE_PUBLIC_ORIGIN`（从 `tailscale status` 推导）与 `THREADBASE_ADMINS`，以及去重后的 `PATH`（agent CLI 常在 mise/nvm 路径下）
+- 带上 `EnvironmentFile=-%h/.config/threadbase/env`：**GitHub 的 client secret 放这个文件，不写进 unit**（unit 文件是可读的）
 - `loginctl enable-linger`，让服务在登出后仍在跑
 - `systemctl --user enable --now`
-- `tailscale serve --bg --https=8443 http://127.0.0.1:7777`
+- `tailscale serve|funnel --bg --https=<port> http://127.0.0.1:7777`（`--funnel` 才公开；GitHub OAuth 回调需要公开 HTTPS）
 - 轮询 `/api/health` 确认真的起来了
 
 所以要升级，替换这个二进制再跑一次 `threadbase install`（或 `threadbase upgrade` 后 `systemctl --user restart threadbase`）即可。
@@ -83,24 +91,25 @@ threadbase install --admin you@example.com
 threadbase install --print                  # 只打印 unit 与命令，不改动系统
 threadbase install --port 7788 --https-port 9443 --unit threadbase-dev
 threadbase install --no-serve --no-start     # 只写 unit
-threadbase install --uninstall              # 停用并删除 unit、关掉 serve（保留数据与二进制）
+threadbase install --funnel                 # 用 tailscale funnel 公开到互联网
+threadbase install --uninstall              # 停用并删除 unit、关掉 serve/funnel（保留数据与二进制）
 ```
 
 unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例。日志：`journalctl --user -u threadbase -f`。
 
 ### 本机开发
 
-`pnpm --dir web dev` 的请求来自回环但没有 Tailscale 身份头，需要显式打开开发身份：
+`pnpm --dir web dev` 的请求来自回环但没有会话 Cookie，需要显式打开开发身份：
 
 ```bash
-THREADBASE_DEV_IDENTITY=dev@example.com cargo run -p threadbase
+THREADBASE_DEV_IDENTITY=dev cargo run -p threadbase
 ```
 
-开发身份只在「回环 peer + 无 `X-Forwarded-*` / `Tailscale-*` 头」时生效，因此经 `tailscale serve` 进来的请求永远不会命中它。不要在生产实例上设置该变量。
+开发身份只在「回环 peer + 无 `X-Forwarded-*` 头」时生效，因此经隧道进来的请求永远不会命中它。不要在生产实例上设置该变量。
 
 ### CSRF 与 Cookie
 
-写操作要求 `Origin` 与 `Host` 一致（或等于 `THREADBASE_PUBLIC_ORIGIN`）并带 `X-Requested-With: threadbase`。`tailscale serve` 会保留浏览器的 Host，因此通常无需额外配置；如果前面还有别的反代改写了 Host，就设置 `THREADBASE_PUBLIC_ORIGIN=https://<machine>.<tailnet>.ts.net`。
+写操作要求 `Origin` 与 `Host` 一致（或等于 `THREADBASE_PUBLIC_ORIGIN`）并带 `X-Requested-With: threadbase`。隧道会保留浏览器的 Host，因此通常无需额外配置；如果前面还有别的反代改写了 Host，就设置 `THREADBASE_PUBLIC_ORIGIN=https://<公开域名>`。该变量同时是 OAuth 回调地址的来源；Cookie 的 `Secure` 标志由它推导（`THREADBASE_COOKIE_SECURE` 可覆盖）。
 
 ## 技术栈
 
@@ -108,22 +117,35 @@ THREADBASE_DEV_IDENTITY=dev@example.com cargo run -p threadbase
 - 前端：Vite 8、React 19、TypeScript strict、Mantine 9、TanStack Query、Zustand、CodeMirror 6。
 - 分发：单二进制，内嵌 web 资源；macOS 与 Linux 优先。
 
-详细版本与偏差见 [docs/06](docs/06-implementation-status.md)。
 
-## 文档
 
-| 文档 | 内容 |
+## 代码结构
+
+```
+crates/shared    wire 类型与领域模型（ts-rs 直接生成 web/src/api/types）
+crates/core      纯领域策略：状态机、投递决策、权限
+crates/workspace 路径约束、git worktree、文件浏览
+crates/draft     Yjs 草稿文档
+crates/agent     ACP harness 与 adapter profile
+crates/server    HTTP/WS 服务
+```
+
+server 按职责分模块：
+
+| 模块 | 职责 |
 | --- | --- |
-| [docs/01-requirements.md](docs/01-requirements.md) | 需求文档：产品定义、领域模型、关键流程、协作语义、功能清单、非功能需求 |
-| [docs/02-open-decisions.md](docs/02-open-decisions.md) | 决策记录：部署、技术栈、CRDT、Tailscale、子 agent、steering、评论等 19 项 |
-| [docs/03-tech-stack.md](docs/03-tech-stack.md) | 技术栈：选型矩阵、架构、事件模型、存储、实时层、质量 |
-| [docs/04-subagents-and-questions.md](docs/04-subagents-and-questions.md) | 子 agent、队列、审批路由、steering、提问与评论 |
-| [docs/05-ui-spec.md](docs/05-ui-spec.md) | UI 规格：交互参考 Delta，视觉以 Linear/Apple Notes 与 Mantine 为准；外壳、左栏树、时间线、Composer、Changes、键位 |
-| [docs/06-implementation-status.md](docs/06-implementation-status.md) | 实现状态、版本审计、规格冲突裁决、验证证据 |
-| [docs/07-state-machines.md](docs/07-state-machines.md) | 隐式状态机审计（已被 08 取代，仅作历史输入） |
-| [docs/08-state-model-decision.md](docs/08-state-model-decision.md) | 统一显式状态模型决策与落地记录 |
-| [docs/09-audit-findings.md](docs/09-audit-findings.md) | 文档-实现差异审计与修正清单 |
-| [docs/research/delta-ui.md](docs/research/delta-ui.md) | Delta 界面与交互调研 |
+| `app` | 进程级 `AppState`，只负责装配 |
+| `projection` | 线程状态读模型与 WebSocket 广播 |
+| `threads` | 线程生命周期、worktree、成员与 DTO |
+| `agents/` | `AgentManager` 门面、事件泵、队列 worker、生命周期副作用 |
+| `approvals` / `elicitations` | 审批与提问的持久化、状态迁移、规则 |
+| `queue` / `comments` / `subagents` / `bindings` | 各自实体的唯一写入点 |
+| `inbox` / `notify` | inbox 记录、webhook 与成员通知 |
+| `events` | 追加式事件日志（每线程顺序、跨线程并行） |
+| `diff` | 基线与审阅；线程列表不再触发任何 git 子进程 |
+| `routes_*` | HTTP 路由，只做鉴权、解析和调用领域模块 |
+
+前端入口按域拆分：`web/src/api/` 是 fetch 层，`components/thread/` 是时间线行组件，`components/composer/` 是 Composer 的命令与建议面板。
 
 ## 已定的事
 
@@ -131,27 +153,26 @@ THREADBASE_DEV_IDENTITY=dev@example.com cargo run -p threadbase
 - 后端 Rust，单二进制分发；前端 Vite + React 19 + Mantine 9。
 - 首发 agent 为 Codex，通过 ACP v1 接入；同时提供 Claude Code、opencode、pi 的 adapter profile。
 - 开源，Apache-2.0；v1 支持 macOS 与 Linux。
-- 只通过 Tailscale 访问；服务固定绑回环，由 `tailscale serve` 终结 TLS。
+- 服务固定绑回环，由外部 HTTPS 隧道（如 Tailscale Funnel）终结 TLS；身份只来自 GitHub OAuth 会话。
 - 草稿层用 CRDT；事件日志仍由服务端定序。
 - 焦点共享走 presence，可跟随成员；子 agent 用左栏树 + tab，审批只阻塞发起的子 agent。
-- UI 交互语义参考 Delta，视觉以 Linear/Apple Notes 与 Mantine 为准，只有文档列出的五处刻意偏离。
+- UI 交互语义参考 Delta，视觉以 Linear/Apple Notes 与 Mantine 为准。
 
 ## 开发命令
 
 ```bash
-# 并行跑全部质量门（热态约 4s；--with-e2e 追加浏览器 e2e）
+# 并行跑全部质量门（热态约 4s）
 scripts/verify.sh
-scripts/verify.sh --with-e2e
 
 # 单独执行
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 MBX_BLAZE=false cargo nextest run --workspace
 pnpm --dir web typecheck
-pnpm --dir web lint
 pnpm --dir web build
-pnpm --dir web exec playwright test
 ```
+
+前端没有单独的 lint 目标：v2 前端工具栏只剩 `tsc --noEmit` 与 `vite build`，`web/audit/*.mjs` 是需要浏览器的手工审计脚本。
 
 真实 Codex 契约 smoke（需要登录）：
 
@@ -159,7 +180,7 @@ pnpm --dir web exec playwright test
 MBX_BLAZE=false cargo test -p threadbase --test real_codex -- --ignored --nocapture
 ```
 
-构建加速：本机使用 `mr-boxington` + blaze 时，`cargo check` 会走 blaze；测试、release 与 fixture 使用 `MBX_BLAZE=false`，原因和配置见 [docs/06](docs/06-implementation-status.md) §6。
+构建加速：本机使用 `mr-boxington` + blaze 时，`cargo check` 会走 blaze；测试、release 与 fixture 使用 `MBX_BLAZE=false`。
 
 ## 打包
 

@@ -1,7 +1,7 @@
 //! Read-only workspace file browsing.
 
 use crate::path::{ensure_within, PathError};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 use threadbase_shared::{FileContentDto, FileEntryDto};
 
@@ -117,5 +117,74 @@ fn language_for(path: &Path) -> Option<&'static str> {
     })
 }
 
-#[allow(dead_code)]
-fn _path(_: PathBuf) {}
+/// Recursively finds files whose path contains `query` (case-insensitive).
+/// Hidden directories and build outputs are skipped, and the scan is capped so
+/// a huge repository cannot stall the composer.
+pub fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<String>, FileError> {
+    let needle = query.trim().to_lowercase();
+    let mut results = Vec::new();
+    let mut visited = 0usize;
+    collect_files(root, root, &needle, limit, &mut visited, 0, &mut results)?;
+    results.sort_by(|left, right| {
+        rank(left, &needle)
+            .cmp(&rank(right, &needle))
+            .then_with(|| left.len().cmp(&right.len()))
+            .then_with(|| left.cmp(right))
+    });
+    results.truncate(limit);
+    Ok(results)
+}
+
+fn rank(path: &str, needle: &str) -> u8 {
+    if needle.is_empty() {
+        return 2;
+    }
+    let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+    if name.starts_with(needle) {
+        0
+    } else if name.contains(needle) {
+        1
+    } else {
+        2
+    }
+}
+
+fn collect_files(
+    root: &Path,
+    directory: &Path,
+    needle: &str,
+    limit: usize,
+    visited: &mut usize,
+    depth: usize,
+    results: &mut Vec<String>,
+) -> Result<(), FileError> {
+    if results.len() >= limit || *visited > 20_000 || depth > 16 {
+        return Ok(());
+    }
+    let mut entries: Vec<_> = std::fs::read_dir(directory)?.flatten().collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        if results.len() >= limit || *visited > 20_000 {
+            return Ok(());
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || ignored(&name) {
+            continue;
+        }
+        *visited += 1;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(root, &path, needle, limit, visited, depth + 1, results)?;
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if needle.is_empty() || relative.to_lowercase().contains(needle) {
+            results.push(relative);
+        }
+    }
+    Ok(())
+}

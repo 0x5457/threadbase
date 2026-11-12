@@ -94,15 +94,6 @@ pub fn ensure_within_any(roots: &[PathBuf], candidate: &Path) -> Result<PathBuf,
     Err(last_error.unwrap_or_else(|| PathError::Outside(candidate.display().to_string())))
 }
 
-/// Render a user supplied relative path without allowing hidden traversal.
-#[must_use]
-pub fn display_relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -15,7 +15,7 @@ export type InboxItemDto = {
   threadTitle: string;
   projectId: ProjectId;
   summary: string;
-  createdAt: bigint;
+  createdAt: number;
   read: boolean;
   approvalId: ApprovalId | null;
   elicitationId: ElicitationId | null;

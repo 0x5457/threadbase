@@ -7,8 +7,8 @@ use sqlx::SqlitePool;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
+use threadbase_server::app::AppState;
 use threadbase_server::auth::CurrentUser;
-use threadbase_server::state::AppState;
 use threadbase_server::{auth, db, projects, threads};
 use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest};
 use threadbase_shared::ThreadEvent;
@@ -76,22 +76,23 @@ async fn real_codex_streams_a_reply() {
     init_repo(repo.path());
     let data = TempDir::new().unwrap();
     let pool = db::connect_memory().await.unwrap();
-    let user = auth::ensure_tailscale_user(&pool, "ada@example.com", Some("Ada"), None, &[])
-        .await
-        .unwrap();
+    let user = auth::ensure_identity_user(
+        &pool,
+        &auth::Identity::github("ada", Some("Ada"), None),
+        &[],
+    )
+    .await
+    .unwrap();
     let current = CurrentUser {
         user: user.clone(),
-        method: "tailscale",
+        method: "github",
     };
     let state = AppState::new(
         threadbase_server::config::Config {
             data_dir: data.path().to_path_buf(),
             db_path: data.path().join("threadbase.db"),
             bind: "127.0.0.1:7777".parse().unwrap(),
-            public_origin: None,
-            tailscale_admins: Vec::new(),
-            dev_identity: None,
-            log_json: false,
+            ..threadbase_server::config::Config::default()
         },
         pool,
     );
@@ -107,7 +108,7 @@ async fn real_codex_streams_a_reply() {
     .unwrap();
     let thread = threads::create(
         &state.pool,
-        &state.state_store,
+        &state.projection,
         data.path(),
         &current,
         project.id.as_str(),

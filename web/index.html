@@ -2,26 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- `interactive-widget=resizes-content` makes Chrome/Android shrink the
-         layout viewport when the keyboard opens, so the composer stays visible.
-         iOS ignores it; the visual-viewport sync in `lib/viewport.ts` covers it. -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#101214" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Threadbase</title>
     <script>
       try {
         const theme = localStorage.getItem("threadbase.theme");
-        const resolved = theme === "light" || theme === "dark" ? theme : "dark";
-        document.documentElement.dataset.mantineColorScheme = resolved;
-        document.documentElement.style.colorScheme = resolved;
-      } catch {
-        // Storage may be unavailable in hardened browser contexts.
-      }
+        if (theme === "dark" || theme === "light") {
+          document.documentElement.dataset.mantineColorScheme = theme;
+          document.documentElement.style.colorScheme = theme;
+        }
+      } catch {}
     </script>
   </head>
   <body>

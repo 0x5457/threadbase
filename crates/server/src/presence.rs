@@ -98,6 +98,15 @@ impl PresenceHub {
         });
     }
 
+    /// Online users for a project, used to annotate API reads.
+    pub async fn online_user_ids(&self, project_id: &str) -> HashSet<String> {
+        let projects = self.projects.read().await;
+        projects
+            .get(project_id)
+            .map(|entry| entry.online.clone())
+            .unwrap_or_default()
+    }
+
     pub async fn remove_user(&self, user_id: &str) {
         let projects_to_flush = {
             let mut projects = self.projects.write().await;

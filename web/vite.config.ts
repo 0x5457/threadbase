@@ -1,28 +1,17 @@
-import { fileURLToPath, URL } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+const apiTarget = process.env.THREADBASE_API ?? "http://127.0.0.1:7777";
+
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-    },
-  },
   server: {
     host: "0.0.0.0",
     port: 5173,
-    strictPort: true,
+    allowedHosts: ["omarchy.taile87f6.ts.net"],
     proxy: {
-      "/api": "http://127.0.0.1:7777",
-      "/ws": {
-        target: "ws://127.0.0.1:7777",
-        ws: true,
-      },
+      "/api": apiTarget,
+      "/ws": { target: apiTarget.replace(/^http/, "ws"), ws: true },
     },
-  },
-  build: {
-    target: "es2022",
-    sourcemap: false,
   },
 });

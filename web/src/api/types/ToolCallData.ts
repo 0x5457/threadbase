@@ -19,6 +19,6 @@ export type ToolCallData = {
   diff: DiffSummary | null;
   terminalId: string | null;
   subagentId: SubagentId | null;
-  createdAt: bigint;
-  updatedAt: bigint;
+  createdAt: number;
+  updatedAt: number;
 };

@@ -1,20 +1,21 @@
 //! Read-only worktree file browsing.
 
+use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::authz;
 use crate::error::ServerError;
-use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
 use serde::Deserialize;
 use std::path::PathBuf;
-use threadbase_shared::{ApiError, FileContentResponseDto, FilesResponseDto};
+use threadbase_shared::{ApiError, FileContentResponseDto, FileSearchResponse, FilesResponseDto};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/threads/{thread_id}/files", get(list_files))
+        .route("/api/threads/{thread_id}/files/search", get(search_files))
         .route("/api/threads/{thread_id}/file", get(read_file))
 }
 
@@ -39,6 +40,31 @@ async fn list_files(
     let entries = threadbase_workspace::files::list(&root, &path)
         .map_err(|error| ServerError(ApiError::validation(error.to_string())))?;
     Ok(Json(FilesResponseDto { path, entries }))
+}
+
+#[derive(Debug, Deserialize)]
+struct FileSearchQuery {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn search_files(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Query(query): Query<FileSearchQuery>,
+) -> Result<Json<FileSearchResponse>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = crate::threads::load_row(&state.pool, &thread_id).await?;
+    let root = PathBuf::from(
+        row.worktree_path
+            .ok_or_else(|| ServerError(ApiError::conflict("thread worktree is not available")))?,
+    );
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let files =
+        threadbase_workspace::files::search(&root, query.q.as_deref().unwrap_or_default(), limit)
+            .map_err(|error| ServerError(ApiError::validation(error.to_string())))?;
+    Ok(Json(FileSearchResponse { files }))
 }
 
 async fn read_file(

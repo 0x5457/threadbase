@@ -14,7 +14,7 @@ export type SubagentDto = {
   cwd: string | null;
   canCancel: boolean;
   usage: Usage | null;
-  lastSeq: bigint;
-  createdAt: bigint;
-  updatedAt: bigint;
+  lastSeq: number;
+  createdAt: number;
+  updatedAt: number;
 };

@@ -17,7 +17,61 @@ pub enum Role {
     Viewer,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum UserAccess {
+    /// Signed in, but an administrator has not approved the account yet.
+    Pending,
+    /// Approved to read. Every write is rejected server-side.
+    ReadOnly,
+    /// Normal access; thread roles still decide per-thread writes.
+    Member,
+    /// Access revoked. Existing sessions stop working immediately.
+    Disabled,
+}
+
+impl UserAccess {
+    #[must_use]
+    pub fn can_read(self) -> bool {
+        matches!(self, Self::ReadOnly | Self::Member)
+    }
+
+    #[must_use]
+    pub fn can_write(self) -> bool {
+        matches!(self, Self::Member)
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::ReadOnly => "read_only",
+            Self::Member => "member",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
 impl Role {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Editor => "editor",
+            Self::Viewer => "viewer",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "owner" => Self::Owner,
+            "editor" => Self::Editor,
+            _ => Self::Viewer,
+        }
+    }
+
     #[must_use]
     pub fn can_write(self) -> bool {
         matches!(self, Self::Owner | Self::Editor)
@@ -60,17 +114,6 @@ pub enum SubagentStatus {
     Idle,
     Cancelled,
     Error,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export)]
-pub enum AgentKind {
-    Codex,
-    Claude,
-    Opencode,
-    Pi,
-    Custom,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -176,6 +219,24 @@ pub enum CommentStatus {
 pub enum ShareLevel {
     InviteOnly,
     Workspace,
+}
+
+impl ShareLevel {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InviteOnly => "invite_only",
+            Self::Workspace => "workspace",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "workspace" => Self::Workspace,
+            _ => Self::InviteOnly,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -292,6 +353,19 @@ pub struct UserBrief {
     pub color: String,
 }
 
+impl UserBrief {
+    #[must_use]
+    pub fn from_user(user: &UserDto) -> Self {
+        Self {
+            id: user.id.clone(),
+            username: user.username.clone(),
+            display_name: user.display_name.clone(),
+            avatar_url: user.avatar_url.clone(),
+            color: crate::user_color(user.id.as_str()).to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -301,7 +375,7 @@ pub struct UserDto {
     pub display_name: String,
     pub avatar_url: Option<String>,
     pub is_admin: bool,
-    pub tailscale_login: Option<String>,
+    pub access: UserAccess,
     pub hidden_presence: bool,
     pub created_at: i64,
 }
@@ -366,11 +440,9 @@ pub struct ThreadDto {
     pub pinned: bool,
     pub unread: bool,
     pub share_level: ShareLevel,
-    pub diverged: bool,
     pub participants: Vec<Participant>,
     pub pending_approvals: u32,
     pub queued_inputs: u32,
-    pub changes: ChangeStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -563,28 +635,6 @@ pub struct InboxItemDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct ProjectOverviewDto {
-    pub project: ProjectDto,
-    pub threads: Vec<ThreadDto>,
-    pub waiting_approvals: Vec<ApprovalDto>,
-    pub recent_activity: Vec<ActivityDto>,
-    pub change_stats: ChangeStats,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ActivityDto {
-    pub thread_id: ThreadId,
-    pub thread_title: String,
-    pub actor: UserBrief,
-    pub summary: String,
-    pub ts: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct FileEntryDto {
     pub name: String,
     pub path: String,
@@ -730,18 +780,6 @@ pub struct DoctorReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct SearchResultDto {
-    pub kind: String,
-    pub id: String,
-    pub title: String,
-    pub subtitle: Option<String>,
-    pub project_id: Option<ProjectId>,
-    pub thread_id: Option<ThreadId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct ShareStateDto {
     pub thread_id: ThreadId,
     pub share_level: ShareLevel,
@@ -763,9 +801,12 @@ pub struct AuthMeDto {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AuthStatusDto {
-    pub tailscale_header: bool,
+    /// GitHub OAuth is configured, so a sign-in redirect is available.
+    pub github: bool,
     pub dev_identity: bool,
     pub needs_admin: bool,
+    /// Where to send the browser to start a GitHub sign-in.
+    pub login_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -799,18 +840,6 @@ impl Default for SettingsDto {
             browser_notifications: false,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct WorkspaceBootstrapDto {
-    pub me: UserDto,
-    pub projects: Vec<ProjectDto>,
-    pub pinned: Vec<ThreadDto>,
-    pub inbox_count: u32,
-    pub settings: SettingsDto,
-    pub agents: Vec<AgentInfoDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

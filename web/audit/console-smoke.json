@@ -1,0 +1,20 @@
+{
+  "baseUrl": "http://127.0.0.1:5173",
+  "chrome": "/usr/bin/google-chrome-stable",
+  "checkedAt": "2026-11-11T20:02:12.132Z",
+  "steps": [
+    "desktop inbox",
+    "desktop thread",
+    "desktop changes",
+    "desktop review",
+    "desktop share",
+    "desktop settings",
+    "desktop preview",
+    "phone inbox",
+    "phone thread",
+    "phone thread menu review",
+    "phone thread menu share",
+    "phone changes drawer"
+  ],
+  "errors": []
+}

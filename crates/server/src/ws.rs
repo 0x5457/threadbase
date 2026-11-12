@@ -1,8 +1,8 @@
 //! WebSocket transport for event replay, live events and presence.
 
+use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::authz;
-use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
@@ -24,26 +24,18 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
     let (mut sender, mut receiver) = socket.split();
     let mut events = state.events.subscribe();
     let mut presence = state.presence.subscribe();
-    let mut state_rx = state.state_tx.subscribe();
+    let mut state_rx = state.projection.subscribe();
     let mut subscriptions: HashMap<String, u64> = HashMap::new();
     let mut projects: HashSet<String> = HashSet::new();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    let inbox_unread: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM inbox WHERE user_id = ? AND read_at IS NULL")
-            .bind(user.user.id.as_str())
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0);
-    if send_json(
-        &mut sender,
-        &ServerWsMessage::InboxCount {
-            unread: u32::try_from(inbox_unread).unwrap_or(0),
-        },
-    )
-    .await
-    .is_err()
+    let unread = crate::inbox::unread_count(&state.pool, user.user.id.as_str())
+        .await
+        .unwrap_or(0);
+    if send_json(&mut sender, &ServerWsMessage::InboxCount { unread })
+        .await
+        .is_err()
     {
         return;
     }
@@ -192,11 +184,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
 }
 
 async fn thread_state(state: &AppState, thread_id: &ThreadId) -> Option<ServerWsMessage> {
-    let snapshot = state
-        .state_store
-        .snapshot_state(thread_id.as_str())
-        .await
-        .ok()?;
+    let snapshot = state.projection.snapshot(thread_id.as_str()).await.ok()?;
     Some(ServerWsMessage::ThreadState { state: snapshot })
 }
 

@@ -1,0 +1,202 @@
+/* ── responsive: tablet ────────────────────────────────────── */
+
+@media (hover: none) {
+  .side-project .project-menu,
+  .comment-menu {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 74.99em) {
+  .header .mantine-ActionIcon-root {
+    width: 30px;
+    height: 30px;
+  }
+
+  .side-nav {
+    height: 32px;
+  }
+
+  .composer-tools .rt-IconButton {
+    width: 28px;
+    height: 28px;
+  }
+
+  .change-row {
+    min-height: 32px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .changes-tabs .expand-panel {
+    display: none;
+  }
+
+  .header {
+    grid-template-columns: 232px minmax(0, 1fr) auto;
+  }
+
+  .doc {
+    width: min(720px, 100%);
+  }
+}
+
+/* ── responsive: phone ─────────────────────────────────────── */
+
+@media (max-width: 48em) {
+  .shell {
+    height: var(--app-height, 100dvh);
+    transform: translateY(var(--app-offset, 0px));
+  }
+
+  /* Mantine positions the mobile navbar at the header offset but leaves its
+     height at 100dvh, pushing the sidebar footer below the viewport. Keep the
+     account/settings row above the status bar. */
+  .mantine-AppShell-navbar.sidebar {
+    height: calc(var(--app-height, 100dvh) - 48px - 30px);
+  }
+
+  .header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .header-left,
+  .header-right {
+    padding: 0 3px;
+  }
+
+  .header-left {
+    padding-left: 4px;
+  }
+
+  .header-center {
+    padding: 0 2px;
+  }
+
+  .header .mantine-ActionIcon-root {
+    width: 36px;
+    height: 36px;
+  }
+
+  .header .mantine-Burger-root {
+    width: 32px;
+    height: 32px;
+  }
+
+  .doc-title {
+    font-size: 14px;
+  }
+
+  .doc {
+    padding: 16px 14px 32px;
+  }
+
+  .settings-head {
+    padding: 12px 14px 10px;
+  }
+
+  .settings-body {
+    padding: 12px 14px;
+  }
+
+  .inbox-head {
+    padding: 12px 14px 10px;
+  }
+
+  .inbox-row {
+    padding: 10px 14px;
+  }
+
+  .inbox-thread {
+    max-width: 150px;
+  }
+
+  .inbox-time {
+    display: none;
+  }
+
+  .block {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .prose {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .comment-row {
+    margin-left: 30px;
+  }
+
+  .turn-gap {
+    margin-left: 30px;
+  }
+
+  .side-nav {
+    height: 36px;
+  }
+
+  .side-project .project-menu {
+    opacity: 1;
+  }
+
+  .side-nav .mantine-NavLink-label {
+    font-size: 14.5px;
+  }
+
+  .composer-inner {
+    padding: 8px 14px 8px;
+  }
+
+  .queue-bar {
+    padding: 4px 14px 5px;
+  }
+
+  .comment-menu {
+    opacity: 1;
+  }
+
+  .composer-row {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .composer-editor {
+    font-size: 17px;
+  }
+
+  /* iOS zooms the page when a focused text control is smaller than 16px. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+  textarea,
+  select {
+    font-size: 17px;
+  }
+
+  .model-picker {
+    max-width: 132px;
+    min-height: 32px;
+    margin: 0;
+  }
+
+  .composer-tools {
+    height: 34px;
+    padding-left: 30px;
+  }
+
+  .composer-tools .mantine-ActionIcon-root {
+    width: 32px;
+    height: 32px;
+  }
+
+  .send-btn {
+    width: 32px;
+    height: 32px;
+  }
+
+  .approval-actions .mantine-Button-root {
+    height: 32px;
+  }
+
+  .statusbar {
+    padding: 0 8px;
+  }
+}

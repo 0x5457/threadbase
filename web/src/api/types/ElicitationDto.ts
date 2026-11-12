@@ -20,6 +20,6 @@ export type ElicitationDto = {
   status: ElicitationStatus;
   response: unknown;
   respondedBy: UserBrief | null;
-  respondedAt: bigint | null;
-  createdAt: bigint;
+  respondedAt: number | null;
+  createdAt: number;
 };

@@ -5,7 +5,7 @@ import type { ThreadId } from "./ThreadId";
 export type EventsPageDto = {
   threadId: ThreadId;
   events: Array<EventEnvelope>;
-  lastSeq: bigint;
-  oldestSeq: bigint;
+  lastSeq: number;
+  oldestSeq: number;
   resync: boolean;
 };

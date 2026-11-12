@@ -8,7 +8,7 @@ export type InviteDto = {
   threadId: ThreadId;
   role: Role;
   email: string | null;
-  createdAt: bigint;
-  expiresAt: bigint;
-  acceptedAt: bigint | null;
+  createdAt: number;
+  expiresAt: number;
+  acceptedAt: number | null;
 };

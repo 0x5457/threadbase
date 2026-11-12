@@ -60,6 +60,35 @@ fn prompt_text(params: &Value) -> String {
         .to_owned()
 }
 
+/// Session configuration the fixture advertises in `session/new` and
+/// `session/load`: one model select and one thinking-level select.
+fn config_options(current_model: &str) -> Value {
+    json!([
+        {
+            "type": "select",
+            "id": "model",
+            "category": "model",
+            "name": "Model",
+            "currentValue": current_model,
+            "options": [
+                {"value": "fake-model-a", "name": "Fake model A"},
+                {"value": "fake-model-b", "name": "Fake model B"},
+            ],
+        },
+        {
+            "type": "select",
+            "id": "thought_level",
+            "category": "thought_level",
+            "name": "Thinking",
+            "currentValue": "high",
+            "options": [
+                {"value": "low", "name": "Low"},
+                {"value": "high", "name": "High"},
+            ],
+        },
+    ])
+}
+
 fn steering_result(text: &str) -> (&'static str, Option<&'static str>) {
     match text.trim() {
         "steer:startedNewTurn" => ("startedNewTurn", None),
@@ -213,9 +242,14 @@ impl Fixture {
                     }),
                 )
             }
-            (Some("session/new"), Some(id)) => {
-                self.respond(out, &id, json!({"sessionId": self.root_session}))
-            }
+            (Some("session/new"), Some(id)) => self.respond(
+                out,
+                &id,
+                json!({
+                    "sessionId": self.root_session,
+                    "configOptions": config_options("fake-model-a"),
+                }),
+            ),
             (Some("session/load"), Some(id)) => {
                 let session = params
                     .get("sessionId")
@@ -226,7 +260,13 @@ impl Fixture {
                     self.respond_error(out, &id, -32001, "session expired")?;
                     return Ok(());
                 }
-                self.respond(out, &id, json!({}))?;
+                // A resumed session re-announces its configuration, exactly
+                // like the real adapters do.
+                self.respond(
+                    out,
+                    &id,
+                    json!({"configOptions": config_options("fake-model-b")}),
+                )?;
                 self.chunk(out, &session, "replayed")
             }
             (Some("session/prompt"), Some(id)) => self.prompt(reader, out, &id, &params),

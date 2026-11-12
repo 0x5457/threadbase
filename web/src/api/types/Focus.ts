@@ -13,5 +13,5 @@ export type Focus = {
   target: Anchor | null;
   typing: boolean;
   hidden: boolean;
-  updatedAt: bigint;
+  updatedAt: number;
 };

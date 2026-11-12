@@ -10,7 +10,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use threadbase_shared::{ApiError, DirectoryEntryDto, DirectoryListingDto};
 
-pub fn router() -> Router<crate::state::AppState> {
+pub fn router() -> Router<crate::app::AppState> {
     Router::new().route("/api/fs/directories", get(list_directories))
 }
 
@@ -20,7 +20,7 @@ struct DirectoryQuery {
 }
 
 async fn list_directories(
-    State(_state): State<crate::state::AppState>,
+    State(_state): State<crate::app::AppState>,
     _user: CurrentUser,
     Query(query): Query<DirectoryQuery>,
 ) -> Result<Json<DirectoryListingDto>, ServerError> {

@@ -1,11 +1,11 @@
 //! Project, thread and change-review routes.
 
+use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::authz;
 use crate::diff;
 use crate::error::ServerError;
 use crate::projects;
-use crate::state::AppState;
 use crate::threads;
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
@@ -18,7 +18,7 @@ use threadbase_shared::api::{
 };
 use threadbase_shared::{
     ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse, OkResponse,
-    ProjectOverviewResponse, ProjectResponse, ProjectsResponse, ThreadResponse, ThreadsResponse,
+    ProjectResponse, ProjectsResponse, ThreadResponse, ThreadsResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -35,7 +35,6 @@ pub fn router() -> Router<AppState> {
             "/api/projects/{project_id}/threads",
             get(list_threads).post(create_thread),
         )
-        .route("/api/projects/{project_id}/overview", get(project_overview))
         .route(
             "/api/threads/{thread_id}",
             get(get_thread).patch(update_thread).delete(delete_thread),
@@ -57,7 +56,7 @@ async fn thread_state(
     Path(thread_id): Path<String>,
 ) -> Result<Json<ThreadState>, ServerError> {
     authz::require_read(&state.pool, &thread_id, &user).await?;
-    Ok(Json(state.state_store.snapshot_state(&thread_id).await?))
+    Ok(Json(state.projection.snapshot(&thread_id).await?))
 }
 
 async fn list_projects(
@@ -142,7 +141,7 @@ async fn create_thread(
 ) -> Result<Json<ThreadResponse>, ServerError> {
     let thread = threads::create(
         &state.pool,
-        &state.state_store,
+        &state.projection,
         &state.config.data_dir,
         &user,
         &project_id,
@@ -181,9 +180,15 @@ async fn thread_bundle(
     user: CurrentUser,
     Path(thread_id): Path<String>,
 ) -> Result<Json<threadbase_shared::ThreadBundleResponse>, ServerError> {
-    Ok(Json(threadbase_shared::ThreadBundleResponse {
-        bundle: threads::bundle(&state.pool, &thread_id, &user).await?,
-    }))
+    let mut bundle = threads::bundle(&state.pool, &thread_id, &user).await?;
+    let online = state
+        .presence
+        .online_user_ids(bundle.project.id.as_str())
+        .await;
+    for participant in &mut bundle.thread.participants {
+        participant.online = online.contains(participant.user.id.as_str());
+    }
+    Ok(Json(threadbase_shared::ThreadBundleResponse { bundle }))
 }
 
 async fn get_thread(
@@ -203,18 +208,24 @@ async fn update_thread(
     Json(request): Json<UpdateThreadRequest>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
     let thread =
-        threads::update(&state.pool, &state.state_store, &thread_id, &user, &request).await?;
+        threads::update(&state.pool, &state.projection, &thread_id, &user, &request).await?;
     if request.model.is_some() || request.effort.is_some() {
-        if let Err(error) = state
-            .agents
-            .set_config(
-                &thread_id,
-                request.model.as_deref(),
-                request.effort.as_deref(),
-            )
-            .await
-        {
-            tracing::warn!(thread_id, %error, "could not apply model/effort to agent");
+        // The UI sends an empty string to clear a field; never forward that to
+        // the adapter as a literal model or effort value.
+        let model = request
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let effort = request
+            .effort
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if model.is_some() || effort.is_some() {
+            if let Err(error) = state.agents.set_config(&thread_id, model, effort).await {
+                tracing::warn!(thread_id, %error, "could not apply model/effort to agent");
+            }
         }
     }
     Ok(Json(ThreadResponse { thread }))
@@ -249,7 +260,7 @@ async fn fork_thread(
     Ok(Json(ThreadResponse {
         thread: threads::fork(
             &state.pool,
-            &state.state_store,
+            &state.projection,
             &state.config.data_dir,
             &thread_id,
             &user,
@@ -364,26 +375,26 @@ async fn merge_back(
 ) -> Result<Json<MergeBackResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
     let row = threads::load_row(&state.pool, &thread_id).await?;
-    Ok(Json(
-        diff::merge_back(
-            &state.pool,
-            &row,
-            &user,
-            request.commit,
-            request.commit_message.as_deref(),
+    let result = diff::merge_back(
+        &state.pool,
+        &row,
+        &user,
+        request.commit,
+        request.commit_message.as_deref(),
+    )
+    .await?;
+    if let Some(commit) = result.commit.as_deref() {
+        sqlx::query(
+            "UPDATE threads SET base_sha = ?, last_turn_sha = ?, updated_at = ? WHERE id = ?",
         )
-        .await?,
-    ))
-}
-
-async fn project_overview(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(project_id): Path<String>,
-) -> Result<Json<ProjectOverviewResponse>, ServerError> {
-    Ok(Json(ProjectOverviewResponse {
-        overview: projects::overview(&state.pool, &project_id, &user).await?,
-    }))
+        .bind(commit)
+        .bind(commit)
+        .bind(threadbase_shared::now_ms())
+        .bind(&thread_id)
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(Json(result))
 }
 
 fn baseline(query: BaselineQuery) -> BaselineDto {

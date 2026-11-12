@@ -1,7 +1,7 @@
 use anyhow::Context;
 use std::process::ExitCode;
+use threadbase_server::app::AppState;
 use threadbase_server::config::Config;
-use threadbase_server::state::AppState;
 use threadbase_server::{db, doctor, install, routes, service, upgrade};
 use tracing_subscriber::EnvFilter;
 
@@ -13,7 +13,7 @@ Usage:
   threadbase doctor [--json]   Check the environment and agent adapters
   threadbase upgrade [--check] Download and verify the latest release
   threadbase install [options]
-                               One-command systemd deployment plus tailscale serve
+                               One-command systemd deployment plus an HTTPS tunnel
   threadbase service install [--print]
                                Write a launchd/systemd user unit
   threadbase --version         Print the version
@@ -22,10 +22,16 @@ Usage:
 Environment:
   THREADBASE_DATA_DIR          Data directory (default: platform data dir)
   THREADBASE_BIND              Loopback address (default: 127.0.0.1:7777)
-  THREADBASE_PUBLIC_ORIGIN     Public HTTPS origin used in share links
-  THREADBASE_TAILSCALE_ADMIN   Comma-separated Tailscale logins that are admins
+  THREADBASE_PUBLIC_ORIGIN     Public HTTPS origin; required for GitHub sign-in
+  THREADBASE_GITHUB_CLIENT_ID  GitHub OAuth app client id
+  THREADBASE_GITHUB_CLIENT_SECRET
+                               GitHub OAuth app client secret
+  THREADBASE_GITHUB_ALLOW      Comma-separated GitHub logins allowed to sign in
+  THREADBASE_ADMINS            Comma-separated GitHub logins that are always admins
+  THREADBASE_SESSION_DAYS      Session lifetime in days (default 30)
+  THREADBASE_COOKIE_SECURE     Force the Secure cookie flag on or off
   THREADBASE_DEV_IDENTITY      Identity accepted from direct local connections
-                               (development only; ignored behind tailscale serve)
+                               (development only; ignored behind a tunnel)
   THREADBASE_LOG_JSON          Set to 1 for JSON logs
   THREADBASE_ACP_COMMAND       Override the ACP adapter command (development)
   THREADBASE_RELEASE_BASE      Override the release download base URL
@@ -111,10 +117,21 @@ async fn run() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
     println!("Data directory: {}", config.data_dir.display());
-    println!("Access: run `tailscale serve --bg 443 {local}` and open the tailnet URL.");
+    if config.github_ready() {
+        println!(
+            "Sign-in: GitHub OAuth, callback {}",
+            config.callback_url().unwrap_or_default()
+        );
+    } else if config.github.is_some() {
+        println!("Sign-in: GitHub client configured but THREADBASE_PUBLIC_ORIGIN is missing.");
+        println!("         Set it to the public HTTPS origin so the OAuth callback resolves.");
+    } else {
+        println!("Sign-in: GitHub OAuth is not configured; only local development works.");
+        println!("         Set THREADBASE_GITHUB_CLIENT_ID and THREADBASE_GITHUB_CLIENT_SECRET.");
+    }
     if config.dev_identity.is_some() {
         println!(
-            "Warning: THREADBASE_DEV_IDENTITY is set; direct local requests bypass Tailscale identity."
+            "Warning: THREADBASE_DEV_IDENTITY is set; direct local requests skip GitHub sign-in."
         );
     }
 

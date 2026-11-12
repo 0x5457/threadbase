@@ -5,9 +5,7 @@ use crate::error::ServerError;
 use sqlx::{FromRow, SqlitePool};
 use std::path::{Path, PathBuf};
 use threadbase_shared::api::CreateProjectRequest;
-use threadbase_shared::{
-    now_ms, ActivityDto, ApiError, ChangeStats, ProjectDto, ProjectOverviewDto,
-};
+use threadbase_shared::{now_ms, ApiError, ProjectDto};
 use threadbase_workspace::git;
 use threadbase_workspace::git::GitInfo;
 use ulid::Ulid;
@@ -235,106 +233,6 @@ pub async fn update(
         .await;
     }
     get(pool, project_id).await
-}
-
-pub async fn overview(
-    pool: &SqlitePool,
-    project_id: &str,
-    user: &CurrentUser,
-) -> Result<ProjectOverviewDto, ServerError> {
-    let project = get(pool, project_id).await?;
-    let threads = crate::threads::list(pool, project_id, user, false).await?;
-    let mut waiting = Vec::new();
-    let mut changes = ChangeStats {
-        files: 0,
-        additions: 0,
-        deletions: 0,
-        seen: 0,
-        total: 0,
-    };
-    for thread in &threads {
-        waiting.extend(crate::approvals::list_pending_for_thread(pool, thread.id.as_str()).await?);
-        changes.files += thread.changes.files;
-        changes.additions += thread.changes.additions;
-        changes.deletions += thread.changes.deletions;
-        changes.seen += thread.changes.seen;
-        changes.total += thread.changes.total;
-    }
-    let activity = recent_activity(pool, project_id).await?;
-    Ok(ProjectOverviewDto {
-        project,
-        threads,
-        waiting_approvals: waiting,
-        recent_activity: activity,
-        change_stats: changes,
-    })
-}
-
-#[derive(Debug, FromRow)]
-struct ActivityRow {
-    thread_id: String,
-    thread_title: String,
-    actor_name: Option<String>,
-    actor_id: Option<String>,
-    kind: String,
-    ts: i64,
-}
-
-async fn recent_activity(
-    pool: &SqlitePool,
-    project_id: &str,
-) -> Result<Vec<ActivityDto>, ServerError> {
-    let mut builder = sqlx::QueryBuilder::new(
-        "SELECT e.thread_id, t.title AS thread_title, e.actor_name, e.actor_id, e.kind, e.ts
-         FROM events e JOIN threads t ON t.id = e.thread_id
-         WHERE t.project_id = ",
-    );
-    builder.push_bind(project_id);
-    builder.push(
-        " AND e.kind NOT IN ('message_delta','thinking_delta','tool_call_update','usage_updated')
-         ORDER BY e.ts DESC LIMIT 20",
-    );
-    let rows = builder
-        .build_query_as::<ActivityRow>()
-        .fetch_all(pool)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let user = row.actor_id.unwrap_or_default();
-            ActivityDto {
-                thread_id: row.thread_id.into(),
-                thread_title: row.thread_title,
-                actor: threadbase_shared::UserBrief {
-                    id: user.clone().into(),
-                    username: row.actor_name.clone().unwrap_or_default(),
-                    display_name: row.actor_name.unwrap_or_else(|| "Threadbase".to_owned()),
-                    avatar_url: None,
-                    color: threadbase_shared::user_color(&user).to_owned(),
-                },
-                summary: summary_for(&row.kind),
-                ts: row.ts,
-            }
-        })
-        .collect())
-}
-
-fn summary_for(kind: &str) -> String {
-    match kind {
-        "turn_started" => "started a turn",
-        "message_completed" => "posted a message",
-        "tool_call" => "ran a tool",
-        "permission_requested" => "requested approval",
-        "permission_resolved" => "resolved an approval",
-        "turn_ended" => "finished a turn",
-        "turn_error" => "hit an error",
-        "changes_updated" => "changed files",
-        "comment_added" => "left a comment",
-        "subagent_updated" => "updated a subagent",
-        "thread_updated" => "updated the thread",
-        _ => "activity",
-    }
-    .to_owned()
 }
 
 async fn path_available(path: &Path) -> bool {

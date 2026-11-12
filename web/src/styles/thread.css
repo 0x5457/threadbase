@@ -1,0 +1,307 @@
+/* ── thread document ───────────────────────────────────────── */
+
+.thread-scroll {
+  min-height: 0;
+  height: 100%;
+}
+
+.settings-view {
+  width: min(860px, 100%);
+  height: 100%;
+  margin: 0 auto;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.settings-head {
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.settings-body {
+  padding: 16px 24px;
+}
+
+.settings-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-card + .settings-card {
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.inbox-view {
+  display: flex;
+  width: min(900px, 100%);
+  height: 100%;
+  margin: 0 auto;
+  flex-direction: column;
+}
+
+.inbox-head {
+  flex: none;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.inbox-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.inbox-filters {
+  flex: none;
+}
+
+.inbox-filter {
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 3px;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.inbox-filter:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.inbox-filter.active {
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: inset 0 -1px 0 var(--ink);
+  font-weight: 500;
+}
+
+.inbox-row {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink);
+  text-align: left;
+}
+
+.inbox-row:hover {
+  background: var(--hover);
+}
+
+.inbox-row.unread {
+  background: color-mix(in srgb, var(--ink) 2%, transparent);
+}
+
+.inbox-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ink-muted);
+}
+
+.inbox-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.inbox-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-thread {
+  overflow: hidden;
+  max-width: 280px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-time {
+  flex: none;
+  margin-top: 1px;
+}
+
+.doc {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 22px 24px 40px;
+}
+
+.block {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  column-gap: 2px;
+}
+
+.block-gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-top: 3px;
+}
+
+.block-body {
+  position: relative;
+  min-width: 0;
+  padding-bottom: 9px;
+}
+
+.msg-meta {
+  margin-bottom: 2px;
+}
+
+.prose {
+  max-width: 68ch;
+  color: var(--ink);
+  font-family: var(--mantine-font-family);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.prose p {
+  margin: 0 0 8px;
+}
+
+.prose p:last-child {
+  margin-bottom: 0;
+}
+
+.prose ul,
+.prose ol {
+  margin: 0 0 9px;
+  padding-left: 18px;
+}
+
+.prose code {
+  padding: 0.5px 3px;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  background: var(--code);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.prose a {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.hl {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--comment) 24%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--comment) 55%, transparent);
+}
+
+.summary {
+  display: inline-flex;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+
+.summary:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.summary .chevron {
+  color: var(--ink-faint);
+}
+
+/* Single-line head: a long command must never wrap inside the row, or it
+   paints over the status dot and the Details disclosure below it. */
+.tool-head {
+  height: 20px;
+  max-height: 20px;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.tool-head > * {
+  min-width: 0;
+}
+
+.tool-head > .mantine-Text-root {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tool-head .verb {
+  color: var(--ink);
+}
+
+.tool-head .path {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--ink-faint);
+  text-underline-offset: 2px;
+}
+
+.tool-head .chevron {
+  color: var(--ink-faint);
+}
+
+/* ── Pierre diff surface ───────────────────────────────────── */
+
+.diff-wrap {
+  overflow: hidden;
+  margin-top: 2px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--code);
+  --diffs-font-family: var(--mono);
+  --diffs-font-size: 12.5px;
+  --diffs-line-height: 20px;
+  --diffs-light-bg: var(--code);
+  --diffs-dark-bg: var(--code);
+  --diffs-light: var(--ink);
+  --diffs-dark: var(--ink);
+  --diffs-gap-fallback: 2px;
+  --diffs-gap-inline: 6px;
+  --diffs-gap-block: 4px;
+}
+
+.diff-wrap > * {
+  border-radius: 2px;
+}
+
+/* ── inline comment ────────────────────────────────────────── */
+
+.comment-row {
+  max-width: 560px;
+  margin: 1px 0 9px 42px;
+}
+
+.comment-card {
+  padding: 5px 8px 6px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--comment);
+  border-radius: 2px;
+  background: var(--paper);
+}
+
+.comment-card .comment-text {
+  min-width: 0;
+  flex: 1;
+  color: var(--ink-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.comment-card .comment-text .mantine-Text-root:first-child {
+  color: var(--ink);
+}
+

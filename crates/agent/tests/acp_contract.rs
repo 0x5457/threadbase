@@ -345,6 +345,42 @@ async fn load_session_resumes_by_session_id() {
     test.harness.shutdown().await.expect("shutdown");
 }
 
+/// Regression: a resumed session used to report no configuration options at
+/// all, because only the `session/new` response was read. Resumed threads then
+/// showed "this agent does not advertise models" in the composer.
+#[tokio::test]
+async fn load_session_restores_config_options() {
+    let mut test = start(true).await;
+    let session = new_session(&mut test).await;
+
+    let fresh = test.harness.config_options();
+    assert!(
+        fresh.iter().any(|option| option.category == "model"),
+        "session/new must surface the model select: {fresh:?}"
+    );
+
+    test.harness
+        .load_session(&threadbase_agent::SessionId(session))
+        .await
+        .expect("load session");
+
+    let resumed = test.harness.config_options();
+    let model = resumed
+        .iter()
+        .find(|option| option.category == "model")
+        .expect("resumed session must still advertise the model select");
+    assert_eq!(model.current_value, "fake-model-b");
+    assert_eq!(model.options.len(), 2);
+    assert!(
+        resumed
+            .iter()
+            .any(|option| option.category == "thought_level"),
+        "effort/thinking select must survive the resume too: {resumed:?}"
+    );
+
+    test.harness.shutdown().await.expect("shutdown");
+}
+
 #[tokio::test]
 async fn permission_allow_selects_the_matching_option_kind() {
     let mut test = start(true).await;

@@ -12,12 +12,11 @@ export type ThreadState = {
   /**
    * Monotonic revision for this thread; consumers must discard older values.
    */
-  revision: bigint;
+  revision: number;
   status: ThreadStatus;
   currentTurn: string | null;
   pendingApprovals: number;
   pendingElicitations: number;
   queuedInputs: number;
   activeSubagents: number;
-  diverged: boolean;
 };

@@ -11,14 +11,12 @@ use threadbase_shared::api::{
     CreateCommentRequest, CreateProjectRequest, CreateThreadRequest, ForkThreadRequest,
     UpdateThreadRequest,
 };
-use threadbase_shared::{
-    now_ms, BaselineDto, BaselineKind, CommentAnchor, ErrorCode, Role, ThreadStatus,
-};
+use threadbase_shared::{BaselineDto, BaselineKind, CommentAnchor, ErrorCode, Role, ThreadStatus};
 use tokio::process::Command as TokioCommand;
 
-fn test_state_store(pool: &SqlitePool) -> threadbase_server::state::StateStore {
+fn test_projection(pool: &SqlitePool) -> threadbase_server::projection::Projection {
     let (state_tx, _) = tokio::sync::broadcast::channel(16);
-    threadbase_server::state::StateStore::new(pool.clone(), state_tx)
+    threadbase_server::projection::Projection::new(pool.clone(), state_tx)
 }
 
 struct Fixture {
@@ -33,12 +31,16 @@ async fn fixture() -> Fixture {
     init_repo(repo.path()).await;
     let data = TempDir::new().unwrap();
     let pool = db::connect_memory().await.unwrap();
-    let user = auth::ensure_tailscale_user(&pool, "ada@example.com", Some("Ada"), None, &[])
-        .await
-        .unwrap();
+    let user = auth::ensure_identity_user(
+        &pool,
+        &auth::Identity::github("ada", Some("Ada"), None),
+        &[],
+    )
+    .await
+    .unwrap();
     let current = CurrentUser {
         user: user.clone(),
-        method: "tailscale",
+        method: "github",
     };
     Fixture {
         repo,
@@ -92,7 +94,7 @@ async fn create_project(fixture: &Fixture) -> threadbase_shared::ProjectDto {
 async fn create_thread(fixture: &Fixture, project_id: &str) -> threadbase_shared::ThreadDto {
     threads::create(
         &fixture.pool,
-        &test_state_store(&fixture.pool),
+        &test_projection(&fixture.pool),
         fixture.data.path(),
         &fixture.current,
         project_id,
@@ -160,7 +162,7 @@ async fn project_validation_and_thread_lifecycle() {
 
     let archived = threads::update(
         &fixture.pool,
-        &test_state_store(&fixture.pool),
+        &test_projection(&fixture.pool),
         thread.id.as_str(),
         &fixture.current,
         &UpdateThreadRequest {
@@ -186,7 +188,7 @@ async fn project_validation_and_thread_lifecycle() {
 
     let unarchived = threads::update(
         &fixture.pool,
-        &test_state_store(&fixture.pool),
+        &test_projection(&fixture.pool),
         thread.id.as_str(),
         &fixture.current,
         &UpdateThreadRequest {
@@ -210,7 +212,7 @@ async fn project_validation_and_thread_lifecycle() {
     .unwrap();
     let fork = threads::fork(
         &fixture.pool,
-        &test_state_store(&fixture.pool),
+        &test_projection(&fixture.pool),
         fixture.data.path(),
         thread.id.as_str(),
         &fixture.current,
@@ -289,9 +291,7 @@ async fn diff_baselines_seen_and_merge_back() {
     )
     .await
     .unwrap();
-    let seen = diff::stats(&fixture.pool, &row, &fixture.current)
-        .await
-        .unwrap();
+    let seen = changes_stats(&fixture, &row).await;
     assert_eq!(seen.seen, 1);
     tokio::fs::write(
         Path::new(worktree).join("README.md"),
@@ -299,9 +299,7 @@ async fn diff_baselines_seen_and_merge_back() {
     )
     .await
     .unwrap();
-    let reset = diff::stats(&fixture.pool, &row, &fixture.current)
-        .await
-        .unwrap();
+    let reset = changes_stats(&fixture, &row).await;
     assert_eq!(reset.seen, 0);
 
     git(Path::new(worktree), &["add", "-A"]);
@@ -408,9 +406,7 @@ async fn seen_state_is_scoped_to_baseline() {
     )
     .await
     .unwrap();
-    let base_stats = diff::stats(&fixture.pool, &row, &fixture.current)
-        .await
-        .unwrap();
+    let base_stats = changes_stats(&fixture, &row).await;
     assert_eq!(base_stats.seen, 1);
 
     // Switching baseline must not inherit the base-branch Seen mark.
@@ -440,27 +436,22 @@ async fn seen_state_is_scoped_to_baseline() {
     assert_eq!(base_changes.stats.seen, 1, "base-branch Seen remains");
 }
 
-#[tokio::test]
-async fn overview_counts_and_pending_approvals() {
-    let fixture = fixture().await;
-    let project = create_project(&fixture).await;
-    let thread = create_thread(&fixture, project.id.as_str()).await;
-    sqlx::query(
-        "INSERT INTO approvals(id, thread_id, agent, title, kind, status, created_at)
-         VALUES(?, ?, 'codex', 'Run tests', 'command', 'pending', ?)",
+async fn changes_stats(
+    fixture: &Fixture,
+    row: &threadbase_server::threads::ThreadRow,
+) -> threadbase_shared::ChangeStats {
+    diff::list(
+        &fixture.pool,
+        row,
+        &fixture.current,
+        &BaselineDto {
+            kind: BaselineKind::BaseBranch,
+            commit: None,
+        },
     )
-    .bind("a1")
-    .bind(thread.id.as_str())
-    .bind(now_ms())
-    .execute(&fixture.pool)
     .await
-    .unwrap();
-    let overview = projects::overview(&fixture.pool, project.id.as_str(), &fixture.current)
-        .await
-        .unwrap();
-    assert_eq!(overview.threads.len(), 1);
-    assert_eq!(overview.waiting_approvals.len(), 1);
-    assert_eq!(overview.project.active_threads, 1);
+    .unwrap()
+    .stats
 }
 
 async fn git_stdout(path: &Path, args: &[&str]) -> String {
@@ -496,7 +487,7 @@ async fn diff_comment_drift_and_revert_to_base() {
     let events = EventStore::new(fixture.pool.clone());
     let comment = comments::create(
         &fixture.pool,
-        &test_state_store(&fixture.pool),
+        &test_projection(&fixture.pool),
         &events,
         thread.id.as_str(),
         &fixture.current,

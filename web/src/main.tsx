@@ -1,236 +1,159 @@
+import "@fontsource-variable/geist";
+import "@mantine/core/styles.css";
+import "@mantine/notifications/styles.css";
+import "@mantine/spotlight/styles.css";
 import {
+  ActionIcon,
+  Badge,
+  Button,
+  Card,
   MantineProvider,
+  NavLink,
+  ScrollArea,
+  Tooltip,
   createTheme,
   localStorageColorSchemeManager,
 } from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { RouterProvider } from "react-router-dom";
-import router from "./App";
-import { AppNotifications } from "./components/app";
-import { ThemeBridge, THEME_STORAGE_KEY } from "./lib/theme";
+import { App } from "./App";
+import { AuthGate } from "./components/AuthGate";
+import { InviteAcceptPage } from "./components/InviteAcceptPage";
 import { installVisualViewportSync } from "./lib/viewport";
-import {
-  breakpoints,
-  colors,
-  fontSizes,
-  fontWeights,
-  lineHeights,
-  radii,
-  shadows,
-  spacing,
-} from "./lib/design";
-import "./index.css";
-
-// Keep the shell above the mobile keyboard (see lib/viewport.ts).
-installVisualViewportSync();
+import "./styles/base.css";
+import "./styles/header.css";
+import "./styles/sidebar.css";
+import "./styles/thread.css";
+import "./styles/approval.css";
+import "./styles/composer.css";
+import "./styles/panels.css";
+import "./styles/responsive.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      retry: 1,
-      staleTime: 5_000,
-    },
+    queries: { refetchOnWindowFocus: false, retry: 1, staleTime: 5_000 },
   },
 });
 
 const theme = createTheme({
-  // ── Font ───────────────────────────────────────────────────────
   fontFamily:
     '"Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   fontFamilyMonospace:
-    '"GeistMono Variable", "SF Mono", ui-monospace, monospace',
-
-  // ── Colors ─────────────────────────────────────────────────────
-  primaryColor: "primary",
-  primaryShade: 7,
+    'ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, monospace',
+  primaryColor: "brand",
+  primaryShade: { light: 6, dark: 4 },
+  defaultRadius: "sm",
   colors: {
-    primary: colors.primary,
-    success: colors.success,
-    warning: colors.warning,
-    danger: colors.danger,
-    info: colors.info,
+    brand: [
+      "#fff4f0",
+      "#ffe4dc",
+      "#ffc9bb",
+      "#fca78f",
+      "#f28362",
+      "#e96545",
+      "#d85540",
+      "#b9432f",
+      "#973524",
+      "#7a2a1c",
+    ],
+    gray: [
+      "#fbfbf8",
+      "#f5f5f1",
+      "#efefea",
+      "#e7e8e5",
+      "#dcddd7",
+      "#ced1cb",
+      "#b8bbb4",
+      "#9a9c97",
+      "#6f7276",
+      "#242529",
+    ],
+    dark: [
+      "#c1c5cc",
+      "#acb2be",
+      "#7e8086",
+      "#3a3f46",
+      "#30343a",
+      "#25292e",
+      "#1f2227",
+      "#191c21",
+      "#171a1e",
+      "#131519",
+    ],
   },
-
-  // ── Radius ─────────────────────────────────────────────────────
-  defaultRadius: "md",
-  radius: {
-    xs: `${radii.sm}px`,
-    sm: `${radii.md}px`,
-    md: `${radii.lg}px`,
-    lg: `${radii.xl}px`,
-    xl: "16px",
+  // Dense-workspace scale, one step up from the previous one. The old values
+  // (10/11/13/14/16) put body copy at 13px and metadata at 10px, which read as
+  // too small on a 1440-wide layout.
+  fontSizes: {
+    xs: "11.5px",
+    sm: "13px",
+    md: "14.5px",
+    lg: "16px",
+    xl: "19px",
   },
-
-  // ── Spacing ────────────────────────────────────────────────────
-  spacing: {
-    xs: `${spacing[2]}px`,
-    sm: `${spacing[4]}px`,
-    md: `${spacing[8]}px`,
-    lg: `${spacing[10]}px`,
-    xl: `${spacing[12]}px`,
-    "2xl": `${spacing[14]}px`,
-    "3xl": `${spacing[15]}px`,
-  },
-
-  // ── Shadows ────────────────────────────────────────────────────
-  shadows: {
-    xs: shadows.sm,
-    sm: shadows.md,
-    md: shadows.lg,
-    lg: "0 20px 25px -5px rgb(0 0 0 / 0.08), 0 8px 10px -6px rgb(0 0 0 / 0.04)",
-    xl: "0 25px 50px -12px rgb(0 0 0 / 0.2)",
-  },
-
-  // ── Breakpoints ────────────────────────────────────────────────
-  breakpoints: {
-    xs: `${breakpoints.xs}px`,
-    sm: `${breakpoints.sm}px`,
-    md: `${breakpoints.md}px`,
-    lg: `${breakpoints.lg}px`,
-    xl: `${breakpoints.xl}px`,
-  },
-
-  // ── Typography ─────────────────────────────────────────────────
-  fontSizes,
   lineHeights: {
-    xs: String(lineHeights.tight),
-    sm: String(lineHeights.normal),
-    md: String(lineHeights.relaxed),
+    xs: "1.4",
+    sm: "1.45",
+    md: "1.55",
+    lg: "1.5",
+    xl: "1.3",
   },
-  headings: {
-    fontWeight: String(fontWeights.semibold),
-    sizes: {
-      h1: {
-        fontSize: fontSizes["3xl"],
-        lineHeight: String(lineHeights.tight),
-        fontWeight: String(fontWeights.semibold),
-      },
-      h2: {
-        fontSize: fontSizes["2xl"],
-        lineHeight: String(lineHeights.tight),
-        fontWeight: String(fontWeights.semibold),
-      },
-      h3: {
-        fontSize: fontSizes.xl,
-        lineHeight: String(lineHeights.tight),
-        fontWeight: String(fontWeights.semibold),
-      },
-      h4: {
-        fontSize: fontSizes.lg,
-        lineHeight: String(lineHeights.tight),
-        fontWeight: String(fontWeights.medium),
-      },
-    },
-  },
-
-  // ── Component defaults ─────────────────────────────────────────
-  // Every Mantine component used in the app gets sensible defaults
-  // so routes never need to repeat the same props.
   components: {
-    Container: {
-      defaultProps: { size: "md" },
-    },
-    Paper: {
-      defaultProps: { radius: "md", p: "md" },
-    },
-    Card: {
-      defaultProps: { radius: "md", p: "md", withBorder: true },
-    },
-    Button: {
-      defaultProps: { size: "sm", radius: "md" },
-      styles: {
-        root: {
-          fontWeight: fontWeights.medium,
-          letterSpacing: "-0.01em",
-        },
-      },
-    },
-    ActionIcon: {
-      defaultProps: { size: "md", variant: "subtle", radius: "md" },
-    },
-    Badge: {
-      defaultProps: { size: "sm", radius: "sm", variant: "light" },
-    },
-    Input: {
-      defaultProps: { size: "sm", radius: "md" },
-      styles: {
-        input: {
-          fontSize: fontSizes.md,
-        },
-      },
-    },
-    TextInput: {
-      defaultProps: { size: "sm", radius: "md" },
-    },
-    Textarea: {
-      defaultProps: { size: "sm", radius: "md" },
-    },
-    Select: {
-      defaultProps: { size: "sm", radius: "md" },
-    },
-    Menu: {
-      defaultProps: { radius: "md", shadow: "md" },
-    },
-    Popover: {
-      defaultProps: { radius: "md", shadow: "md" },
-    },
-    Modal: {
-      defaultProps: { radius: "lg", shadow: "lg", padding: "xl" },
-    },
-    Drawer: {
-      defaultProps: { radius: "lg", shadow: "lg", padding: "md" },
-    },
-    Tooltip: {
-      defaultProps: { openDelay: 300, radius: "sm", withArrow: true },
-    },
-    Alert: {
-      defaultProps: { radius: "md" },
-    },
-    Skeleton: {
-      defaultProps: { radius: "md" },
-    },
-    Avatar: {
-      defaultProps: { radius: "xl" },
-    },
-    Tabs: {
-      defaultProps: { radius: "md" },
-    },
-    ScrollArea: {
-      defaultProps: { scrollbarSize: 6 },
-    },
+    Button: Button.extend({
+      defaultProps: { size: "xs", radius: "sm", fw: 400 },
+    }),
+    ActionIcon: ActionIcon.extend({
+      defaultProps: { size: 24, variant: "subtle", color: "gray", radius: "sm" },
+    }),
+    Card: Card.extend({
+      defaultProps: { withBorder: true, radius: "sm", padding: "xs" },
+    }),
+    Badge: Badge.extend({
+      defaultProps: { size: "xs", radius: "sm" },
+    }),
+    Tooltip: Tooltip.extend({
+      defaultProps: { openDelay: 300, withArrow: true },
+    }),
+    NavLink: NavLink.extend({
+      defaultProps: { variant: "subtle", color: "gray" },
+    }),
+    ScrollArea: ScrollArea.extend({
+      defaultProps: { type: "hover", scrollbarSize: 6 },
+    }),
   },
-
-  // ── Other ──────────────────────────────────────────────────────
-  autoContrast: true,
-  cursorType: "pointer",
-  // Honours prefers-reduced-motion: tests and users with the OS setting get
-  // instant transitions instead of animated ones.
-  respectReducedMotion: true,
 });
 
 const colorSchemeManager = localStorageColorSchemeManager({
-  key: THEME_STORAGE_KEY,
+  key: "threadbase.theme",
 });
 
-const root = document.getElementById("root");
-if (!root) {
-  throw new Error("Missing #root element");
+function inviteToken() {
+  return /^\/invite\/([^/]+)\/?$/.exec(window.location.pathname)?.[1] ?? null;
 }
+
+installVisualViewportSync();
+
+const root = document.getElementById("root");
+if (!root) throw new Error("Missing #root");
 
 createRoot(root).render(
   <StrictMode>
     <MantineProvider
-      colorSchemeManager={colorSchemeManager}
-      defaultColorScheme="dark"
       theme={theme}
+      defaultColorScheme="light"
+      colorSchemeManager={colorSchemeManager}
     >
-      <ThemeBridge />
-      <AppNotifications />
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <AuthGate>
+          {inviteToken() ? (
+            <InviteAcceptPage token={inviteToken() as string} />
+          ) : (
+            <App />
+          )}
+        </AuthGate>
+        <Notifications position="bottom-right" />
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,

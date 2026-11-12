@@ -1,13 +1,14 @@
 //! Agent input, cancellation and queue routes.
 
+use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::authz;
 use crate::error::ServerError;
-use crate::state::AppState;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get, post};
 use axum::Json;
 use axum::Router;
+use serde::Deserialize;
 use sqlx::FromRow;
 use threadbase_core::state::parse_queue_status;
 use threadbase_shared::api::SendMessageRequest;
@@ -122,7 +123,7 @@ async fn send_message(
             .ok();
         crate::comments::mark_pending_delivered(
             &state.pool,
-            &state.state_store,
+            &state.projection,
             &state.events,
             &thread_id,
             &user,
@@ -133,12 +134,25 @@ async fn send_message(
     Ok(Json(response))
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct AgentConfigQuery {
+    /// Start the bound adapter when it is not running yet so it can advertise
+    /// its model and effort options before the first message.
+    ensure: Option<bool>,
+}
+
 async fn agent_config(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(thread_id): Path<String>,
+    Query(query): Query<AgentConfigQuery>,
 ) -> Result<Json<threadbase_shared::AgentConfigResponse>, ServerError> {
-    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let role = authz::require_read(&state.pool, &thread_id, &user).await?;
+    if query.ensure.unwrap_or(false) && role.can_write() {
+        if let Err(error) = state.agents.ensure_started(&thread_id).await {
+            tracing::warn!(thread_id, %error, "could not start agent to read config");
+        }
+    }
     let options = state
         .agents
         .config_options(&thread_id)
@@ -222,10 +236,7 @@ async fn retry_queue_item(
     Path((thread_id, item_id)): Path<(String, String)>,
 ) -> Result<Json<OkResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
-    state
-        .state_store
-        .retry_queue_item(&thread_id, &item_id)
-        .await?;
+    crate::queue::retry(&state.pool, &state.projection, &thread_id, &item_id).await?;
     let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
     state.agents.kick_queue(&thread_id);
     Ok(Json(OkResponse { ok: true }))
@@ -237,10 +248,7 @@ async fn drop_queue_item(
     Path((thread_id, item_id)): Path<(String, String)>,
 ) -> Result<Json<OkResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
-    state
-        .state_store
-        .drop_queue_item(&thread_id, &item_id)
-        .await?;
+    crate::queue::remove(&state.pool, &state.projection, &thread_id, &item_id).await?;
     let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
     Ok(Json(OkResponse { ok: true }))
 }

@@ -4,6 +4,6 @@ export type FileEntryDto = {
   name: string;
   path: string;
   isDir: boolean;
-  size: bigint;
-  modifiedAt: bigint | null;
+  size: number;
+  modifiedAt: number | null;
 };

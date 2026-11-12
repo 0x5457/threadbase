@@ -52,12 +52,3 @@ pub struct Focus {
     pub hidden: bool,
     pub updated_at: i64,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct PresenceSnapshot {
-    pub project_id: ProjectId,
-    pub focuses: Vec<Focus>,
-    pub online_user_ids: Vec<UserId>,
-}
