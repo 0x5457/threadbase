@@ -435,6 +435,38 @@
   color: var(--ink-faint);
 }
 
+/* Image tool results render as images; the base64 payload never reaches the
+   timeline. */
+.tool-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 8px;
+}
+
+.tool-image {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--code);
+  line-height: 0;
+}
+
+.tool-image img {
+  display: block;
+  max-width: min(100%, 420px);
+  max-height: 280px;
+  object-fit: contain;
+}
+
+.tool-caption {
+  margin: -2px 0 8px;
+  color: var(--ink-faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 /* ── Pierre diff surface ───────────────────────────────────── */
 
 .diff-wrap {

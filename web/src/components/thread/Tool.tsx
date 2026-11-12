@@ -127,6 +127,47 @@ function diffTextPreview(patch: string): { lines: PreviewLine[]; hidden: number 
   };
 }
 
+type OutputBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; mimeType: string; data: string };
+
+/** Unwrap ACP tool content: text blocks and images, instead of raw JSON/base64. */
+function parseOutput(raw: string | null | undefined): OutputBlock[] | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return null;
+  let parsed: { content?: unknown };
+  try {
+    parsed = JSON.parse(trimmed) as typeof parsed;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed.content)) return null;
+  const blocks: OutputBlock[] = [];
+  for (const item of parsed.content) {
+    if (typeof item !== "object" || item === null) continue;
+    const block = item as Record<string, unknown>;
+    if (block.type === "text" && typeof block.text === "string") {
+      blocks.push({ type: "text", text: block.text });
+    } else if (
+      block.type === "image" &&
+      typeof block.data === "string" &&
+      typeof block.mimeType === "string"
+    ) {
+      blocks.push({ type: "image", mimeType: block.mimeType, data: block.data });
+    }
+  }
+  return blocks.length > 0 ? blocks : null;
+}
+
+/** Section label: "Details" hides what the tool actually returned. */
+const DETAIL_LABELS: Partial<Record<ToolKind, string>> = {
+  read: "Contents",
+  search: "Results",
+  execute: "Output",
+  fetch: "Response",
+};
+
 export const Tool = memo(function Tool({
   item,
   expanded,
@@ -142,6 +183,23 @@ export const Tool = memo(function Tool({
   const preview = call.diff?.patch
     ? diffTextPreview(call.diff.patch)
     : toolPreview(call);
+  const output = parseOutput(call.output);
+  const outputImages = output?.filter(
+    (block): block is Extract<OutputBlock, { type: "image" }> =>
+      block.type === "image",
+  ) ?? [];
+  const outputText = output
+    ?.filter((block): block is Extract<OutputBlock, { type: "text" }> => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+  const detailsLabel = call.diff?.patch
+    ? "Full diff"
+    : (DETAIL_LABELS[call.kind] ?? "Details");
+  // Image results are the content: no input JSON toggle to open.
+  const hasDetails = Boolean(
+    call.diff?.patch ||
+      (outputImages.length === 0 && (call.input || call.output)),
+  );
   return (
     <div className="block">
       <div className="block-gutter" />
@@ -173,7 +231,31 @@ export const Tool = memo(function Tool({
             ) : null}
           </div>
         ) : null}
-        {call.diff?.patch || call.input || call.output ? (
+        {outputImages.length > 0 ? (
+          <>
+            <div className="tool-images">
+              {outputImages.map((image, index) => {
+                const src = `data:${image.mimeType};base64,${image.data}`;
+                return (
+                  <a
+                    key={index}
+                    className="tool-image"
+                    href={src}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`${image.mimeType} · ${Math.round((image.data.length * 3) / 4 / 1024)} KB`}
+                  >
+                    <img src={src} alt="" loading="lazy" />
+                  </a>
+                );
+              })}
+            </div>
+            {outputText ? (
+              <div className="tool-caption">{outputText}</div>
+            ) : null}
+          </>
+        ) : null}
+        {hasDetails ? (
           <details
             className="tool-details"
             open={expanded}
@@ -182,17 +264,22 @@ export const Tool = memo(function Tool({
             }}
           >
             <summary>
-              {call.diff?.patch ? "Full diff" : "Details"}{" "}
+              {detailsLabel}{" "}
               <IconChevronDown size={11} stroke={1.5} className="chevron" />
             </summary>
             {expanded ? (
               <>
                 {call.diff?.patch ? <DiffView patch={call.diff.patch} /> : null}
-                {!call.diff?.patch && call.input ? (
-                  <pre className="cmd">{call.input}</pre>
+                {!call.diff?.patch && outputText ? (
+                  <pre className="cmd">{outputText}</pre>
                 ) : null}
-                {!call.diff?.patch && call.output ? (
-                  <pre className="cmd">{call.output}</pre>
+                {!call.diff?.patch && !output ? (
+                  <>
+                    {call.input ? <pre className="cmd">{call.input}</pre> : null}
+                    {call.output ? (
+                      <pre className="cmd">{call.output}</pre>
+                    ) : null}
+                  </>
                 ) : null}
               </>
             ) : null}
