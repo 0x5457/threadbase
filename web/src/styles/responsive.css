@@ -225,7 +225,7 @@
   }
 
   .block {
-    grid-template-columns: 36px minmax(0, 1fr);
+    grid-template-columns: 46px minmax(0, 1fr);
   }
 
   .prose {
@@ -234,11 +234,11 @@
   }
 
   .comment-row {
-    margin-left: 38px;
+    margin-left: 48px;
   }
 
   .turn-gap {
-    margin-left: 38px;
+    margin-left: 48px;
   }
 
   .side-nav {
@@ -421,15 +421,15 @@
   }
 
   .block {
-    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-columns: 58px minmax(0, 1fr);
   }
 
   .comment-row {
-    margin-left: 46px;
+    margin-left: 60px;
   }
 
   .turn-gap {
-    margin-left: 46px;
+    margin-left: 60px;
   }
 
   /* The per-message comment action was hover-only, so touch users had no way
@@ -437,13 +437,13 @@
      block gets enough height that the button cannot spill into the next row
      (where that row's gutter would swallow the tap). */
   .message-block {
-    min-height: 68px;
+    min-height: 78px;
   }
 
   .msg-comment-btn {
-    top: 24px;
+    top: 36px;
     right: auto;
-    left: -40px;
+    left: -46px;
     display: grid;
     width: 36px;
     height: 36px;

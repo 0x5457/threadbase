@@ -206,7 +206,7 @@
 
 .block {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-columns: 60px minmax(0, 1fr);
   column-gap: 2px;
 }
 
@@ -652,6 +652,6 @@
 
 .block-gutter .avatar-agent {
   color: var(--ink-muted);
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 0.02em;
 }

@@ -42,7 +42,7 @@ export const Message = memo(function Message({
     >
       <div className="block-gutter" {...press}>
         <Avatar
-          size={22}
+          size={32}
           radius={agent ? 4 : "xl"}
           color="gray"
           variant="light"
