@@ -65,20 +65,13 @@ async fn send_message(
     };
     let mut draft_authors = Vec::new();
     let text = if from_draft {
-        let blocks = state
+        let (text, editors) = state
             .drafts
-            .peek_blocks(&thread_id)
+            .peek_draft(&thread_id)
             .await
             .map_err(|error| ServerError::internal(error.to_string()))?;
-        let ids: Vec<String> = blocks.iter().map(|block| block.author.clone()).collect();
-        draft_authors = crate::agents::briefs_by_ids(&state.pool, &ids).await;
-        blocks
-            .iter()
-            .map(|block| block.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_owned()
+        draft_authors = crate::agents::briefs_by_ids(&state.pool, &editors).await;
+        text.trim().to_owned()
     } else {
         request.text.trim().to_owned()
     };
@@ -127,7 +120,7 @@ async fn send_message(
     if from_draft {
         state
             .drafts
-            .take_blocks(&thread_id)
+            .take_draft(&thread_id)
             .await
             .map_err(|error| ServerError::internal(error.to_string()))?;
     }

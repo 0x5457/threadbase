@@ -877,12 +877,8 @@ async fn draft_route_preserves_multiple_authors() {
     .unwrap();
     // Seed the draft with two per-author blocks via the persisted snapshot.
     let mut draft = threadbase_draft::DraftDoc::new();
-    draft
-        .append_block("b1", fixture.user.user.id.as_str(), "ada part", 1)
-        .unwrap();
-    draft
-        .append_block("b2", bob.id.as_str(), "bob part", 2)
-        .unwrap();
+    threadbase_draft::seed_text(&mut draft, fixture.user.user.id.as_str(), &["ada part"]).unwrap();
+    threadbase_draft::seed_text(&mut draft, bob.id.as_str(), &["bob part"]).unwrap();
     let blob = draft.encode_full();
     sqlx::query(
         "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
@@ -961,12 +957,8 @@ async fn queued_draft_route_preserves_multiple_authors() {
     .await
     .unwrap();
     let mut draft = threadbase_draft::DraftDoc::new();
-    draft
-        .append_block("b1", fixture.user.user.id.as_str(), "ada part", 1)
-        .unwrap();
-    draft
-        .append_block("b2", bob.id.as_str(), "bob part", 2)
-        .unwrap();
+    threadbase_draft::seed_text(&mut draft, fixture.user.user.id.as_str(), &["ada part"]).unwrap();
+    threadbase_draft::seed_text(&mut draft, bob.id.as_str(), &["bob part"]).unwrap();
     let blob = draft.encode_full();
     sqlx::query(
         "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
@@ -1093,9 +1085,7 @@ async fn failed_send_retains_draft() {
     );
 
     let mut draft = threadbase_draft::DraftDoc::new();
-    draft
-        .append_block("b1", fixture.user.user.id.as_str(), "keep me", 1)
-        .unwrap();
+    threadbase_draft::seed_text(&mut draft, fixture.user.user.id.as_str(), &["keep me"]).unwrap();
     let blob = draft.encode_full();
     sqlx::query(
         "INSERT INTO draft_snapshots(thread_id, upto_seq, state_blob, updated_at)
@@ -1131,14 +1121,14 @@ async fn failed_send_retains_draft() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
-    let blocks = fixture
+    let (text, authors) = fixture
         .state
         .drafts
-        .peek_blocks(fixture.thread.id.as_str())
+        .peek_draft(fixture.thread.id.as_str())
         .await
         .unwrap();
-    assert_eq!(blocks.len(), 1, "failed send must retain the draft");
-    assert_eq!(blocks[0].text, "keep me");
+    assert_eq!(text, "keep me", "failed send must retain the draft");
+    assert_eq!(authors.len(), 1);
 }
 
 #[tokio::test]

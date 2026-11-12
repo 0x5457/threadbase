@@ -130,6 +130,37 @@
   right: 2px;
 }
 
+/* Remote carets from `@tiptap/extension-collaboration-caret`: the label sits
+   above the caret and inherits the peer's color from the extension. */
+.collaboration-carets__caret {
+  position: relative;
+  margin-left: -1px;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  pointer-events: none;
+  word-break: normal;
+}
+
+.collaboration-carets__label {
+  position: absolute;
+  top: -1.35em;
+  left: -1px;
+  padding: 1px 4px;
+  border-radius: 3px 3px 3px 0;
+  color: #fff;
+  font-family: var(--mantine-font-family);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.collaboration-carets__selection {
+  border-radius: 2px;
+  opacity: 0.35;
+}
+
 .composer-row {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr);

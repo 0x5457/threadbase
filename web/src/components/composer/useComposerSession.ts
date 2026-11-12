@@ -9,7 +9,7 @@ import {
   sendDraft,
   sendMessage,
 } from "../../api";
-import { useDraftSession, userColor as colorForUser } from "../../lib/draft";
+import { useDraftSession } from "../../lib/draft";
 
 export type ComposerDelivery = "auto" | "queue";
 
@@ -65,11 +65,7 @@ export function useComposerSession({
       ? { id: currentUserId, name: currentUserName }
       : null,
   );
-  const {
-    setMyText: mirrorDraft,
-    markSent: markDraftSent,
-    setEditing: setDraftEditing,
-  } = draft;
+  const { setEditing: setDraftEditing } = draft;
 
   // Reading config must not start the adapter: opening a thread should not
   // spawn the agent process. An absent session reports no options.
@@ -135,16 +131,10 @@ export function useComposerSession({
       setSending(true);
       try {
         if (shared) {
-          // The server reads the pending CRDT blocks, so the editor must stay
-          // populated until the POST returns. Its tombstone clears the draft.
-          // Queued sends stay silent: the queue bar above the composer already
-          // lists them, and the delivery mode is the caller's own choice.
+          // The server consumes the shared CRDT draft and clears it for every
+          // open composer, so the editor empties through the collaboration
+          // update instead of a local command.
           await sendDraft(threadId, delivery, attachmentIds);
-          // Allocate the next draft block before the editor clears, so the
-          // cleared text does not allocate a second empty block.
-          markDraftSent();
-          editor.commands.clearContent();
-          setHasText(false);
         } else {
           editor.commands.clearContent();
           setHasText(false);
@@ -158,9 +148,10 @@ export function useComposerSession({
         });
         return true;
       } catch (cause) {
-        editor.commands.setContent(text);
-        setHasText(true);
-        if (shared) mirrorDraft(text);
+        if (!shared) {
+          editor.commands.setContent(text);
+          setHasText(true);
+        }
         notifications.show({
           message:
             cause instanceof Error ? cause.message : "Could not send message",
@@ -176,8 +167,6 @@ export function useComposerSession({
       delivery,
       draft.active,
       draft.synced,
-      markDraftSent,
-      mirrorDraft,
       onSent,
       queryClient,
       sending,
@@ -186,11 +175,6 @@ export function useComposerSession({
     ],
   );
 
-  const authorName = (authorId: string) =>
-    draft.remoteEditors.find((peer) => peer.id === authorId)?.name ?? "Teammate";
-  const authorAccent = (authorId: string) =>
-    draft.remoteEditors.find((peer) => peer.id === authorId)?.color ??
-    colorForUser(authorId);
   const editingNames = Array.from(
     new Set(draft.remoteEditors.map((peer) => peer.name)),
   );
@@ -215,7 +199,6 @@ export function useComposerSession({
     delivery,
     setDelivery,
     draft,
-    mirrorDraft,
     setDraftEditing,
     send,
     ensureConfig,
@@ -227,8 +210,6 @@ export function useComposerSession({
     currentUserId,
     currentUserName,
     currentUserAvatar,
-    authorName,
-    authorAccent,
     liveLabel,
     sendBlocked,
     sendLabel,

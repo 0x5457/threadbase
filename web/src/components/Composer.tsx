@@ -1,7 +1,6 @@
 import { ActionIcon, Loader } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
 import { PickerAgentContext } from "../lib/model-prefs";
-import { PendingBlocks } from "./composer/PendingBlocks";
 import { ComposerInput } from "./composer/ComposerInput";
 import { ComposerToolbar } from "./composer/ComposerToolbar";
 import { useComposerEditor } from "./composer/useComposerEditor";
@@ -70,10 +69,11 @@ export function Composer({
     });
   const { editor, hasText, setHasText } = useComposerEditor({
     agent: session.agent,
-    threadId,
     writable: session.writable,
-    restoredText: session.draft.restoredText,
-    mirrorDraft: session.mirrorDraft,
+    document: session.draft.document,
+    provider: session.draft.provider,
+    userId: session.currentUserId,
+    userName: session.currentUserName,
     setDraftEditing: session.setDraftEditing,
     suggestionExtension: extension,
   });
@@ -130,16 +130,8 @@ export function Composer({
             send();
           }
         }}
-        onCompositionEnd={() => {
-          if (editor) session.mirrorDraft(editor.getText());
-        }}
       >
         <div className="composer-inner">
-          <PendingBlocks
-            blocks={session.draft.remoteBlocks}
-            authorName={session.authorName}
-            authorAccent={session.authorAccent}
-          />
           {images.images.length > 0 ? (
             <div className="composer-images">
               {images.images.map((image) => (
