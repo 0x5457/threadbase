@@ -31,6 +31,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
+    "react-virtuoso": "^4.18.22",
     "remark-gfm": "^4.0.1",
     "y-websocket": "3.1.0",
     "yjs": "13.6.33"

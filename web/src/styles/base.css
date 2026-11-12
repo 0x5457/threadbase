@@ -2,6 +2,11 @@ html,
 body,
 #root {
   height: 100%;
+  /* The shell is sized from the visual viewport and shifted by --app-offset on
+     phones; without this the document itself can scroll and a page-level
+     scrollbar appears whenever the browser chrome changes height. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 *:focus-visible {

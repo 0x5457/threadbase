@@ -1,8 +1,46 @@
 /* ── thread document ───────────────────────────────────────── */
 
+.thread-scroll-wrap {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+}
+
+/* Virtuoso owns the scroller; it needs a definite height from the grid row. */
 .thread-scroll {
   min-height: 0;
   height: 100%;
+}
+
+/* The virtualized list is the document column: same measure, padding and
+   text-width setting as the non-virtualized pages. */
+.timeline-doc {
+  padding-bottom: 40px;
+}
+
+.thread-scroll-wrap.wide .timeline-doc {
+  width: min(900px, 100%);
+}
+
+.jump-latest {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  transform: translateX(-50%);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--raised);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.jump-latest:hover {
+  color: var(--ink);
 }
 
 .settings-view {

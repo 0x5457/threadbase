@@ -1,15 +1,17 @@
-import { Alert, Center, Loader, ScrollArea } from "@mantine/core";
+import { Alert, Center, Loader, UnstyledButton } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertCircle } from "@tabler/icons-react";
+import { IconAlertCircle, IconArrowDown } from "@tabler/icons-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Fragment,
+  forwardRef,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import {
   cancelSubagent,
   createComment,
@@ -30,7 +32,7 @@ import {
   type Subagent,
 } from "../api";
 import { useLiveThread } from "../lib/live-thread";
-import { reduceEvents } from "../lib/thread-events";
+import { reduceEvents, type ViewItem } from "../lib/thread-events";
 import { AgentLog } from "./AgentLog";
 import { Composer } from "./Composer";
 import { ApprovalCard } from "./thread/ApprovalCard";
@@ -41,6 +43,67 @@ import { Message, Notice, Thinking } from "./thread/Message";
 import { QueueBar } from "./thread/QueueBar";
 import { SubagentList } from "./thread/SubagentList";
 import { Tool } from "./thread/Tool";
+
+/// Virtuoso renders the transcript inside this wrapper so the document column,
+/// its padding and the text-width setting keep applying.
+
+/// One transcript row. Rendering is a pure function of the reducer item so
+/// Virtuoso can mount and unmount rows freely while scrolling.
+function TimelineRow({
+  item,
+  active,
+  comments,
+  commentKey,
+  editing,
+  editor,
+  onComment,
+}: {
+  item: ViewItem;
+  active: boolean;
+  comments: ReactNode[];
+  commentKey: string | null;
+  editing: string | null;
+  editor: (anchor: CommentAnchor) => ReactNode;
+  onComment: (messageId: string) => void;
+}) {
+  if (item.kind === "message") {
+    return (
+      <>
+        <Message item={item} active={active} onComment={onComment} />
+        {comments}
+        {editing === commentKey
+          ? editor({ kind: "message", messageId: item.id })
+          : null}
+      </>
+    );
+  }
+  switch (item.kind) {
+    case "thinking":
+      return <Thinking />;
+    case "tool":
+      return (
+        <>
+          <Tool item={item} />
+          {comments}
+        </>
+      );
+    case "notice":
+      return <Notice item={item} />;
+    case "turn":
+      return <div className="turn-gap">{item.label}</div>;
+    default:
+      return null;
+  }
+}
+
+const TimelineList = forwardRef<HTMLDivElement, { style?: React.CSSProperties; children?: React.ReactNode }>(
+  ({ style, children }, ref) => (
+    <div ref={ref} style={style} className="doc timeline-doc">
+      {children}
+    </div>
+  ),
+);
+TimelineList.displayName = "TimelineList";
 
 export function RealThreadView({
   threadId,
@@ -58,7 +121,10 @@ export function RealThreadView({
   const [commentFor, setCommentFor] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [commentSaving, setCommentSaving] = useState(false);
-  const viewportRef = useRef<HTMLDivElement>(null);
+  // A long session can hold thousands of blocks; Virtuoso mounts only what is
+  // visible, so a 10k-event transcript costs the same as a short one.
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [stickToBottom, setStickToBottom] = useState(true);
   const notifiedApprovals = useRef<Set<string>>(new Set());
 
   const bundleQuery = useQuery({
@@ -138,10 +204,25 @@ export function RealThreadView({
   const commentsFor = (kind: "message" | "tool_call", id: string) =>
     commentsByAnchor.get(`${kind === "message" ? "m" : "t"}:${id}`) ?? [];
 
+  // Rows handed to Virtuoso: every reducer block except a pending tool card,
+  // which the approval card rendered in the footer replaces.
+  const rows = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          !(
+            pending.length > 0 &&
+            item.kind === "tool" &&
+            item.call.status === "pending"
+          ),
+      ),
+    [items, pending.length],
+  );
+
   useEffect(() => {
-    const viewport = viewportRef.current;
-    if (viewport) viewport.scrollTop = viewport.scrollHeight;
-  }, [threadId, items.length, subagents.length, pending.length]);
+    setStickToBottom(true);
+  }, [threadId]);
+
 
   useEffect(() => {
     if (!stateQuery.data?.settings.browserNotifications) return;
@@ -320,6 +401,47 @@ export function RealThreadView({
     />
   );
 
+  const footerContent = (
+    <>
+      {comments
+        .filter((comment) => comment.anchor.kind === "thread")
+        .map(commentCard)}
+
+      {commentFor === "thread"
+        ? commentEditor({ kind: "thread" })
+        : null}
+
+      {pending.map((approval) => (
+        <ApprovalCard
+          key={approval.id}
+          approval={approval}
+          busy={deciding === approval.id}
+          readOnly={readOnlyAccount}
+          onDecide={(kind) => void decide(approval, kind)}
+        />
+      ))}
+
+      {elicitations.map((elicitation) => (
+        <ElicitationCard
+          key={elicitation.id}
+          elicitation={elicitation}
+          busy={responding === elicitation.id}
+          readOnly={readOnlyAccount}
+          onRespond={(action, values) =>
+            void respond(elicitation, action, values)
+          }
+        />
+      ))}
+
+      <SubagentList
+        subagents={subagents}
+        limit={stateQuery.data?.settings.subthreadsPerThread ?? 10}
+        cancelling={cancelling}
+        onCancel={(subagent) => void cancel(subagent)}
+      />
+    </>
+  );
+
   if (bundleQuery.isPending && live.events.length === 0) {
     return (
       <Center h="100%">
@@ -330,124 +452,81 @@ export function RealThreadView({
 
   return (
     <>
-      <ScrollArea
-        className="thread-scroll"
-        type="hover"
-        viewportRef={viewportRef}
+      <div
+        className={`thread-scroll-wrap${
+          stateQuery.data?.settings.textWidth === "full" ? " wide" : ""
+        }`}
       >
-        <div
-          className="doc"
-          style={
-            stateQuery.data?.settings.textWidth === "full"
-              ? { width: "min(900px, 100%)" }
-              : undefined
+        <Virtuoso
+          ref={virtuosoRef}
+          className="thread-scroll"
+          data={rows}
+          initialTopMostItemIndex={Math.max(0, rows.length - 1)}
+          followOutput={(atBottom) => (atBottom ? "smooth" : false)}
+          atBottomStateChange={setStickToBottom}
+          increaseViewportBy={{ top: 600, bottom: 800 }}
+          computeItemKey={(index, item) =>
+            item.kind === "message"
+              ? `m:${item.id}`
+              : item.kind === "tool"
+                ? `t:${item.call.id}`
+                : `i:${index}`
           }
+          components={{
+            List: TimelineList,
+            Footer: () => <>{footerContent}</>,
+            EmptyPlaceholder: () =>
+              live.error ? (
+                <Alert
+                  icon={<IconAlertCircle size={14} />}
+                  title="Cannot load thread activity"
+                  color="red"
+                >
+                  {live.error}
+                </Alert>
+              ) : (
+                <EmptyThread agent={bundle?.thread.agent ?? "the agent"} />
+              ),
+          }}
+          itemContent={(_index, item) => (
+            <TimelineRow
+              item={item}
+              active={bundle?.thread.status === "running"}
+              comments={commentsFor(
+                item.kind === "message"
+                  ? "message"
+                  : item.kind === "tool"
+                    ? "tool_call"
+                    : "message",
+                item.kind === "message"
+                  ? item.id
+                  : item.kind === "tool"
+                    ? item.call.id
+                    : "",
+              ).map(commentCard)}
+              commentKey={item.kind === "message" ? `m:${item.id}` : null}
+              editing={commentFor}
+              editor={commentEditor}
+              onComment={commentOnMessage}
+            />
+          )}
+        />
+      {!stickToBottom ? (
+        <UnstyledButton
+          className="jump-latest"
+          onClick={() => {
+            virtuosoRef.current?.scrollToIndex({
+              index: "LAST",
+              behavior: "smooth",
+            });
+            setStickToBottom(true);
+          }}
         >
-          {live.error && items.length === 0 ? (
-            <Alert
-              icon={<IconAlertCircle size={14} />}
-              title="Cannot load thread activity"
-              color="red"
-              mb="md"
-            >
-              {live.error}
-            </Alert>
-          ) : null}
-
-          {items.length === 0 && pending.length === 0 ? (
-            <EmptyThread agent={bundle?.thread.agent ?? "the agent"} />
-          ) : null}
-
-          {items
-            .filter(
-              (item) =>
-                !(
-                  pending.length > 0 &&
-                  item.kind === "tool" &&
-                  item.call.status === "pending"
-                ),
-            )
-            .map((item, index) => {
-              if (item.kind === "message") {
-                const key = `m:${item.id}`;
-                return (
-                  <Fragment key={key}>
-                    <Message
-                      item={item}
-                      active={bundle?.thread.status === "running"}
-                      onComment={commentOnMessage}
-                    />
-                    {commentsFor("message", item.id).map(commentCard)}
-                    {commentFor === key
-                      ? commentEditor({
-                          kind: "message",
-                          messageId: item.id,
-                        })
-                      : null}
-                  </Fragment>
-                );
-              }
-              switch (item.kind) {
-                case "thinking":
-                  return <Thinking key={index} />;
-                case "tool":
-                  return (
-                    <Fragment key={index}>
-                      <Tool item={item} />
-                      {commentsFor("tool_call", item.call.id).map(commentCard)}
-                    </Fragment>
-                  );
-                case "notice":
-                  return <Notice key={index} item={item} />;
-                case "turn":
-                  return (
-                    <div key={index} className="turn-gap">
-                      {item.label}
-                    </div>
-                  );
-                default:
-                  return null;
-              }
-            })}
-
-          {comments
-            .filter((comment) => comment.anchor.kind === "thread")
-            .map(commentCard)}
-
-          {commentFor === "thread"
-            ? commentEditor({ kind: "thread" })
-            : null}
-
-          {pending.map((approval) => (
-            <ApprovalCard
-              key={approval.id}
-              approval={approval}
-              busy={deciding === approval.id}
-              readOnly={readOnlyAccount}
-              onDecide={(kind) => void decide(approval, kind)}
-            />
-          ))}
-
-          {elicitations.map((elicitation) => (
-            <ElicitationCard
-              key={elicitation.id}
-              elicitation={elicitation}
-              busy={responding === elicitation.id}
-              readOnly={readOnlyAccount}
-              onRespond={(action, values) =>
-                void respond(elicitation, action, values)
-              }
-            />
-          ))}
-
-          <SubagentList
-            subagents={subagents}
-            limit={stateQuery.data?.settings.subthreadsPerThread ?? 10}
-            cancelling={cancelling}
-            onCancel={(subagent) => void cancel(subagent)}
-          />
-        </div>
-      </ScrollArea>
+          <IconArrowDown size={12} stroke={1.5} />
+          Jump to latest
+        </UnstyledButton>
+      ) : null}
+      </div>
       <div className="composer-stack">
         <AgentLog lines={diagnostics} />
         <QueueBar items={queue} busy={dropping} onDrop={(id) => void drop(id)} />
