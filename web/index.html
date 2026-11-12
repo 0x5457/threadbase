@@ -9,15 +9,8 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Threadbase</title>
-    <script>
-      try {
-        const theme = localStorage.getItem("threadbase.theme");
-        if (theme === "dark" || theme === "light") {
-          document.documentElement.dataset.mantineColorScheme = theme;
-          document.documentElement.style.colorScheme = theme;
-        }
-      } catch {}
-    </script>
+    <!-- External, not inline: the server sends `script-src 'self'`. -->
+    <script src="/theme-boot.js"></script>
   </head>
   <body>
     <div id="root"></div>

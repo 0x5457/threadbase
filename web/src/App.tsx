@@ -34,6 +34,7 @@ import {
   getMe,
   getState,
   getThread,
+  listTerminalSessions,
   listAllThreads,
   listInbox,
   listProjects,
@@ -151,6 +152,19 @@ function Workspace() {
   });
   const me = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 60_000 });
   const terminalEnabled = Boolean(stateQuery.data?.terminal) && Boolean(me.data?.user.isAdmin);
+  // A shell that outlived the drawer: the status bar keeps it discoverable.
+  const terminalSessions = useQuery({
+    queryKey: ["terminal-sessions", terminalThreadId],
+    queryFn: () => listTerminalSessions(terminalThreadId),
+    enabled: terminalEnabled,
+    staleTime: 5_000,
+    refetchInterval: terminalOpen ? false : 10_000,
+  });
+  const liveTerminal =
+    terminalSessions.data?.sessions.find(
+      (session) =>
+        session.alive && (session.threadId ?? null) === terminalThreadId,
+    ) ?? null;
   const [changesWidth, setChangesWidth] = useState(() => {
     try {
       const stored = Number(
@@ -719,6 +733,7 @@ function Workspace() {
               key={selectedThread.id}
               threadId={selectedThread.id}
               onPresence={setOnlineUserIds}
+              presencePanel={terminalOpen ? "terminal" : "transcript"}
             />
           ) : route.kind === "thread" ? (
             <EmptyState loading title="Opening thread" />
@@ -772,6 +787,11 @@ function Workspace() {
           <StatusBar
             thread={selectedThread ?? undefined}
             workspace={view !== "thread" || selectedThread === null}
+            terminal={
+              terminalEnabled && liveTerminal && !terminalOpen
+                ? { onClick: () => setTerminalOpen(true) }
+                : undefined
+            }
           />
         )}
         {/* Inside the shell, so the transformed shell's stacking context keeps

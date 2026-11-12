@@ -8,4 +8,8 @@ export type CreateTerminalSessionRequest = {
   threadId: ThreadId | null;
   cols: number | null;
   rows: number | null;
+  /**
+   * Screens that cannot type (phones) ask for a watcher-only ticket.
+   */
+  watchOnly: boolean | null;
 };

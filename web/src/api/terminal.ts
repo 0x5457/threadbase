@@ -22,10 +22,10 @@ export function createTerminalSession(body: CreateTerminalSessionRequest) {
 }
 
 /** Attach ticket for a shell that already exists. */
-export function attachTerminalSession(sessionId: string) {
+export function attachTerminalSession(sessionId: string, watchOnly = false) {
   return request<TerminalSessionResponse>(
     `/api/terminal/sessions/${encodeURIComponent(sessionId)}/attach`,
-    { method: "POST", body: JSON.stringify({}) },
+    { method: "POST", body: JSON.stringify({ watchOnly }) },
   );
 }
 

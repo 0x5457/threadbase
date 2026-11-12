@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path as FsPath, PathBuf};
 use std::time::Duration;
 use threadbase_shared::{
-    ApiError, CreateTerminalSessionRequest, ErrorCode, TerminalSessionDto, TerminalSessionResponse,
-    TerminalSessionsResponse, UserId,
+    ApiError, AttachTerminalSessionRequest, CreateTerminalSessionRequest, ErrorCode,
+    TerminalSessionDto, TerminalSessionResponse, TerminalSessionsResponse, UserId,
 };
 
 const DEFAULT_COLS: u16 = 120;
@@ -221,7 +221,10 @@ async fn create_session(
         .ensure(&id, thread_id.as_deref(), &cwd, cols, rows)
         .await
         .map_err(map_terminal_error)?;
-    let ticket = state.terminal.ticket(&id, user.user.id.as_str());
+    let watch_only = request.watch_only.unwrap_or(false);
+    let ticket = state
+        .terminal
+        .ticket(&id, user.user.id.as_str(), watch_only);
     let session = session_dto(&state, &id, thread_id, &cwd.to_string_lossy(), true).await;
     Ok(Json(TerminalSessionResponse { session, ticket }))
 }
@@ -230,6 +233,7 @@ async fn attach_ticket(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(session_id): Path<String>,
+    body: Option<Json<AttachTerminalSessionRequest>>,
 ) -> Result<Json<TerminalSessionResponse>, ServerError> {
     gate(&state, &user)?;
     if !terminal::is_session_id(&session_id) || !owns_session(&user, &session_id) {
@@ -256,7 +260,10 @@ async fn attach_ticket(
                 .adopt(&session_id, thread_id.as_deref(), FsPath::new(&cwd))
         }
     };
-    let ticket = state.terminal.ticket(&session_id, user.user.id.as_str());
+    let watch_only = body.and_then(|Json(body)| body.watch_only).unwrap_or(false);
+    let ticket = state
+        .terminal
+        .ticket(&session_id, user.user.id.as_str(), watch_only);
     let session = session_dto(
         &state,
         &session_id,
@@ -359,15 +366,17 @@ async fn upgrade(
             "terminal session not found",
         )));
     }
-    // The ticket proves this socket was authorised by a CSRF-guarded POST.
-    if !state
-        .terminal
-        .take_ticket(&query.ticket, &session_id, user.user.id.as_str())
-    {
+    // The ticket proves this socket was authorised by a CSRF-guarded POST, and
+    // carries whether the caller is allowed to type at all.
+    let Some(watch_only) =
+        state
+            .terminal
+            .take_ticket(&query.ticket, &session_id, user.user.id.as_str())
+    else {
         return Err(ServerError(ApiError::forbidden(
             "terminal ticket is invalid or expired",
         )));
-    }
+    };
     // A revoked or downgraded account must not ride an old ticket, so the
     // decision is taken from the row as it is now, not from the cookie.
     let fresh = load_user_by_id(&state.pool, user.user.id.as_str())
@@ -388,7 +397,10 @@ async fn upgrade(
         .await
         .map_err(map_terminal_error)?;
     let role = room
-        .claim(user.user.id.as_str(), access == Access::Drive)
+        .claim(
+            user.user.id.as_str(),
+            access == Access::Drive && !watch_only,
+        )
         .map_err(map_terminal_error)?;
     let attachment = match terminal::attach(
         &session_id,

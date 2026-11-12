@@ -568,4 +568,13 @@ pub struct CreateTerminalSessionRequest {
     pub thread_id: Option<ThreadId>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
+    /// Screens that cannot type (phones) ask for a watcher-only ticket.
+    pub watch_only: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AttachTerminalSessionRequest {
+    pub watch_only: Option<bool>,
 }

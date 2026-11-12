@@ -98,6 +98,9 @@ struct Ticket {
     session: String,
     user: String,
     expires_at: i64,
+    /// Set when the caller may not take the keyboard, e.g. a phone that can
+    /// only watch.
+    watch_only: bool,
 }
 
 /// One shared terminal: a tmux session plus the browsers attached to it.
@@ -235,7 +238,7 @@ impl TerminalHub {
     }
 
     /// Mint a single-use ticket bound to one user and one session.
-    pub fn ticket(&self, session: &str, user: &str) -> String {
+    pub fn ticket(&self, session: &str, user: &str, watch_only: bool) -> String {
         let token = random_token();
         if let Ok(mut tickets) = self.tickets.lock() {
             let now = now_ms();
@@ -248,22 +251,22 @@ impl TerminalHub {
                     session: session.to_owned(),
                     user: user.to_owned(),
                     expires_at: now + TICKET_TTL_MS,
+                    watch_only,
                 },
             );
         }
         token
     }
 
-    /// Consume a ticket. It is removed even when it does not match, so a wrong
-    /// guess cannot be retried against the same token.
-    pub fn take_ticket(&self, token: &str, session: &str, user: &str) -> bool {
-        let Ok(mut tickets) = self.tickets.lock() else {
-            return false;
-        };
-        let Some(ticket) = tickets.remove(token) else {
-            return false;
-        };
-        ticket.session == session && ticket.user == user && ticket.expires_at > now_ms()
+    /// Consume a ticket, returning whether the caller asked to watch only. It is
+    /// removed even when it does not match, so a wrong guess cannot be retried
+    /// against the same token.
+    pub fn take_ticket(&self, token: &str, session: &str, user: &str) -> Option<bool> {
+        let mut tickets = self.tickets.lock().ok()?;
+        let ticket = tickets.remove(token)?;
+        let valid =
+            ticket.session == session && ticket.user == user && ticket.expires_at > now_ms();
+        valid.then_some(ticket.watch_only)
     }
 
     /// Apply the options to a server this process did not start.
@@ -445,9 +448,14 @@ const OPTIONS: &[(&str, &str)] = &[
     ("history-limit", "10000"),
     // The driver owns the window size; watchers render a crop of it.
     ("window-size", "manual"),
-    ("remain-on-exit", "on"),
+    // When the shell exits the client must see EOF, so the drawer can offer a
+    // fresh session instead of showing a dead pane forever.
+    ("remain-on-exit", "off"),
     ("destroy-unattached", "off"),
     ("set-clipboard", "off"),
+    // Rows outside a smaller-than-client window are padded with this; tmux's
+    // default dot pattern reads as corruption in the drawer.
+    ("fill-character", " "),
 ];
 
 fn option_value<'a>(key: &str, shell: &'a str) -> &'a str {
@@ -678,15 +686,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let hub = TerminalHub::new(dir.path(), "/bin/bash", "tb-test");
 
-        let token = hub.ticket("t-1", "u1");
-        assert!(!hub.take_ticket(&token, "t-1", "u2"));
-        assert!(!hub.take_ticket(&token, "t-1", "u1"));
+        let token = hub.ticket("t-1", "u1", false);
+        assert_eq!(hub.take_ticket(&token, "t-1", "u2"), None);
+        assert_eq!(hub.take_ticket(&token, "t-1", "u1"), None);
 
-        let token = hub.ticket("t-1", "u1");
-        assert!(!hub.take_ticket(&token, "t-2", "u1"));
+        let token = hub.ticket("t-1", "u1", false);
+        assert_eq!(hub.take_ticket(&token, "t-2", "u1"), None);
 
-        let token = hub.ticket("t-1", "u1");
-        assert!(hub.take_ticket(&token, "t-1", "u1"));
+        let token = hub.ticket("t-1", "u1", false);
+        assert_eq!(hub.take_ticket(&token, "t-1", "u1"), Some(false));
+
+        let token = hub.ticket("t-1", "u1", true);
+        assert_eq!(hub.take_ticket(&token, "t-1", "u1"), Some(true));
     }
 
     #[test]

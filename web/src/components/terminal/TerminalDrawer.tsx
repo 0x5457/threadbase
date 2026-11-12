@@ -1,5 +1,6 @@
 import "@xterm/xterm/css/xterm.css";
 import { ActionIcon, Button, Group, Text, Tooltip } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import {
   IconKeyboard,
   IconKeyboardOff,
@@ -69,12 +70,14 @@ const MAX_HEIGHT = 720;
 async function openSession(
   threadId: string | null,
   size: { cols: number; rows: number },
+  watchOnly: boolean,
 ) {
   try {
     return await createTerminalSession({
       threadId,
       cols: size.cols,
       rows: size.rows,
+      watchOnly,
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
@@ -94,7 +97,7 @@ async function openSession(
           : "Only an administrator can start a terminal on this machine.",
       );
     }
-    return attachTerminalSession(existing.id);
+    return attachTerminalSession(existing.id, watchOnly);
   }
 }
 
@@ -129,6 +132,10 @@ export function TerminalDrawer({
   const [error, setError] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  // Typing on a phone means fighting the soft keyboard over a pty, so phones
+  // watch: the ticket itself is watcher-only, enforced on the server.
+  const phone = useMediaQuery("(max-width: 47.99em)");
+  const watchOnly = Boolean(phone);
 
   const socketRef = useRef<WebSocket | null>(null);
   const sendRef = useRef<(message: unknown) => void>(() => {});
@@ -158,7 +165,7 @@ export function TerminalDrawer({
 
     const connect = async () => {
       try {
-        const created = await openSession(threadId, size());
+        const created = await openSession(threadId, size(), watchOnly);
         if (cancelled) return;
         setSession(created.session);
         setCwd(created.session.cwd);
@@ -227,7 +234,7 @@ export function TerminalDrawer({
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [ready, threadId, attempt, size, write]);
+  }, [ready, threadId, attempt, size, write, watchOnly]);
 
   // Drag the top edge to trade transcript space for terminal height.
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -291,14 +298,16 @@ export function TerminalDrawer({
   const canDrive = role === "controller" && phase === "live";
   const watchNote =
     controller === null
-      ? "Watching: nobody is driving. Only an administrator can type in this shell."
+      ? watchOnly
+        ? "Watching. Typing is off on this screen."
+        : "Watching: nobody is driving. Only an administrator can type in this shell."
       : `Watching: ${controller} is driving. The keyboard is off for you.`;
 
   return (
     <section
       className="terminal-drawer"
-      data-fullscreen={fullscreen ? "true" : undefined}
-      style={fullscreen ? undefined : { height }}
+      data-fullscreen={fullscreen || phone ? "true" : undefined}
+      style={fullscreen || phone ? undefined : { height }}
       aria-label="Terminal"
     >
       {fullscreen ? null : (

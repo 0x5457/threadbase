@@ -1,6 +1,11 @@
 import type { ThreadEvent } from "../../api";
 
-export type LivePanel = "transcript" | "changes" | "approvals" | "files";
+export type LivePanel =
+  | "transcript"
+  | "changes"
+  | "approvals"
+  | "files"
+  | "terminal";
 
 export const DEFAULT_PANEL: LivePanel = "transcript";
 

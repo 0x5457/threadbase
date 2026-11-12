@@ -49,6 +49,7 @@ import {
   type Subagent,
 } from "../api";
 import { useLiveThread } from "../lib/live-thread";
+import type { LivePanel } from "../lib/live/types";
 import { reduceEvents, type ViewItem } from "../lib/thread-events";
 import { ActionSheet } from "./ActionSheet";
 import { AgentLog } from "./AgentLog";
@@ -220,9 +221,12 @@ TimelineList.displayName = "TimelineList";
 export function RealThreadView({
   threadId,
   onPresence,
+  presencePanel = "transcript",
 }: {
   threadId: string;
   onPresence?: (onlineUserIds: string[]) => void;
+  /** What this browser is looking at, reported to everyone else in the thread. */
+  presencePanel?: LivePanel;
 }) {
   const queryClient = useQueryClient();
   const [deciding, setDeciding] = useState<string | null>(null);
@@ -282,6 +286,9 @@ export function RealThreadView({
   useEffect(() => {
     onPresence?.(live.presence.onlineUserIds);
   }, [live.presence.onlineUserIds, onPresence]);
+  useEffect(() => {
+    live.sendPresence({ panel: presencePanel });
+  }, [live.sendPresence, presencePanel]);
   useEffect(
     () => () => {
       onPresence?.([]);
@@ -297,6 +304,17 @@ export function RealThreadView({
       ),
     [live.events, bundle?.thread.agent],
   );
+  const terminalUsers = live.presence.focuses
+    .filter(
+      (focus) =>
+        focus.threadId === threadId && !focus.hidden && focus.panel === "terminal",
+    )
+    .map((focus) => {
+      const participant = bundle?.thread.participants.find(
+        (entry) => entry.user.id === focus.userId,
+      );
+      return participant?.user.displayName ?? focus.userId;
+    });
   const pending = (bundle?.approvals ?? []).filter(
     (approval) => approval.status === "pending",
   );
@@ -801,6 +819,7 @@ export function RealThreadView({
               (focus) => focus.threadId === threadId && !focus.hidden,
             ).length
           }
+          terminalUsers={terminalUsers}
           onThreadComment={() => openComment("thread")}
         />
       </div>

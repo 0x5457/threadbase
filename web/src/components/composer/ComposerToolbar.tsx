@@ -14,6 +14,7 @@ import {
   IconCheck,
   IconCommand,
   IconEye,
+  IconTerminal2,
   IconMessagePlus,
 } from "@tabler/icons-react";
 import type { ModelChoice } from "../ModelPicker";
@@ -23,6 +24,7 @@ import type { ComposerDelivery } from "./useComposerSession";
 interface ComposerToolbarProps {
   agent: string;
   watching?: number;
+  terminalUsers?: string[];
   draftActive: boolean;
   draftSynced: boolean;
   draftConnected: boolean;
@@ -51,6 +53,7 @@ interface ComposerToolbarProps {
 export function ComposerToolbar({
   agent,
   watching,
+  terminalUsers,
   draftActive,
   draftSynced,
   draftConnected,
@@ -148,6 +151,19 @@ export function ComposerToolbar({
           </Menu.Item>
         </Menu.Dropdown>
       </Menu>
+      {terminalUsers?.length ? (
+        <Tooltip
+          label={`${terminalUsers.join(", ")} in the terminal`}
+          openDelay={200}
+        >
+          <Group gap={3} className="watching-label" wrap="nowrap">
+            <IconTerminal2 size={12} stroke={1.5} />
+            <Text size="xs" c="dimmed">
+              {terminalUsers.length}
+            </Text>
+          </Group>
+        </Tooltip>
+      ) : null}
       {watching ? (
         <Tooltip
           label={`${watching} ${watching === 1 ? "person" : "people"} watching`}

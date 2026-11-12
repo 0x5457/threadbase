@@ -325,6 +325,42 @@ async fn a_home_shell_belongs_to_one_account() {
 }
 
 #[tokio::test]
+async fn a_watch_only_ticket_never_takes_the_keyboard() {
+    if !tmux_available() {
+        return;
+    }
+    let fixture = fixture(true).await;
+    let session = format!("t-{}", fixture.thread_id);
+    let (status, body) = fixture
+        .call(
+            Method::POST,
+            "/api/terminal/sessions",
+            &fixture.admin,
+            Some(json!({ "threadId": fixture.thread_id, "watchOnly": true })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ticket = body["ticket"].as_str().unwrap().to_owned();
+
+    let mut socket = fixture.connect(&fixture.admin, &ticket).await;
+    let ready = next_json(&mut socket).await;
+    assert_eq!(ready["type"], "ready");
+    assert_eq!(ready["role"], "watcher");
+
+    let _ = fixture
+        .call(
+            Method::DELETE,
+            &format!("/api/terminal/sessions/{session}"),
+            &fixture.admin,
+            None,
+        )
+        .await;
+    let _ = std::process::Command::new("tmux")
+        .args(["-L", &fixture.socket, "kill-server"])
+        .status();
+}
+
+#[tokio::test]
 async fn members_may_watch_but_not_open_a_shell() {
     let fixture = fixture(true).await;
     let (status, body) = fixture

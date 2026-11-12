@@ -45,14 +45,15 @@
   white-space: nowrap;
 }
 
-.terminal-icon,
-.terminal-cwd,
-.terminal-role {
+.terminal-head > * {
   flex: none;
 }
 
 .terminal-cwd {
+  /* The only elastic item in the header: a long path truncates instead of
+     pushing the controls off a narrow screen. */
   overflow: hidden;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 46ch;
   cursor: copy;
@@ -174,9 +175,42 @@
   border-color: color-mix(in srgb, var(--del) 30%, var(--line));
 }
 
-/* Phones get no terminal: a soft keyboard over a pty is a different product. */
+/* Phones get a read-only, full-screen terminal: the drawer would leave no room
+   for the soft keyboard, and the ticket is watcher-only anyway. */
 @media (max-width: 47.99em) {
   .terminal-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 190;
+    border-top: none;
+  }
+
+  .terminal-resize {
     display: none;
   }
+
+  .terminal-cwd {
+    max-width: 16ch;
+  }
+}
+
+/* Status bar chip: a shell is alive but its drawer is closed. */
+.status-terminal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.status-terminal:hover {
+  background: var(--hover);
+  color: var(--ink);
 }

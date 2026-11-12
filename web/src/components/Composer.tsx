@@ -27,6 +27,8 @@ interface ComposerProps {
   canWrite?: boolean;
   /** Live presence count for this thread. */
   watching?: number;
+  /** People currently looking at the terminal, by display name. */
+  terminalUsers?: string[];
   /** When false, plain Enter sends and Shift+Enter inserts a newline. */
   sendWithModifier?: boolean;
 }
@@ -42,6 +44,7 @@ export function Composer({
   onSent,
   onThreadComment,
   watching,
+  terminalUsers,
   sendWithModifier = true,
   userId,
   userName,
@@ -133,6 +136,7 @@ export function Composer({
           <ComposerToolbar
             agent={session.agent}
             watching={watching}
+            terminalUsers={terminalUsers}
             draftActive={session.draft.active}
             draftSynced={session.draft.synced}
             draftConnected={session.draft.connected}
