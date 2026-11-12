@@ -56,8 +56,19 @@ pub async fn update(
     if let Some(value) = patch.hidden_presence {
         settings.hidden_presence = value;
     }
-    if patch.webhook_url.is_some() {
-        settings.webhook_url = patch.webhook_url;
+    if let Some(value) = patch.webhook_url {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            let valid = url::Url::parse(trimmed)
+                .ok()
+                .is_some_and(|url| url.scheme() == "https");
+            if !valid {
+                return Err(ServerError(threadbase_shared::ApiError::validation(
+                    "webhook URL must be a valid https URL",
+                )));
+            }
+        }
+        settings.webhook_url = Some(value);
     }
     if let Some(value) = patch.browser_notifications {
         settings.browser_notifications = value;

@@ -6,13 +6,14 @@ use crate::app::AppState;
 use crate::auth::{self, client_ip_for_headers, Identity, METHOD_GITHUB};
 use crate::auth_github;
 use crate::auth_session;
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use url::form_urlencoded;
@@ -26,8 +27,12 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/auth/github/callback", get(github_callback))
 }
 
-async fn github_start(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if !RateLimit::allow(&headers) {
+async fn github_start(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if !RateLimit::allow(&headers, Some(peer)) {
         return redirect_error("too many sign-in attempts, wait a minute");
     }
     let Some(oauth) = state.config.github.as_ref() else {
@@ -68,6 +73,7 @@ struct CallbackQuery {
 
 async fn github_callback(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<CallbackQuery>,
     headers: HeaderMap,
 ) -> Response {
@@ -130,6 +136,7 @@ async fn github_callback(
 
     let allowed = match auth::may_sign_in(
         &state.pool,
+        profile.id,
         &profile.login,
         &state.config.admins,
         &state.config.github_allow,
@@ -151,6 +158,7 @@ async fn github_callback(
     }
 
     let identity = Identity::github(
+        profile.id,
         &profile.login,
         profile.display_name.as_deref(),
         profile.avatar_url.as_deref(),
@@ -164,7 +172,7 @@ async fn github_callback(
         }
     };
 
-    let ip = client_ip_for_headers(&headers);
+    let ip = client_ip_for_headers(&headers, Some(peer));
     let user_agent = headers
         .get(header::USER_AGENT)
         .and_then(|value| value.to_str().ok());
@@ -239,11 +247,11 @@ fn redirect_error(message: &str) -> Response {
 struct RateLimit;
 
 impl RateLimit {
-    fn allow(headers: &HeaderMap) -> bool {
+    fn allow(headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
         const LIMIT: u32 = 30;
         const WINDOW: Duration = Duration::from_secs(60);
         static BUCKETS: OnceLock<Mutex<HashMap<String, (u32, Instant)>>> = OnceLock::new();
-        let key = client_ip_for_headers(headers);
+        let key = client_ip_for_headers(headers, peer);
         let buckets = BUCKETS.get_or_init(|| Mutex::new(HashMap::new()));
         let Ok(mut buckets) = buckets.lock() else {
             return true;

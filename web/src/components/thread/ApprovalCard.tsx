@@ -4,10 +4,12 @@ import type { Approval } from "../../api";
 export function ApprovalCard({
   approval,
   busy,
+  readOnly = false,
   onDecide,
 }: {
   approval: Approval;
   busy: boolean;
+  readOnly?: boolean;
   onDecide: (kind: Approval["options"][number]["kind"]) => void;
 }) {
   const options =
@@ -52,11 +54,18 @@ export function ApprovalCard({
             ) : approval.input ? (
               <pre className="cmd">{approval.input}</pre>
             ) : null}
+            {readOnly ? (
+              <Text size="xs" c="dimmed" mt={6}>
+                Your account has read-only access, so decisions are disabled.
+                Ask an administrator to allow editing.
+              </Text>
+            ) : null}
             <Group justify="flex-end" gap={6} mt={8}>
               {options.map((option) => (
                 <Button
                   key={option.id}
                   loading={busy}
+                  disabled={readOnly}
                   variant={
                     option.kind === "deny"
                       ? "subtle"

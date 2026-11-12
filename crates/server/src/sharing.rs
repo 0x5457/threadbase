@@ -504,7 +504,7 @@ mod tests {
         };
         let target = crate::auth::ensure_identity_user(
             &pool,
-            &crate::auth::Identity::github("invitee", Some("Invitee"), None),
+            &crate::auth::Identity::github(2, "invitee", Some("Invitee"), None),
             &[],
         )
         .await

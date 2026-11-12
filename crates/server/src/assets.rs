@@ -17,7 +17,10 @@ pub fn serve(uri: &Uri) -> Response {
 fn serve_disk(root: &std::path::Path, uri: &Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
-    let candidate = root.join(path);
+    let Ok(candidate) = threadbase_workspace::path::ensure_within(root, std::path::Path::new(path))
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     if candidate.is_file() {
         if let Ok(data) = std::fs::read(&candidate) {
             return file_response(path, data);
@@ -82,4 +85,32 @@ fn file_response(path: &str, data: Vec<u8>) -> Response {
         Body::from(data),
     )
         .into_response()
+}
+
+#[cfg(all(debug_assertions, test))]
+mod tests {
+    use super::*;
+
+    fn root_with_index() -> (tempfile::TempDir, std::path::PathBuf) {
+        let parent = tempfile::tempdir().unwrap();
+        std::fs::write(parent.path().join("secret.txt"), "secret").unwrap();
+        let root = parent.path().join("dist");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("index.html"), "<html></html>").unwrap();
+        (parent, root)
+    }
+
+    #[test]
+    fn traversal_outside_the_asset_root_is_not_found() {
+        let (_parent, root) = root_with_index();
+        let uri: Uri = "/../secret.txt".parse().unwrap();
+        assert_eq!(serve_disk(&root, &uri).status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn dotless_paths_fall_back_to_the_spa_shell() {
+        let (_parent, root) = root_with_index();
+        let uri: Uri = "/settings".parse().unwrap();
+        assert_eq!(serve_disk(&root, &uri).status(), StatusCode::OK);
+    }
 }

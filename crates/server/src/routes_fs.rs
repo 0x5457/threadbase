@@ -20,20 +20,42 @@ struct DirectoryQuery {
 }
 
 async fn list_directories(
-    State(_state): State<crate::app::AppState>,
+    State(state): State<crate::app::AppState>,
     _user: CurrentUser,
     Query(query): Query<DirectoryQuery>,
 ) -> Result<Json<DirectoryListingDto>, ServerError> {
+    let home_root = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| path.canonicalize().unwrap_or(path))
+        .or_else(|| state.config.data_dir.parent().map(Path::to_path_buf));
     let requested = query
         .path
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".to_owned()));
+        .or_else(|| {
+            home_root
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    if requested.is_empty() || requested.contains('\0') {
+        return Err(ServerError(ApiError::validation(
+            "directory is not available",
+        )));
+    }
     let path = PathBuf::from(&requested);
     let path = if path.is_file() {
         path.parent().map(Path::to_path_buf).unwrap_or(path)
     } else {
         path
     };
+    let mut roots: Vec<PathBuf> = home_root.into_iter().collect();
+    let project_paths: Vec<String> = sqlx::query_scalar("SELECT path FROM projects")
+        .fetch_all(&state.pool)
+        .await?;
+    roots.extend(project_paths.into_iter().map(PathBuf::from));
+    let path = threadbase_workspace::path::ensure_within_any(&roots, &path)
+        .map_err(|_| ServerError(ApiError::validation("directory is not available")))?;
     let path = path
         .canonicalize()
         .map_err(|_| ServerError(ApiError::validation("directory does not exist")))?;

@@ -2,8 +2,9 @@
 //!
 //! This is the classic OAuth web-application flow, not a GitHub App. GitHub
 //! does not issue OIDC tokens here, so identity comes from `GET /user`; the
-//! login name is the stable key and the email address is deliberately ignored
-//! because users can keep it private.
+//! numeric account id is the stable key, while the login name is only a mutable
+//! display handle (GitHub allows renames and re-registration of freed logins).
+//! The email address is deliberately ignored because users can keep it private.
 
 use crate::config::GitHubOAuth;
 use base64::Engine;
@@ -22,6 +23,8 @@ const USER_AGENT: &str = "threadbase";
 
 #[derive(Debug, Clone)]
 pub struct Profile {
+    /// Immutable GitHub account id; survives login renames.
+    pub id: i64,
     pub login: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
@@ -120,6 +123,7 @@ pub async fn exchange(
 pub async fn profile(access_token: &str) -> anyhow::Result<Profile> {
     #[derive(Deserialize)]
     struct UserResponse {
+        id: i64,
         login: String,
         name: Option<String>,
         avatar_url: Option<String>,
@@ -136,11 +140,15 @@ pub async fn profile(access_token: &str) -> anyhow::Result<Profile> {
         anyhow::bail!("github user endpoint returned {status}");
     }
     let user: UserResponse = response.json().await?;
+    if user.id <= 0 {
+        anyhow::bail!("github returned an unusable account id");
+    }
     let login = user.login.trim().to_owned();
     if login.is_empty() || login.len() > 100 {
         anyhow::bail!("github returned an unusable login");
     }
     Ok(Profile {
+        id: user.id,
         login,
         display_name: user
             .name

@@ -77,10 +77,13 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
 }
 
 async fn session_token(pool: &SqlitePool, login: &str) -> String {
-    let user =
-        auth::ensure_identity_user(pool, &auth::Identity::github(login, Some(login), None), &[])
-            .await
-            .unwrap();
+    let user = auth::ensure_identity_user(
+        pool,
+        &auth::Identity::github(1, login, Some(login), None),
+        &[],
+    )
+    .await
+    .unwrap();
     auth_session::create(
         pool,
         user.id.as_str(),
@@ -184,9 +187,10 @@ async fn only_the_first_identity_becomes_admin() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // A GitHub sign-in afterwards must not inherit admin.
-    let other = auth::ensure_identity_user(&pool, &auth::Identity::github("bob", None, None), &[])
-        .await
-        .unwrap();
+    let other =
+        auth::ensure_identity_user(&pool, &auth::Identity::github(2, "bob", None, None), &[])
+            .await
+            .unwrap();
     assert!(!other.is_admin);
 }
 
@@ -195,7 +199,7 @@ async fn sessions_authenticate_and_logout_revokes_them() {
     let (app, pool, _data) = test_app().await;
     let user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github("ada", Some("Ada"), None),
+        &auth::Identity::github(1, "ada", Some("Ada"), None),
         &[],
     )
     .await
@@ -230,9 +234,10 @@ async fn sessions_authenticate_and_logout_revokes_them() {
 #[tokio::test]
 async fn expired_session_cookie_is_rejected() {
     let (app, pool, _data) = test_app().await;
-    let user = auth::ensure_identity_user(&pool, &auth::Identity::github("ada", None, None), &[])
-        .await
-        .unwrap();
+    let user =
+        auth::ensure_identity_user(&pool, &auth::Identity::github(1, "ada", None, None), &[])
+            .await
+            .unwrap();
     let token = auth_session::create(&pool, user.id.as_str(), "github", None, None, -1)
         .await
         .unwrap();
@@ -285,11 +290,12 @@ async fn disabled_user_is_forbidden_outside_self_service_routes() {
 #[tokio::test]
 async fn pending_and_read_only_access_are_enforced() {
     let (app, pool, _data) = test_app().await;
-    let _admin = auth::ensure_identity_user(&pool, &auth::Identity::github("ada", None, None), &[])
-        .await
-        .unwrap();
+    let _admin =
+        auth::ensure_identity_user(&pool, &auth::Identity::github(1, "ada", None, None), &[])
+            .await
+            .unwrap();
     let pending =
-        auth::ensure_identity_user(&pool, &auth::Identity::github("bob", None, None), &[])
+        auth::ensure_identity_user(&pool, &auth::Identity::github(2, "bob", None, None), &[])
             .await
             .unwrap();
     let token = auth_session::create(&pool, pending.id.as_str(), "github", None, None, 3600)
@@ -484,27 +490,28 @@ async fn sign_in_policy_covers_allowlists_and_existing_users() {
     let empty: Vec<String> = Vec::new();
 
     // An unowned instance accepts the first login.
-    assert!(auth::may_sign_in(&pool, "ada", &empty, &empty)
+    assert!(auth::may_sign_in(&pool, 1, "ada", &empty, &empty)
         .await
         .unwrap());
 
-    let _admin = auth::ensure_identity_user(&pool, &auth::Identity::github("ada", None, None), &[])
-        .await
-        .unwrap();
+    let _admin =
+        auth::ensure_identity_user(&pool, &auth::Identity::github(1, "ada", None, None), &[])
+            .await
+            .unwrap();
     // Once owned, strangers need an allowlist entry.
-    assert!(!auth::may_sign_in(&pool, "stranger", &empty, &empty)
+    assert!(!auth::may_sign_in(&pool, 2, "stranger", &empty, &empty)
         .await
         .unwrap());
     // Existing users keep access.
-    assert!(auth::may_sign_in(&pool, "ada", &empty, &empty)
+    assert!(auth::may_sign_in(&pool, 1, "ada", &empty, &empty)
         .await
         .unwrap());
     let allow = vec!["invited".to_owned()];
-    assert!(auth::may_sign_in(&pool, "invited", &empty, &allow)
+    assert!(auth::may_sign_in(&pool, 3, "invited", &empty, &allow)
         .await
         .unwrap());
     let admins = vec!["Owner".to_owned()];
-    assert!(auth::may_sign_in(&pool, "owner", &admins, &empty)
+    assert!(auth::may_sign_in(&pool, 4, "owner", &admins, &empty)
         .await
         .unwrap());
 }
@@ -525,4 +532,236 @@ async fn password_endpoints_are_gone() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+// ── access levels ─────────────────────────────────────────────
+
+fn json_request(method: Method, uri: &str, body: serde_json::Value) -> Request<Body> {
+    let mut request = request(method, uri, None);
+    *request.body_mut() = Body::from(body.to_string());
+    request
+}
+
+async fn sign_in(pool: &SqlitePool, id: i64, login: &str) -> (threadbase_shared::UserDto, String) {
+    let user = auth::ensure_identity_user(
+        pool,
+        &auth::Identity::github(id, login, Some(login), None),
+        &[],
+    )
+    .await
+    .unwrap();
+    let token = auth_session::create(pool, user.id.as_str(), "github", None, None, 3600)
+        .await
+        .unwrap();
+    (user, token)
+}
+
+async fn set_access(
+    app: axum::Router,
+    admin_token: &str,
+    user_id: &str,
+    is_admin: bool,
+    access: &str,
+) -> axum::response::Response {
+    app.oneshot(with_session(
+        json_request(
+            Method::PATCH,
+            &format!("/api/auth/users/{user_id}"),
+            serde_json::json!({ "isAdmin": is_admin, "access": access }),
+        ),
+        admin_token,
+    ))
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn pending_account_is_signed_in_but_sees_no_workspace_data() {
+    let (app, pool, _data) = test_app().await;
+    let (admin, _admin_token) = sign_in(&pool, 1, "ada").await;
+    assert!(admin.is_admin);
+    let (bob, token) = sign_in(&pool, 2, "bob").await;
+    assert_eq!(bob.access, threadbase_shared::UserAccess::Pending);
+
+    let response = app
+        .clone()
+        .oneshot(with_session(
+            request(Method::GET, "/api/auth/me", None),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["user"]["access"], "pending");
+
+    let response = app
+        .clone()
+        .oneshot(with_session(
+            request(Method::GET, "/api/auth/status", None),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(with_session(
+            request(Method::GET, "/api/projects", None),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .oneshot(with_session(
+            json_request(
+                Method::POST,
+                "/api/projects",
+                serde_json::json!({ "path": "/tmp/threadbase-pending-test" }),
+            ),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn read_only_account_can_read_but_not_write() {
+    let (app, pool, _data) = test_app().await;
+    let (_admin, admin_token) = sign_in(&pool, 1, "ada").await;
+    let (bob, _) = sign_in(&pool, 2, "bob").await;
+
+    let response = set_access(
+        app.clone(),
+        &admin_token,
+        bob.id.as_str(),
+        false,
+        "read_only",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let updated = body["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|user| user["id"] == bob.id.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(updated["access"], "read_only");
+
+    let token = auth_session::create(&pool, bob.id.as_str(), "github", None, None, 3600)
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(with_session(
+            request(Method::GET, "/api/projects", None),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(with_session(
+            json_request(
+                Method::POST,
+                "/api/projects",
+                serde_json::json!({ "path": "/tmp/threadbase-readonly-test" }),
+            ),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // Personal preferences stay writable for a read-only account.
+    let response = app
+        .oneshot(with_session(
+            json_request(Method::PATCH, "/api/settings", serde_json::json!({})),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn revoking_access_ends_live_sessions() {
+    let (app, pool, _data) = test_app().await;
+    let (_admin, admin_token) = sign_in(&pool, 1, "ada").await;
+    let (bob, old_token) = sign_in(&pool, 2, "bob").await;
+
+    let response = set_access(
+        app.clone(),
+        &admin_token,
+        bob.id.as_str(),
+        false,
+        "disabled",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // The session issued before the change is gone immediately.
+    let response = app
+        .clone()
+        .oneshot(with_session(
+            request(Method::GET, "/api/auth/me", None),
+            &old_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // A fresh sign-in can see the revoked state, but no workspace data.
+    let new_token = auth_session::create(&pool, bob.id.as_str(), "github", None, None, 3600)
+        .await
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(with_session(
+            request(Method::GET, "/api/auth/me", None),
+            &new_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["user"]["access"], "disabled");
+
+    let response = app
+        .oneshot(with_session(
+            request(Method::GET, "/api/projects", None),
+            &new_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admins_cannot_reduce_their_own_access() {
+    let (app, pool, _data) = test_app().await;
+    let (admin, admin_token) = sign_in(&pool, 1, "ada").await;
+    assert!(admin.is_admin);
+
+    let response = set_access(
+        app.clone(),
+        &admin_token,
+        admin.id.as_str(),
+        false,
+        "disabled",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let response = set_access(app, &admin_token, admin.id.as_str(), false, "read_only").await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }

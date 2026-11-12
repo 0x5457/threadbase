@@ -21,10 +21,12 @@ interface ElicitationProperty {
 export function ElicitationCard({
   elicitation,
   busy,
+  readOnly = false,
   onRespond,
 }: {
   elicitation: Elicitation;
   busy: boolean;
+  readOnly?: boolean;
   onRespond: (
     action: "accept" | "decline",
     values: Record<string, string>,
@@ -68,6 +70,7 @@ export function ElicitationCard({
                       description={property.description}
                       data={property.enum}
                       value={values[key] ?? null}
+                      disabled={readOnly}
                       onChange={(value) =>
                         setValues((current) => ({
                           ...current,
@@ -82,6 +85,7 @@ export function ElicitationCard({
                       label={property.title ?? key}
                       description={property.description}
                       value={values[key] ?? ""}
+                      disabled={readOnly}
                       onChange={(event) =>
                         setValues((current) => ({
                           ...current,
@@ -94,11 +98,18 @@ export function ElicitationCard({
                 )}
               </Stack>
             ) : null}
-            <Group justify="flex-end" gap={6}>
+            {readOnly ? (
+              <Text size="xs" c="dimmed">
+                Your account has read-only access, so responses are disabled.
+                Ask an administrator to allow editing.
+              </Text>
+            ) : null}
+            <Group justify="flex-end" gap={6} mt={readOnly ? 8 : 0}>
               <Button
                 variant="subtle"
                 color="gray"
                 loading={busy}
+                disabled={readOnly}
                 onClick={() => onRespond("decline", values)}
               >
                 Decline
@@ -107,7 +118,7 @@ export function ElicitationCard({
                 variant="filled"
                 color="dark"
                 loading={busy}
-                disabled={missing}
+                disabled={readOnly || missing}
                 onClick={() => onRespond("accept", values)}
               >
                 Continue

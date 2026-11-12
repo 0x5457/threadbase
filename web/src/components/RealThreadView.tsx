@@ -16,6 +16,7 @@ import {
   decideApproval,
   deleteComment,
   dropQueueItem,
+  getMe,
   getState,
   getThreadBundle,
   respondElicitation,
@@ -73,6 +74,12 @@ export function RealThreadView({
     queryFn: getState,
     staleTime: 30_000,
   });
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: getMe,
+    staleTime: 60_000,
+  });
+  const readOnlyAccount = me.data?.user.access === "read_only";
   const live = useLiveThread(threadId, {
     projectId: bundle?.project.id,
     hidden: stateQuery.data?.settings.hiddenPresence ?? false,
@@ -178,6 +185,7 @@ export function RealThreadView({
     approval: Approval,
     kind: Approval["options"][number]["kind"],
   ) => {
+    if (readOnlyAccount) return;
     setDeciding(approval.id);
     try {
       await decideApproval(approval.id, kind);
@@ -195,6 +203,7 @@ export function RealThreadView({
     action: "accept" | "decline",
     values: Record<string, string>,
   ) => {
+    if (readOnlyAccount) return;
     setResponding(elicitation.id);
     try {
       await respondElicitation(
@@ -413,6 +422,7 @@ export function RealThreadView({
               key={approval.id}
               approval={approval}
               busy={deciding === approval.id}
+              readOnly={readOnlyAccount}
               onDecide={(kind) => void decide(approval, kind)}
             />
           ))}
@@ -422,6 +432,7 @@ export function RealThreadView({
               key={elicitation.id}
               elicitation={elicitation}
               busy={responding === elicitation.id}
+              readOnly={readOnlyAccount}
               onRespond={(action, values) =>
                 void respond(elicitation, action, values)
               }
