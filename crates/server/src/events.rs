@@ -4,8 +4,7 @@ use sqlx::{FromRow, SqlitePool};
 use threadbase_core::state::{delivery_str, parse_delivery};
 use threadbase_shared::{
     now_ms, Actor, ActorKind, ApiError, Delivery, EventEnvelope, EventsPageDto, OlderEventsDto,
-    Origin,
-    ThreadEvent, ThreadId,
+    Origin, ThreadEvent, ThreadId,
 };
 use tokio::sync::broadcast;
 

@@ -284,7 +284,10 @@ impl Pump {
             .bind(&self.thread_id)
             .execute(&self.inner.pool)
             .await?;
-        self.transition(action).await
+        let status = self.transition(action).await?;
+        // A failed turn must not strand the messages queued behind it.
+        let _ = self.inner.queue_tx.send(self.thread_id.clone());
+        Ok(status)
     }
 
     async fn transition(&self, action: ThreadAction) -> Result<(), ServerError> {

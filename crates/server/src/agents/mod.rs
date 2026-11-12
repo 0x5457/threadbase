@@ -91,9 +91,20 @@ impl AgentManager {
             &self.inner.projection,
         )
         .await?;
-        for thread_id in reconciled {
-            cancel_pending_approvals(&self.inner, &thread_id).await;
-            cancel_pending_elicitations(&self.inner, &thread_id).await;
+        for thread_id in &reconciled {
+            cancel_pending_approvals(&self.inner, thread_id).await;
+            cancel_pending_elicitations(&self.inner, thread_id).await;
+        }
+        // Queued input is durable work: drain it even for threads that were
+        // idle at shutdown, otherwise a restart strands the queue forever.
+        let mut drain: std::collections::HashSet<String> = reconciled.into_iter().collect();
+        let queued: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT thread_id FROM queued_inputs WHERE status = 'queued'",
+        )
+        .fetch_all(&self.inner.pool)
+        .await?;
+        drain.extend(queued);
+        for thread_id in drain {
             if has_queued_input(&self.inner.pool, &thread_id).await {
                 self.kick_queue(&thread_id);
             }
