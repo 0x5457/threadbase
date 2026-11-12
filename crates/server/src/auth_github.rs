@@ -7,11 +7,14 @@
 //! The email address is deliberately ignored because users can keep it private.
 
 use crate::config::GitHubOAuth;
-use base64::Engine;
+use oauth2::{
+    basic::BasicClient, AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
+    EndpointNotSet, EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, TokenResponse,
+    TokenUrl,
+};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::time::Duration;
-use url::Url;
 
 /// Callback path registered on the GitHub OAuth app.
 pub const CALLBACK_PATH: &str = "/api/auth/github/callback";
@@ -30,46 +33,61 @@ pub struct Profile {
     pub avatar_url: Option<String>,
 }
 
+/// OAuth client configured for GitHub's authorize and token endpoints.
+type GitHubClient =
+    BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
+
+fn github_client(oauth: &GitHubOAuth) -> GitHubClient {
+    BasicClient::new(ClientId::new(oauth.client_id.clone()))
+        .set_client_secret(ClientSecret::new(oauth.client_secret.clone()))
+        // GitHub expects client credentials in the form body, not HTTP Basic.
+        .set_auth_type(AuthType::RequestBody)
+        .set_auth_uri(AuthUrl::new(AUTHORIZE_URL.to_owned()).expect("valid github authorize url"))
+        .set_token_uri(TokenUrl::new(TOKEN_URL.to_owned()).expect("valid github token url"))
+}
+
+fn validated_redirect(uri: &str) -> anyhow::Result<RedirectUrl> {
+    RedirectUrl::new(uri.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid github callback url: {error}"))
+}
+
+fn pkce(verifier: &str) -> PkceCodeChallenge {
+    PkceCodeChallenge::from_code_verifier_sha256(&PkceCodeVerifier::new(verifier.to_owned()))
+}
+
 /// Unguessable value that ties the callback to the browser that started it.
 #[must_use]
 pub fn new_state() -> String {
-    random_b64url()
+    CsrfToken::new_random().secret().to_owned()
 }
 
 /// PKCE verifier: 43 characters from the unreserved set, as GitHub requires.
 #[must_use]
 pub fn new_verifier() -> String {
-    random_b64url()
+    let (_, verifier) = PkceCodeChallenge::new_random_sha256();
+    verifier.secret().to_owned()
 }
 
 /// `BASE64URL(SHA256(verifier))` without padding.
 #[must_use]
 pub fn pkce_challenge(verifier: &str) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
-}
-
-fn random_b64url() -> String {
-    let seed = format!("{}{}", ulid::Ulid::new(), ulid::Ulid::new());
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(seed.as_bytes()))
+    pkce(verifier).as_str().to_owned()
 }
 
 /// GitHub redirect that asks the user to authorize this app.
-#[must_use]
 pub fn authorize_url(
     oauth: &GitHubOAuth,
     redirect_uri: &str,
     state: &str,
     verifier: &str,
-) -> String {
-    let mut url = Url::parse(AUTHORIZE_URL).expect("static authorize url");
-    url.query_pairs_mut()
-        .append_pair("client_id", &oauth.client_id)
-        .append_pair("redirect_uri", redirect_uri)
-        .append_pair("state", state)
-        .append_pair("code_challenge", &pkce_challenge(verifier))
-        .append_pair("code_challenge_method", "S256")
-        .append_pair("allow_signup", "false");
-    url.into()
+) -> anyhow::Result<String> {
+    let (url, _) = github_client(oauth)
+        .authorize_url(|| CsrfToken::new(state.to_owned()))
+        .set_redirect_uri(Cow::Owned(validated_redirect(redirect_uri)?))
+        .set_pkce_challenge(pkce(verifier))
+        .add_extra_param("allow_signup", "false")
+        .url();
+    Ok(url.to_string())
 }
 
 /// Exchanges the authorization code for an access token.
@@ -79,44 +97,15 @@ pub async fn exchange(
     code: &str,
     verifier: &str,
 ) -> anyhow::Result<String> {
-    #[derive(Deserialize)]
-    struct TokenResponse {
-        access_token: Option<String>,
-        error: Option<String>,
-        error_description: Option<String>,
-    }
-
-    // reqwest's `form` helper is behind a feature this build does not enable,
-    // and the body is four fields; encode it directly.
-    let body = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("client_id", &oauth.client_id)
-        .append_pair("client_secret", &oauth.client_secret)
-        .append_pair("code", code)
-        .append_pair("redirect_uri", redirect_uri)
-        .append_pair("code_verifier", verifier)
-        .finish();
-    let response = client()?
-        .post(TOKEN_URL)
-        .header("accept", "application/json")
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body(body)
-        .send()
-        .await?;
-    let status = response.status();
-    let body = response.text().await?;
-    if !status.is_success() {
-        anyhow::bail!("github token endpoint returned {status}");
-    }
-    let parsed: TokenResponse = serde_json::from_str(&body)
-        .map_err(|error| anyhow::anyhow!("github token response was not JSON: {error}"))?;
-    match (parsed.access_token, parsed.error) {
-        (Some(token), _) if !token.is_empty() => Ok(token),
-        (_, Some(error)) => anyhow::bail!(
-            "github rejected the code exchange: {error} {}",
-            parsed.error_description.unwrap_or_default()
-        ),
-        _ => anyhow::bail!("github token response contained no access token"),
-    }
+    let http = token_client()?;
+    let token = github_client(oauth)
+        .exchange_code(AuthorizationCode::new(code.to_owned()))
+        .set_redirect_uri(Cow::Owned(validated_redirect(redirect_uri)?))
+        .set_pkce_verifier(PkceCodeVerifier::new(verifier.to_owned()))
+        .request_async(&http)
+        .await
+        .map_err(|error| anyhow::anyhow!("github token exchange failed: {error}"))?;
+    Ok(token.access_token().secret().to_owned())
 }
 
 /// Reads the authenticated user's profile.
@@ -129,7 +118,7 @@ pub async fn profile(access_token: &str) -> anyhow::Result<Profile> {
         avatar_url: Option<String>,
     }
 
-    let response = client()?
+    let response = api_client()?
         .get(USER_URL)
         .header("accept", "application/vnd.github+json")
         .bearer_auth(access_token)
@@ -161,10 +150,18 @@ pub async fn profile(access_token: &str) -> anyhow::Result<Profile> {
     })
 }
 
-fn client() -> anyhow::Result<reqwest::Client> {
+fn api_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .user_agent(USER_AGENT)
+        .build()?)
+}
+
+fn token_client() -> anyhow::Result<oauth2::reqwest::Client> {
+    Ok(oauth2::reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(USER_AGENT)
+        .redirect(oauth2::reqwest::redirect::Policy::none())
         .build()?)
 }
 
@@ -172,6 +169,7 @@ fn client() -> anyhow::Result<reqwest::Client> {
 mod tests {
     use super::*;
     use crate::config::GitHubOAuth;
+    use url::Url;
 
     fn oauth() -> GitHubOAuth {
         GitHubOAuth {
@@ -182,7 +180,11 @@ mod tests {
 
     #[test]
     fn state_and_verifier_are_random_and_url_safe() {
-        assert_ne!(new_state(), new_state());
+        let state = new_state();
+        assert_ne!(state, new_state());
+        assert!(state
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_')));
         let verifier = new_verifier();
         assert!((43..=128).contains(&verifier.len()));
         assert!(verifier
@@ -206,17 +208,30 @@ mod tests {
             "https://machine.example.ts.net/api/auth/github/callback",
             "st4te",
             "verifier-verifier-verifier-verifier-verifier",
-        );
+        )
+        .unwrap();
         let parsed = Url::parse(&url).unwrap();
         let params: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
         assert_eq!(parsed.host_str(), Some("github.com"));
         assert_eq!(params["client_id"], "client");
         assert_eq!(params["state"], "st4te");
         assert_eq!(params["code_challenge_method"], "S256");
+        assert_eq!(params["allow_signup"], "false");
         assert!(!params["code_challenge"].is_empty());
         assert_eq!(
             params["redirect_uri"],
             "https://machine.example.ts.net/api/auth/github/callback"
         );
+    }
+
+    #[test]
+    fn authorize_url_rejects_an_invalid_callback() {
+        assert!(authorize_url(
+            &oauth(),
+            "machine.example.ts.net/api/auth/github/callback",
+            "st4te",
+            "verifier-verifier-verifier-verifier-verifier",
+        )
+        .is_err());
     }
 }

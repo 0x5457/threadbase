@@ -11,11 +11,13 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
+use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+use std::time::Duration;
 use url::form_urlencoded;
 
 /// Handshake cookie is only presented to the callback.
@@ -43,7 +45,13 @@ async fn github_start(
     };
     let state_value = auth_github::new_state();
     let verifier = auth_github::new_verifier();
-    let url = auth_github::authorize_url(oauth, &callback, &state_value, &verifier);
+    let url = match auth_github::authorize_url(oauth, &callback, &state_value, &verifier) {
+        Ok(url) => url,
+        Err(error) => {
+            tracing::warn!(%error, "github authorization URL could not be built");
+            return redirect_error("github sign-in is not configured");
+        }
+    };
 
     let mut response_headers = HeaderMap::new();
     response_headers.append(
@@ -250,7 +258,7 @@ fn redirect_error(message: &str) -> Response {
 const RATE_LIMIT: u32 = 30;
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
-/// The two unauthenticated endpoints keep separate buckets, so hammering one
+/// The two unauthenticated endpoints keep separate quotas, so hammering one
 /// cannot exhaust the other's budget for the same client.
 #[derive(Clone, Copy, Debug)]
 enum AuthEndpoint {
@@ -258,19 +266,35 @@ enum AuthEndpoint {
     Callback,
 }
 
-impl AuthEndpoint {
-    fn bucket_key(self, ip: &str) -> String {
-        match self {
-            Self::Start => format!("start:{ip}"),
-            Self::Callback => format!("callback:{ip}"),
-        }
-    }
+fn rate_quota() -> Quota {
+    Quota::with_period(RATE_LIMIT_WINDOW / RATE_LIMIT)
+        .expect("rate limit window is nonzero")
+        .allow_burst(NonZeroU32::new(RATE_LIMIT).expect("rate limit is nonzero"))
 }
 
 /// Coarse rate limit for the two unauthenticated auth endpoints: they are
 /// reachable from a public tunnel, and each one can trigger an outbound GitHub
 /// request.
 struct RateLimit;
+
+struct RateLimiters {
+    start: DefaultKeyedRateLimiter<String>,
+    callback: DefaultKeyedRateLimiter<String>,
+}
+
+impl Default for RateLimiters {
+    fn default() -> Self {
+        Self {
+            start: RateLimiter::keyed(rate_quota()),
+            callback: RateLimiter::keyed(rate_quota()),
+        }
+    }
+}
+
+fn rate_limiters() -> &'static RateLimiters {
+    static LIMITERS: OnceLock<RateLimiters> = OnceLock::new();
+    LIMITERS.get_or_init(RateLimiters::default)
+}
 
 impl RateLimit {
     fn allow_start(headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
@@ -282,41 +306,30 @@ impl RateLimit {
     }
 
     fn allow(endpoint: AuthEndpoint, headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
-        static BUCKETS: OnceLock<Mutex<HashMap<String, (u32, Instant)>>> = OnceLock::new();
-        let key = endpoint.bucket_key(&client_ip_for_headers(headers, peer));
-        let buckets = BUCKETS.get_or_init(|| Mutex::new(HashMap::new()));
-        let Ok(mut buckets) = buckets.lock() else {
-            return true;
+        let limiters = rate_limiters();
+        let limiter = match endpoint {
+            AuthEndpoint::Start => &limiters.start,
+            AuthEndpoint::Callback => &limiters.callback,
         };
-        allow_in(
-            &mut buckets,
-            &key,
-            RATE_LIMIT,
-            RATE_LIMIT_WINDOW,
-            Instant::now(),
-        )
+        // Forwarded addresses are client-controlled when the direct peer is a
+        // local proxy, so every value becomes a key. Retain only buckets that
+        // are still inside their window instead of letting the map grow.
+        if PRUNE_COUNTER
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(PRUNE_EVERY)
+        {
+            limiters.start.retain_recent();
+            limiters.callback.retain_recent();
+        }
+        allow_key(limiter, &client_ip_for_headers(headers, peer))
     }
 }
 
-/// Counts one request against `key`. Split out of `RateLimit` so tests can
-/// drive the clock instead of sleeping.
-fn allow_in(
-    buckets: &mut HashMap<String, (u32, Instant)>,
-    key: &str,
-    limit: u32,
-    window: Duration,
-    now: Instant,
-) -> bool {
-    if buckets.len() > 4096 {
-        buckets.retain(|_, (_, started)| now.saturating_duration_since(*started) < window);
-    }
-    let entry = buckets.entry(key.to_owned()).or_insert((0, now));
-    if now.saturating_duration_since(entry.1) > window {
-        *entry = (1, now);
-        return true;
-    }
-    entry.0 = entry.0.saturating_add(1);
-    if entry.0 > limit {
+const PRUNE_EVERY: u64 = 1024;
+static PRUNE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn allow_key(limiter: &DefaultKeyedRateLimiter<String>, key: &str) -> bool {
+    if limiter.check_key(&key.to_owned()).is_err() {
         tracing::warn!("auth endpoint rate limit reached");
         return false;
     }
@@ -326,90 +339,98 @@ fn allow_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use governor::clock::FakeRelativeClock;
+    use governor::state::keyed::DefaultKeyedStateStore;
+
+    type TestLimiter = RateLimiter<
+        String,
+        DefaultKeyedStateStore<String>,
+        FakeRelativeClock,
+        governor::middleware::NoOpMiddleware<governor::nanos::Nanos>,
+    >;
+
+    fn test_limiter(clock: FakeRelativeClock) -> TestLimiter {
+        RateLimiter::new(rate_quota(), DefaultKeyedStateStore::default(), clock)
+    }
 
     /// Spends a bucket's full budget against a fixed clock, so tests never
     /// depend on wall time.
-    fn spend_budget(key: &str, now: Instant) -> HashMap<String, (u32, Instant)> {
-        let mut buckets = HashMap::new();
+    fn spend_budget(limiter: &TestLimiter, key: &str) {
         for _ in 0..RATE_LIMIT {
             assert!(
-                allow_in(&mut buckets, key, RATE_LIMIT, RATE_LIMIT_WINDOW, now),
+                limiter.check_key(&key.to_owned()).is_ok(),
                 "requests inside the budget must be allowed"
             );
         }
         assert!(
-            !allow_in(&mut buckets, key, RATE_LIMIT, RATE_LIMIT_WINDOW, now),
+            limiter.check_key(&key.to_owned()).is_err(),
             "the request after the budget must be rejected"
         );
-        buckets
     }
 
     #[test]
-    fn allow_in_permits_requests_under_the_limit() {
-        let mut buckets = HashMap::new();
-        let now = Instant::now();
+    fn keyed_quota_permits_requests_under_the_limit() {
+        let limiter = test_limiter(FakeRelativeClock::default());
         for count in 0..RATE_LIMIT {
             assert!(
-                allow_in(
-                    &mut buckets,
-                    "callback:203.0.113.7",
-                    RATE_LIMIT,
-                    RATE_LIMIT_WINDOW,
-                    now
-                ),
+                limiter.check_key(&"203.0.113.7".to_owned()).is_ok(),
                 "request {count} is inside the budget"
             );
         }
     }
 
     #[test]
-    fn allow_in_rejects_requests_over_the_limit() {
-        spend_budget("callback:203.0.113.7", Instant::now());
+    fn keyed_quota_rejects_requests_over_the_limit() {
+        let limiter = test_limiter(FakeRelativeClock::default());
+        spend_budget(&limiter, "203.0.113.7");
     }
 
     #[test]
-    fn allow_in_refills_after_the_window() {
-        let now = Instant::now();
-        let key = "callback:203.0.113.7";
-        let mut buckets = spend_budget(key, now);
-        let later = now + RATE_LIMIT_WINDOW + Duration::from_secs(1);
+    fn keyed_quota_refills_after_the_window() {
+        let clock = FakeRelativeClock::default();
+        let limiter = test_limiter(clock.clone());
+        let key = "203.0.113.7";
+        spend_budget(&limiter, key);
+        clock.advance(RATE_LIMIT_WINDOW + Duration::from_secs(1));
         assert!(
-            allow_in(&mut buckets, key, RATE_LIMIT, RATE_LIMIT_WINDOW, later),
+            limiter.check_key(&key.to_owned()).is_ok(),
             "a fresh window must restore the budget"
         );
     }
 
     #[test]
     fn start_and_callback_budgets_are_independent() {
-        let now = Instant::now();
+        let limiters = RateLimiters::default();
         let ip = "203.0.113.7";
-        let start = AuthEndpoint::Start.bucket_key(ip);
-        let callback = AuthEndpoint::Callback.bucket_key(ip);
-        assert_ne!(start, callback, "each endpoint must key its own bucket");
+        for _ in 0..RATE_LIMIT {
+            assert!(limiters.start.check_key(&ip.to_owned()).is_ok());
+        }
+        assert!(limiters.start.check_key(&ip.to_owned()).is_err());
 
-        let mut start_spent = spend_budget(&start, now);
+        // The exhausted start bucket must not consume the callback budget.
+        for _ in 0..RATE_LIMIT {
+            assert!(
+                limiters.callback.check_key(&ip.to_owned()).is_ok(),
+                "the callback bucket must still have its full budget"
+            );
+        }
         assert!(
-            allow_in(
-                &mut start_spent,
-                &callback,
-                RATE_LIMIT,
-                RATE_LIMIT_WINDOW,
-                now
-            ),
-            "an exhausted start budget must not spend the callback budget"
+            limiters.start.check_key(&ip.to_owned()).is_err(),
+            "spending the callback budget must not refill the start bucket"
         );
+    }
 
-        let mut callback_spent = spend_budget(&callback, now);
-        assert!(
-            allow_in(
-                &mut callback_spent,
-                &start,
-                RATE_LIMIT,
-                RATE_LIMIT_WINDOW,
-                now
-            ),
-            "an exhausted callback budget must not spend the start budget"
-        );
+    #[test]
+    fn production_limiter_enforces_the_budget_per_client() {
+        let peer = Some(SocketAddr::from(([127, 0, 0, 1], 0)));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("192.0.2.55"));
+        for _ in 0..RATE_LIMIT {
+            assert!(RateLimit::allow_callback(&headers, peer));
+        }
+        assert!(!RateLimit::allow_callback(&headers, peer));
+        // The other endpoint keeps a separate bucket for the same client.
+        assert!(RateLimit::allow_start(&headers, peer));
     }
 
     #[test]

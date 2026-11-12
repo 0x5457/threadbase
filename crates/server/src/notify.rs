@@ -163,6 +163,9 @@ pub async fn allowed_webhook_url(url: &str) -> bool {
     }
 }
 
+// std's `IpAddr::is_global` is still unstable (tracking issue #27709) and,
+// once enabled, treats multicast and IPv4-mapped addresses as global. Both
+// would weaken this SSRF guard, so the address classes stay explicit here.
 fn is_public_ip(ip: IpAddr) -> bool {
     if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
         return false;

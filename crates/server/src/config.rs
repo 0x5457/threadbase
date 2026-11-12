@@ -1,3 +1,4 @@
+use axum::http::uri::Authority;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
@@ -207,27 +208,30 @@ fn normalized_host_header(value: &str) -> Option<String> {
     if value.is_empty() {
         return None;
     }
-    let host = if let Some(rest) = value.strip_prefix('[') {
-        let (host, remainder) = rest.split_once(']')?;
-        if !remainder.is_empty() && !remainder.starts_with(':') {
-            return None;
+    match value.parse::<Authority>() {
+        Ok(authority) => {
+            // A Host header cannot carry userinfo, and accepting it would let
+            // `evil.example@localhost` pass as `localhost`.
+            if authority.as_str().contains('@') {
+                return None;
+            }
+            normalize_authority(&authority)
         }
-        host
-    } else if value.parse::<IpAddr>().is_ok() {
-        value
-    } else if let Some((host, port)) = value.rsplit_once(':') {
-        if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
-            return None;
-        }
-        host
-    } else {
-        value
-    };
-    normalize_host(host)
+        // Unbracketed IPv6 is not a valid Authority but was accepted before.
+        Err(_) => Some(value.parse::<IpAddr>().ok()?.to_string()),
+    }
 }
 
 fn normalize_host(host: &str) -> Option<String> {
-    let host = host.trim();
+    let authority = host.trim().parse::<Authority>().ok()?;
+    if authority.as_str().contains('@') {
+        return None;
+    }
+    normalize_authority(&authority)
+}
+
+fn normalize_authority(authority: &Authority) -> Option<String> {
+    let host = authority.host();
     let host = host
         .strip_prefix('[')
         .and_then(|host| host.strip_suffix(']'))
