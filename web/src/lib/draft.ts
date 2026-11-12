@@ -1,4 +1,6 @@
+import { diffChars } from "diff";
 import { useCallback, useEffect, useRef, useState } from "react";
+import truncateUtf8Bytes from "truncate-utf8-bytes";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
@@ -105,22 +107,28 @@ const IDLE_STATE: DraftSessionState = {
   restoredText: null,
 };
 
-/** Presence colors are per user id so every client renders a peer the same. */
+/** Mirrors `user_color` in crates/shared/src/lib.rs: the same eight-color
+ *  palette and 64-bit FNV-1a hash, so a user has one color everywhere. */
 const USER_COLORS = [
-  "#f76707",
-  "#1c7ed6",
-  "#7048e8",
-  "#2f9e44",
-  "#f59f00",
-  "#e64980",
-];
+  "#f97316",
+  "#ec4899",
+  "#84cc16",
+  "#a855f7",
+  "#eab308",
+  "#fb7185",
+  "#3b82f6",
+  "#94a3b8",
+] as const;
+
+const textEncoder = new TextEncoder();
 
 export function userColor(userId: string): string {
-  let hash = 0;
-  for (let index = 0; index < userId.length; index += 1) {
-    hash = (hash * 31 + userId.charCodeAt(index)) | 0;
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of textEncoder.encode(userId)) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x0100000001b3n);
   }
-  return USER_COLORS[Math.abs(hash) % USER_COLORS.length];
+  return USER_COLORS[Number(hash % BigInt(USER_COLORS.length))];
 }
 
 function draftSocketUrl(): string {
@@ -128,31 +136,13 @@ function draftSocketUrl(): string {
   return `${protocol}//${window.location.host}/ws/drafts`;
 }
 
-const textEncoder = new TextEncoder();
-
 function byteLength(value: string): number {
   return textEncoder.encode(value).length;
 }
 
 /** Trim to a UTF-8 byte budget without splitting a code point. */
 function truncateToBytes(value: string, limit: number): string {
-  if (byteLength(value) <= limit) return value;
-  let size = 0;
-  let end = 0;
-  for (const char of value) {
-    const charSize = byteLength(char);
-    if (size + charSize > limit) break;
-    size += charSize;
-    end += char.length;
-  }
-  return value.slice(0, end);
-}
-
-function randomId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  return truncateUtf8Bytes(value, limit);
 }
 
 function readBlocks(blocks: Y.Array<Y.Map<unknown>>): BlockRecord[] {
@@ -183,51 +173,25 @@ function byOrder(left: BlockRecord, right: BlockRecord): number {
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 }
 
-/** Apply `next` to `body` as one minimal diff transaction. */
+/** Apply `next` to `body` as one diff transaction. */
 function spliceText(doc: Y.Doc, body: Y.Text, next: string): void {
   const current = body.toString();
   if (current === next) return;
 
-  let start = 0;
-  const shortest = Math.min(current.length, next.length);
-  while (start < shortest && current[start] === next[start]) start += 1;
-  // Never cut a surrogate pair in half.
-  if (start > 0 && isHighSurrogate(current.charCodeAt(start - 1))) start -= 1;
-
-  let tailCurrent = current.length;
-  let tailNext = next.length;
-  while (tailCurrent > start && tailNext > start) {
-    const previous = current.charCodeAt(tailCurrent - 1);
-    const candidate = next.charCodeAt(tailNext - 1);
-    if (previous !== candidate) break;
-    if (isLowSurrogate(previous) && tailCurrent - 2 >= start && tailNext - 2 >= start) {
-      if (
-        isHighSurrogate(current.charCodeAt(tailCurrent - 2)) &&
-        isHighSurrogate(next.charCodeAt(tailNext - 2))
-      ) {
-        tailCurrent -= 2;
-        tailNext -= 2;
-        continue;
+  const changes = diffChars(current, next);
+  doc.transact(() => {
+    let index = 0;
+    for (const change of changes) {
+      if (change.removed) {
+        body.delete(index, change.value.length);
+      } else if (change.added) {
+        body.insert(index, change.value);
+        index += change.value.length;
+      } else {
+        index += change.value.length;
       }
     }
-    tailCurrent -= 1;
-    tailNext -= 1;
-  }
-
-  const removed = tailCurrent - start;
-  const inserted = next.slice(start, tailNext);
-  doc.transact(() => {
-    if (removed > 0) body.delete(start, removed);
-    if (inserted.length > 0) body.insert(start, inserted);
   });
-}
-
-function isHighSurrogate(code: number): boolean {
-  return code >= 0xd800 && code <= 0xdbff;
-}
-
-function isLowSurrogate(code: number): boolean {
-  return code >= 0xdc00 && code <= 0xdfff;
 }
 
 interface AwarenessUser {
@@ -298,7 +262,7 @@ export function useDraftSession(
     const createBlock = (): BlockRecord => {
       const map = new Y.Map<unknown>();
       const body = new Y.Text();
-      const id = randomId();
+      const id = crypto.randomUUID();
       const createdAt = Date.now();
       doc.transact(() => {
         map.set("id", id);

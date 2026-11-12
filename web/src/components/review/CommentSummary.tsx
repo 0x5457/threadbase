@@ -1,18 +1,10 @@
 import { Avatar, Card, Group, Text } from "@mantine/core";
 import { IconMessageCircle } from "@tabler/icons-react";
 import type { Comment } from "../../api";
+import { initials } from "../../lib/initials";
 import { SectionHead } from "./SectionHead";
 
 const COMMENT_LIMIT = 6;
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
 
 export function CommentSummary({ comments }: { comments: Comment[] }) {
   const visible = comments.slice(-COMMENT_LIMIT);

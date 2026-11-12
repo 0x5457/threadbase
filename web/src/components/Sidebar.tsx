@@ -31,16 +31,8 @@ import {
 import { AddProjectModal } from "./AddProjectModal";
 import { NewThreadModal } from "./NewThreadModal";
 import { ProjectSettingsModal } from "./ProjectSettingsModal";
+import { initials } from "../lib/initials";
 import { ProjectNode } from "./sidebar/ProjectNode";
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
 
 interface SidebarProps {
   onNavigate: () => void;

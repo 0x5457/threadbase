@@ -1,14 +1,8 @@
-/** Slash commands advertised per agent, and the trigger parser. */
+/** Slash commands advertised per agent. */
 
 export interface Command {
   command: string;
   description: string;
-}
-
-export interface Suggestion {
-  kind: "command" | "file";
-  query: string;
-  from: number;
 }
 
 export interface SuggestionOption {
@@ -95,30 +89,4 @@ export function commandsFor(agent: string): Command[] {
   if (name.includes("codex")) return codex;
   if (name === "pi" || name.includes("pi ")) return pi;
   return generic;
-}
-
-/** Detect a `/command` or `@file` trigger immediately before the caret. */
-export function detectSuggestion(editor: {
-  state: {
-    selection: { from: number };
-    doc: {
-      textBetween: (from: number, to: number, a: string, b: string) => string;
-    };
-  };
-}): Suggestion | null {
-  const from = editor.state.selection.from;
-  const text = editor.state.doc.textBetween(0, from, "\n", "\n");
-  const slash = /(?:^|\s)\/([^\s/]*)$/.exec(text);
-  if (slash) {
-    return {
-      kind: "command",
-      query: slash[1],
-      from: from - slash[1].length - 1,
-    };
-  }
-  const file = /(?:^|\s)@([^\s]*)$/.exec(text);
-  if (file) {
-    return { kind: "file", query: file[1], from: from - file[1].length - 1 };
-  }
-  return null;
 }

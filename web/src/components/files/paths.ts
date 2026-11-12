@@ -1,3 +1,5 @@
+import { basename, dirname } from "pathe";
+import prettyBytes from "pretty-bytes";
 import type { FileEntry } from "../../api";
 
 export interface Crumb {
@@ -6,12 +8,12 @@ export interface Crumb {
 }
 
 export function baseName(path: string) {
-  return path.slice(path.lastIndexOf("/") + 1);
+  return basename(path);
 }
 
 export function directoryOf(path: string) {
-  const slash = path.lastIndexOf("/");
-  return slash === -1 ? "" : path.slice(0, slash);
+  const directory = dirname(path);
+  return directory === "." ? "" : directory;
 }
 
 export function pathCrumbs(path: string): Crumb[] {
@@ -26,15 +28,7 @@ export function pathCrumbs(path: string): Crumb[] {
 }
 
 export function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value < 10 ? value.toFixed(1) : String(Math.round(value))} ${units[unit]}`;
+  return prettyBytes(bytes);
 }
 
 export function sortEntries(entries: FileEntry[]) {

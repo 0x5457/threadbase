@@ -1,16 +1,8 @@
 import { ActionIcon, Avatar, Group, Stack, Text, Tooltip } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import type { ShareMember } from "../../api";
+import { initials } from "../../lib/initials";
 import { RoleSelect } from "./RoleSelect";
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
 
 export function MemberList({
   members,

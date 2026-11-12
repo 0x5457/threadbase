@@ -94,9 +94,26 @@
 
 .inbox-filters {
   flex: none;
+  gap: 2px;
 }
 
-.inbox-filter {
+.inbox-filters .mantine-SegmentedControl-root {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  gap: 2px;
+}
+
+.inbox-filters .mantine-SegmentedControl-indicator {
+  display: none;
+}
+
+.inbox-filters .mantine-SegmentedControl-control {
+  border: 0;
+  background: transparent;
+}
+
+.inbox-filters .mantine-SegmentedControl-label {
   height: 22px;
   padding: 0 6px;
   border-radius: 3px;
@@ -104,12 +121,12 @@
   font-size: 13px;
 }
 
-.inbox-filter:hover {
+.inbox-filters .mantine-SegmentedControl-label:hover {
   background: var(--hover);
   color: var(--ink);
 }
 
-.inbox-filter.active {
+.inbox-filters .mantine-SegmentedControl-label[data-active] {
   border-radius: 0;
   background: transparent;
   color: var(--ink);

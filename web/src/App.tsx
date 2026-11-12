@@ -22,6 +22,14 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router";
+import {
   ApiError,
   forkThread,
   getThread,
@@ -50,7 +58,7 @@ import {
   RevertThreadDialog,
 } from "./components/ThreadDialogs";
 import { WorkspaceEmpty } from "./components/WorkspaceEmpty";
-import { isKnownPath, navigate, pathFor, useRoute } from "./lib/router";
+import { pathFor, useRoute } from "./lib/router";
 
 type View = "inbox" | "thread" | "settings" | "project";
 
@@ -71,8 +79,10 @@ function withoutThreadInboxItems(
   };
 }
 
-export function App() {
+function Workspace() {
   const route = useRoute();
+  const location = useLocation();
+  const navigate = useNavigate();
   // The URL owns navigation; everything below derives from it so reloads,
   // deep links and the back button behave the same as in-app clicks.
   const view: View =
@@ -121,12 +131,12 @@ export function App() {
     staleTime: 5_000,
   });
 
-  // Give the first screen a real URL instead of leaving the bar at "/".
-  useEffect(() => {
-    if (window.location.pathname === "/" || !isKnownPath(window.location.pathname)) {
-      navigate(pathFor({ kind: "inbox" }), { replace: true });
-    }
-  }, []);
+  /** History push guard: clicking the open thread twice must not stack
+   *  duplicate entries. */
+  const go = (path: string, options?: { replace?: boolean }) => {
+    if (path === location.pathname) return;
+    void navigate(path, options);
+  };
 
   // A thread URL is authoritative: resolve it from the cached list, or fetch it
   // directly so a deep link works before any list has loaded.
@@ -157,7 +167,7 @@ export function App() {
           color: "red",
         });
         if (route.kind === "thread") {
-          navigate(pathFor({ kind: "project", projectId: route.projectId }), {
+          go(pathFor({ kind: "project", projectId: route.projectId }), {
             replace: true,
           });
         }
@@ -182,27 +192,27 @@ export function App() {
     setAsideTab("changes");
     setOnlineUserIds([]);
     changes.close();
-    navigate(pathFor({ kind: "thread", projectId: thread.projectId, threadId: thread.id }));
+    go(pathFor({ kind: "thread", projectId: thread.projectId, threadId: thread.id }));
   };
 
   const openProject = (projectId: string) => {
     setSelectedThread(null);
     setOnlineUserIds([]);
     changes.close();
-    navigate(pathFor({ kind: "project", projectId }));
+    go(pathFor({ kind: "project", projectId }));
   };
 
   const openInbox = () => {
     setSelectedThread(null);
     setOnlineUserIds([]);
     changes.close();
-    navigate(pathFor({ kind: "inbox" }));
+    go(pathFor({ kind: "inbox" }));
   };
 
   const openSettings = () => {
     setSelectedThread(null);
     changes.close();
-    navigate(pathFor({ kind: "settings" }));
+    go(pathFor({ kind: "settings" }));
   };
 
   // Read bookkeeping runs in the background: the row leaves the unread cache
@@ -250,7 +260,7 @@ export function App() {
     setAsideTab("changes");
     setOnlineUserIds([]);
     changes.close();
-    navigate(
+    go(
       pathFor({
         kind: "thread",
         projectId: item.projectId,
@@ -592,5 +602,19 @@ export function App() {
         className="spotlight"
       />
     </>
+  );
+}
+
+export function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/inbox" element={<Workspace />} />
+        <Route path="/settings" element={<Workspace />} />
+        <Route path="/p/:projectId" element={<Workspace />} />
+        <Route path="/p/:projectId/t/:threadId" element={<Workspace />} />
+        <Route path="*" element={<Navigate to="/inbox" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

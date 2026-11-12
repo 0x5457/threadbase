@@ -38,7 +38,7 @@ export interface LiveThreadState {
   connected: boolean;
   error: string | null;
   presence: LivePresence;
-  sendPresence: (focus: Partial<LiveFocus>) => void;
+  sendPresence: (focus: Partial<PresencePayload>) => void;
 }
 
 /** Outgoing presence fields; `userId` and `updatedAt` are assigned by the server. */

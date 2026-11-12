@@ -1,14 +1,6 @@
 import { Avatar, Indicator } from "@mantine/core";
 import type { ThreadSummary } from "../../api";
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
+import { initials } from "../../lib/initials";
 
 export function Participants({
   participants,

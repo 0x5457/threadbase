@@ -1,11 +1,13 @@
 import { PickerAgentContext } from "../lib/model-prefs";
 import { PendingBlocks } from "./composer/PendingBlocks";
-import { SuggestionMenu } from "./composer/SuggestionMenu";
 import { ComposerInput } from "./composer/ComposerInput";
 import { ComposerToolbar } from "./composer/ComposerToolbar";
 import { useComposerEditor } from "./composer/useComposerEditor";
 import { useComposerSession } from "./composer/useComposerSession";
-import { useComposerSuggestions } from "./composer/useComposerSuggestions";
+import {
+  dismissComposerSuggestions,
+  useComposerSuggestions,
+} from "./composer/useComposerSuggestions";
 
 interface ComposerProps {
   threadId?: string;
@@ -57,28 +59,26 @@ export function Composer({
     userName,
     canWrite,
   });
-  const { editor, hasText, setHasText, suggestion, setSuggestion, active, setActive } =
-    useComposerEditor({
-      agent: session.agent,
+  const { extension, openTrigger, active: suggestionOpen } =
+    useComposerSuggestions({
       threadId,
-      writable: session.writable,
-      restoredText: session.draft.restoredText,
-      mirrorDraft: session.mirrorDraft,
-      setDraftEditing: session.setDraftEditing,
+      projectId,
+      agent: session.agent,
     });
-  const { options, loading, choose, openTrigger } = useComposerSuggestions({
-    editor,
-    threadId,
-    projectId,
+  const { editor, hasText, setHasText } = useComposerEditor({
     agent: session.agent,
-    suggestion,
-    setSuggestion,
-    active,
-    setActive,
+    threadId,
+    writable: session.writable,
+    restoredText: session.draft.restoredText,
+    mirrorDraft: session.mirrorDraft,
+    setDraftEditing: session.setDraftEditing,
+    suggestionExtension: extension,
   });
 
   const send = () => {
-    void session.send(editor, setHasText, () => setSuggestion(null));
+    void session.send(editor, setHasText, () =>
+      dismissComposerSuggestions(editor),
+    );
   };
 
   // The model/effort pickers are instantiated inside the toolbar subtree; the
@@ -95,7 +95,7 @@ export function Composer({
             !event.metaKey &&
             !event.ctrlKey &&
             !event.nativeEvent.isComposing &&
-            !suggestion
+            !suggestionOpen
           ) {
             event.preventDefault();
             event.stopPropagation();
@@ -114,16 +114,6 @@ export function Composer({
         }}
       >
         <div className="composer-inner">
-          {suggestion ? (
-            <SuggestionMenu
-              suggestion={suggestion}
-              options={options}
-              active={active}
-              loading={loading}
-              onActive={setActive}
-              onChoose={choose}
-            />
-          ) : null}
           <PendingBlocks
             blocks={session.draft.remoteBlocks}
             authorName={session.authorName}
@@ -148,7 +138,7 @@ export function Composer({
             draftConnected={session.draft.connected}
             liveLabel={session.liveLabel}
             onThreadComment={onThreadComment}
-            onOpenTrigger={openTrigger}
+            onOpenTrigger={(kind) => openTrigger(kind, editor)}
             delivery={session.delivery}
             onDeliveryChange={session.setDelivery}
             modelLabel={session.modelLabel}
