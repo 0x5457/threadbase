@@ -27,6 +27,7 @@ import "./styles/header.css";
 import "./styles/sidebar.css";
 import "./styles/thread.css";
 import "./styles/approval.css";
+import "./styles/agent-log.css";
 import "./styles/composer.css";
 import "./styles/panels.css";
 import "./styles/responsive.css";

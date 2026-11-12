@@ -168,6 +168,11 @@ pub enum RawAgentEvent {
     Notice {
         message: String,
     },
+    /// Adapter stderr: diagnostics for the agent log, not conversation output.
+    AgentLog {
+        level: String,
+        text: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]

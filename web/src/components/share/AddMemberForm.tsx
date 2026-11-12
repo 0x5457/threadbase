@@ -22,8 +22,9 @@ export function AddMemberForm({
     <Group gap="xs" align="flex-end" wrap="nowrap">
       <TextInput
         flex={1}
-        label="Add member"
-        placeholder="github login"
+        label="GitHub login"
+        placeholder="octocat"
+        description="They join automatically the first time they sign in with GitHub."
         value={username}
         onChange={(event) => onUsernameChange(event.currentTarget.value)}
         onKeyDown={(event) => {

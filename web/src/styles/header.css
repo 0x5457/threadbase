@@ -30,6 +30,23 @@
   padding: 0 8px;
 }
 
+.status-readonly {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  line-height: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* Header-sized copy of the sidebar's running dot. */
+.dot.header-running {
+  width: 7px;
+  height: 7px;
+}
+
 .doc-title {
   overflow: hidden;
   color: var(--ink);

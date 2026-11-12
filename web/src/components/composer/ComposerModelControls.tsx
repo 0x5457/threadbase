@@ -11,6 +11,7 @@ interface ComposerModelControlsProps {
   writable: boolean;
   onModelChange?: (model: string) => void;
   onEffortChange?: (effort: string) => void;
+  onOpen: () => void;
 }
 
 /** Model/effort pickers when the agent config is writable, label otherwise. */
@@ -24,6 +25,7 @@ export function ComposerModelControls({
   writable,
   onModelChange,
   onEffortChange,
+  onOpen,
 }: ComposerModelControlsProps) {
   if (!onModelChange) {
     return (
@@ -41,6 +43,7 @@ export function ComposerModelControls({
         loading={loading}
         disabled={!writable}
         onChange={onModelChange}
+        onOpen={onOpen}
       />
       {onEffortChange ? (
         <ModelPicker
@@ -51,6 +54,7 @@ export function ComposerModelControls({
           loading={loading}
           disabled={!writable}
           onChange={onEffortChange}
+          onOpen={onOpen}
         />
       ) : null}
     </>

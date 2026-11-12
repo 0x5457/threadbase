@@ -27,8 +27,8 @@ use threadbase_shared::{
 
 pub(crate) use github_routes::router as github_router;
 pub use identity::{
-    ensure_identity_user, list_users, load_user_by_id, load_user_by_identity,
-    load_user_by_username, needs_admin, update_user,
+    ensure_identity_user, ensure_pending_identity, list_users, load_user_by_id,
+    load_user_by_identity, load_user_by_username, needs_admin, update_user,
 };
 
 /// Methods reported by `/api/auth/me`.

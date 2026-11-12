@@ -151,7 +151,7 @@ pub struct UpdateCommentRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AddMemberRequest {
-    pub username: String,
+    pub login: String,
     pub role: Role,
 }
 

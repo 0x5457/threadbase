@@ -242,6 +242,12 @@ pub enum ThreadEvent {
         level: String,
         message: String,
     },
+    /// Adapter stderr and other process diagnostics. Rendered in the web's
+    /// collapsible agent log, never in the conversation timeline.
+    AgentLog {
+        level: String,
+        text: String,
+    },
 }
 
 impl ThreadEvent {
@@ -276,6 +282,7 @@ impl ThreadEvent {
             Self::AgentMessage { .. } => "agent_message",
             Self::ContextCompacted { .. } => "context_compacted",
             Self::SystemNotice { .. } => "system_notice",
+            Self::AgentLog { .. } => "agent_log",
         }
     }
 }

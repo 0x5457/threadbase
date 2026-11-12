@@ -23,6 +23,11 @@ export type { CommentAnchor };
 export type { ToolCallData };
 
 export function getAgentConfig(threadId: string) {
+  return request<AgentConfigResponse>(`/api/threads/${threadId}/agent-config`);
+}
+
+/** Starts the bound adapter if needed so it can advertise its options. */
+export function ensureAgentConfig(threadId: string) {
   return request<AgentConfigResponse>(
     `/api/threads/${threadId}/agent-config?ensure=true`,
   );

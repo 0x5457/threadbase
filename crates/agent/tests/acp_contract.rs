@@ -317,19 +317,13 @@ async fn prompt_streams_text_tools_plan_usage_and_completion() {
 }
 
 #[tokio::test]
-async fn load_session_resumes_by_session_id() {
+async fn load_session_resumes_without_replaying_history() {
     let mut test = start(true).await;
     let session = new_session(&mut test).await;
     test.harness
         .load_session(&threadbase_agent::SessionId(session.clone()))
         .await
         .expect("load session");
-
-    expect_event(
-        &mut test.events,
-        |event| matches!(event, RawAgentEvent::AgentMessageChunk { text } if text == "replayed"),
-    )
-    .await;
 
     let load = journal_entry(&test.journal, |message| {
         message.get("method").and_then(Value::as_str) == Some("session/load")
@@ -341,6 +335,51 @@ async fn load_session_resumes_by_session_id() {
             .and_then(Value::as_str),
         Some(session.as_str())
     );
+
+    // `session/load` replays the stored conversation as session updates. The
+    // fixture writes the "replayed" chunk right after the load response, so a
+    // short quiet window gives the driver time to consume it while the
+    // harness is still replaying. A leak fails either this window or the
+    // first-chunk check below (the replayed chunk precedes live output).
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, next_event(&mut test.events)).await {
+            Err(_) => break,
+            Ok(RawAgentEvent::AgentMessageChunk { text }) => {
+                panic!("load replay leaked a message chunk: {text:?}")
+            }
+            Ok(RawAgentEvent::AgentThoughtChunk { .. })
+            | Ok(RawAgentEvent::ToolCall { .. })
+            | Ok(RawAgentEvent::ToolCallUpdate { .. }) => {
+                panic!("load replay leaked a conversation event")
+            }
+            Ok(_) => {}
+        }
+    }
+
+    // The first prompt re-opens the stream.
+    test.harness
+        .prompt(vec!["stream".to_owned()])
+        .await
+        .expect("prompt");
+    let first = loop {
+        match next_event(&mut test.events).await {
+            event @ RawAgentEvent::AgentMessageChunk { .. } => break event,
+            RawAgentEvent::PromptDone { .. } => {
+                panic!("streaming prompt finished without a message chunk")
+            }
+            _ => {}
+        }
+    };
+    let RawAgentEvent::AgentMessageChunk { text } = first else {
+        unreachable!("filtered for a message chunk");
+    };
+    assert_eq!(text, "Hello", "replay must not precede live streaming");
+    assert_eq!(expect_prompt_done(&mut test.events).await, "end_turn");
 
     test.harness.shutdown().await.expect("shutdown");
 }

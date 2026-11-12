@@ -1,6 +1,28 @@
 import type { ThreadEvent, ToolCallData } from "../api";
 import type { UserBrief } from "../api/types/UserBrief";
 
+/**
+ * Wire shape added after the generated bindings: the diagnostics channel for
+ * adapter stderr. Kept local because generated `ThreadEvent` bindings are
+ * regenerated separately.
+ */
+type AgentLogPayload = {
+  type: "agent_log";
+  level: string;
+  text: string;
+};
+
+export type DiagnosticLine = {
+  /** Event sequence, unique within the thread. */
+  id: number;
+  level: "info" | "error";
+  text: string;
+  ts: number;
+};
+
+/** Keep the log bounded; the oldest diagnostics fall off first. */
+const DIAGNOSTIC_LIMIT = 500;
+
 export type ViewItem =
   | {
       kind: "message";
@@ -27,12 +49,16 @@ function displayName(
 /**
  * Folds the append-only event log into the thread's document blocks. Deltas
  * are merged in place so streaming output updates the same message row.
+ *
+ * Diagnostics are returned separately: the timeline never renders them, and
+ * the agent log only shows the newest {@link DIAGNOSTIC_LIMIT} lines.
  */
 export function reduceEvents(
   events: ThreadEvent[],
   agentName = "Agent",
-): ViewItem[] {
+): { items: ViewItem[]; diagnostics: DiagnosticLine[] } {
   const items: ViewItem[] = [];
+  const diagnostics: DiagnosticLine[] = [];
   const messageRows = new Map<string, number>();
   const toolRows = new Map<string, number>();
   const thinkingRows = new Map<string, number>();
@@ -75,7 +101,16 @@ export function reduceEvents(
   };
 
   for (const event of events) {
-    const payload = event.payload;
+    const payload = event.payload as ThreadEvent["payload"] | AgentLogPayload;
+    if (payload.type === "agent_log") {
+      diagnostics.push({
+        id: event.seq,
+        level: payload.level === "error" ? "error" : "info",
+        text: String(payload.text ?? ""),
+        ts: event.ts,
+      });
+      continue;
+    }
     switch (payload.type) {
       case "turn_started": {
         const author = payload.author;
@@ -186,11 +221,6 @@ export function reduceEvents(
         break;
       }
       case "system_notice": {
-        // Adapter install noise ("agent stderr: npm notice run npx") is
-        // diagnostics, not part of the conversation.
-        if (/^agent stderr: npm (notice|WARN)/.test(String(payload.message ?? ""))) {
-          break;
-        }
         items.push({
           kind: "notice",
           level: payload.level === "error" ? "error" : "info",
@@ -231,5 +261,9 @@ export function reduceEvents(
     }
   }
 
-  return items;
+  if (diagnostics.length > DIAGNOSTIC_LIMIT) {
+    diagnostics.splice(0, diagnostics.length - DIAGNOSTIC_LIMIT);
+  }
+
+  return { items, diagnostics };
 }

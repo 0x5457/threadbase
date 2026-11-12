@@ -1,8 +1,14 @@
 import { notifications } from "@mantine/notifications";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
 import { useCallback, useState } from "react";
-import { getAgentConfig, getMe, sendDraft, sendMessage } from "../../api";
+import {
+  ensureAgentConfig,
+  getAgentConfig,
+  getMe,
+  sendDraft,
+  sendMessage,
+} from "../../api";
 import { useDraftSession, userColor as colorForUser } from "../../lib/draft";
 
 export type ComposerDelivery = "auto" | "queue";
@@ -35,6 +41,7 @@ export function useComposerSession({
   userName,
   canWrite,
 }: UseComposerSessionOptions) {
+  const queryClient = useQueryClient();
   const [sending, setSending] = useState(false);
   const [delivery, setDelivery] = useState<ComposerDelivery>("auto");
   const agent = agentName ?? "agent";
@@ -63,8 +70,8 @@ export function useComposerSession({
     setEditing: setDraftEditing,
   } = draft;
 
-  // The running adapter is the source of truth for model choices; agents that
-  // do not advertise them still accept a custom id in the picker.
+  // Reading config must not start the adapter: opening a thread should not
+  // spawn the agent process. An absent session reports no options.
   const agentConfig = useQuery({
     queryKey: ["agent-config", threadId],
     queryFn: () => getAgentConfig(threadId as string),
@@ -72,6 +79,20 @@ export function useComposerSession({
     staleTime: 30_000,
     retry: false,
   });
+  // Only an explicit picker open may start the adapter so it can advertise
+  // its model and effort choices. The result fills the same config cache.
+  const ensureConfigRequest = useMutation({
+    mutationFn: (id: string) => ensureAgentConfig(id),
+    onSuccess: (config, id) => {
+      queryClient.setQueryData(["agent-config", id], config);
+    },
+  });
+  const ensureConfig = useCallback(() => {
+    if (!threadId || !onModelChange || ensureConfigRequest.isPending) return;
+    ensureConfigRequest.mutate(threadId);
+  }, [ensureConfigRequest, onModelChange, threadId]);
+  const configLoading =
+    agentConfig.isFetching || ensureConfigRequest.isPending;
   const modelOption = agentConfig.data?.options.find(
     (option) => option.category === "model",
   );
@@ -138,6 +159,11 @@ export function useComposerSession({
           }
         }
         onSent?.();
+        // The send started the adapter, so its options can now be read
+        // without asking the server to ensure a session.
+        void queryClient.invalidateQueries({
+          queryKey: ["agent-config", threadId],
+        });
       } catch (cause) {
         editor.commands.setContent(text);
         setHasText(true);
@@ -159,6 +185,7 @@ export function useComposerSession({
       markDraftSent,
       mirrorDraft,
       onSent,
+      queryClient,
       sending,
       threadId,
       writable,
@@ -194,7 +221,8 @@ export function useComposerSession({
     mirrorDraft,
     setDraftEditing,
     send,
-    agentConfig,
+    ensureConfig,
+    configLoading,
     modelOption,
     effortOption,
     effectiveModel,

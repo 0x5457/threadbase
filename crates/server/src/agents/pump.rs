@@ -162,6 +162,9 @@ impl Pump {
                 })
                 .await
             }
+            RawAgentEvent::AgentLog { level, text } => {
+                self.append(ThreadEvent::AgentLog { level, text }).await
+            }
         }
     }
 

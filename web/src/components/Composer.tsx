@@ -1,3 +1,4 @@
+import { PickerAgentContext } from "../lib/model-prefs";
 import { PendingBlocks } from "./composer/PendingBlocks";
 import { SuggestionMenu } from "./composer/SuggestionMenu";
 import { ComposerInput } from "./composer/ComposerInput";
@@ -80,88 +81,93 @@ export function Composer({
     void session.send(editor, setHasText, () => setSuggestion(null));
   };
 
+  // The model/effort pickers are instantiated inside the toolbar subtree; the
+  // composer owns the agent they edit and keys their recent picks on it.
   return (
-    <section
-      className="composer"
-      onKeyDownCapture={(event) => {
-        if (
-          !sendWithModifier &&
-          event.key === "Enter" &&
-          !event.shiftKey &&
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.nativeEvent.isComposing &&
-          !suggestion
-        ) {
-          event.preventDefault();
-          event.stopPropagation();
-          send();
-        }
-      }}
-      onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-          event.preventDefault();
-          send();
-        }
-      }}
-      onCompositionEnd={() => {
-        if (editor) session.mirrorDraft(editor.getText());
-      }}
-    >
-      <div className="composer-inner">
-        {suggestion ? (
-          <SuggestionMenu
-            suggestion={suggestion}
-            options={options}
-            active={active}
-            loading={loading}
-            onActive={setActive}
-            onChoose={choose}
+    <PickerAgentContext value={session.agent}>
+      <section
+        className="composer"
+        onKeyDownCapture={(event) => {
+          if (
+            !sendWithModifier &&
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.nativeEvent.isComposing &&
+            !suggestion
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            send();
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            send();
+          }
+        }}
+        onCompositionEnd={() => {
+          if (editor) session.mirrorDraft(editor.getText());
+        }}
+      >
+        <div className="composer-inner">
+          {suggestion ? (
+            <SuggestionMenu
+              suggestion={suggestion}
+              options={options}
+              active={active}
+              loading={loading}
+              onActive={setActive}
+              onChoose={choose}
+            />
+          ) : null}
+          <PendingBlocks
+            blocks={session.draft.remoteBlocks}
+            authorName={session.authorName}
+            authorAccent={session.authorAccent}
           />
-        ) : null}
-        <PendingBlocks
-          blocks={session.draft.remoteBlocks}
-          authorName={session.authorName}
-          authorAccent={session.authorAccent}
-        />
-        <ComposerInput
-          editor={editor}
-          hasText={hasText}
-          writable={session.writable}
-          agent={session.agent}
-          userId={session.currentUserId}
-          userName={session.currentUserName}
-          avatarUrl={session.currentUserAvatar}
-          userColor={userColor}
-        />
-        <ComposerToolbar
-          agent={session.agent}
-          watching={watching}
-          draftActive={session.draft.active}
-          draftSynced={session.draft.synced}
-          draftConnected={session.draft.connected}
-          liveLabel={session.liveLabel}
-          onThreadComment={onThreadComment}
-          onOpenTrigger={openTrigger}
-          delivery={session.delivery}
-          onDeliveryChange={session.setDelivery}
-          modelLabel={session.modelLabel}
-          effectiveModel={session.effectiveModel}
-          modelOptions={session.modelOption?.options ?? []}
-          effectiveEffort={session.effectiveEffort}
-          effortOptions={session.effortOption?.options ?? []}
-          configLoading={session.agentConfig.isFetching}
-          writable={session.writable}
-          onModelChange={onModelChange}
-          onEffortChange={onEffortChange}
-          hasText={hasText}
-          sending={session.sending}
-          sendBlocked={session.sendBlocked}
-          sendLabel={session.sendLabel}
-          onSend={send}
-        />
-      </div>
-    </section>
+          <ComposerInput
+            editor={editor}
+            hasText={hasText}
+            writable={session.writable}
+            agent={session.agent}
+            userId={session.currentUserId}
+            userName={session.currentUserName}
+            avatarUrl={session.currentUserAvatar}
+            userColor={userColor}
+          />
+          <ComposerToolbar
+            agent={session.agent}
+            watching={watching}
+            draftActive={session.draft.active}
+            draftSynced={session.draft.synced}
+            draftConnected={session.draft.connected}
+            liveLabel={session.liveLabel}
+            onThreadComment={onThreadComment}
+            onOpenTrigger={openTrigger}
+            delivery={session.delivery}
+            onDeliveryChange={session.setDelivery}
+            modelLabel={session.modelLabel}
+            effectiveModel={session.effectiveModel}
+            modelOptions={session.modelOption?.options ?? []}
+            effectiveEffort={session.effectiveEffort}
+            effortOptions={session.effortOption?.options ?? []}
+            configLoading={session.configLoading}
+            writable={session.writable}
+            onModelChange={onModelChange}
+            onEffortChange={onEffortChange}
+            onConfigOpen={session.ensureConfig}
+            hasText={hasText}
+            sending={session.sending}
+            sendBlocked={session.sendBlocked}
+            sendLabel={session.sendLabel}
+            onSend={send}
+          />
+        </div>
+      </section>
+    </PickerAgentContext>
   );
 }

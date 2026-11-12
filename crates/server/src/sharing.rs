@@ -17,12 +17,18 @@ pub async fn add_member(
     events: &EventStore,
     thread_id: &str,
     actor: &CurrentUser,
-    username: &str,
+    login: &str,
     role: threadbase_shared::Role,
 ) -> Result<ThreadMemberDto, ServerError> {
-    let target = crate::auth::load_user_by_username(pool, username.trim())
-        .await?
-        .ok_or_else(|| ServerError(ApiError::not_found("user not found")))?;
+    let login = login.trim();
+    if login.is_empty() {
+        return Err(ServerError(ApiError::not_found("user not found")));
+    }
+    let target =
+        match crate::auth::load_user_by_identity(pool, &crate::auth::github_key(login)).await? {
+            Some(user) => user,
+            None => crate::auth::ensure_pending_identity(pool, login, None).await?,
+        };
     let now = now_ms();
     sqlx::query(
         "INSERT INTO thread_members(thread_id, user_id, role, joined_at) VALUES(?, ?, ?, ?)
@@ -56,7 +62,7 @@ pub async fn add_member(
         "thread.member_added",
         Some("thread"),
         Some(thread_id),
-        Some(target.id.as_str()),
+        Some(login),
         None,
     )
     .await;
@@ -369,7 +375,7 @@ async fn add_member_route(
             &state.events,
             &thread_id,
             &user,
-            &request.username,
+            &request.login,
             request.role,
         )
         .await?,

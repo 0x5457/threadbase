@@ -201,6 +201,24 @@ async fn create_identity_user(
     Err(ServerError::internal("could not allocate a username"))
 }
 
+/// Creates a pending account for a GitHub login that has never signed in, or
+/// returns the existing user untouched.
+///
+/// Adding someone as a thread member must not grant workspace access before
+/// they sign in, and signing in later must not silently approve them: an
+/// existing user's access is never modified here.
+pub async fn ensure_pending_identity(
+    pool: &SqlitePool,
+    login: &str,
+    display_name: Option<&str>,
+) -> Result<UserDto, ServerError> {
+    let identity = Identity::github(login.trim(), display_name, None);
+    if let Some(user) = load_user_by_identity(pool, &identity.key).await? {
+        return Ok(user);
+    }
+    create_identity_user(pool, &identity, UserAccess::Pending).await
+}
+
 pub async fn load_user_by_identity(
     pool: &SqlitePool,
     identity_key: &str,

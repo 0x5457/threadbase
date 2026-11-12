@@ -22,6 +22,7 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ApiError,
   forkThread,
   getThread,
   listAllThreads,
@@ -32,6 +33,7 @@ import {
   type InboxItem,
   type ThreadSummary,
 } from "./api";
+import type { InboxPageDto } from "./api/types/InboxPageDto";
 import { FilesPanel } from "./components/FilesPanel";
 import { InboxView } from "./components/InboxView";
 import { RealChangesPanel } from "./components/RealChangesPanel";
@@ -52,6 +54,23 @@ import { isKnownPath, navigate, pathFor, useRoute } from "./lib/router";
 
 type View = "inbox" | "thread" | "settings" | "project";
 
+/** Optimistic unread page after a thread's inbox items were marked read. */
+function withoutThreadInboxItems(
+  page: InboxPageDto,
+  threadId: string,
+): InboxPageDto {
+  const removed = page.items.filter((entry) => entry.threadId === threadId);
+  if (removed.length === 0) return page;
+  return {
+    ...page,
+    items: page.items.filter((entry) => entry.threadId !== threadId),
+    unread: Math.max(
+      0,
+      page.unread - removed.filter((entry) => !entry.read).length,
+    ),
+  };
+}
+
 export function App() {
   const route = useRoute();
   // The URL owns navigation; everything below derives from it so reloads,
@@ -70,6 +89,7 @@ export function App() {
   );
   const selectedThreadId = useRef<string | null>(null);
   selectedThreadId.current = selectedThread?.id ?? null;
+  const pendingInboxReads = useRef<Set<string>>(new Set());
   const [navOpened, nav] = useDisclosure(false);
   const [changesOpened, changes] = useDisclosure(false);
   const [mergeOpened, merge] = useDisclosure(false);
@@ -128,8 +148,19 @@ export function App() {
       .then(({ thread }) => {
         if (!cancelled) setSelectedThread(thread);
       })
-      .catch(() => {
-        if (!cancelled) setSelectedThread(null);
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        setSelectedThread(null);
+        if (!(cause instanceof ApiError) || cause.status !== 404) return;
+        notifications.show({
+          message: "Thread not found — showing its project",
+          color: "red",
+        });
+        if (route.kind === "thread") {
+          navigate(pathFor({ kind: "project", projectId: route.projectId }), {
+            replace: true,
+          });
+        }
       });
     return () => {
       cancelled = true;
@@ -174,21 +205,59 @@ export function App() {
     navigate(pathFor({ kind: "settings" }));
   };
 
-  const openInboxItem = async (item: InboxItem) => {
-    try {
-      const [{ thread }] = await Promise.all([
-        getThread(item.threadId),
-        markInboxRead(item.threadId).catch(() => undefined),
-      ]);
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
-      openThread(thread);
-    } catch (cause) {
-      notifications.show({
-        message:
-          cause instanceof Error ? cause.message : "Could not open thread",
-        color: "red",
+  // Read bookkeeping runs in the background: the row leaves the unread cache
+  // immediately, and a failed write puts it back and says why.
+  const markInboxItemRead = (threadId: string) => {
+    if (pendingInboxReads.current.has(threadId)) return;
+    pendingInboxReads.current.add(threadId);
+    const snapshot = queryClient.getQueriesData<InboxPageDto>({
+      queryKey: ["inbox", "unread"],
+    });
+    queryClient.setQueriesData<InboxPageDto>(
+      { queryKey: ["inbox", "unread"] },
+      (page) => (page ? withoutThreadInboxItems(page, threadId) : page),
+    );
+    void markInboxRead(threadId)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      })
+      .catch((cause: unknown) => {
+        for (const [queryKey, data] of snapshot) {
+          queryClient.setQueryData(queryKey, data);
+        }
+        notifications.show({
+          message:
+            cause instanceof Error ? cause.message : "Could not mark item read",
+          color: "red",
+        });
+      })
+      .finally(() => {
+        pendingInboxReads.current.delete(threadId);
       });
+  };
+
+  // The click is one history push: `navigate` ignores an identical path, so a
+  // double-click cannot stack the same thread URL. The route effect above
+  // resolves the thread from cache or fetches it; the loader covers the gap.
+  const openInboxItem = (item: InboxItem) => {
+    if (selectedThreadId.current !== item.threadId) {
+      setSelectedThread(
+        allThreads.data?.threads.find(
+          (thread) => thread.id === item.threadId,
+        ) ?? null,
+      );
     }
+    setAsideTab("changes");
+    setOnlineUserIds([]);
+    changes.close();
+    navigate(
+      pathFor({
+        kind: "thread",
+        projectId: item.projectId,
+        threadId: item.threadId,
+      }),
+    );
+    markInboxItemRead(item.threadId);
   };
 
   const refreshThreadLists = (thread?: ThreadSummary) => {
@@ -306,6 +375,9 @@ export function App() {
       >
         <TitleBar
           title={title}
+          running={
+            route.kind === "thread" && selectedThread?.status === "running"
+          }
           participants={participants}
           onlineUserIds={onlineUserIds}
           unreadCount={inboxUnread.data?.unread ?? 0}
@@ -394,7 +466,7 @@ export function App() {
         />
         <AppShell.Main className="main">
           {view === "inbox" ? (
-            <InboxView onOpenThread={(item) => void openInboxItem(item)} />
+            <InboxView onOpenThread={openInboxItem} />
           ) : view === "settings" ? (
             <SettingsView />
           ) : selectedThread ? (

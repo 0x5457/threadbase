@@ -375,6 +375,7 @@ impl Harness for AcpHarness {
     async fn new_session(&mut self, req: NewSession) -> HarnessResult<SessionId> {
         let connection = self.connection()?.clone();
         let mcp_servers = parse_mcp_servers(&req.mcp_servers)?;
+        lock_state(&self.state).replaying = false;
         let response = connection
             .send_request(NewSessionRequest::new(req.cwd).mcp_servers(mcp_servers))
             .block_task()
@@ -446,14 +447,25 @@ impl Harness for AcpHarness {
     async fn load_session(&mut self, id: &SessionId) -> HarnessResult<()> {
         let connection = self.connection()?.clone();
         let cwd = self.cwd.clone().ok_or(HarnessError::NotRunning)?;
-        let response = connection
+        // `session/load` replays the stored conversation through session
+        // updates. Mark the session as replaying before the request because
+        // the adapter may emit those updates before the response is observed;
+        // the first prompt re-opens the stream.
+        lock_state(&self.state).replaying = true;
+        let response = match connection
             .send_request(LoadSessionRequest::new(
                 AcpSessionId::new(id.0.as_str()),
                 cwd,
             ))
             .block_task()
             .await
-            .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        {
+            Ok(response) => response,
+            Err(error) => {
+                lock_state(&self.state).replaying = false;
+                return Err(HarnessError::Protocol(error.to_string()));
+            }
+        };
         reset_session(&mut lock_state(&self.state), &id.0);
         // `session/load` re-announces the session configuration; without this a
         // resumed thread reported "does not advertise models" even though the
@@ -583,6 +595,7 @@ impl Harness for AcpHarness {
             state.turn_seq += 1;
             let turn_id = format!("turn-{}", state.turn_seq);
             state.running_turn = Some(turn_id.clone());
+            state.replaying = false;
             turn_id
         };
         let handle = TurnHandle {
@@ -798,6 +811,10 @@ struct HarnessState {
     turn_seq: u64,
     request_seq: u64,
     running_turn: Option<String>,
+    /// Set while `session/load` replays stored history so replayed output is
+    /// not mistaken for live output. Cleared by the first `prompt` or a new
+    /// session.
+    replaying: bool,
     tools: HashMap<String, ToolCallEvent>,
     subagents: HashMap<String, SubagentEvent>,
     permissions: HashMap<String, PendingPermission>,
@@ -903,8 +920,9 @@ fn spawn_stderr_reader(stderr: tokio::process::ChildStderr, bus: EventBus) {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             if !line.trim().is_empty() {
-                bus.send(RawAgentEvent::Notice {
-                    message: format!("agent stderr: {line}"),
+                bus.send(RawAgentEvent::AgentLog {
+                    level: "info".to_owned(),
+                    text: line,
                 });
             }
         }
@@ -1016,19 +1034,29 @@ fn handle_session_notification(
     bus: &EventBus,
     notification: SessionNotification,
 ) {
+    let replaying = lock_state(state).replaying;
     let origin = notification.session_id.0.to_string();
     match notification.update {
         SessionUpdate::AgentMessageChunk(chunk) => {
+            if replaying {
+                return;
+            }
             if let Some(text) = content_text(&chunk.content) {
                 bus.send(RawAgentEvent::AgentMessageChunk { text });
             }
         }
         SessionUpdate::AgentThoughtChunk(chunk) => {
+            if replaying {
+                return;
+            }
             if let Some(text) = content_text(&chunk.content) {
                 bus.send(RawAgentEvent::AgentThoughtChunk { text });
             }
         }
         SessionUpdate::ToolCall(call) => {
+            if replaying {
+                return;
+            }
             let event = tool_call_event(&call);
             lock_state(state)
                 .tools
@@ -1036,6 +1064,9 @@ fn handle_session_notification(
             bus.send(RawAgentEvent::ToolCall { call: event });
         }
         SessionUpdate::ToolCallUpdate(update) => {
+            if replaying {
+                return;
+            }
             let mut state = lock_state(state);
             let id = update.tool_call_id.0.to_string();
             let event = apply_tool_update(state.tools.remove(&id), &update);

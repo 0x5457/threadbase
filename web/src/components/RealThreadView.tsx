@@ -30,6 +30,7 @@ import {
 } from "../api";
 import { useLiveThread } from "../lib/live-thread";
 import { reduceEvents } from "../lib/thread-events";
+import { AgentLog } from "./AgentLog";
 import { Composer } from "./Composer";
 import { ApprovalCard } from "./thread/ApprovalCard";
 import { CommentCard, CommentEditor } from "./thread/CommentCard";
@@ -91,7 +92,7 @@ export function RealThreadView({
     [onPresence],
   );
 
-  const items = useMemo(
+  const { items, diagnostics } = useMemo(
     () =>
       reduceEvents(
         live.events.filter((event) => !event.subagentId),
@@ -437,6 +438,7 @@ export function RealThreadView({
         </div>
       </ScrollArea>
       <div className="composer-stack">
+        <AgentLog lines={diagnostics} />
         <QueueBar items={queue} busy={dropping} onDrop={(id) => void drop(id)} />
         <Composer
           threadId={threadId}

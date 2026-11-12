@@ -40,6 +40,7 @@ interface ComposerToolbarProps {
   writable: boolean;
   onModelChange?: (model: string) => void;
   onEffortChange?: (effort: string) => void;
+  onConfigOpen: () => void;
   hasText: boolean;
   sending: boolean;
   sendBlocked: boolean;
@@ -67,6 +68,7 @@ export function ComposerToolbar({
   writable,
   onModelChange,
   onEffortChange,
+  onConfigOpen,
   hasText,
   sending,
   sendBlocked,
@@ -181,6 +183,7 @@ export function ComposerToolbar({
         writable={writable}
         onModelChange={onModelChange}
         onEffortChange={onEffortChange}
+        onOpen={onConfigOpen}
       />
       <Tooltip label={sendLabel}>
         <Box component="span" style={{ display: "inline-flex" }}>

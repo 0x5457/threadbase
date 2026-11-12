@@ -11,10 +11,14 @@ import {
   ThemeIcon,
   Title,
 } from "@mantine/core";
-import { IconBrandGithub, IconShieldLock } from "@tabler/icons-react";
+import {
+  IconBrandGithub,
+  IconLockAccess,
+  IconShieldLock,
+} from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { getAuthStatus, getMe } from "../api";
+import { getAuthStatus, getMe, logout } from "../api";
 
 /**
  * The server accepts either a GitHub session cookie or an explicitly
@@ -42,7 +46,51 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return <SignIn />;
   }
 
+  // Invites create accounts with `pending` access, and revoked accounts keep a
+  // live session on purpose so the shell can explain itself. Both would
+  // otherwise render the workspace and fail every request with a 403.
+  const access = me.data.user.access;
+  if (access === "pending") {
+    return <AccessScreen access={access} />;
+  }
+  if (access === "disabled") {
+    return <AccessScreen access={access} />;
+  }
+
   return <>{children}</>;
+}
+
+function AccessScreen({ access }: { access: "pending" | "disabled" }) {
+  const pending = access === "pending";
+  return (
+    <Center h="100dvh" px="md" className="auth-screen">
+      <Stack align="center" gap="sm" maw={430}>
+        <ThemeIcon size={38} radius="xl" variant="light" color="gray">
+          <IconLockAccess size={18} stroke={1.5} />
+        </ThemeIcon>
+        <Title order={2} size="h4">
+          {pending ? "Waiting for approval" : "Access revoked"}
+        </Title>
+        <Text size="sm" c="dimmed" ta="center">
+          {pending
+            ? "Your GitHub account is signed in, but an administrator has not approved it yet. You will get access as soon as they do."
+            : "An administrator removed your access to this workspace. Signing out clears the local session."}
+        </Text>
+        <Box mt={4}>
+          <Button
+            variant="default"
+            onClick={() => {
+              void logout().then(() => {
+                window.location.href = "/";
+              });
+            }}
+          >
+            Sign out
+          </Button>
+        </Box>
+      </Stack>
+    </Center>
+  );
 }
 
 function SignIn() {

@@ -18,11 +18,11 @@ export function setShareLevel(threadId: string, shareLevel: ShareLevel) {
   });
 }
 
-export function addMember(threadId: string, username: string, role: Role) {
+export function addMember(threadId: string, login: string, role: Role) {
   return jsonRequest<ThreadMemberDto>(
     `/api/threads/${threadId}/members`,
     "POST",
-    { username, role },
+    { login, role },
   );
 }
 

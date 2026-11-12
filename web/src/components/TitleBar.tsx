@@ -21,6 +21,8 @@ import { TitleActions } from "./titlebar/TitleActions";
 
 interface TitleBarProps {
   title: string;
+  /** A live agent turn is in progress for the open thread. */
+  running?: boolean;
   participants: ThreadSummary["participants"];
   /** Authoritative online author ids from the live presence socket. */
   onlineUserIds?: string[];
@@ -46,6 +48,7 @@ interface TitleBarProps {
 
 export function TitleBar({
   title,
+  running = false,
   participants,
   onlineUserIds,
   unreadCount,
@@ -100,6 +103,14 @@ export function TitleBar({
       </div>
 
       <div className="header-center">
+        {running ? (
+          <span
+            className="dot running header-running"
+            role="status"
+            aria-label="Agent is running"
+            title="Agent is running"
+          />
+        ) : null}
         <Text size="md" fw={500} className="doc-title">
           {title}
         </Text>

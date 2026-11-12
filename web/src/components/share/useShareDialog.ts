@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   addMember,
+  ApiError,
   createInvite,
   getThreadBundle,
   removeMember,
@@ -57,14 +58,20 @@ export function useShareDialog(threadId: string | null, opened: boolean) {
     void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
   };
 
-  const run = async (key: string, action: () => Promise<unknown>) => {
+  const run = async (
+    key: string,
+    action: () => Promise<unknown>,
+    describeFailure?: (cause: unknown) => string,
+  ) => {
     setBusy(key);
     try {
       await action();
       refresh();
     } catch (cause) {
       notifications.show({
-        message: cause instanceof Error ? cause.message : "Request failed",
+        message:
+          describeFailure?.(cause) ??
+          (cause instanceof Error ? cause.message : "Request failed"),
         color: "red",
       });
     } finally {
@@ -80,11 +87,25 @@ export function useShareDialog(threadId: string | null, opened: boolean) {
 
   const add = () => {
     if (!threadId || !username.trim()) return;
-    void run("add", async () => {
-      await addMember(threadId, username.trim(), memberRole);
-      setUsername("");
-      notifications.show({ message: "Member added", color: "teal" });
-    });
+    void run(
+      "add",
+      async () => {
+        await addMember(threadId, username.trim(), memberRole);
+        setUsername("");
+        notifications.show({ message: "Member added", color: "teal" });
+      },
+      (cause) => {
+        if (cause instanceof ApiError) {
+          if (cause.status === 403) {
+            return "Only the thread owner can add members";
+          }
+          if (cause.status === 404) {
+            return "This thread is no longer available";
+          }
+        }
+        return cause instanceof Error ? cause.message : "Request failed";
+      },
+    );
   };
 
   const invite = () => {

@@ -1,7 +1,7 @@
 import { AppShell, Divider, Group, Text } from "@mantine/core";
 import { IconFolder, IconGitBranch, IconLayoutGrid } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { getThreadBundle, type ThreadSummary } from "../api";
+import { getMe, getThreadBundle, type ThreadSummary } from "../api";
 
 export function StatusBar({
   thread,
@@ -18,6 +18,13 @@ export function StatusBar({
     retry: false,
   });
   const stats = bundle.data?.bundle.changes.stats;
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: getMe,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const readOnly = me.data?.user.access === "read_only";
 
   if (workspace || !thread) {
     return (
@@ -59,6 +66,11 @@ export function StatusBar({
       </Group>
       <div className="spacer" />
       <Group gap={10} wrap="nowrap">
+        {readOnly ? (
+          <Text size="xs" className="status-readonly" title="Your account can read but not write">
+            read-only
+          </Text>
+        ) : null}
         <Text size="xs" c="dimmed" visibleFrom="md">
           {thread.agent}
         </Text>
