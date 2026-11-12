@@ -1,7 +1,8 @@
+import { WebSocket as ReconnectingWebSocket } from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadEvent } from "../api";
 import { emptyStore, mergeEvents, replaceEvents } from "./live/store";
-import type { EventStore, LiveFocus, LivePresence, PresencePayload } from "./live/types";
+import type { EventStore, LivePresence, PresencePayload } from "./live/types";
 import {
   DEFAULT_PANEL,
   EMPTY_EVENTS,
@@ -10,10 +11,7 @@ import {
 import type { LiveEventsPage, LiveThreadOptions, LiveThreadState } from "./live/types";
 import {
   HEARTBEAT_MS,
-  RECONNECT_STABLE_MS,
-  SOCKET_CONNECTING,
-  SOCKET_OPEN,
-  backoffDelay,
+  RECONNECT_OPTIONS,
   errorMessage,
   sendJson,
   socketUrl,
@@ -53,7 +51,7 @@ export function useLiveThread(
   const storeRef = useRef<EventStore>(emptyStore());
   /** Which thread `storeRef` belongs to; render never shows another thread's log. */
   const storeThreadRef = useRef<string | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<ReconnectingWebSocket | null>(null);
   const onInboxCountRef = useRef(onInboxCount);
   const payloadRef = useRef<PresencePayload>({
     projectId: projectId ?? "",
@@ -110,12 +108,9 @@ export function useLiveThread(
     }
 
     let disposed = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
+    let socket: ReconnectingWebSocket | null = null;
     let heartbeatTimer: number | null = null;
-    let attempt = 0;
     let catchUpRounds = 0;
-    let openedAt = 0;
     let pingOutstanding = false;
 
     const publish = (next: EventStore) => {
@@ -227,99 +222,78 @@ export function useLiveThread(
       }
     };
 
-    const clearTimers = () => {
+    const clearFlush = () => {
       if (flushFrame !== null) {
         window.cancelAnimationFrame(flushFrame);
         flushFrame = null;
       }
       pendingEvents = [];
-      if (reconnectTimer !== null) {
-        window.clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
+    };
+
+    const clearHeartbeat = () => {
       if (heartbeatTimer !== null) {
         window.clearInterval(heartbeatTimer);
         heartbeatTimer = null;
       }
     };
 
-    const scheduleReconnect = () => {
-      if (disposed || reconnectTimer !== null) return;
-      const delay = backoffDelay(attempt);
-      attempt += 1;
-      reconnectTimer = window.setTimeout(() => {
-        reconnectTimer = null;
-        connect();
-      }, delay);
+    const clearTimers = () => {
+      clearFlush();
+      clearHeartbeat();
     };
 
-    const connect = () => {
-      if (disposed) return;
-      let next: WebSocket;
-      try {
-        next = new WebSocket(socketUrl());
-      } catch (cause) {
-        setError(
-          errorMessage(cause, "Could not open the live connection."),
-        );
-        scheduleReconnect();
-        return;
-      }
+    let next: ReconnectingWebSocket;
+    try {
+      next = new ReconnectingWebSocket(
+        socketUrl(),
+        undefined,
+        RECONNECT_OPTIONS,
+      );
+    } catch (cause) {
+      setError(errorMessage(cause, "Could not open the live connection."));
+      return;
+    }
 
-      socket = next;
-      socketRef.current = next;
+    socket = next;
+    socketRef.current = next;
 
-      next.onopen = () => {
-        openedAt = Date.now();
-        catchUpRounds = 0;
-        pingOutstanding = false;
-        setConnected(true);
-        setError(null);
-        heartbeatTimer = window.setInterval(() => {
-          // A ping that went unanswered for a full interval means the socket is
-          // half-open (dead network, no close frame); drop it to reconnect.
-          if (pingOutstanding) {
-            next.close(4000, "heartbeat timeout");
-            return;
-          }
-          pingOutstanding = true;
-          sendJson(next, { type: "ping" });
-        }, HEARTBEAT_MS);
-        sendSubscribe();
-        sendPresenceNow();
-      };
-
-      next.onmessage = (message: MessageEvent) => {
-        if (typeof message.data === "string") handleServerMessage(message.data);
-      };
-
-      next.onclose = (event: CloseEvent) => {
-        if (socket === next) socket = null;
-        if (socketRef.current === next) socketRef.current = null;
-        if (disposed) return;
-        flush();
-        clearTimers();
-        // Only a connection that stayed up resets the ladder, so a server that
-        // accepts and immediately closes cannot turn this into a hot loop.
-        if (openedAt !== 0 && Date.now() - openedAt >= RECONNECT_STABLE_MS) {
-          attempt = 0;
+    next.onopen = () => {
+      catchUpRounds = 0;
+      pingOutstanding = false;
+      setConnected(true);
+      setError(null);
+      clearHeartbeat();
+      heartbeatTimer = window.setInterval(() => {
+        // A ping that went unanswered for a full interval means the socket is
+        // half-open (dead network, no close frame); reconnect to replace it.
+        if (pingOutstanding) {
+          next.reconnect(4000, "heartbeat timeout");
+          return;
         }
-        openedAt = 0;
-        pingOutstanding = false;
-        setConnected(false);
-        setPresence(EMPTY_PRESENCE);
-        setError(
-          event.reason !== ""
-            ? event.reason
-            : `Live connection closed (${event.code}); reconnecting.`,
-        );
-        scheduleReconnect();
-      };
-
-      // `onerror` always precedes `onclose`; reconnection is driven there.
+        pingOutstanding = true;
+        sendJson(next, { type: "ping" });
+      }, HEARTBEAT_MS);
+      sendSubscribe();
+      sendPresenceNow();
     };
 
-    connect();
+    next.onmessage = (message: MessageEvent) => {
+      if (typeof message.data === "string") handleServerMessage(message.data);
+    };
+
+    next.onclose = (event: CloseEvent) => {
+      if (disposed) return;
+      flush();
+      clearTimers();
+      pingOutstanding = false;
+      setConnected(false);
+      setPresence(EMPTY_PRESENCE);
+      setError(
+        event.reason !== ""
+          ? event.reason
+          : `Live connection closed (${event.code}); reconnecting.`,
+      );
+    };
 
     return () => {
       disposed = true;
@@ -328,24 +302,18 @@ export function useLiveThread(
       socket = null;
       if (socketRef.current === closing) socketRef.current = null;
       if (closing === null) return;
-      // Detach first: `connect` only re-enters from these callbacks.
+      // Detach first: partysocket only re-enters from these callbacks.
       closing.onopen = null;
       closing.onmessage = null;
       closing.onerror = null;
       closing.onclose = null;
-      // A handshake still in flight must be aborted, not just ignored.
-      if (
-        closing.readyState === SOCKET_CONNECTING ||
-        closing.readyState === SOCKET_OPEN
-      ) {
-        closing.close(1000, "live thread released");
-      }
+      closing.close(1000, "live thread released");
     };
   }, [threadId, sendPresenceNow]);
 
   const sendPresence = useCallback(
-    (focus: Partial<LiveFocus>) => {
-      payloadRef.current = withFocusPatch(payloadRef.current, focus);
+    (focus: Partial<PresencePayload>) => {
+      payloadRef.current = Object.assign({}, payloadRef.current, focus);
       sendPresenceNow();
     },
     [sendPresenceNow],
@@ -361,19 +329,4 @@ export function useLiveThread(
     presence,
     sendPresence,
   };
-}
-
-
-function withFocusPatch(
-  payload: PresencePayload,
-  patch: Partial<LiveFocus>,
-): PresencePayload {
-  const next: PresencePayload = { ...payload };
-  if (patch.projectId !== undefined) next.projectId = patch.projectId;
-  if (patch.threadId !== undefined) next.threadId = patch.threadId;
-  if (patch.target !== undefined) next.target = patch.target;
-  if (patch.panel !== undefined) next.panel = patch.panel;
-  if (patch.typing !== undefined) next.typing = patch.typing;
-  if (patch.hidden !== undefined) next.hidden = patch.hidden;
-  return next;
 }

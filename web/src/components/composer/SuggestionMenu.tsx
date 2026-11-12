@@ -7,7 +7,20 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { IconCommand, IconFile, IconSparkles } from "@tabler/icons-react";
-import type { Suggestion, SuggestionOption } from "./commands";
+import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
+import type { SuggestionOption } from "./commands";
+
+export interface SuggestionMenuHandle {
+  onKeyDown: (event: KeyboardEvent) => boolean;
+}
+
+export interface SuggestionMenuProps {
+  kind: "command" | "file";
+  query: string;
+  options: SuggestionOption[];
+  loading: boolean;
+  onChoose: (option: SuggestionOption) => void;
+}
 
 function iconFor(kind: SuggestionOption["kind"]) {
   if (kind === "file") return <IconFile size={13} stroke={1.5} />;
@@ -15,37 +28,93 @@ function iconFor(kind: SuggestionOption["kind"]) {
   return <IconCommand size={13} stroke={1.5} />;
 }
 
-export function SuggestionMenu({
-  suggestion,
-  options,
-  active,
-  loading,
-  onActive,
-  onChoose,
-}: {
-  suggestion: Suggestion;
-  options: SuggestionOption[];
-  active: number;
-  loading: boolean;
-  onActive: (index: number) => void;
-  onChoose: (option: SuggestionOption) => void;
-}) {
+const OPTION_ID = "composer-suggestion-option";
+
+export const SuggestionMenu = forwardRef<
+  SuggestionMenuHandle,
+  SuggestionMenuProps
+>(function SuggestionMenu(
+  { kind, query, options, loading, onChoose },
+  ref,
+) {
+  const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    setActive(0);
+  }, [options, query]);
+
+  useEffect(() => {
+    if (active >= options.length) {
+      setActive(Math.max(0, options.length - 1));
+    }
+  }, [active, options.length]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      onKeyDown: (event) => {
+        if (event.isComposing) return false;
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          event.stopPropagation();
+          setActive((current) =>
+            options.length === 0
+              ? 0
+              : Math.min(current + 1, options.length - 1),
+          );
+          return true;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          event.stopPropagation();
+          setActive((current) => Math.max(current - 1, 0));
+          return true;
+        }
+        if (
+          event.key === "Enter" &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.shiftKey
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          const option = options[active];
+          if (option) onChoose(option);
+          return true;
+        }
+        return false;
+      },
+    }),
+    [active, onChoose, options],
+  );
+
   return (
     <Paper className="composer-suggest" withBorder shadow="md" p={0}>
       <Group className="suggest-head" justify="space-between" px={8} py={4}>
         <Text size="xs" c="dimmed">
-          {suggestion.kind === "file" ? "Files" : "Commands & skills"}
+          {kind === "file" ? "Files" : "Commands & skills"}
         </Text>
         <Text size="xs" c="dimmed" ff="monospace">
-          {suggestion.query}
+          {query}
         </Text>
       </Group>
-      <Box className="suggest-list">
+      <Box
+        className="suggest-list"
+        role="listbox"
+        aria-label={kind === "file" ? "Files" : "Commands and skills"}
+        aria-activedescendant={
+          options.length > 0 ? `${OPTION_ID}-${active}` : undefined
+        }
+      >
         {options.map((option, index) => (
           <UnstyledButton
             key={option.id}
+            id={`${OPTION_ID}-${index}`}
+            type="button"
+            role="option"
+            aria-selected={index === active}
             className={`suggest-item${index === active ? " active" : ""}`}
-            onMouseEnter={() => onActive(index)}
+            onMouseEnter={() => setActive(index)}
             onClick={() => onChoose(option)}
           >
             <Box className="suggest-icon">{iconFor(option.kind)}</Box>
@@ -84,4 +153,4 @@ export function SuggestionMenu({
       </Group>
     </Paper>
   );
-}
+});

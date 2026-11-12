@@ -1,164 +1,249 @@
-import { useDebouncedValue } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { Editor } from "@tiptap/react";
-import { useCallback, useEffect, useMemo } from "react";
-import { listSkills, searchFiles } from "../../api";
+import { shift } from "@floating-ui/dom";
+import { PluginKey } from "@tiptap/pm/state";
 import {
-  commandsFor,
-  type Suggestion,
-  type SuggestionOption,
-} from "./commands";
+  Extension,
+  ReactRenderer,
+  type Editor,
+} from "@tiptap/react";
+import Suggestion, {
+  exitSuggestion,
+  type SuggestionKeyDownProps,
+  type SuggestionProps,
+} from "@tiptap/suggestion";
+import { notifications } from "@mantine/notifications";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMemo, useRef, useState } from "react";
+import { listSkills, searchFiles } from "../../api";
+import { commandsFor, type SuggestionOption } from "./commands";
+import {
+  SuggestionMenu,
+  type SuggestionMenuHandle,
+  type SuggestionMenuProps,
+} from "./SuggestionMenu";
 
-interface UseComposerSuggestionsOptions {
-  editor: Editor | null;
-  threadId?: string;
-  projectId?: string;
+const COMMAND_PLUGIN_KEY = new PluginKey("composer-command-suggestions");
+const FILE_PLUGIN_KEY = new PluginKey("composer-file-suggestions");
+
+const SUGGESTION_LIMIT = 24;
+
+interface SuggestionContext {
   agent: string;
-  suggestion: Suggestion | null;
-  setSuggestion: (suggestion: Suggestion | null) => void;
-  active: number;
-  setActive: (updater: number | ((current: number) => number)) => void;
+  projectId?: string;
+  threadId?: string;
+  queryClient: QueryClient;
+  onActiveChange: (active: boolean) => void;
 }
 
-/** Feeds the `@file` / `/command` menu and owns its keyboard interaction. */
-export function useComposerSuggestions({
-  editor,
-  threadId,
-  projectId,
-  agent,
-  suggestion,
-  setSuggestion,
-  active,
-  setActive,
-}: UseComposerSuggestionsOptions) {
-  const skills = useQuery({
-    queryKey: ["skills", projectId],
-    queryFn: () => listSkills(projectId as string),
-    enabled: Boolean(projectId),
-    staleTime: 60_000,
-    retry: false,
-  });
+async function commandOptions(
+  context: SuggestionContext,
+  query: string,
+): Promise<SuggestionOption[]> {
+  const needle = query.toLowerCase();
+  const commandOptions = commandsFor(context.agent)
+    .filter(
+      (command) => !needle || command.command.toLowerCase().includes(needle),
+    )
+    .map((command) => ({
+      id: `command:${command.command}`,
+      kind: "command" as const,
+      label: `/${command.command}`,
+      description: command.description,
+      insert: `/${command.command} `,
+    }));
 
-  const [fileQuery] = useDebouncedValue(
-    suggestion?.kind === "file" ? suggestion.query : "",
-    160,
-  );
-  const files = useQuery({
-    queryKey: ["file-search", threadId, fileQuery],
-    queryFn: () => searchFiles(threadId as string, fileQuery),
-    enabled: Boolean(threadId && suggestion?.kind === "file"),
-    staleTime: 5_000,
-    placeholderData: keepPreviousData,
-  });
+  let skills: { name: string; description: string; path: string; source: string }[] = [];
+  if (context.projectId) {
+    try {
+      const response = await context.queryClient.fetchQuery({
+        queryKey: ["skills", context.projectId],
+        queryFn: () => listSkills(context.projectId as string),
+        staleTime: 60_000,
+        retry: false,
+      });
+      skills = response.skills;
+    } catch {
+      // A failed lookup leaves the commands usable; the menu just has no skills.
+    }
+  }
 
-  const options = useMemo<SuggestionOption[]>(() => {
-    if (!suggestion) return [];
-    const query = suggestion.query.toLowerCase();
-    if (suggestion.kind === "file") {
-      return (files.data?.files ?? []).map((file) => ({
+  const skillOptions = skills
+    .filter(
+      (skill) =>
+        !needle ||
+        skill.name.toLowerCase().includes(needle) ||
+        skill.description.toLowerCase().includes(needle),
+    )
+    .map((skill) => ({
+      id: `skill:${skill.path}`,
+      kind: "skill" as const,
+      label: `/${skill.name}`,
+      description: skill.description,
+      source: skill.source,
+      insert: `/${skill.name} `,
+    }));
+
+  return [...commandOptions, ...skillOptions].slice(0, SUGGESTION_LIMIT);
+}
+
+async function fileOptions(
+  context: SuggestionContext,
+  query: string,
+): Promise<SuggestionOption[]> {
+  if (!context.threadId) return [];
+  try {
+    const response = await context.queryClient.fetchQuery({
+      queryKey: ["file-search", context.threadId, query],
+      queryFn: () => searchFiles(context.threadId as string, query),
+      staleTime: 5_000,
+    });
+    return response.files
+      .map((file) => ({
         id: `file:${file}`,
         kind: "file" as const,
         label: file,
         description: "Add a file reference",
         insert: `@${file} `,
-      }));
-    }
+      }))
+      .slice(0, SUGGESTION_LIMIT);
+  } catch {
+    return [];
+  }
+}
 
-    const commandOptions = commandsFor(agent)
-      .filter(
-        (command) =>
-          !query || command.command.toLowerCase().includes(query),
-      )
-      .map((command) => ({
-        id: `command:${command.command}`,
-        kind: "command" as const,
-        label: `/${command.command}`,
-        description: command.description,
-        insert: `/${command.command} `,
-      }));
-    const skillOptions = (skills.data?.skills ?? [])
-      .filter(
-        (skill) =>
-          !query ||
-          skill.name.toLowerCase().includes(query) ||
-          skill.description.toLowerCase().includes(query),
-      )
-      .map((skill) => ({
-        id: `skill:${skill.path}`,
-        kind: "skill" as const,
-        label: `/${skill.name}`,
-        description: skill.description,
-        source: skill.source,
-        insert: `/${skill.name} `,
-      }));
-    return [...commandOptions, ...skillOptions].slice(0, 24);
-  }, [agent, files.data, suggestion, skills.data]);
+function menuProps(
+  kind: "command" | "file",
+  props: SuggestionProps<SuggestionOption>,
+): SuggestionMenuProps {
+  return {
+    kind,
+    query: props.query,
+    options: props.items,
+    loading: props.loading,
+    onChoose: (option) => props.command(option),
+  };
+}
 
-  useEffect(() => {
-    setActive(0);
-  }, [setActive, suggestion?.kind, suggestion?.query]);
+function suggestionRenderer(
+  kind: "command" | "file",
+  context: SuggestionContext,
+) {
+  return () => {
+    let component: ReactRenderer<SuggestionMenuHandle, SuggestionMenuProps> | null =
+      null;
+    let unmount: (() => void) | null = null;
 
-  useEffect(() => {
-    if (active >= options.length) {
-      setActive(Math.max(0, options.length - 1));
-    }
-  }, [active, options.length, setActive]);
+    return {
+      onStart: (props: SuggestionProps<SuggestionOption>) => {
+        component = new ReactRenderer(SuggestionMenu, {
+          props: menuProps(kind, props),
+          editor: props.editor,
+          className: "composer-suggest-layer",
+        });
+        unmount = props.mount(component.element);
+        context.onActiveChange(true);
+      },
+      onUpdate: (props: SuggestionProps<SuggestionOption>) => {
+        component?.updateProps(menuProps(kind, props));
+      },
+      onKeyDown: ({ event }: SuggestionKeyDownProps) =>
+        component?.ref?.onKeyDown(event) ?? false,
+      onExit: () => {
+        unmount?.();
+        unmount = null;
+        component?.destroy();
+        component = null;
+        context.onActiveChange(false);
+      },
+    };
+  };
+}
 
-  const choose = useCallback(
-    (option: SuggestionOption) => {
-      if (!editor || !suggestion) return;
-      const to = editor.state.selection.from;
-      editor
-        .chain()
-        .focus()
-        .deleteRange({ from: suggestion.from, to })
-        .insertContent(option.insert)
-        .run();
-      setSuggestion(null);
+function composerSuggestions(context: SuggestionContext) {
+  return Extension.create({
+    name: "composerSuggestions",
+    addProseMirrorPlugins() {
+      return [
+        Suggestion<SuggestionOption>({
+          editor: this.editor,
+          pluginKey: COMMAND_PLUGIN_KEY,
+          char: "/",
+          allowedPrefixes: [" "],
+          decorationClass: "composer-suggestion",
+          floatingUi: { middleware: [shift({ padding: 8 })] },
+          items: ({ query }) => commandOptions(context, query),
+          command: ({ editor, range, props }) => {
+            editor
+              .chain()
+              .focus()
+              .deleteRange(range)
+              .insertContent(props.insert)
+              .run();
+          },
+          render: suggestionRenderer("command", context),
+        }),
+        Suggestion<SuggestionOption>({
+          editor: this.editor,
+          pluginKey: FILE_PLUGIN_KEY,
+          char: "@",
+          allowedPrefixes: [" "],
+          debounce: 160,
+          decorationClass: "composer-suggestion",
+          floatingUi: { middleware: [shift({ padding: 8 })] },
+          items: ({ query }) => fileOptions(context, query),
+          command: ({ editor, range, props }) => {
+            editor
+              .chain()
+              .focus()
+              .deleteRange(range)
+              .insertContent(props.insert)
+              .run();
+          },
+          render: suggestionRenderer("file", context),
+        }),
+      ];
     },
-    [editor, setSuggestion, suggestion],
+  });
+}
+
+/** Hide any open command/file menu before the composer clears its draft. */
+export function dismissComposerSuggestions(editor: Editor | null): void {
+  if (!editor) return;
+  exitSuggestion(editor.view, COMMAND_PLUGIN_KEY);
+  exitSuggestion(editor.view, FILE_PLUGIN_KEY);
+}
+
+interface UseComposerSuggestionsOptions {
+  threadId?: string;
+  projectId?: string;
+  agent: string;
+}
+
+/** Provides the Tiptap suggestion extension and the toolbar trigger buttons. */
+export function useComposerSuggestions({
+  threadId,
+  projectId,
+  agent,
+}: UseComposerSuggestionsOptions) {
+  const queryClient = useQueryClient();
+  const [active, setActive] = useState(false);
+  const contextRef = useRef<SuggestionContext>({
+    agent,
+    projectId,
+    threadId,
+    queryClient,
+    onActiveChange: setActive,
+  });
+  contextRef.current.agent = agent;
+  contextRef.current.projectId = projectId;
+  contextRef.current.threadId = threadId;
+  contextRef.current.queryClient = queryClient;
+  contextRef.current.onActiveChange = setActive;
+  const extension = useMemo(
+    () => composerSuggestions(contextRef.current),
+    [],
   );
 
-  useEffect(() => {
-    if (!suggestion) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        setSuggestion(null);
-        return;
-      }
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        event.stopPropagation();
-        setActive((current) => Math.min(current + 1, options.length - 1));
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        event.stopPropagation();
-        setActive((current) => Math.max(current - 1, 0));
-        return;
-      }
-      if (
-        event.key === "Enter" &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.shiftKey
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        const option = options[active];
-        if (option) choose(option);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [active, choose, options, setActive, setSuggestion, suggestion]);
-
-  const openTrigger = (kind: "command" | "file") => {
+  const openTrigger = (kind: "command" | "file", editor: Editor | null) => {
     if (!editor) return;
     if (kind === "file" && !threadId) {
       notifications.show({
@@ -174,8 +259,5 @@ export function useComposerSuggestions({
       .run();
   };
 
-  const loading =
-    suggestion?.kind === "file" ? files.isFetching : skills.isFetching;
-
-  return { options, loading, choose, openTrigger };
+  return { extension, openTrigger, active };
 }

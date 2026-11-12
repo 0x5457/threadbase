@@ -7,9 +7,14 @@
   background: var(--paper);
 }
 
+.composer-suggest-layer {
+  z-index: 300;
+}
+
 .composer-suggest {
   overflow: hidden;
-  margin-bottom: 6px;
+  min-width: 260px;
+  max-width: min(440px, calc(100vw - 16px));
   border-color: var(--line);
   border-radius: 4px;
   background: var(--raised);
@@ -237,7 +242,7 @@
 }
 
 .model-picker-option:hover,
-.model-picker-option.active {
+.model-picker-option[data-combobox-selected] {
   background: var(--hover);
 }
 

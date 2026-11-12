@@ -5,6 +5,7 @@ import {
   Group,
   Loader,
   ScrollArea,
+  SegmentedControl,
   Stack,
   Text,
   UnstyledButton,
@@ -19,8 +20,12 @@ import {
   IconMail,
   IconMessage,
 } from "@tabler/icons-react";
+import dayjs from "dayjs";
+import calendar from "dayjs/plugin/calendar";
 import { useState } from "react";
 import { listInbox, markAllInboxRead, type InboxItem } from "../api";
+
+dayjs.extend(calendar);
 
 const kindLabel: Record<InboxItem["kind"], string> = {
   approval: "Approval",
@@ -47,11 +52,12 @@ function kindIcon(kind: InboxItem["kind"]) {
 }
 
 function timeOf(ts: number) {
-  const date = new Date(ts);
-  return `${date.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-  })} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return dayjs(ts).calendar(null, {
+    sameDay: "[Today] hh:mm A",
+    lastDay: "[Yesterday] hh:mm A",
+    lastWeek: "MMM D, hh:mm A",
+    sameElse: "MMM D, hh:mm A",
+  });
 }
 
 export function InboxView({
@@ -83,18 +89,18 @@ export function InboxView({
             </Text>
           </Box>
           <Group gap={2} className="inbox-filters" wrap="nowrap">
-            <UnstyledButton
-              className={`inbox-filter${filter === "unread" ? " active" : ""}`}
-              onClick={() => setFilter("unread")}
-            >
-              Unread{unread ? ` ${unread}` : ""}
-            </UnstyledButton>
-            <UnstyledButton
-              className={`inbox-filter${filter === "all" ? " active" : ""}`}
-              onClick={() => setFilter("all")}
-            >
-              All
-            </UnstyledButton>
+            <SegmentedControl
+              size="xs"
+              value={filter}
+              onChange={(value) => setFilter(value as "unread" | "all")}
+              data={[
+                {
+                  value: "unread",
+                  label: `Unread${unread ? ` ${unread}` : ""}`,
+                },
+                { value: "all", label: "All" },
+              ]}
+            />
             {unread ? (
               <Button
                 variant="subtle"

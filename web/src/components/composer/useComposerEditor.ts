@@ -1,8 +1,7 @@
 import Placeholder from "@tiptap/extension-placeholder";
-import { useEditor } from "@tiptap/react";
+import { useEditor, type Extension } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useRef, useState } from "react";
-import { detectSuggestion, type Suggestion } from "./commands";
 
 interface UseComposerEditorOptions {
   agent: string;
@@ -11,6 +10,7 @@ interface UseComposerEditorOptions {
   restoredText: string | null;
   mirrorDraft: (text: string) => void;
   setDraftEditing: (active: boolean) => void;
+  suggestionExtension: Extension;
 }
 
 /** Owns the Tiptap instance, its local text state, and the draft restore. */
@@ -21,10 +21,9 @@ export function useComposerEditor({
   restoredText,
   mirrorDraft,
   setDraftEditing,
+  suggestionExtension,
 }: UseComposerEditorOptions) {
   const [hasText, setHasText] = useState(false);
-  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
-  const [active, setActive] = useState(0);
   const restoredThread = useRef<string | null>(null);
 
   const editor = useEditor({
@@ -41,6 +40,7 @@ export function useComposerEditor({
       Placeholder.configure({
         placeholder: `Message ${agent}…`,
       }),
+      suggestionExtension,
     ],
     editorProps: {
       attributes: {
@@ -53,12 +53,8 @@ export function useComposerEditor({
     editable: writable,
     onUpdate: ({ editor: current }) => {
       setHasText(current.getText().trim().length > 0);
-      setSuggestion(detectSuggestion(current));
       // IME composition is reconciled on compositionend instead.
       if (!current.view.composing) mirrorDraft(current.getText());
-    },
-    onSelectionUpdate: ({ editor: current }) => {
-      if (suggestion) setSuggestion(detectSuggestion(current));
     },
     onFocus: () => setDraftEditing(true),
     onBlur: ({ editor: current }) => {
@@ -83,13 +79,5 @@ export function useComposerEditor({
     setHasText(restoredText.trim().length > 0);
   }, [editor, restoredText, threadId]);
 
-  return {
-    editor,
-    hasText,
-    setHasText,
-    suggestion,
-    setSuggestion,
-    active,
-    setActive,
-  };
+  return { editor, hasText, setHasText };
 }

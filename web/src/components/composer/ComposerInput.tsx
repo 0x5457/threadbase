@@ -1,15 +1,7 @@
 import { Avatar } from "@mantine/core";
 import { EditorContent, type Editor } from "@tiptap/react";
 import { userColor as colorForUser } from "../../lib/draft";
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
+import { initials } from "../../lib/initials";
 
 interface ComposerInputProps {
   editor: Editor | null;

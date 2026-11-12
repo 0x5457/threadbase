@@ -1,12 +1,12 @@
 import {
   Box,
+  Combobox,
   Group,
   Loader,
-  Popover,
   ScrollArea,
   Text,
-  TextInput,
   UnstyledButton,
+  useCombobox,
 } from "@mantine/core";
 import { IconCheck, IconChevronDown, IconSearch } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -49,10 +49,7 @@ function normalize(value: string) {
  *  ("Thinking: high", "Model: 6 Luna"). The picker already names that setting,
  *  so the prefix is noise. */
 function stripPrefix(value: string) {
-  return value.replace(
-    /^(thinking|reasoning|effort|model|mode)\s*:\s*/i,
-    "",
-  );
+  return value.replace(/^(thinking|reasoning|effort|model|mode)\s*:\s*/i, "");
 }
 
 /**
@@ -76,11 +73,15 @@ export function ModelPicker({
 }: ModelPickerProps) {
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
   const [recent, setRecent] = useState<string[]>([]);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const listboxId = `model-picker-listbox-${name.toLowerCase()}`;
+  const wasOpened = useRef(false);
   const agent = usePickerAgent();
+
+  const combobox = useCombobox({
+    opened,
+    onOpenedChange: setOpened,
+    onDropdownOpen: () => onOpen?.(),
+  });
 
   const choices = useMemo(() => {
     const seen = new Map<string, ModelChoice>();
@@ -163,31 +164,23 @@ export function ModelPicker({
     [choices, filtered, grouped, needle],
   );
 
-  /** Sections in render order, each knowing where it starts in the flat order.
-   *  A null label is the ungrouped list of a short picker. */
+  /** Sections in render order. A null label is the ungrouped list of a short
+   *  picker. */
   const sections = useMemo(() => {
-    const built: {
-      label: string | null;
-      items: ModelChoice[];
-      offset: number;
-    }[] = [];
-    let offset = 0;
-    const add = (label: string | null, items: ModelChoice[]) => {
-      if (items.length === 0) return;
-      built.push({ label, items, offset });
-      offset += items.length;
-    };
+    const built: { label: string | null; items: ModelChoice[] }[] = [];
     if (!grouped) {
-      add(null, filtered);
+      if (filtered.length > 0) built.push({ label: null, items: filtered });
       return built;
     }
-    add(RECENT_GROUP, recentChoices);
-    for (const group of groups) add(group.label, group.items);
+    if (recentChoices.length > 0) {
+      built.push({ label: RECENT_GROUP, items: recentChoices });
+    }
+    for (const group of groups) {
+      if (group.items.length > 0) built.push(group);
+    }
     return built;
   }, [filtered, groups, grouped, recentChoices]);
 
-  /** Flat order the keyboard walks: group headers are skipped, so ↑/↓ cross
-   *  provider boundaries like they crossed options before. */
   const visible = useMemo(
     () => sections.flatMap((section) => section.items),
     [sections],
@@ -201,7 +194,6 @@ export function ModelPicker({
         choice.value === queryText ||
         normalize(choice.name) === normalize(queryText),
     );
-  const total = visible.length + (custom ? 1 : 0);
 
   const selected = choices.find((choice) => choice.value === value);
   const label =
@@ -209,9 +201,11 @@ export function ModelPicker({
     value ??
     (loading && choices.length === 0 ? "Loading…" : placeholder);
 
+  /** Keyboard order starts at the first match after every query change. */
   useEffect(() => {
-    setActive(0);
-  }, [needle]);
+    if (!opened) return;
+    combobox.selectFirstOption();
+  }, [opened, needle, visible.length]);
 
   // Recents only change through this picker, so one read per open is enough.
   useEffect(() => {
@@ -221,22 +215,15 @@ export function ModelPicker({
   useEffect(() => {
     if (!opened) {
       setQuery("");
-      setActive(0);
+      combobox.resetSelectedOption();
+      if (wasOpened.current) combobox.focusTarget();
+      wasOpened.current = false;
       return;
     }
-    const frame = requestAnimationFrame(() => searchRef.current?.focus());
+    wasOpened.current = true;
+    const frame = requestAnimationFrame(() => combobox.searchRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [opened]);
-
-  useEffect(() => {
-    if (active >= total) setActive(Math.max(0, total - 1));
-  }, [active, total]);
-
-  useEffect(() => {
-    if (!opened) return;
-    const element = document.getElementById(`${listboxId}-option-${active}`);
-    element?.scrollIntoView({ block: "nearest" });
-  }, [active, opened]);
 
   const choose = (model: string) => {
     setOpened(false);
@@ -244,28 +231,14 @@ export function ModelPicker({
     if (model !== (value ?? "")) onChange?.(model);
   };
 
-  const chooseActive = () => {
-    if (active < visible.length) {
-      const choice = visible[active];
-      if (choice) choose(choice.value);
-      return;
-    }
-    if (custom) choose(queryText);
-  };
-
-  const renderOption = (choice: ModelChoice, index: number) => {
-    const isActive = index === active;
+  const renderOption = (choice: ModelChoice) => {
     const isSelected = choice.value === value;
     return (
-      <UnstyledButton
+      <Combobox.Option
         key={choice.value}
-        id={`${listboxId}-option-${index}`}
-        type="button"
-        role="option"
-        aria-selected={isSelected}
-        className={`model-picker-option${isActive ? " active" : ""}`}
-        onMouseEnter={() => setActive(index)}
-        onClick={() => choose(choice.value)}
+        value={choice.value}
+        selected={isSelected}
+        className="model-picker-option"
       >
         <Box className="model-picker-option-body">
           <Text size="sm" className="model-picker-option-name">
@@ -280,31 +253,27 @@ export function ModelPicker({
         {isSelected ? (
           <IconCheck size={12} stroke={1.5} className="model-picker-check" />
         ) : null}
-      </UnstyledButton>
+      </Combobox.Option>
     );
   };
 
   return (
-    <Popover
-      opened={opened}
-      onChange={setOpened}
+    <Combobox
+      store={combobox}
+      onOptionSubmit={choose}
       position="top-end"
       width={296}
       shadow="md"
-      trapFocus
-      returnFocus
       disabled={disabled}
-      onOpen={onOpen}
+      readOnly={disabled}
     >
-      <Popover.Target>
+      <Combobox.Target targetType="button" withExpandedAttribute>
         <UnstyledButton
           type="button"
           className="model-picker"
           disabled={disabled}
           aria-label={`${name}: ${label}`}
-          aria-haspopup="listbox"
-          aria-expanded={opened}
-          onClick={() => setOpened((current) => !current)}
+          onClick={() => combobox.toggleDropdown()}
         >
           <Text
             size="sm"
@@ -315,32 +284,13 @@ export function ModelPicker({
           </Text>
           <IconChevronDown size={10} stroke={1.5} className="model-picker-chevron" />
         </UnstyledButton>
-      </Popover.Target>
-      <Popover.Dropdown p={6} className="model-picker-dropdown">
-        <TextInput
-          ref={searchRef}
+      </Combobox.Target>
+      <Combobox.Dropdown p={6} className="model-picker-dropdown">
+        <Combobox.Search
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              if (total > 0) {
-                setActive((current) => Math.min(current + 1, total - 1));
-              }
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setActive((current) => Math.max(current - 1, 0));
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              chooseActive();
-            }
-          }}
           placeholder={`Search ${name.toLowerCase()}`}
           aria-label={`Search ${name.toLowerCase()}`}
-          aria-controls={listboxId}
-          aria-activedescendant={
-            total > 0 ? `${listboxId}-option-${active}` : undefined
-          }
           size="xs"
           leftSection={<IconSearch size={12} stroke={1.5} />}
         />
@@ -350,28 +300,16 @@ export function ModelPicker({
           type="auto"
           styles={{ content: { minWidth: 0 } }}
         >
-          <Box id={listboxId} role="listbox" aria-label={`${name}s`}>
-            {sections.map((section) => (
-              <Box
-                key={section.label ?? "all"}
-                className="model-picker-group"
-                role={section.label ? "group" : "presentation"}
-                aria-label={section.label ?? undefined}
-              >
-                {section.label ? (
-                  <Text
-                    size="xs"
-                    aria-hidden
-                    className="model-picker-group-label"
-                  >
-                    {section.label}
-                  </Text>
-                ) : null}
-                {section.items.map((choice, index) =>
-                  renderOption(choice, section.offset + index),
-                )}
-              </Box>
-            ))}
+          <Combobox.Options aria-label={`${name}s`}>
+            {sections.map((section) =>
+              section.label === null ? (
+                section.items.map((choice) => renderOption(choice))
+              ) : (
+                <Combobox.Group key={section.label} label={section.label}>
+                  {section.items.map((choice) => renderOption(choice))}
+                </Combobox.Group>
+              ),
+            )}
             {visible.length === 0 && loading ? (
               <Group justify="center" gap={6} py="sm">
                 <Loader size="xs" />
@@ -381,24 +319,14 @@ export function ModelPicker({
               </Group>
             ) : null}
             {visible.length === 0 && !loading ? (
-              <Text size="xs" c="dimmed" className="model-picker-empty">
+              <Combobox.Empty className="model-picker-empty">
                 {choices.length === 0
                   ? "This agent does not advertise models. Type a model id and press Enter."
                   : "No matching models."}
-              </Text>
+              </Combobox.Empty>
             ) : null}
             {custom ? (
-              <UnstyledButton
-                id={`${listboxId}-option-${visible.length}`}
-                type="button"
-                role="option"
-                aria-selected={false}
-                className={`model-picker-option custom${
-                  active === visible.length ? " active" : ""
-                }`}
-                onMouseEnter={() => setActive(visible.length)}
-                onClick={() => choose(queryText)}
-              >
+              <Combobox.Option value={queryText} className="model-picker-option custom">
                 <Box className="model-picker-option-body">
                   <Text size="sm" className="model-picker-option-name">
                     Use {queryText}
@@ -407,16 +335,16 @@ export function ModelPicker({
                     Set this custom model id
                   </Text>
                 </Box>
-              </UnstyledButton>
+              </Combobox.Option>
             ) : null}
-          </Box>
+          </Combobox.Options>
         </ScrollArea.Autosize>
         <Group className="model-picker-foot" gap={6} px={4} pt={4}>
           <Text size="xs" c="dimmed">
             ↑↓ navigate · ↵ choose · esc close
           </Text>
         </Group>
-      </Popover.Dropdown>
-    </Popover>
+      </Combobox.Dropdown>
+    </Combobox>
   );
 }

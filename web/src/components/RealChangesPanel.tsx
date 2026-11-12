@@ -9,6 +9,7 @@ import {
   Text,
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
+import { formatPatch, type StructuredPatch } from "diff";
 import {
   IconFile,
   IconFiles,
@@ -26,25 +27,25 @@ import { DiffView } from "./DiffView";
 
 function patchFromDiff(diff: FileDiff) {
   const oldPath = diff.oldPath ?? diff.path;
-  const header = [
-    `diff --git a/${oldPath} b/${diff.path}`,
-    `--- a/${oldPath}`,
-    `+++ b/${diff.path}`,
-  ].join("\n");
-  const hunks = diff.hunks
-    .map((hunk) => {
-      const headerLine = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
-      const lines = hunk.lines
-        .map((line) => {
-          const prefix =
-            line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
-          return `${prefix}${line.content}`;
-        })
-        .join("\n");
-      return `${headerLine}\n${lines}`;
-    })
-    .join("\n");
-  return `${header}\n${hunks}\n`;
+  const patch: StructuredPatch = {
+    oldFileName: `a/${oldPath}`,
+    newFileName: `b/${diff.path}`,
+    oldHeader: undefined,
+    newHeader: undefined,
+    isGit: true,
+    hunks: diff.hunks.map((hunk) => ({
+      oldStart: hunk.oldStart,
+      oldLines: hunk.oldLines,
+      newStart: hunk.newStart,
+      newLines: hunk.newLines,
+      lines: hunk.lines.map((line) => {
+        const prefix =
+          line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
+        return `${prefix}${line.content}`;
+      }),
+    })),
+  };
+  return formatPatch(patch);
 }
 
 const statusLetter: Record<string, string> = {
