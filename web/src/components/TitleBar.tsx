@@ -9,6 +9,7 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import {
+  IconGitBranch,
   IconInbox,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
@@ -34,6 +35,10 @@ interface TitleBarProps {
   /** Unread inbox items; the red dot is rendered only when this is non-zero. */
   unreadCount: number;
   canOpenChanges: boolean;
+  /** Thread has its own git worktree; the badge and merge actions need it. */
+  hasWorktree: boolean;
+  branch: string;
+  baseBranch: string;
   /** Desktop changes panel is hidden; the toggle reveals it again. */
   asideCollapsed: boolean;
   onToggleAside: () => void;
@@ -62,6 +67,9 @@ export function TitleBar({
   onlineUserIds,
   unreadCount,
   canOpenChanges,
+  hasWorktree,
+  branch,
+  baseBranch,
   asideCollapsed,
   onToggleAside,
   navOpened,
@@ -164,13 +172,34 @@ export function TitleBar({
             Read-only
           </Badge>
         ) : null}
+        {hasWorktree ? (
+          <Tooltip
+            label={`Isolated worktree · ${branch} (base ${baseBranch})`}
+          >
+            <Badge
+              variant="light"
+              color="gray"
+              leftSection={<IconGitBranch size={9} stroke={1.5} />}
+              style={{ textTransform: "none" }}
+            >
+              worktree
+            </Badge>
+          </Tooltip>
+        ) : (
+          <Tooltip label="Runs directly in the project working tree; changes are live">
+            <Badge variant="light" color="gray" style={{ textTransform: "none" }}>
+              project tree
+            </Badge>
+          </Tooltip>
+        )}
         <Participants
           participants={participants}
           onlineUserIds={onlineUserIds}
         />
         <TitleActions
-          visible={canOpenChanges && !navOpened}
+          visible={canManage && !navOpened}
           canManage={canManage}
+          hasWorktree={hasWorktree}
           isPinned={isPinned}
           onReviews={onReviews}
           onMerge={onMerge}
@@ -215,6 +244,7 @@ export function TitleBar({
           <Box hiddenFrom="md">
             <ThreadMenu
               canManage={canManage}
+              hasWorktree={hasWorktree}
               isPinned={isPinned}
                   onMerge={onMerge}
               onReviews={onReviews}

@@ -1,6 +1,7 @@
 import {
   Alert,
   Button,
+  Checkbox,
   Group,
   Modal,
   Select,
@@ -43,6 +44,13 @@ export function NewThreadModal({
   const phone = useMediaQuery("(max-width: 47.99em)");
   const [title, setTitle] = useState("");
   const [agent, setAgent] = useState("codex");
+  const [worktree, setWorktree] = useState(() => {
+    try {
+      return window.localStorage.getItem("threadbase.new-thread-worktree") !== "0";
+    } catch {
+      return true;
+    }
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,6 +84,7 @@ export function NewThreadModal({
         // what the agent actually advertises. Only the saved default applies here.
         model: stateQuery.data?.settings.defaultModel?.trim() || null,
         baseBranch: project.defaultBranch,
+        worktree,
       });
       notifications.show({ message: "Thread created", color: "teal" });
       onCreated(thread);
@@ -116,10 +125,30 @@ export function NewThreadModal({
           onChange={(value) => setAgent(value ?? "codex")}
           allowDeselect={false}
         />
+        <Checkbox
+          checked={worktree}
+          onChange={(event) => {
+            const next = event.currentTarget.checked;
+            setWorktree(next);
+            try {
+              window.localStorage.setItem(
+                "threadbase.new-thread-worktree",
+                next ? "1" : "0",
+              );
+            } catch {
+              // Private mode: the preference simply does not persist.
+            }
+          }}
+          label="Isolated git worktree"
+          description="A threadbase/<id> branch and worktree; changes stay reviewable and never touch your working tree."
+        />
         <Text size="xs" c="dimmed">
-          Base branch <strong>{project?.defaultBranch ?? "main"}</strong>. The
-          agent gets its own worktree so every change stays reviewable. Pick the
-          model inside the thread once the agent reports what it offers.
+          Base branch <strong>{project?.defaultBranch ?? "main"}</strong>.{" "}
+          {worktree
+            ? "The agent gets its own worktree so every change stays reviewable."
+            : "Without a worktree the agent edits the project directory directly, so its changes are live in your working tree."}{" "}
+          Pick the model inside the thread once the agent reports what it
+          offers.
         </Text>
         {error ? (
           <Alert icon={<IconAlertCircle size={14} />} color="red">

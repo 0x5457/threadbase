@@ -271,6 +271,7 @@ function Workspace() {
   const toggleAside = () => setAsideOpen(asideCollapsed);
 
   const openChanges = () => {
+    if (!hasWorktree) return;
     blurActiveInput();
     // The desktop panel is persistent, not a drawer: reveal it in place.
     if (wide) {
@@ -370,6 +371,7 @@ function Workspace() {
   }, [routeThreadId, allThreads.data]);
 
   const showAside = view === "thread" && selectedThread !== null;
+  const hasWorktree = Boolean(selectedThread?.worktreePath);
 
   // ⌘/Ctrl+Shift+B hides or reveals the changes panel without leaving the
   // thread; the preference persists like the nav width.
@@ -599,7 +601,10 @@ function Workspace() {
         aside={{
           width: 420,
           breakpoint: "lg",
-          collapsed: { mobile: true, desktop: !showAside || asideCollapsed },
+          collapsed: {
+            mobile: true,
+            desktop: !showAside || !hasWorktree || asideCollapsed,
+          },
         }}
         footer={{
           height: { base: 56, sm: 26 },
@@ -618,9 +623,12 @@ function Workspace() {
           participants={participants}
           onlineUserIds={onlineUserIds}
           unreadCount={inboxUnread.data?.unread ?? 0}
-          canOpenChanges={showAside}
+          canOpenChanges={showAside && hasWorktree}
           asideCollapsed={asideCollapsed}
           onToggleAside={toggleAside}
+          hasWorktree={hasWorktree}
+          branch={selectedThread?.branch ?? ""}
+          baseBranch={selectedThread?.baseBranch ?? ""}
           canManage={Boolean(selectedThread) && route.kind === "thread"}
           isPinned={selectedThread?.pinned ?? false}
           navOpened={navOpened}
@@ -714,7 +722,7 @@ function Workspace() {
         </AppShell.Main>
         {wide ? (
           <AppShell.Aside p={0} className="aside">
-            {selectedThread ? (
+            {selectedThread && hasWorktree ? (
               asideTab === "changes" ? (
                 <RealChangesPanel
                   key={selectedThread.id}
@@ -738,7 +746,7 @@ function Workspace() {
             view={view}
             unreadCount={inboxUnread.data?.unread ?? 0}
             threadsOpened={navOpened}
-            changesEnabled={Boolean(selectedThread)}
+            changesEnabled={Boolean(selectedThread) && hasWorktree}
             onInbox={openInbox}
             onThreads={toggleNav}
             onChanges={openChangesFromTabs}
@@ -763,7 +771,7 @@ function Workspace() {
         ) : null}
       </AppShell>
 
-      {!wide && showAside ? (
+      {!wide && showAside && hasWorktree ? (
         <Drawer
           opened={changesOpened}
           onClose={changes.close}

@@ -5,6 +5,7 @@ import { ThreadMenu } from "./ThreadMenu";
 interface TitleActionsProps {
   visible: boolean;
   canManage: boolean;
+  hasWorktree: boolean;
   isPinned: boolean;
   onReviews: () => void;
   onMerge: () => void;
@@ -18,6 +19,7 @@ interface TitleActionsProps {
 export function TitleActions({
   visible,
   canManage,
+  hasWorktree,
   isPinned,
   onReviews,
   onMerge,
@@ -35,26 +37,31 @@ export function TitleActions({
       visibleFrom="md"
       display={visible ? undefined : "none"}
     >
-      <Button
-        variant="subtle"
-        size="compact-xs"
-        color="gray"
-        leftSection={<IconListCheck size={13} stroke={1.5} />}
-        onClick={onReviews}
-      >
-        Reviews
-      </Button>
-      <Button
-        variant="subtle"
-        size="compact-xs"
-        color="gray"
-        leftSection={<IconGitMerge size={13} stroke={1.5} />}
-        onClick={onMerge}
-      >
-        Merge
-      </Button>
+      {hasWorktree ? (
+        <>
+          <Button
+            variant="subtle"
+            size="compact-xs"
+            color="gray"
+            leftSection={<IconListCheck size={13} stroke={1.5} />}
+            onClick={onReviews}
+          >
+            Reviews
+          </Button>
+          <Button
+            variant="subtle"
+            size="compact-xs"
+            color="gray"
+            leftSection={<IconGitMerge size={13} stroke={1.5} />}
+            onClick={onMerge}
+          >
+            Merge
+          </Button>
+        </>
+      ) : null}
       <ThreadMenu
         canManage={canManage}
+        hasWorktree={hasWorktree}
         isPinned={isPinned}
         onMerge={onMerge}
         onReviews={onReviews}

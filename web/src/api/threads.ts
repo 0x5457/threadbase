@@ -39,6 +39,8 @@ export interface CreateThreadInput {
   effort?: string | null;
   baseBranch: string;
   initialPrompt?: string | null;
+  /** Give the thread its own worktree; false runs in the project directory. */
+  worktree?: boolean;
 }
 
 export interface Baseline {
@@ -79,6 +81,7 @@ export function createThread(projectId: string, input: CreateThreadInput) {
     effort: input.effort ?? null,
     baseBranch: input.baseBranch,
     initialPrompt: input.initialPrompt ?? null,
+    worktree: input.worktree ?? null,
   };
   return jsonRequest<ThreadResponse>(
     `/api/projects/${projectId}/threads`,

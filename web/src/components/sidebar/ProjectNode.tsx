@@ -16,6 +16,7 @@ import {
   IconCopy,
   IconDots,
   IconFolder,
+  IconGitBranch,
   IconMessage,
   IconPin,
   IconPinFilled,
@@ -60,8 +61,19 @@ function ThreadRow({
       onClick={() => onOpen(thread)}
       leftSection={<IconMessage size={12} stroke={1.5} />}
       rightSection={
-        thread.pendingApprovals || thread.status === "running" ? (
+        thread.pendingApprovals ||
+        thread.status === "running" ||
+        thread.worktreePath ? (
           <Group gap={5} wrap="nowrap">
+            {thread.worktreePath ? (
+              <span
+                className="thread-worktree-mark"
+                title="Isolated worktree"
+                aria-label="Isolated worktree"
+              >
+                <IconGitBranch size={11} stroke={1.5} />
+              </span>
+            ) : null}
             {thread.pendingApprovals ? (
               <Text size="xs" className="approval-count">
                 {thread.pendingApprovals}

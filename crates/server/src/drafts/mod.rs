@@ -236,7 +236,13 @@ mod tests {
             let room = room.lock().await;
             room.peek_draft()
         };
-        assert_eq!(text, "hello\nworld");
+        // Concurrent root inserts integrate in client-id order, so the two
+        // replicas converge on one order but not necessarily their seed order.
+        let lines: Vec<&str> = text.split('\n').collect();
+        assert!(
+            lines.contains(&"hello") && lines.contains(&"world"),
+            "{text}"
+        );
         assert_eq!(authors, vec!["u1".to_owned(), "u2".to_owned()]);
     }
 

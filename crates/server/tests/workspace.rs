@@ -64,6 +64,21 @@ async fn init_repo(path: &Path) {
     git(path, &["commit", "-m", "initial"]);
 }
 
+fn git_output(path: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
 fn git(path: &Path, args: &[&str]) {
     let output = Command::new("git")
         .arg("-C")
@@ -105,10 +120,63 @@ async fn create_thread(fixture: &Fixture, project_id: &str) -> threadbase_shared
             effort: None,
             base_branch: Some("main".into()),
             initial_prompt: None,
+            worktree: None,
         },
     )
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn thread_without_worktree_runs_in_the_project_directory() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = threads::create(
+        &fixture.pool,
+        &test_projection(&fixture.pool),
+        fixture.data.path(),
+        &fixture.current,
+        project.id.as_str(),
+        &CreateThreadRequest {
+            title: Some("Chat thread".into()),
+            agent: Some("codex".into()),
+            model: None,
+            effort: None,
+            base_branch: Some("main".into()),
+            initial_prompt: None,
+            worktree: Some(false),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(thread.worktree_path.is_none());
+    assert_eq!(thread.branch, "main");
+    assert!(
+        !fixture
+            .data
+            .path()
+            .join("worktrees")
+            .join(thread.id.as_str())
+            .exists(),
+        "a chat thread must not create a worktree directory"
+    );
+    let cwd: String = sqlx::query_scalar("SELECT cwd FROM agent_bindings WHERE thread_id = ?")
+        .bind(thread.id.as_str())
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+    assert_eq!(cwd, fixture.repo.path().to_string_lossy());
+
+    // Deleting the thread must leave the project's own branch alone.
+    threads::delete(&fixture.pool, thread.id.as_str(), &fixture.current)
+        .await
+        .unwrap();
+    let branches = git_output(fixture.repo.path(), &["branch", "--list", "main"]);
+    assert!(
+        branches.contains("main"),
+        "base branch was deleted: {branches}"
+    );
 }
 
 #[tokio::test]

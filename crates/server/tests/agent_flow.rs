@@ -113,6 +113,7 @@ async fn fixture() -> Option<Fixture> {
             effort: None,
             base_branch: Some("main".into()),
             initial_prompt: None,
+            worktree: None,
         },
     )
     .await
@@ -403,6 +404,7 @@ async fn fake_agent_streams_tools_and_permissions() {
             effort: None,
             base_branch: Some("main".into()),
             initial_prompt: Some("stream".into()),
+            worktree: None,
         },
     )
     .await
@@ -663,6 +665,7 @@ async fn first_turn_replaces_the_default_thread_title() {
             effort: None,
             base_branch: Some("main".into()),
             initial_prompt: None,
+            worktree: None,
         },
     )
     .await

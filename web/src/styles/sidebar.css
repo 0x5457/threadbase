@@ -329,3 +329,9 @@
 .side-nav.mantine-NavLink-root {
   min-height: 32px;
 }
+
+/* Threads with their own worktree get a quiet branch mark in the sidebar. */
+.thread-worktree-mark {
+  display: inline-flex;
+  color: var(--ink-faint);
+}

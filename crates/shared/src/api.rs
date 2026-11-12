@@ -62,6 +62,9 @@ pub struct CreateThreadRequest {
     pub effort: Option<String>,
     pub base_branch: Option<String>,
     pub initial_prompt: Option<String>,
+    /// Give the thread its own git worktree and branch (default true). When
+    /// false the agent works directly in the project directory.
+    pub worktree: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
