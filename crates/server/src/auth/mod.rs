@@ -142,6 +142,10 @@ fn is_direct_local_request(parts: &Parts) -> bool {
 
 /// Best-effort client address for audit rows and rate limiting.
 ///
+/// `axum-client-ip` only offers extractors that trust a header unconditionally
+/// or use the socket address, so it cannot express the conditional rule below;
+/// the check therefore stays explicit here.
+///
 /// `x-forwarded-for` is only honoured when the direct peer is loopback, which
 /// is where a local terminator (Tailscale Funnel, a reverse proxy) sits. A
 /// remote peer cannot spoof its address through the header; its socket address

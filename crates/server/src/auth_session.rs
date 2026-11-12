@@ -6,10 +6,12 @@
 //! instead of usable tokens.
 
 use axum::http::HeaderMap;
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use cookie::time::Duration;
+use rand::TryRng;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use threadbase_shared::now_ms;
-use ulid::Ulid;
 
 /// Session cookie name.
 pub const COOKIE: &str = "threadbase_session";
@@ -26,9 +28,13 @@ pub struct Session {
     pub method: String,
 }
 
-/// 160 random bits from the ULID generator, hex-encoded by `Display`.
+/// 256 random bits from the operating system CSPRNG, hex-encoded.
 fn new_token() -> String {
-    format!("{}{}", Ulid::new(), Ulid::new())
+    let mut bytes = [0u8; 32];
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("operating system random source must be available");
+    hex::encode(bytes)
 }
 
 #[must_use]
@@ -155,16 +161,13 @@ pub async fn revoke_all_for_user(pool: &SqlitePool, user_id: &str) -> Result<(),
 #[must_use]
 pub fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers.get_all("cookie").iter().find_map(|header| {
-        header.to_str().ok().and_then(|value| {
-            value.split(';').find_map(|pair| {
-                let (key, raw) = pair.split_once('=')?;
-                if key.trim() != name {
-                    return None;
-                }
-                let raw = raw.trim().trim_matches('"');
-                (!raw.is_empty()).then(|| raw.to_owned())
+        let value = header.to_str().ok()?;
+        Cookie::split_parse(value)
+            .filter_map(Result::ok)
+            .find_map(|cookie| {
+                let value = cookie.value_trimmed();
+                (cookie.name() == name && !value.is_empty()).then(|| value.to_owned())
             })
-        })
     })
 }
 
@@ -188,12 +191,15 @@ pub fn cookie_header_at(
     max_age_seconds: i64,
     path: &str,
 ) -> String {
-    let mut cookie =
-        format!("{name}={value}; Path={path}; HttpOnly; SameSite=Lax; Max-Age={max_age_seconds}");
+    let mut cookie = Cookie::build((name, value))
+        .path(path)
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .max_age(Duration::seconds(max_age_seconds));
     if secure {
-        cookie.push_str("; Secure");
+        cookie = cookie.secure(true);
     }
-    cookie
+    cookie.build().to_string()
 }
 
 #[must_use]
@@ -216,7 +222,7 @@ mod tests {
         let a = new_token();
         let b = new_token();
         assert_ne!(a, b);
-        assert_eq!(a.len(), 52);
+        assert_eq!(a.len(), 64);
         assert_eq!(hash(&a).len(), 64);
         assert_ne!(hash(&a), hash(&b));
     }
