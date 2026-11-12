@@ -32,6 +32,9 @@ export const Message = memo(function Message({
   // Waiting for the first chunk owns no text yet: a caret then would hang
   // under the previous block instead of tracking the agent's output.
   const streaming = item.streaming && active && item.text.trim().length > 0;
+  // A trailing blank line from the composer would otherwise paint as a second
+  // line inside the bubble; the prompt itself is already trimmed server-side.
+  const text = agent ? item.text : item.text.replace(/^\n+|\n+$/g, "");
 
   return (
     <div
@@ -80,10 +83,10 @@ export const Message = memo(function Message({
         <div className={streaming ? "prose streaming" : "prose"}>
           {agent ? (
             <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
-              {item.text}
+              {text}
             </ReactMarkdown>
           ) : (
-            <p>{item.text}</p>
+            <p>{text}</p>
           )}
         </div>
       </div>

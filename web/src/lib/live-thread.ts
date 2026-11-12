@@ -1,6 +1,7 @@
 import { WebSocket as ReconnectingWebSocket } from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadEvent } from "../api";
+import { getOlderEvents } from "../api";
 import { emptyStore, mergeEvents, replaceEvents } from "./live/store";
 import type { EventStore, LivePresence, PresencePayload } from "./live/types";
 import {
@@ -47,6 +48,10 @@ export function useLiveThread(
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [presence, setPresence] = useState<LivePresence>(EMPTY_PRESENCE);
+  const [hasEarlier, setHasEarlier] = useState(false);
+  const oldestRef = useRef(0);
+  const publishRef = useRef<((next: EventStore) => void) | null>(null);
+  const loadingEarlier = useRef(false);
 
   const storeRef = useRef<EventStore>(emptyStore());
   /** Which thread `storeRef` belongs to; render never shows another thread's log. */
@@ -99,6 +104,8 @@ export function useLiveThread(
     setEvents([]);
     setConnected(false);
     setError(null);
+    setHasEarlier(false);
+    oldestRef.current = 0;
 
     if (typeof WebSocket === "undefined") {
       // Server-rendered or exotic host without WebSocket: stay inert instead
@@ -118,6 +125,7 @@ export function useLiveThread(
       storeRef.current = next;
       setEvents(next.ordered);
     };
+    publishRef.current = publish;
 
     // Token deltas arrive many times per frame. Buffering them keeps the
     // event-store merge and React render to at most once per animation frame.
@@ -150,10 +158,16 @@ export function useLiveThread(
 
     const applyPage = (page: LiveEventsPage) => {
       flush();
+      const firstLoad =
+        storeRef.current.ordered.length === 0 || page.resync;
       const next = page.resync
         ? replaceEvents(page.events)
         : mergeEvents(storeRef.current, page.events);
       publish(next);
+      if (firstLoad) {
+        oldestRef.current = page.oldestSeq;
+        setHasEarlier(page.oldestSeq > 1);
+      }
       if (
         page.events.length >= EVENTS_PAGE_LIMIT &&
         next.lastSeq < page.lastSeq &&
@@ -325,6 +339,28 @@ export function useLiveThread(
     [sendPresenceNow],
   );
 
+  const loadEarlier = useCallback(async () => {
+    const before = oldestRef.current;
+    if (!threadId || before <= 1 || loadingEarlier.current) return false;
+    loadingEarlier.current = true;
+    try {
+      const page = await getOlderEvents(threadId, before);
+      if (storeThreadRef.current !== threadId) return false;
+      if (page.events.length === 0) {
+        setHasEarlier(false);
+        return false;
+      }
+      publishRef.current?.(mergeEvents(storeRef.current, page.events));
+      oldestRef.current = page.oldestSeq;
+      setHasEarlier(page.hasMore);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      loadingEarlier.current = false;
+    }
+  }, [threadId]);
+
   return {
     events:
       threadId !== null && storeThreadRef.current === threadId
@@ -333,6 +369,8 @@ export function useLiveThread(
     connected,
     error,
     presence,
+    hasEarlier,
+    loadEarlier,
     sendPresence,
   };
 }

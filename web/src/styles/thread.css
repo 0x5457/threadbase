@@ -198,6 +198,12 @@
   margin-bottom: 18px;
 }
 
+.load-earlier-row {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 16px;
+}
+
 .block {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);

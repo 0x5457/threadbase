@@ -107,3 +107,30 @@ export const PickerAgentContext = createContext("agent");
 export function usePickerAgent(): string {
   return useContext(PickerAgentContext);
 }
+
+/** Last explicitly picked model/effort for an agent, used for new threads and
+ *  for threads that never recorded a choice. */
+export function pickStorageKey(agent: string, kind: "model" | "effort") {
+  return `threadbase.pick.${agent}.${kind}`;
+}
+
+export function readPick(agent: string, kind: "model" | "effort") {
+  try {
+    return window.localStorage.getItem(pickStorageKey(agent, kind)) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberPick(
+  agent: string,
+  kind: "model" | "effort",
+  value: string | null,
+) {
+  if (!value) return;
+  try {
+    window.localStorage.setItem(pickStorageKey(agent, kind), value);
+  } catch {
+    // Private mode: the pick simply does not persist.
+  }
+}

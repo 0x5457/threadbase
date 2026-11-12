@@ -206,6 +206,17 @@ pub struct SettingsPatch {
     pub browser_notifications: Option<bool>,
 }
 
+/// One earlier slice of the thread log, used when the transcript scrolls past
+/// the window a cold load returned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OlderEventsDto {
+    pub events: Vec<EventEnvelope>,
+    pub oldest_seq: u64,
+    pub has_more: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

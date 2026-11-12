@@ -405,7 +405,7 @@ impl AgentManager {
         }
         if !session.capabilities.steering {
             return Err(ServerError(ApiError::conflict(
-                "this agent cannot take steering input; the message stays queued",
+                "this agent can't accept input mid-turn; the message will be sent when the current turn ends",
             )));
         }
         if !attachments.is_empty() && !session.capabilities.images {
