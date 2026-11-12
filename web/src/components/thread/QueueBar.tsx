@@ -22,6 +22,7 @@ function QueueRow({
   busy,
   canWrite,
   canSteer,
+  showAuthor,
   dragging,
   onDrop,
   onSteer,
@@ -34,6 +35,8 @@ function QueueRow({
   busy: string | null;
   canWrite: boolean;
   canSteer: boolean;
+  /** False when the previous row was written by the same author. */
+  showAuthor: boolean;
   dragging: boolean;
   onDrop: (id: string) => void;
   onSteer: (id: string) => void;
@@ -131,9 +134,11 @@ function QueueRow({
         >
           <IconGripVertical size={12} stroke={1.5} />
         </button>
-        <Text size="xs" fw={500}>
-          {item.author.displayName}
-        </Text>
+        {showAuthor ? (
+          <Text size="xs" className="queue-author">
+            {item.author.displayName}
+          </Text>
+        ) : null}
         {editing ? (
           <input
             className="queue-edit"
@@ -155,12 +160,10 @@ function QueueRow({
             }}
           />
         ) : (
-          <Text size="xs" c="dimmed" className="queue-text">
-            {item.text}
-          </Text>
+          <Text className="queue-text">{item.text}</Text>
         )}
         {actionable ? (
-          <Group gap={0} wrap="nowrap">
+          <Group gap={0} wrap="nowrap" className="queue-actions">
             <ActionIcon
               size={16}
               variant="subtle"
@@ -301,19 +304,20 @@ export function QueueBar({
 
   return (
     <div className="queue-bar">
-      <Group gap={4}>
+      <Group gap={4} className="queue-head">
         <IconStack2 size={11} stroke={1.5} />
         <Text size="xs" c="dimmed">
           {items.length} queued
         </Text>
       </Group>
-      {visible.map((item) => (
+      {visible.map((item, index) => (
         <QueueRow
           key={item.id}
           item={item}
           busy={busy}
           canWrite={canWrite}
           canSteer={canSteer}
+          showAuthor={index === 0 || visible[index - 1].author.id !== item.author.id}
           dragging={draggingId === item.id}
           onDrop={onDrop}
           onSteer={onSteer}
