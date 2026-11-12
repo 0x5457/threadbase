@@ -2,4 +2,12 @@
 import type { SettingsDto } from "./SettingsDto";
 import type { UserDto } from "./UserDto";
 
-export type StateResponse = { settings: SettingsDto; user: UserDto };
+export type StateResponse = {
+  settings: SettingsDto;
+  user: UserDto;
+  /**
+   * The browser terminal is opt-in per server; the UI hides its entry points
+   * when this is false.
+   */
+  terminal: boolean;
+};

@@ -17,6 +17,7 @@ import {
   IconMoon,
   IconSettings,
   IconSun,
+  IconTerminal2,
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -30,6 +31,8 @@ import {
 import {
   ApiError,
   forkThread,
+  getMe,
+  getState,
   getThread,
   listAllThreads,
   listInbox,
@@ -48,6 +51,7 @@ import { RealChangesPanel } from "./components/RealChangesPanel";
 import { RealThreadView } from "./components/RealThreadView";
 import { ReviewDialog } from "./components/ReviewDialog";
 import { SettingsView } from "./components/SettingsView";
+import { TerminalDrawer } from "./components/terminal/TerminalDrawer";
 import { ShareDialog } from "./components/ShareDialog";
 import { SheetGrabber } from "./components/SheetGrabber";
 import { Sidebar } from "./components/Sidebar";
@@ -67,6 +71,9 @@ type View = "inbox" | "thread" | "settings" | "project";
 
 function blurActiveInput() {
   const active = document.activeElement;
+  // The terminal's input is xterm's helper <textarea>. Blurring it would end
+  // the session's keyboard, so scroll-driven blur must never reach it.
+  if (active instanceof HTMLElement && active.closest(".terminal-drawer")) return;
   if (
     active instanceof HTMLElement &&
     (active.isContentEditable ||
@@ -130,6 +137,20 @@ function Workspace() {
     }
   });
   const [asideTab, setAsideTab] = useState<"changes" | "files">("changes");
+  // The terminal drawer is workspace state, not thread state: switching thread
+  // remounts it against that thread's shell.
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalFull, setTerminalFull] = useState(false);
+  const terminalThreadId = view === "thread" ? (selectedThread?.id ?? null) : null;
+  // The server decides whether the feature exists at all; only administrators
+  // can drive a shell. Entry points stay hidden otherwise.
+  const stateQuery = useQuery({
+    queryKey: ["state"],
+    queryFn: getState,
+    staleTime: 60_000,
+  });
+  const me = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 60_000 });
+  const terminalEnabled = Boolean(stateQuery.data?.terminal) && Boolean(me.data?.user.isAdmin);
   const [changesWidth, setChangesWidth] = useState(() => {
     try {
       const stored = Number(
@@ -192,6 +213,19 @@ function Workspace() {
     spotlight.close();
   });
 
+  // Ctrl+` mirrors the editor panel shortcut. It stays live while the terminal
+  // has focus, which is the only way back out from a fullscreen shell.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "`" && event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        if (terminalEnabled) setTerminalOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [terminalEnabled]);
+
   useEffect(() => {
     if (!navOpened) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -227,7 +261,12 @@ function Workspace() {
     let timer = 0;
     const arm = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && target.closest(".composer")) return;
+      if (
+        target instanceof Element &&
+        target.closest(".composer, .terminal-drawer")
+      ) {
+        return;
+      }
       armed = true;
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
@@ -502,6 +541,21 @@ function Workspace() {
           spotlight.close();
         },
       },
+      ...(terminalEnabled
+        ? [
+            {
+              id: "terminal",
+              group: "Navigate",
+              label: "Open terminal",
+              description: "A shell in this machine, shared with the thread",
+              leftSection: <IconTerminal2 size={16} stroke={1.5} />,
+              onClick: () => {
+                setTerminalOpen(true);
+                spotlight.close();
+              },
+            },
+          ]
+        : []),
       {
         id: "settings",
         group: "Navigate",
@@ -643,6 +697,8 @@ function Workspace() {
           onNavigate={nav.close}
           onOpenInbox={openInbox}
           onOpenSettings={openSettings}
+          onOpenTerminal={() => setTerminalOpen((open) => !open)}
+          canTerminal={terminalEnabled}
           activeView={view}
           selectedThreadId={selectedThread?.id ?? null}
           activeProjectId={
@@ -669,6 +725,18 @@ function Workspace() {
           ) : (
             <WorkspaceEmpty />
           )}
+          {terminalOpen ? (
+            <TerminalDrawer
+              key={terminalThreadId ?? "home"}
+              threadId={terminalThreadId}
+              fullscreen={terminalFull}
+              onFullscreen={setTerminalFull}
+              onClose={() => {
+                setTerminalOpen(false);
+                setTerminalFull(false);
+              }}
+            />
+          ) : null}
         </AppShell.Main>
         {wide ? (
           <AppShell.Aside p={0} className="aside">

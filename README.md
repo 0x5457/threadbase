@@ -97,6 +97,22 @@ threadbase install --uninstall              # 停用并删除 unit、关掉 serv
 
 unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例。日志：`journalctl --user -u threadbase -f`。
 
+### 网页终端（默认关闭）
+
+`THREADBASE_TERMINAL=1` 才挂载终端路由，且**只有管理员能驱动**：其他 `member` 账号打开同一个终端只能看（tmux 只读客户端，服务端不接收其按键），`read_only` 账号连入口都没有。关掉这个功能时相关路由返回 404，不暴露存在性。
+
+```bash
+THREADBASE_TERMINAL=1 cargo run -p threadbase
+# 浏览器里按 Ctrl+` 或点左栏底部的终端图标
+```
+
+- **形态**：底部抽屉（`Ctrl+`` 开关，拖上边缘改高度，`⤢` 全屏）。每个 thread 一个 shell，cwd 是该 thread 的 worktree；未选中 thread 时开的是 `$HOME` 里的全局 shell（`h-<user>`）。
+- **持久化在 tmux 内存里，不落盘**：会话名 `t-<thread>` / `h-<user>`，挂在私有 socket `threadbase` 上（`THREADBASE_TERMINAL_SOCKET` 可换）。关抽屉、刷新、重启服务都只是 detach，shell 继续跑；`history-limit=10000` 的 scrollback 也只存在 tmux server 内存里。
+- **只读由 tmux 执行**：driver 用 `tmux attach`，其他人 `tmux attach -r`；`window-size manual` + `resize-window` 让窗口尺寸跟 driver 走，围观者小屏是裁切而不是让 driver 的终端换行。
+- **鉴权**：WebSocket 不能带自定义头，所以升级用一次性 ticket（`POST /api/terminal/sessions`，受 CSRF 中间件保护，30 秒过期、用户与会话绑定）。升级时还要求会话 Cookie 与当前用户行仍然有效。
+- **不记日志**：终端内容不写入磁盘、也不进事件日志；需要复盘时只能靠 tmux 里还活着的 scrollback。想彻底停掉就 `tmux -L threadbase kill-server`。
+- **前端**：xterm.js 懒加载；按键条补上浏览器吞掉的键（Ctrl+C/D/L/Z/R、Esc、Tab、方向键）；`Ctrl+Shift+C/V` 复制粘贴，多行粘贴先确认。手机端不显示终端。
+
 ### 本机开发
 
 `pnpm --dir web dev` 的请求来自回环但没有会话 Cookie，需要显式打开开发身份：

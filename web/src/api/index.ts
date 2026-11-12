@@ -6,4 +6,5 @@ export * from "./inbox";
 export * from "./projects";
 export * from "./settings";
 export * from "./sharing";
+export * from "./terminal";
 export * from "./threads";

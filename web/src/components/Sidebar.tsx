@@ -17,6 +17,7 @@ import {
   IconMessage,
   IconPlus,
   IconSettings,
+  IconTerminal2,
 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 import {
@@ -38,6 +39,8 @@ interface SidebarProps {
   onNavigate: () => void;
   onOpenInbox: () => void;
   onOpenSettings: () => void;
+  onOpenTerminal: () => void;
+  canTerminal: boolean;
   activeView: "inbox" | "thread" | "settings" | "project";
   selectedThreadId: string | null;
   activeProjectId: string | null;
@@ -49,6 +52,8 @@ export function Sidebar({
   onNavigate,
   onOpenInbox,
   onOpenSettings,
+  onOpenTerminal,
+  canTerminal,
   activeView,
   selectedThreadId,
   activeProjectId,
@@ -221,6 +226,18 @@ export function Sidebar({
             @{currentUser?.username ?? "you"}
           </Text>
         </Box>
+        {canTerminal ? (
+          <ActionIcon
+            aria-label="Terminal"
+            title="Terminal (Ctrl+`)"
+            onClick={() => {
+              onOpenTerminal();
+              onNavigate();
+            }}
+          >
+            <IconTerminal2 size={14} stroke={1.5} />
+          </ActionIcon>
+        ) : null}
         <ActionIcon
           aria-label="Settings"
           onClick={() => {
