@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、presence/跟随、CLI 与发布工作流。
+v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片粘贴、presence/跟随、CLI 与发布工作流。
 
 质量门由 `scripts/verify.sh` 统一执行；界面审计记录保留在 `web/audit/`。
 
