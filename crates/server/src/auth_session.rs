@@ -89,23 +89,44 @@ pub async fn lookup(
     let Some((user_id, method, expires_at, last_seen_at)) = row else {
         return Ok(None);
     };
+    slide(
+        pool,
+        &token_hash,
+        expires_at,
+        last_seen_at,
+        ttl_seconds,
+        now,
+    )
+    .await;
+    Ok(Some(Session { user_id, method }))
+}
+
+/// Slides a live session's expiry forward after a successful lookup. Shared
+/// with the joined session+user lookup used by the `CurrentUser` extractor.
+pub(crate) async fn slide(
+    pool: &SqlitePool,
+    token_hash: &str,
+    expires_at: i64,
+    last_seen_at: Option<i64>,
+    ttl_seconds: i64,
+    now: i64,
+) {
     if last_seen_at.is_none_or(|seen| now - seen > TOUCH_INTERVAL_MS) {
         let _ = sqlx::query(
             "UPDATE auth_sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?",
         )
         .bind(now)
         .bind(now + ttl_seconds * 1000)
-        .bind(&token_hash)
+        .bind(token_hash)
         .execute(pool)
         .await;
     } else if expires_at - now < ttl_seconds * 500 {
         let _ = sqlx::query("UPDATE auth_sessions SET expires_at = ? WHERE token_hash = ?")
             .bind(now + ttl_seconds * 1000)
-            .bind(&token_hash)
+            .bind(token_hash)
             .execute(pool)
             .await;
     }
-    Ok(Some(Session { user_id, method }))
 }
 
 pub async fn revoke(pool: &SqlitePool, token: &str) -> Result<(), sqlx::Error> {
@@ -249,6 +270,43 @@ mod tests {
 
         revoke(&pool, &token).await.unwrap();
         assert!(lookup(&pool, &token, 3600).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn lookup_slides_expiry_and_last_seen() {
+        let pool = db::connect_memory().await.unwrap();
+        sqlx::query(
+            "INSERT INTO users(id, username, display_name, is_admin, created_at) VALUES('u1','ada','Ada',1,0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let token = create(&pool, "u1", "github", None, None, 3600)
+            .await
+            .unwrap();
+        let token_hash = hash(&token);
+        let old_seen = now_ms() - 2 * TOUCH_INTERVAL_MS;
+        sqlx::query(
+            "UPDATE auth_sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?",
+        )
+        .bind(old_seen)
+        .bind(now_ms() + 1000)
+        .bind(&token_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let session = lookup(&pool, &token, 3600).await.unwrap().unwrap();
+        assert_eq!(session.user_id, "u1");
+        let (last_seen, expires): (Option<i64>, i64) = sqlx::query_as(
+            "SELECT last_seen_at, expires_at FROM auth_sessions WHERE token_hash = ?",
+        )
+        .bind(&token_hash)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(last_seen.unwrap() > old_seen);
+        assert!(expires > now_ms() + 3600 * 1000 - 5_000);
     }
 
     #[tokio::test]

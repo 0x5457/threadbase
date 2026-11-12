@@ -1,17 +1,17 @@
 //! `threadbase doctor` environment diagnostics.
 
 use crate::config::Config;
-use std::process::Command;
+use crate::install::command;
 use threadbase_agent::profile::{all_profiles, find_in_path, resolve};
 use threadbase_shared::{AgentInfoDto, DoctorReport};
 
 pub async fn report(config: &Config) -> DoctorReport {
     let mut warnings = Vec::new();
-    let node = version("node", &["--version"]);
+    let node = command::stdout("node", &["--version"]);
     if node.is_none() {
         warnings.push("Node is not installed; npx-based adapters will not start".to_owned());
     }
-    let git = version("git", &["--version"]);
+    let git = command::stdout("git", &["--version"]);
     if git.is_none() {
         warnings.push("git is not installed".to_owned());
     }
@@ -121,18 +121,5 @@ pub fn print(report: &DoctorReport) {
         for warning in &report.warnings {
             println!("  warning    {warning}");
         }
-    }
-}
-
-fn version(command: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(command).args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
     }
 }

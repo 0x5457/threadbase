@@ -2,14 +2,13 @@
 //! `Y.Text` body. The event log is deliberately not a CRDT.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use y_sync::awareness::Awareness;
 use yrs::updates::decoder::Decode;
-use yrs::updates::encoder::Encode;
 use yrs::{
-    Array, Doc, GetString, Map, MapPrelim, MapRef, ReadTxn, Text, TextPrelim, TextRef, Transact,
-    Update,
+    Array, ArrayRef, Doc, GetString, Map, MapPrelim, MapRef, ReadTxn, Text, TextPrelim, TextRef,
+    Transact, Update,
 };
 
 pub const MAX_THREAD_DRAFT_BYTES: usize = 200 * 1024;
@@ -63,16 +62,11 @@ impl DraftDoc {
 
     /// Load a persisted document snapshot.
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DraftError> {
-        let doc = Doc::new();
+        let mut draft = Self::new();
         if !bytes.is_empty() {
-            let update = Update::decode_v1(bytes)
-                .map_err(|error| DraftError::InvalidUpdate(error.to_string()))?;
-            let mut txn = doc.transact_mut();
-            txn.apply_update(update);
+            draft.apply_update(bytes)?;
         }
-        Ok(Self {
-            awareness: Awareness::new(doc),
-        })
+        Ok(draft)
     }
 
     #[must_use]
@@ -89,16 +83,10 @@ impl DraftDoc {
         &mut self.awareness
     }
 
-    #[must_use]
-    pub fn state_vector(&self) -> Vec<u8> {
-        let _ = self.awareness.doc().get_or_insert_array("blocks");
-        let txn = self.awareness.doc().transact();
-        txn.state_vector().encode_v1()
-    }
-
+    /// Encode the complete document as a single v1 update.
     #[must_use]
     pub fn encode_full(&self) -> Vec<u8> {
-        let _ = self.awareness.doc().get_or_insert_array("blocks");
+        self.ensure_blocks();
         let txn = self.awareness.doc().transact();
         txn.encode_state_as_update_v1(&yrs::StateVector::default())
     }
@@ -106,7 +94,7 @@ impl DraftDoc {
     pub fn apply_update(&mut self, bytes: &[u8]) -> Result<(), DraftError> {
         let update = Update::decode_v1(bytes)
             .map_err(|error| DraftError::InvalidUpdate(error.to_string()))?;
-        let _ = self.awareness.doc().get_or_insert_array("blocks");
+        self.ensure_blocks();
         let mut txn = self.awareness.doc().transact_mut();
         txn.apply_update(update);
         Ok(())
@@ -114,25 +102,23 @@ impl DraftDoc {
 
     #[must_use]
     pub fn blocks(&self) -> Vec<DraftBlock> {
-        let mut blocks: Vec<DraftBlock> = self
-            .snapshot()
-            .into_iter()
-            .map(|(block, _)| block)
-            .filter(|block| !block.sent)
-            .collect();
-        sort_blocks(&mut blocks);
-        blocks
+        self.pending_blocks(false)
     }
 
     /// Non-destructive view of the pending (non-empty, unsent) blocks.
     /// Used by the send path to read the text before committing to send.
     #[must_use]
     pub fn peek_blocks(&self) -> Vec<DraftBlock> {
+        self.pending_blocks(true)
+    }
+
+    /// Pending blocks in display order; `require_text` drops empty blocks.
+    fn pending_blocks(&self, require_text: bool) -> Vec<DraftBlock> {
         let mut blocks: Vec<DraftBlock> = self
             .snapshot()
             .into_iter()
             .map(|(block, _)| block)
-            .filter(|block| !block.sent && !block.text.trim().is_empty())
+            .filter(|block| !block.sent && (!require_text || !block.text.trim().is_empty()))
             .collect();
         sort_blocks(&mut blocks);
         blocks
@@ -149,8 +135,12 @@ impl DraftDoc {
                 .all(|(block, _)| block.text.len() <= MAX_BLOCK_BYTES)
     }
 
+    fn ensure_blocks(&self) -> ArrayRef {
+        self.awareness.doc().get_or_insert_array("blocks")
+    }
+
     fn snapshot(&self) -> Vec<(DraftBlock, u32)> {
-        let blocks = self.awareness.doc().get_or_insert_array("blocks");
+        let blocks = self.ensure_blocks();
         let txn = self.awareness.doc().transact();
         let mut out = Vec::new();
         for index in 0..blocks.len(&txn) {
@@ -187,7 +177,7 @@ impl DraftDoc {
         if self.total_bytes() + text.len() > MAX_THREAD_DRAFT_BYTES {
             return Err(DraftError::ThreadTooLarge);
         }
-        let blocks = self.awareness.doc().get_or_insert_array("blocks");
+        let blocks = self.ensure_blocks();
         let mut txn = self.awareness.doc().transact_mut();
         let position = blocks.len(&txn);
         let map = blocks.insert(&mut txn, position, MapPrelim::<i32>::from(HashMap::new()));
@@ -199,13 +189,14 @@ impl DraftDoc {
         Ok(())
     }
 
-    /// Replace a block body. Used by the server-side send path and tests; live
-    /// typing normally arrives as client CRDT updates.
+    /// Replace a block body. Test-only helper that simulates a remote text
+    /// edit; live typing normally arrives as client CRDT updates.
+    #[cfg(test)]
     pub fn set_block_text(&mut self, block_id: &str, text: &str) -> Result<(), DraftError> {
         if text.len() > MAX_BLOCK_BYTES {
             return Err(DraftError::BlockTooLarge);
         }
-        let blocks = self.awareness.doc().get_or_insert_array("blocks");
+        let blocks = self.ensure_blocks();
         let mut txn = self.awareness.doc().transact_mut();
         for index in 0..blocks.len(&txn) {
             let Some(value) = blocks.get(&txn, index) else {
@@ -232,20 +223,13 @@ impl DraftDoc {
         Ok(())
     }
 
-    /// Remove all non-empty blocks and return them in deterministic author
+    /// Remove all non-empty blocks and return them in deterministic display
     /// order. Empty blocks are dropped. The CRDT array itself may converge in a
     /// different order, so display order comes from `createdAt`, then `id`.
     pub fn take_trailing(&mut self) -> Vec<DraftBlock> {
-        let blocks = self.awareness.doc().get_or_insert_array("blocks");
-        let snapshot = self.snapshot();
-        let mut taken: Vec<DraftBlock> = snapshot
-            .into_iter()
-            .map(|(block, _)| block)
-            .filter(|block| !block.text.trim().is_empty())
-            .collect();
-        sort_blocks(&mut taken);
-        let ids: std::collections::HashSet<String> =
-            taken.iter().map(|block| block.id.clone()).collect();
+        let taken = self.pending_blocks(true);
+        let blocks = self.ensure_blocks();
+        let ids: HashSet<String> = taken.iter().map(|block| block.id.clone()).collect();
         let mut txn = self.awareness.doc().transact_mut();
         for index in 0..blocks.len(&txn) {
             let Some(value) = blocks.get(&txn, index) else {
@@ -273,9 +257,18 @@ impl DraftDoc {
         taken
     }
 
-    #[must_use]
-    pub fn total_bytes(&self) -> usize {
+    fn total_bytes(&self) -> usize {
         self.blocks().iter().map(|block| block.text.len()).sum()
+    }
+
+    /// Remove every block, used after a send transaction has consumed them.
+    pub fn reset(&mut self) {
+        let blocks = self.ensure_blocks();
+        let mut txn = self.awareness.doc().transact_mut();
+        let len = blocks.len(&txn);
+        if len > 0 {
+            blocks.remove_range(&mut txn, 0, len);
+        }
     }
 }
 
@@ -306,21 +299,45 @@ fn read_text<T: ReadTxn>(txn: &T, map: &MapRef) -> String {
         .unwrap_or_default()
 }
 
-impl DraftDoc {
-    /// Remove every block, used after a send transaction has consumed them.
-    pub fn reset(&mut self) {
-        let blocks = self.awareness.doc().get_or_insert_array("blocks");
-        let mut txn = self.awareness.doc().transact_mut();
-        let len = blocks.len(&txn);
-        if len > 0 {
-            blocks.remove_range(&mut txn, 0, len);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_round_trips_encoded_state() {
+        let mut doc = DraftDoc::new();
+        doc.append_block("b1", "alice", "hello", 1).unwrap();
+        doc.append_block("b2", "bob", "world", 2).unwrap();
+        let encoded = doc.encode_full();
+        let restored = DraftDoc::from_snapshot(&encoded).unwrap();
+        assert_eq!(restored.blocks(), doc.blocks());
+        assert_eq!(
+            restored.encode_full(),
+            encoded,
+            "snapshot must re-encode byte-identically"
+        );
+    }
+
+    #[test]
+    fn empty_snapshot_loads_an_empty_draft() {
+        let doc = DraftDoc::from_snapshot(&[]).unwrap();
+        assert!(doc.blocks().is_empty());
+        assert!(doc.limits_ok());
+    }
+
+    #[test]
+    fn thread_size_limit_is_enforced() {
+        let mut doc = DraftDoc::new();
+        let block = "x".repeat(MAX_BLOCK_BYTES);
+        let full_blocks = MAX_THREAD_DRAFT_BYTES / MAX_BLOCK_BYTES;
+        for index in 0..full_blocks {
+            doc.append_block(&format!("b{index}"), "alice", &block, index as i64)
+                .unwrap();
+        }
+        assert!(doc.limits_ok());
+        let result = doc.append_block("overflow", "alice", &block, 99);
+        assert!(matches!(result, Err(DraftError::ThreadTooLarge)));
+    }
 
     #[test]
     fn blocks_round_trip_and_converge() {

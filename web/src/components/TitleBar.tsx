@@ -1,34 +1,23 @@
 import {
   ActionIcon,
   AppShell,
-  Avatar,
-  Burger,
   Box,
-  Button,
-  Group,
-  Indicator,
-  Menu,
+  Burger,
   Text,
   Tooltip,
   useMantineColorScheme,
 } from "@mantine/core";
 import {
-  IconArchive,
-  IconArrowBackUp,
-  IconDots,
-  IconGitFork,
-  IconGitMerge,
   IconInbox,
   IconLayoutSidebarRightExpand,
-  IconListCheck,
   IconMoon,
-  IconPencil,
-  IconPin,
   IconSearch,
-  IconShare,
   IconSun,
 } from "@tabler/icons-react";
 import type { ThreadSummary } from "../api";
+import { Participants } from "./titlebar/Participants";
+import { ThreadMenu } from "./titlebar/ThreadMenu";
+import { TitleActions } from "./titlebar/TitleActions";
 
 interface TitleBarProps {
   title: string;
@@ -53,89 +42,6 @@ interface TitleBarProps {
   onFork: () => void;
   onRevert: () => void;
   onArchive: () => void;
-}
-
-function ThreadMenu({
-  canManage,
-  isPinned,
-  onShare,
-  onMerge,
-  onReviews,
-  onRename,
-  onTogglePin,
-  onFork,
-  onRevert,
-  onArchive,
-}: {
-  canManage: boolean;
-  isPinned: boolean;
-  onShare: () => void;
-  onMerge: () => void;
-  onReviews: () => void;
-  onRename: () => void;
-  onTogglePin: () => void;
-  onFork: () => void;
-  onRevert: () => void;
-  onArchive: () => void;
-}) {
-  if (!canManage) return null;
-  return (
-    <Menu position="bottom-end" width={190} shadow="md">
-      <Menu.Target>
-        <ActionIcon aria-label="Thread actions">
-          <IconDots size={15} stroke={1.5} />
-        </ActionIcon>
-      </Menu.Target>
-      <Menu.Dropdown>
-        <Menu.Item leftSection={<IconShare size={13} />} onClick={onShare}>
-          Share
-        </Menu.Item>
-        <Menu.Item leftSection={<IconGitMerge size={13} />} onClick={onMerge}>
-          Merge
-        </Menu.Item>
-        <Menu.Item
-          leftSection={<IconListCheck size={13} />}
-          onClick={onReviews}
-        >
-          Reviews
-        </Menu.Item>
-        <Menu.Divider />
-        <Menu.Item leftSection={<IconPencil size={13} />} onClick={onRename}>
-          Rename
-        </Menu.Item>
-        <Menu.Item leftSection={<IconPin size={13} />} onClick={onTogglePin}>
-          {isPinned ? "Unpin" : "Pin"}
-        </Menu.Item>
-        <Menu.Divider />
-        <Menu.Item leftSection={<IconGitFork size={13} />} onClick={onFork}>
-          Fork thread
-        </Menu.Item>
-        <Menu.Item
-          leftSection={<IconArrowBackUp size={13} />}
-          onClick={onRevert}
-        >
-          Revert changes
-        </Menu.Item>
-        <Menu.Divider />
-        <Menu.Item
-          color="red"
-          leftSection={<IconArchive size={13} />}
-          onClick={onArchive}
-        >
-          Archive thread
-        </Menu.Item>
-      </Menu.Dropdown>
-    </Menu>
-  );
-}
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
 }
 
 export function TitleBar({
@@ -197,82 +103,23 @@ export function TitleBar({
         <Text size="md" fw={500} className="doc-title">
           {title}
         </Text>
-        {participants.length ? (
-          <Avatar.Group spacing={-4} visibleFrom="xs">
-            {participants.slice(0, 3).map((participant, index) => (
-              <Indicator
-                key={participant.user.id}
-                color="green"
-                size={5}
-                offset={1}
-                position="bottom-end"
-                disabled={
-                  onlineUserIds
-                    ? !onlineUserIds.includes(participant.user.id)
-                    : !participant.online
-                }
-                withBorder={false}
-              >
-                <Avatar
-                  size={18}
-                  radius="xl"
-                  color={index === 0 ? "brand" : "blue"}
-                  title={participant.user.displayName}
-                  src={participant.user.avatarUrl ?? undefined}
-                >
-                  {initials(participant.user.displayName)}
-                </Avatar>
-              </Indicator>
-            ))}
-          </Avatar.Group>
-        ) : null}
-        <Group
-          gap={2}
-          ml="auto"
-          wrap="nowrap"
-          visibleFrom="md"
-          display={canOpenChanges ? undefined : "none"}
-        >
-          <Button
-            variant="subtle"
-            size="compact-xs"
-            color="gray"
-            leftSection={<IconListCheck size={13} stroke={1.5} />}
-            onClick={onReviews}
-          >
-            Reviews
-          </Button>
-          <Button
-            variant="subtle"
-            size="compact-xs"
-            color="gray"
-            leftSection={<IconGitMerge size={13} stroke={1.5} />}
-            onClick={onMerge}
-          >
-            Merge
-          </Button>
-          <Button
-            variant="subtle"
-            size="compact-xs"
-            color="gray"
-            leftSection={<IconShare size={13} stroke={1.5} />}
-            onClick={onShare}
-          >
-            Share
-          </Button>
-          <ThreadMenu
-            canManage={canManage}
-            isPinned={isPinned}
-            onShare={onShare}
-            onMerge={onMerge}
-            onReviews={onReviews}
-            onRename={onRename}
-            onTogglePin={onTogglePin}
-            onFork={onFork}
-            onRevert={onRevert}
-            onArchive={onArchive}
-          />
-        </Group>
+        <Participants
+          participants={participants}
+          onlineUserIds={onlineUserIds}
+        />
+        <TitleActions
+          visible={canOpenChanges}
+          canManage={canManage}
+          isPinned={isPinned}
+          onReviews={onReviews}
+          onMerge={onMerge}
+          onShare={onShare}
+          onRename={onRename}
+          onTogglePin={onTogglePin}
+          onFork={onFork}
+          onRevert={onRevert}
+          onArchive={onArchive}
+        />
       </div>
 
       <div className="header-right">

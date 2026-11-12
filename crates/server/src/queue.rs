@@ -36,10 +36,13 @@ pub async fn list_for_thread(
     thread_id: &str,
 ) -> Result<Vec<QueueItemDto>, ServerError> {
     let rows = sqlx::query_as::<_, QueueRow>(&format!(
-        "{SELECT} WHERE q.thread_id = ? AND q.status IN ('queued','sending','superseded')
+        "{SELECT} WHERE q.thread_id = ? AND q.status IN (?, ?, ?)
          ORDER BY q.position ASC"
     ))
     .bind(thread_id)
+    .bind(queue_status_str(QueueStatus::Queued))
+    .bind(queue_status_str(QueueStatus::Sending))
+    .bind(queue_status_str(QueueStatus::Superseded))
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(to_dto).collect())
@@ -61,8 +64,7 @@ pub async fn enqueue(pool: &SqlitePool, input: NewQueuedInput<'_>) -> Result<u32
     .bind(input.thread_id)
     .fetch_one(pool)
     .await?;
-    let status = QueueMachine::transition(QueueStatus::Queued, &QueueAction::Enqueue)
-        .map_err(|error| ServerError::internal(error.to_string()))?;
+    let status = queue_status_str(QueueStatus::Queued);
     sqlx::query(
         "INSERT INTO queued_inputs(id, thread_id, author_id, text, authors_json, status,
             position, created_at, updated_at)
@@ -73,7 +75,7 @@ pub async fn enqueue(pool: &SqlitePool, input: NewQueuedInput<'_>) -> Result<u32
     .bind(input.author_id)
     .bind(input.text)
     .bind(input.authors_json)
-    .bind(queue_status_str(status))
+    .bind(status)
     .bind(position)
     .bind(input.created_at)
     .bind(input.created_at)
@@ -99,10 +101,11 @@ pub async fn head(
 ) -> Result<Option<(String, String, String, Option<String>)>, ServerError> {
     let row = sqlx::query_as(
         "SELECT id, author_id, text, authors_json FROM queued_inputs
-         WHERE thread_id = ? AND status = 'queued' AND superseded = 0
+         WHERE thread_id = ? AND status = ? AND superseded = 0
          ORDER BY position ASC LIMIT 1",
     )
     .bind(thread_id)
+    .bind(queue_status_str(QueueStatus::Queued))
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -166,17 +169,19 @@ pub async fn remove(
     thread_id: &str,
     item_id: &str,
 ) -> Result<QueueStatus, ServerError> {
-    if status_of(pool, item_id).await? != QueueStatus::Queued {
+    let current = status_of(pool, item_id).await?;
+    if current != QueueStatus::Queued {
         return Err(ServerError(ApiError::not_found(
             "queued message not found or already sent",
         )));
     }
-    transition(
+    transition_from(
         pool,
         projection,
         thread_id,
         item_id,
-        QueueAction::Delete,
+        current,
+        &QueueAction::Delete,
         None,
     )
     .await
@@ -198,11 +203,13 @@ pub async fn retry(
         .map_err(|error| ServerError::internal(error.to_string()))?;
     sqlx::query(
         "UPDATE queued_inputs SET status = ?, superseded = 0, updated_at = ?
-         WHERE id = ? AND status IN ('queued','superseded')",
+         WHERE id = ? AND status IN (?, ?)",
     )
     .bind(queue_status_str(next))
     .bind(now_ms())
     .bind(item_id)
+    .bind(queue_status_str(QueueStatus::Queued))
+    .bind(queue_status_str(QueueStatus::Superseded))
     .execute(pool)
     .await?;
     projection.publish(thread_id).await;
@@ -217,16 +224,16 @@ pub async fn supersede(
     thread_id: &str,
     turn_id: Option<&str>,
 ) -> Result<u32, ServerError> {
-    let superseded = QueueMachine::transition(QueueStatus::Queued, &QueueAction::Supersede)
-        .map_err(|error| ServerError::internal(error.to_string()))?;
+    let superseded = queue_status_str(QueueStatus::Superseded);
     let result = sqlx::query(
         "UPDATE queued_inputs SET status = ?, superseded = 1, turn_id = ?, updated_at = ?
-         WHERE thread_id = ? AND status = 'queued'",
+         WHERE thread_id = ? AND status = ?",
     )
-    .bind(queue_status_str(superseded))
+    .bind(superseded)
     .bind(turn_id)
     .bind(now_ms())
     .bind(thread_id)
+    .bind(queue_status_str(QueueStatus::Queued))
     .execute(pool)
     .await?;
     projection.publish(thread_id).await;
@@ -242,11 +249,23 @@ async fn transition(
     turn_id: Option<&str>,
 ) -> Result<QueueStatus, ServerError> {
     let current = status_of(pool, item_id).await?;
-    let next = QueueMachine::transition(current, &action)
+    transition_from(
+        pool, projection, thread_id, item_id, current, &action, turn_id,
+    )
+    .await
+}
+
+async fn transition_from(
+    pool: &SqlitePool,
+    projection: &Projection,
+    thread_id: &str,
+    item_id: &str,
+    current: QueueStatus,
+    action: &QueueAction,
+    turn_id: Option<&str>,
+) -> Result<QueueStatus, ServerError> {
+    let next = QueueMachine::transition(current, action)
         .map_err(|error| ServerError::internal(error.to_string()))?;
-    if next == current {
-        return Ok(next);
-    }
     let updated = sqlx::query(
         "UPDATE queued_inputs SET status = ?, turn_id = ?, updated_at = ?
          WHERE id = ? AND status = ?",
@@ -314,53 +333,217 @@ mod tests {
         Projection::new(pool.clone(), tx)
     }
 
+    async fn seed_item(
+        pool: &SqlitePool,
+        thread_id: &str,
+        author_id: &str,
+        id: &str,
+        status: QueueStatus,
+        position: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position, created_at, updated_at)
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(thread_id)
+        .bind(author_id)
+        .bind(format!("text {id}"))
+        .bind(queue_status_str(status))
+        .bind(position)
+        .bind(now_ms())
+        .bind(now_ms())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn cancelling_marks_queued_inputs_superseded() {
         let pool = db::connect_memory().await.unwrap();
         let (user, _, thread) = seed_thread(&pool).await;
-        sqlx::query(
-            "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position, created_at, updated_at)
-             VALUES('q1', ?, ?, 'queued', 'queued', 1, ?, ?)",
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Queued,
+            1,
         )
-        .bind(thread.as_str())
-        .bind(user.as_str())
-        .bind(now_ms())
-        .bind(now_ms())
-        .execute(&pool)
-        .await
-        .unwrap();
+        .await;
         supersede(&pool, &projection(&pool), thread.as_str(), Some("turn-1"))
             .await
             .unwrap();
         let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
         assert_eq!(items.len(), 1);
         assert!(items[0].superseded);
+        assert_eq!(items[0].status, QueueStatus::Superseded);
     }
 
     #[tokio::test]
-    async fn queued_inputs_survive_and_keep_order() {
+    async fn enqueue_assigns_positions_and_keeps_order() {
         let pool = db::connect_memory().await.unwrap();
         let (user, _, thread) = seed_thread(&pool).await;
-        for (position, text) in [(1, "first"), (2, "second")] {
-            sqlx::query(
-                "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position, created_at, updated_at)
-                 VALUES(?, ?, ?, ?, 'queued', ?, ?, ?)",
+        for (expected, text) in [(1, "first"), (2, "second")] {
+            let position = enqueue(
+                &pool,
+                NewQueuedInput {
+                    thread_id: thread.as_str(),
+                    author_id: user.as_str(),
+                    text,
+                    authors_json: None,
+                    created_at: now_ms(),
+                },
             )
-            .bind(ulid::Ulid::new().to_string())
-            .bind(thread.as_str())
-            .bind(user.as_str())
-            .bind(text)
-            .bind(position)
-            .bind(now_ms())
-            .bind(now_ms())
-            .execute(&pool)
             .await
             .unwrap();
+            assert_eq!(position, expected);
         }
         let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].text, "first");
         assert_eq!(items[1].text, "second");
         assert!(items.iter().all(|item| item.status == QueueStatus::Queued));
+    }
+
+    #[tokio::test]
+    async fn head_returns_the_next_queued_item() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Queued,
+            1,
+        )
+        .await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q2",
+            QueueStatus::Queued,
+            2,
+        )
+        .await;
+        let head_item = head(&pool, thread.as_str()).await.unwrap().unwrap();
+        assert_eq!(head_item.0, "q1");
+        dispatch(&pool, &projection(&pool), thread.as_str(), "q1")
+            .await
+            .unwrap();
+        let next = head(&pool, thread.as_str()).await.unwrap().unwrap();
+        assert_eq!(next.0, "q2");
+    }
+
+    #[tokio::test]
+    async fn dispatch_then_complete_marks_sent() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Queued,
+            1,
+        )
+        .await;
+        let projection = projection(&pool);
+        assert_eq!(
+            dispatch(&pool, &projection, thread.as_str(), "q1")
+                .await
+                .unwrap(),
+            QueueStatus::Sending
+        );
+        assert_eq!(
+            complete(&pool, &projection, thread.as_str(), "q1", Some("turn-1"))
+                .await
+                .unwrap(),
+            QueueStatus::Sent
+        );
+        assert_eq!(status_of(&pool, "q1").await.unwrap(), QueueStatus::Sent);
+        let turn_id: Option<String> =
+            sqlx::query_scalar("SELECT turn_id FROM queued_inputs WHERE id = 'q1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(turn_id.as_deref(), Some("turn-1"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_then_fail_marks_dropped() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Queued,
+            1,
+        )
+        .await;
+        let projection = projection(&pool);
+        dispatch(&pool, &projection, thread.as_str(), "q1")
+            .await
+            .unwrap();
+        assert_eq!(
+            fail(&pool, &projection, thread.as_str(), "q1")
+                .await
+                .unwrap(),
+            QueueStatus::Dropped
+        );
+        assert_eq!(status_of(&pool, "q1").await.unwrap(), QueueStatus::Dropped);
+    }
+
+    #[tokio::test]
+    async fn retry_restores_superseded_item_to_queued() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Superseded,
+            1,
+        )
+        .await;
+        sqlx::query("UPDATE queued_inputs SET superseded = 1 WHERE id = 'q1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            retry(&pool, &projection(&pool), thread.as_str(), "q1")
+                .await
+                .unwrap(),
+            QueueStatus::Queued
+        );
+        let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status, QueueStatus::Queued);
+        assert!(!items[0].superseded);
+    }
+
+    #[tokio::test]
+    async fn remove_rejects_items_that_already_left_the_queue() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Sending,
+            1,
+        )
+        .await;
+        let error = remove(&pool, &projection(&pool), thread.as_str(), "q1")
+            .await
+            .unwrap_err();
+        assert_eq!(error.0.code, threadbase_shared::ErrorCode::NotFound);
+        assert_eq!(status_of(&pool, "q1").await.unwrap(), QueueStatus::Sending);
     }
 }
