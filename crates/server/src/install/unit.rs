@@ -1,8 +1,9 @@
 //! systemd user-unit paths and rendering.
 
 use anyhow::Context;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use threadbase_agent::profile::find_in_path;
+use threadbase_workspace::path::clean_path;
 
 pub(crate) fn path(unit: &str) -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME is not set")?;
@@ -136,10 +137,10 @@ pub(crate) fn current_binary() -> PathBuf {
     if argv0.contains('/') {
         let path = PathBuf::from(&argv0);
         if path.is_absolute() {
-            return normalize(&path);
+            return clean_path(&path);
         }
         if let Ok(cwd) = std::env::current_dir() {
-            return normalize(&cwd.join(path));
+            return clean_path(&cwd.join(path));
         }
     } else if !argv0.is_empty() {
         if let Some(path) = find_in_path(&argv0) {
@@ -147,26 +148,6 @@ pub(crate) fn current_binary() -> PathBuf {
         }
     }
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("threadbase"))
-}
-
-/// Lexical cleanup so the unit reads `/opt/bin/threadbase`, not `/opt/./bin/x`.
-fn normalize(path: &Path) -> PathBuf {
-    let mut parts: Vec<std::ffi::OsString> = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                parts.pop();
-            }
-            Component::RootDir | Component::Prefix(_) => {}
-            Component::Normal(part) => parts.push(part.to_owned()),
-        }
-    }
-    let mut output = PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
-    for part in parts {
-        output.push(part);
-    }
-    output
 }
 
 #[cfg(test)]
@@ -255,7 +236,7 @@ mod tests {
     #[test]
     fn paths_are_normalized() {
         assert_eq!(
-            normalize(Path::new("/home/ada/./bin/../bin/threadbase")),
+            clean_path(Path::new("/home/ada/./bin/../bin/threadbase")),
             PathBuf::from("/home/ada/bin/threadbase")
         );
     }

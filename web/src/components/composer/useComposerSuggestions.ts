@@ -113,19 +113,27 @@ async function fileOptions(
 function menuProps(
   kind: "command" | "file",
   props: SuggestionProps<SuggestionOption>,
+  pluginKey: PluginKey,
 ): SuggestionMenuProps {
   return {
     kind,
     query: props.query,
     options: props.items,
     loading: props.loading,
-    onChoose: (option) => props.command(option),
+    onChoose: (option) => {
+      props.command(option);
+      // `props.command` only runs the insertion callback; the plugin state
+      // stays active until it is explicitly exited. Without this the menu
+      // remains open after choosing with Enter or a click.
+      exitSuggestion(props.editor.view, pluginKey);
+    },
   };
 }
 
 function suggestionRenderer(
   kind: "command" | "file",
   context: SuggestionContext,
+  pluginKey: PluginKey,
 ) {
   return () => {
     let component: ReactRenderer<SuggestionMenuHandle, SuggestionMenuProps> | null =
@@ -135,7 +143,7 @@ function suggestionRenderer(
     return {
       onStart: (props: SuggestionProps<SuggestionOption>) => {
         component = new ReactRenderer(SuggestionMenu, {
-          props: menuProps(kind, props),
+          props: menuProps(kind, props, pluginKey),
           editor: props.editor,
           className: "composer-suggest-layer",
         });
@@ -143,7 +151,7 @@ function suggestionRenderer(
         context.onActiveChange(true);
       },
       onUpdate: (props: SuggestionProps<SuggestionOption>) => {
-        component?.updateProps(menuProps(kind, props));
+        component?.updateProps(menuProps(kind, props, pluginKey));
       },
       onKeyDown: ({ event }: SuggestionKeyDownProps) =>
         component?.ref?.onKeyDown(event) ?? false,
@@ -179,7 +187,7 @@ function composerSuggestions(context: SuggestionContext) {
               .insertContent(props.insert)
               .run();
           },
-          render: suggestionRenderer("command", context),
+          render: suggestionRenderer("command", context, COMMAND_PLUGIN_KEY),
         }),
         Suggestion<SuggestionOption>({
           editor: this.editor,
@@ -198,7 +206,7 @@ function composerSuggestions(context: SuggestionContext) {
               .insertContent(props.insert)
               .run();
           },
-          render: suggestionRenderer("file", context),
+          render: suggestionRenderer("file", context, FILE_PLUGIN_KEY),
         }),
       ];
     },

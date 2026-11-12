@@ -34,9 +34,12 @@ function patchFromDiff(diff: FileDiff) {
     newHeader: undefined,
     isGit: true,
     hunks: diff.hunks.map((hunk) => ({
-      oldStart: hunk.oldStart,
+      // `diff` subtracts one from a zero-length range start and emits an
+      // invalid `@@ --1,0` header for added files. Feed it the equivalent
+      // one-based start so the emitted header is `@@ -0,0`.
+      oldStart: hunk.oldLines === 0 ? 1 : hunk.oldStart,
       oldLines: hunk.oldLines,
-      newStart: hunk.newStart,
+      newStart: hunk.newLines === 0 ? 1 : hunk.newStart,
       newLines: hunk.newLines,
       lines: hunk.lines.map((line) => {
         const prefix =
