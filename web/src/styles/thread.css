@@ -342,3 +342,32 @@
   color: var(--ink);
 }
 
+
+/* Consecutive tool calls collapse into one line, Delta style. */
+.tool-group {
+  margin: 2px 0;
+}
+
+.tool-group > summary {
+  display: flex;
+  width: fit-content;
+  height: 20px;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-muted);
+  font-size: 12.5px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.tool-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-group > summary:hover {
+  color: var(--ink);
+}
+
+.tool-group-body {
+  padding-left: 2px;
+}

@@ -633,6 +633,7 @@ export function App() {
           <button
             type="button"
             className="nav-scrim"
+            tabIndex={-1}
             aria-label="Close navigation"
             onClick={nav.close}
           />

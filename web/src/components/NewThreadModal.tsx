@@ -40,7 +40,7 @@ export function NewThreadModal({
   onClose,
   onCreated,
 }: NewThreadModalProps) {
-  const phone = useMediaQuery("(max-width: 48em)");
+  const phone = useMediaQuery("(max-width: 47.99em)");
   const [title, setTitle] = useState("");
   const [agent, setAgent] = useState("codex");
   const [submitting, setSubmitting] = useState(false);

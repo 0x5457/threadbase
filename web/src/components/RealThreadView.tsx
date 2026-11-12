@@ -1,8 +1,13 @@
 import { Alert, Center, Loader, UnstyledButton } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertCircle, IconArrowDown } from "@tabler/icons-react";
+import {
+  IconAlertCircle,
+  IconArrowDown,
+  IconChevronDown,
+} from "@tabler/icons-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Fragment,
   forwardRef,
   useCallback,
   useEffect,
@@ -48,12 +53,23 @@ import { Tool } from "./thread/Tool";
 /// Virtuoso renders the transcript inside this wrapper so the document column,
 /// its padding and the text-width setting keep applying.
 
+/// A row is either a single reducer item or a run of consecutive tool calls,
+/// which Delta-style collapses into one "ran N tools" line.
+type TimelineRowItem =
+  | ViewItem
+  | {
+      kind: "tools";
+      id: string;
+      tools: Extract<ViewItem, { kind: "tool" }>[];
+    };
+
 /// One transcript row. Rendering is a pure function of the reducer item so
 /// Virtuoso can mount and unmount rows freely while scrolling.
 function TimelineRow({
   item,
   active,
   comments,
+  commentsForTool,
   threadKey,
   openComments,
   onToggleComments,
@@ -62,9 +78,10 @@ function TimelineRow({
   editor,
   onComment,
 }: {
-  item: ViewItem;
+  item: TimelineRowItem;
   active: boolean;
   comments: Comment[];
+  commentsForTool: (toolCallId: string) => Comment[];
   threadKey: string | null;
   openComments: Set<string>;
   onToggleComments: (key: string) => void;
@@ -73,6 +90,36 @@ function TimelineRow({
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
 }) {
+  if (item.kind === "tools" && item.tools.length > 1) {
+    return (
+      <details className="tool-group">
+        <summary>
+          <span>ran {item.tools.length} tools</span>
+          <IconChevronDown size={11} stroke={1.5} />
+        </summary>
+        <div className="tool-group-body">
+          {item.tools.map((tool) => (
+            <Fragment key={tool.call.id}>
+              <Tool item={tool} />
+              <CommentThread
+                comments={commentsForTool(tool.call.id)}
+                threadKey={`t:${tool.call.id}`}
+                expanded={
+                  openComments.has(`t:${tool.call.id}`) ||
+                  editing === `t:${tool.call.id}`
+                }
+                onToggle={onToggleComments}
+                renderCard={renderComment}
+                editing={editing === `t:${tool.call.id}`}
+                editor={null}
+              />
+            </Fragment>
+          ))}
+        </div>
+      </details>
+    );
+  }
+
   const thread =
     threadKey === null ? null : (
       <CommentThread
@@ -101,10 +148,10 @@ function TimelineRow({
   switch (item.kind) {
     case "thinking":
       return <Thinking count={item.count} tools={item.tools} text={item.text} />;
-    case "tool":
+    case "tools":
       return (
         <>
-          <Tool item={item} />
+          <Tool item={item.tools[0]} />
           {thread}
         </>
       );
@@ -235,18 +282,30 @@ export function RealThreadView({
 
   // Rows handed to Virtuoso: every reducer block except a pending tool card,
   // which the approval card rendered in the footer replaces.
-  const rows = useMemo(
-    () =>
-      items.filter(
-        (item) =>
-          !(
-            pending.length > 0 &&
-            item.kind === "tool" &&
-            item.call.status === "pending"
-          ),
-      ),
-    [items, pending.length],
-  );
+  const rows = useMemo<TimelineRowItem[]>(() => {
+    const visible = items.filter(
+      (item) =>
+        !(
+          pending.length > 0 &&
+          item.kind === "tool" &&
+          item.call.status === "pending"
+        ),
+    );
+    const out: TimelineRowItem[] = [];
+    for (const item of visible) {
+      if (item.kind === "tool") {
+        const previous = out[out.length - 1];
+        if (previous?.kind === "tools") {
+          previous.tools.push(item);
+          continue;
+        }
+        out.push({ kind: "tools", id: item.call.id, tools: [item] });
+        continue;
+      }
+      out.push(item);
+    }
+    return out;
+  }, [items, pending.length]);
 
   useEffect(() => {
     setStickToBottom(true);
@@ -497,8 +556,8 @@ export function RealThreadView({
           computeItemKey={(index, item) =>
             item.kind === "message"
               ? `m:${item.id}`
-              : item.kind === "tool"
-                ? `t:${item.call.id}`
+              : item.kind === "tools"
+                ? `g:${item.id}`
                 : `i:${index}`
           }
           components={{
@@ -521,23 +580,20 @@ export function RealThreadView({
             <TimelineRow
               item={item}
               active={bundle?.thread.status === "running"}
+              commentsForTool={(id) => commentsFor("tool_call", id)}
               comments={commentsFor(
-                item.kind === "message"
-                  ? "message"
-                  : item.kind === "tool"
-                    ? "tool_call"
-                    : "message",
+                item.kind === "message" ? "message" : "tool_call",
                 item.kind === "message"
                   ? item.id
-                  : item.kind === "tool"
-                    ? item.call.id
+                  : item.kind === "tools"
+                    ? item.tools[0].call.id
                     : "",
               )}
               threadKey={
                 item.kind === "message"
                   ? `m:${item.id}`
-                  : item.kind === "tool"
-                    ? `t:${item.call.id}`
+                  : item.kind === "tools" && item.tools.length === 1
+                    ? `t:${item.tools[0].call.id}`
                     : null
               }
               openComments={openComments}

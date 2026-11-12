@@ -93,7 +93,7 @@
   width: min(760px, 100%);
   min-width: 0;
   margin: 0 auto;
-  padding: 8px 24px 6px;
+  padding: 6px 24px 4px;
 }
 
 .composer-row {
@@ -108,7 +108,7 @@
 
 .composer-input {
   position: relative;
-  min-height: 38px;
+  min-height: 32px;
 }
 
 /* Rendered from React so it follows the thread's agent; the editor's own
@@ -124,8 +124,8 @@
 }
 
 .composer-editor {
-  min-height: 34px;
-  padding: 4px 2px;
+  min-height: 28px;
+  padding: 2px 2px;
   color: var(--ink);
   font-family: var(--mantine-font-family);
   font-size: 14.5px;
@@ -140,7 +140,7 @@
 
 .composer-tools {
   display: flex;
-  height: 26px;
+  height: 24px;
   align-items: center;
   gap: 1px;
   padding-left: 42px;

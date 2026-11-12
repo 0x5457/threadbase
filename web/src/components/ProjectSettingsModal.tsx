@@ -27,7 +27,7 @@ export function ProjectSettingsModal({
   onClose,
   onSaved,
 }: ProjectSettingsModalProps) {
-  const phone = useMediaQuery("(max-width: 48em)");
+  const phone = useMediaQuery("(max-width: 47.99em)");
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [path, setPath] = useState("");

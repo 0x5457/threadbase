@@ -29,6 +29,7 @@
 
 .statusbar {
   padding-right: calc(10px + var(--safe-right));
+  padding-bottom: var(--safe-bottom);
   padding-left: calc(10px + var(--safe-left));
 }
 
@@ -40,6 +41,12 @@
 .composer-inner {
   padding-right: max(24px, var(--safe-right));
   padding-left: max(24px, var(--safe-left));
+}
+
+.mantine-Notifications-root {
+  padding-top: var(--safe-top);
+  padding-right: var(--safe-right);
+  padding-left: var(--safe-left);
 }
 
 /* ── overlay scrim ─────────────────────────────────────────── */
@@ -366,8 +373,36 @@
     height: 36px;
   }
 
-  .approval-actions .mantine-Button-root {
+  .approval-actions .mantine-Button-root,
+  .approval-card .mantine-Button-root {
     height: 40px;
+  }
+
+  .comment-card .mantine-Button-root,
+  .subagent-row .mantine-Button-root {
+    height: 36px;
+  }
+
+  .agent-log-head {
+    height: 36px;
+  }
+
+  .agent-log-copy {
+    width: 32px;
+    height: 32px;
+  }
+
+  .mantine-Modal-content .mantine-Button-root {
+    height: 38px;
+  }
+
+  .mantine-Menu-item {
+    min-height: 40px;
+  }
+
+  .model-picker-option,
+  .suggest-item {
+    min-height: 40px;
   }
 
   .block {

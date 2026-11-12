@@ -17,7 +17,7 @@ export function ReviewDialog({
   onClose: () => void;
   onOpenChanges?: () => void;
 }) {
-  const phone = useMediaQuery("(max-width: 48em)");
+  const phone = useMediaQuery("(max-width: 47.99em)");
   const review = useReviewDialog(threadId, opened, onClose);
 
   return (
