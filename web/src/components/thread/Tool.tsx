@@ -129,8 +129,13 @@ function diffTextPreview(patch: string): { lines: PreviewLine[]; hidden: number 
 
 export const Tool = memo(function Tool({
   item,
+  expanded,
+  onToggleExpanded,
 }: {
   item: Extract<ViewItem, { kind: "tool" }>;
+  /** The details body is open; kept in React so unmounting keeps it open. */
+  expanded: boolean;
+  onToggleExpanded: () => void;
 }) {
   const call: ToolCallData = item.call;
   const path = call.locations[0]?.path;
@@ -169,17 +174,27 @@ export const Tool = memo(function Tool({
           </div>
         ) : null}
         {call.diff?.patch || call.input || call.output ? (
-          <details className="tool-details">
+          <details
+            className="tool-details"
+            open={expanded}
+            onToggle={(event) => {
+              if (event.currentTarget.open !== expanded) onToggleExpanded();
+            }}
+          >
             <summary>
               {call.diff?.patch ? "Full diff" : "Details"}{" "}
-              <IconChevronDown size={11} stroke={1.5} />
+              <IconChevronDown size={11} stroke={1.5} className="chevron" />
             </summary>
-            {call.diff?.patch ? <DiffView patch={call.diff.patch} /> : null}
-            {!call.diff?.patch && call.input ? (
-              <pre className="cmd">{call.input}</pre>
-            ) : null}
-            {!call.diff?.patch && call.output ? (
-              <pre className="cmd">{call.output}</pre>
+            {expanded ? (
+              <>
+                {call.diff?.patch ? <DiffView patch={call.diff.patch} /> : null}
+                {!call.diff?.patch && call.input ? (
+                  <pre className="cmd">{call.input}</pre>
+                ) : null}
+                {!call.diff?.patch && call.output ? (
+                  <pre className="cmd">{call.output}</pre>
+                ) : null}
+              </>
             ) : null}
           </details>
         ) : null}

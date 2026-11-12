@@ -98,11 +98,16 @@ function TimelineRow({
   renderComment,
   editing,
   editor,
+  expanded,
+  onToggleExpanded,
   onComment,
   onMessageLongPress,
 }: {
   item: TimelineRowItem;
   active: boolean;
+  /** Group/row keys whose collapsible body is open; survives virtualization. */
+  expanded: Set<string>;
+  onToggleExpanded: (key: string) => void;
   comments: Comment[];
   commentsForTool: (toolCallId: string) => Comment[];
   threadKey: string | null;
@@ -116,7 +121,11 @@ function TimelineRow({
 }) {
   const toolRow = (tool: ToolItem) => (
     <Fragment key={tool.call.id}>
-      <Tool item={tool} />
+      <Tool
+        item={tool}
+        expanded={expanded.has(`d:${tool.call.id}`)}
+        onToggleExpanded={() => onToggleExpanded(`d:${tool.call.id}`)}
+      />
       <CommentThread
         comments={commentsForTool(tool.call.id)}
         threadKey={`t:${tool.call.id}`}
@@ -134,21 +143,30 @@ function TimelineRow({
 
   // A run shows its opening tools inline: a collapsed summary alone said that
   // the agent ran tools, never what it was doing. The rest stays one click away.
-  const groupTools = (tools: ToolItem[]) => {
+  const groupTools = (tools: ToolItem[], key: string) => {
     const preview = tools.slice(0, PREVIEW_TOOLS);
     const rest = tools.slice(PREVIEW_TOOLS);
+    const open = expanded.has(`g:${key}`);
     return (
       <>
         {preview.map(toolRow)}
         {rest.length > 0 ? (
-          <details className="run-more">
+          <details
+            className="run-more"
+            open={open}
+            onToggle={(event) => {
+              // Keep the open state in React so a row that Virtuoso unmounts
+              // does not silently collapse and shift the scroll height.
+              if (event.currentTarget.open !== open) onToggleExpanded(`g:${key}`);
+            }}
+          >
             <summary>
               <span>
                 {rest.length} more {rest.length === 1 ? "tool" : "tools"}
               </span>
-              <IconChevronDown size={11} stroke={1.5} />
+              <IconChevronDown size={11} stroke={1.5} className="chevron" />
             </summary>
-            <div className="run-body">{rest.map(toolRow)}</div>
+            {open ? <div className="run-body">{rest.map(toolRow)}</div> : null}
           </details>
         ) : null}
       </>
@@ -172,7 +190,7 @@ function TimelineRow({
             {ran}
           </span>
         </div>
-        {groupTools(item.tools)}
+        {groupTools(item.tools, item.id)}
       </div>
     );
   }
@@ -183,7 +201,7 @@ function TimelineRow({
         <div className="run-head">
           <span>ran {item.tools.length} tools</span>
         </div>
-        {groupTools(item.tools)}
+        {groupTools(item.tools, item.id)}
       </div>
     );
   }
@@ -224,7 +242,13 @@ function TimelineRow({
     case "tools":
       return (
         <>
-          <Tool item={item.tools[0]} />
+          <Tool
+            item={item.tools[0]}
+            expanded={expanded.has(`d:${item.tools[0].call.id}`)}
+            onToggleExpanded={() =>
+              onToggleExpanded(`d:${item.tools[0].call.id}`)
+            }
+          />
           {thread}
         </>
       );
@@ -269,7 +293,19 @@ export function RealThreadView({
   // A long session can hold thousands of blocks; Virtuoso mounts only what is
   // visible, so a 10k-event transcript costs the same as a short one.
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+  // Expansion lives in React state: Virtuoso unmounts off-screen rows, and DOM
+  // `<details>` state would collapse with them, shifting the scroll height.
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
+  const toggleExpandedRow = useCallback((key: string) => {
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
   const [openComments, setOpenComments] = useState<Set<string>>(new Set());
   const toggleComments = (key: string) =>
     setOpenComments((current) => {
@@ -401,7 +437,30 @@ export function RealThreadView({
 
   useEffect(() => {
     setStickToBottom(true);
+    setExpandedRows(new Set());
   }, [threadId]);
+
+  // History arrives after mount, so `initialTopMostItemIndex` cannot land on
+  // the last row; jump there once the first batch renders. A second pass after
+  // the tail rows are measured corrects the estimate.
+  const scrolledFor = useRef<string | null>(null);
+  // `scrollToIndex(LAST, align: "end")` stops at the last row, leaving the
+  // footer below the fold. Scrolling the element itself lands on the true end.
+  const scrollToLatest = useCallback((behavior: "auto" | "smooth" = "auto") => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+  }, []);
+  useEffect(() => {
+    if (rows.length === 0) return;
+    if (scrolledFor.current === threadId) return;
+    scrolledFor.current = threadId;
+    // No cleanup on row changes: the corrective pass must survive the first
+    // measurement flush, otherwise the footer is left below the fold.
+    scrollToLatest();
+    window.setTimeout(() => scrollToLatest(), 300);
+    window.setTimeout(() => scrollToLatest(), 900);
+  }, [rows.length, threadId, scrollToLatest]);
 
 
   useEffect(() => {
@@ -707,6 +766,9 @@ export function RealThreadView({
       >
         <Virtuoso
           ref={virtuosoRef}
+          scrollerRef={(element) => {
+            if (element instanceof HTMLElement) scrollerRef.current = element;
+          }}
           className="thread-scroll"
           data={rows}
           initialTopMostItemIndex={Math.max(0, rows.length - 1)}
@@ -764,6 +826,8 @@ export function RealThreadView({
               renderComment={commentCard}
               editing={commentFor}
               editor={commentEditor}
+              expanded={expandedRows}
+              onToggleExpanded={toggleExpandedRow}
               onComment={commentOnMessage}
               onMessageLongPress={openMessageSheet}
             />
@@ -773,10 +837,11 @@ export function RealThreadView({
         <UnstyledButton
           className="jump-latest"
           onClick={() => {
-            virtuosoRef.current?.scrollToIndex({
-              index: "LAST",
-              behavior: "smooth",
-            });
+            // The tail may still be unmeasured and rows above may have just
+            // changed height; correct the landing once more after the smooth
+            // scroll settles.
+            scrollToLatest("smooth");
+            window.setTimeout(() => scrollToLatest(), 400);
             setStickToBottom(true);
           }}
         >

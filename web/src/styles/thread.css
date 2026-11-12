@@ -451,6 +451,16 @@
   color: var(--ink);
 }
 
+.tool-details .chevron,
+.run-more .chevron {
+  transition: transform 120ms ease;
+}
+
+.tool-details[open] > summary .chevron,
+.run-more[open] > summary .chevron {
+  transform: rotate(180deg);
+}
+
 .run-body {
   padding-left: 2px;
 }
