@@ -62,7 +62,7 @@
   display: none;
   padding: 0;
   border: 0;
-  background: color-mix(in srgb, var(--ink) 32%, transparent);
+  background: rgb(0 0 0 / 32%);
   cursor: default;
 }
 
@@ -388,8 +388,8 @@
   }
 
   .agent-log-copy {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
   }
 
   .mantine-Modal-content .mantine-Button-root {
@@ -418,7 +418,13 @@
   }
 
   /* The per-message comment action was hover-only, so touch users had no way
-     to comment on a message. Keep it in the gutter, below the avatar. */
+     to comment on a message. Keep it in the gutter, below the avatar; the
+     block gets enough height that the button cannot spill into the next row
+     (where that row's gutter would swallow the tap). */
+  .message-block {
+    min-height: 68px;
+  }
+
   .msg-comment-btn {
     top: 24px;
     right: auto;
@@ -429,8 +435,8 @@
   }
 
   .comment-menu {
-    width: 28px;
-    height: 28px;
+    width: 36px;
+    height: 36px;
     opacity: 1;
   }
 
@@ -441,12 +447,12 @@
   }
 
   .queue-item {
-    height: 36px;
+    height: 40px;
   }
 
   .queue-item .mantine-ActionIcon-root {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
   }
 
   .changes-head {
@@ -481,6 +487,11 @@
   .inbox-filter {
     height: 36px;
     padding: 0 10px;
+  }
+
+  .inbox-head .mantine-Button-root,
+  .settings-view .mantine-Button-root {
+    min-height: 36px;
   }
 
   /* iOS Safari zooms the page when a focused control is smaller than 16px. */

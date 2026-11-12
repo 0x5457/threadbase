@@ -178,6 +178,11 @@ export function App() {
     if (wide) changes.close();
   }, [wide]);
 
+  // The phone drawer must not survive a resize into the tablet rail.
+  useEffect(() => {
+    if (!phone) nav.close();
+  }, [phone]);
+
   // iOS keeps the keyboard up while the transcript scrolls underneath it.
   // Blur the composer on a real drag, but never on the keyboard's own resize
   // scroll or when the pointer went down inside the composer.
