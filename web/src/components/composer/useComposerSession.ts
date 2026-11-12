@@ -134,15 +134,9 @@ export function useComposerSession({
         if (shared) {
           // The server reads the pending CRDT blocks, so the editor must stay
           // populated until the POST returns. Its tombstone clears the draft.
-          const result = await sendDraft(threadId, delivery);
-          // A successful send is visible in the timeline; only queueing, which
-          // changes when the agent sees the message, is worth announcing.
-          if (result.delivery === "queued") {
-            notifications.show({
-              message: "Queued for the next turn",
-              color: "teal",
-            });
-          }
+          // Queued sends stay silent: the queue bar above the composer already
+          // lists them, and the delivery mode is the caller's own choice.
+          await sendDraft(threadId, delivery);
           // Allocate the next draft block before the editor clears, so the
           // cleared text does not allocate a second empty block.
           markDraftSent();
@@ -151,13 +145,7 @@ export function useComposerSession({
         } else {
           editor.commands.clearContent();
           setHasText(false);
-          const result = await sendMessage(threadId, text, delivery);
-          if (result.delivery === "queued") {
-            notifications.show({
-              message: "Queued for the next turn",
-              color: "teal",
-            });
-          }
+          await sendMessage(threadId, text, delivery);
         }
         onSent?.();
         // The send started the adapter, so its options can now be read
