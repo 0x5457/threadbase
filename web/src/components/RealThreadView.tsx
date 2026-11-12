@@ -72,6 +72,9 @@ import { Tool } from "./thread/Tool";
 /// A row is either a single reducer item or a run of consecutive tool calls,
 /// which Delta-style collapses into one "ran N tools" line.
 type ToolItem = Extract<ViewItem, { kind: "tool" }>;
+
+/** Tools rendered inline before a run collapses the rest behind a toggle. */
+const PREVIEW_TOOLS = 3;
 type TimelineRowItem =
   | ViewItem
   | { kind: "tools"; id: string; tools: ToolItem[] }
@@ -129,6 +132,29 @@ function TimelineRow({
     </Fragment>
   );
 
+  // A run shows its opening tools inline: a collapsed summary alone said that
+  // the agent ran tools, never what it was doing. The rest stays one click away.
+  const groupTools = (tools: ToolItem[]) => {
+    const preview = tools.slice(0, PREVIEW_TOOLS);
+    const rest = tools.slice(PREVIEW_TOOLS);
+    return (
+      <>
+        {preview.map(toolRow)}
+        {rest.length > 0 ? (
+          <details className="run-more">
+            <summary>
+              <span>
+                {rest.length} more {rest.length === 1 ? "tool" : "tools"}
+              </span>
+              <IconChevronDown size={11} stroke={1.5} />
+            </summary>
+            <div className="run-body">{rest.map(toolRow)}</div>
+          </details>
+        ) : null}
+      </>
+    );
+  };
+
   if (item.kind === "run") {
     const count = item.thinking.count;
     const thought = count > 1 ? `Thought ${count} times` : "Thought once";
@@ -136,28 +162,29 @@ function TimelineRow({
       item.tools.length === 1 ? "tool" : "tools"
     }`;
     return (
-      <details className="run">
-        <summary title={item.thinking.text.trim().slice(0, 240)}>
+      <div className="run">
+        <div
+          className="run-head"
+          title={item.thinking.text.trim().slice(0, 240)}
+        >
           <span>
             {thought}
             {ran}
           </span>
-          <IconChevronDown size={11} stroke={1.5} />
-        </summary>
-        <div className="run-body">{item.tools.map(toolRow)}</div>
-      </details>
+        </div>
+        {groupTools(item.tools)}
+      </div>
     );
   }
 
   if (item.kind === "tools" && item.tools.length > 1) {
     return (
-      <details className="tool-group">
-        <summary>
+      <div className="tool-group">
+        <div className="run-head">
           <span>ran {item.tools.length} tools</span>
-          <IconChevronDown size={11} stroke={1.5} />
-        </summary>
-        <div className="tool-group-body">{item.tools.map(toolRow)}</div>
-      </details>
+        </div>
+        {groupTools(item.tools)}
+      </div>
     );
   }
 

@@ -314,6 +314,35 @@
   color: var(--ink-faint);
 }
 
+/* The opening lines of a tool call are visible by default: enough to see what
+   the agent is touching without opening the full input/output. */
+.tool-lines {
+  margin: 2px 0 7px;
+  padding-left: 2px;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.tool-line {
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-line.del {
+  color: color-mix(in srgb, var(--del) 72%, var(--ink));
+}
+
+.tool-line.add {
+  color: color-mix(in srgb, var(--add) 72%, var(--ink));
+}
+
+.tool-line.more {
+  color: var(--ink-faint);
+}
+
 /* ── Pierre diff surface ───────────────────────────────────── */
 
 .diff-wrap {
@@ -373,8 +402,8 @@
   margin: 2px 0;
 }
 
-.run > summary,
-.tool-group > summary {
+.run-head,
+.run-more > summary {
   display: flex;
   width: fit-content;
   height: 20px;
@@ -383,21 +412,21 @@
   color: var(--ink-muted);
   font-size: 12.5px;
   list-style: none;
+}
+
+.run-more > summary {
   cursor: pointer;
 }
 
-.run > summary::-webkit-details-marker,
-.tool-group > summary::-webkit-details-marker {
+.run-more > summary::-webkit-details-marker {
   display: none;
 }
 
-.run > summary:hover,
-.tool-group > summary:hover {
+.run-more > summary:hover {
   color: var(--ink);
 }
 
-.run-body,
-.tool-group-body {
+.run-body {
   padding-left: 2px;
 }
 
