@@ -1,8 +1,6 @@
 import {
   AppShell,
-  Center,
   Drawer,
-  Loader,
   useMantineColorScheme,
 } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
@@ -44,11 +42,13 @@ import {
 import type { InboxPageDto } from "./api/types/InboxPageDto";
 import { FilesPanel } from "./components/FilesPanel";
 import { InboxView } from "./components/InboxView";
+import { MobileTabBar } from "./components/MobileTabBar";
 import { RealChangesPanel } from "./components/RealChangesPanel";
 import { RealThreadView } from "./components/RealThreadView";
 import { ReviewDialog } from "./components/ReviewDialog";
 import { SettingsView } from "./components/SettingsView";
 import { ShareDialog } from "./components/ShareDialog";
+import { SheetGrabber } from "./components/SheetGrabber";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TitleBar } from "./components/TitleBar";
@@ -57,10 +57,24 @@ import {
   RenameThreadDialog,
   RevertThreadDialog,
 } from "./components/ThreadDialogs";
+import { EmptyState } from "./components/EmptyState";
 import { WorkspaceEmpty } from "./components/WorkspaceEmpty";
+import { useOverlayBack } from "./lib/overlay-back";
 import { pathFor, useRoute } from "./lib/router";
 
 type View = "inbox" | "thread" | "settings" | "project";
+
+function blurActiveInput() {
+  const active = document.activeElement;
+  if (
+    active instanceof HTMLElement &&
+    (active.isContentEditable ||
+      active.tagName === "INPUT" ||
+      active.tagName === "TEXTAREA")
+  ) {
+    active.blur();
+  }
+}
 
 /** Optimistic unread page after a thread's inbox items were marked read. */
 function withoutThreadInboxItems(
@@ -107,11 +121,20 @@ function Workspace() {
   const [renameOpened, rename] = useDisclosure(false);
   const [revertOpened, revert] = useDisclosure(false);
   const [reviewOpened, review] = useDisclosure(false);
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem("threadbase.nav-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [asideTab, setAsideTab] = useState<"changes" | "files">("changes");
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const wide = useMediaQuery("(min-width: 1200px)");
-  const phone = useMediaQuery("(max-width: 48em)");
+  const phone = useMediaQuery("(max-width: 47.99em)");
+  const tablet = useMediaQuery("(min-width: 48em) and (max-width: 74.99em)");
+  const [paletteOpened, setPaletteOpened] = useState(false);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
 
@@ -137,6 +160,115 @@ function Workspace() {
     if (path === location.pathname) return;
     void navigate(path, options);
   };
+
+  // Back closes the topmost overlay instead of leaving the screen behind it.
+  useOverlayBack(navOpened, nav.close);
+  useOverlayBack(changesOpened, changes.close);
+  useOverlayBack(mergeOpened, merge.close);
+  useOverlayBack(shareOpened, share.close);
+  useOverlayBack(renameOpened, rename.close);
+  useOverlayBack(revertOpened, revert.close);
+  useOverlayBack(reviewOpened, review.close);
+  useOverlayBack(paletteOpened, () => {
+    setPaletteOpened(false);
+    spotlight.close();
+  });
+
+  useEffect(() => {
+    if (!navOpened) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") nav.close();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navOpened]);
+
+  // An in-app navigation makes the overlays stale; close them as the route
+  // changes so a drawer never survives into the next screen.
+  useEffect(() => {
+    nav.close();
+    changes.close();
+  }, [route.kind, routeThreadId]);
+
+  // Crossing into the three-column layout replaces the drawer with the inline
+  // aside; drop the drawer state so it does not reappear on the way back.
+  useEffect(() => {
+    if (wide) changes.close();
+  }, [wide]);
+
+  // The phone drawer must not survive a resize into the tablet rail.
+  useEffect(() => {
+    if (!phone) nav.close();
+  }, [phone]);
+
+  // iOS keeps the keyboard up while the transcript scrolls underneath it.
+  // Blur the composer on a real drag, but never on the keyboard's own resize
+  // scroll or when the pointer went down inside the composer.
+  useEffect(() => {
+    let armed = false;
+    let timer = 0;
+    const arm = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".composer")) return;
+      armed = true;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        armed = false;
+      }, 1_500);
+    };
+    const onScroll = () => {
+      if (!armed) return;
+      armed = false;
+      window.clearTimeout(timer);
+      blurActiveInput();
+    };
+    document.addEventListener("pointerdown", arm, true);
+    document.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", arm, true);
+      document.removeEventListener("scroll", onScroll, true);
+    };
+  }, []);
+
+  const openChanges = () => {
+    blurActiveInput();
+    changes.open();
+  };
+
+  // The phone tab bar opens the sheet from the bottom; when the nav drawer is
+  // over the thread, let it finish its close transition first, otherwise the
+  // two overlays fight over the same history entry.
+  const openChangesFromTabs = () => {
+    if (!selectedThread) return;
+    if (navOpened) {
+      nav.close();
+      window.setTimeout(openChanges, 220);
+      return;
+    }
+    openChanges();
+  };
+
+  const toggleNav = () => {
+    if (!navOpened) blurActiveInput();
+    nav.toggle();
+  };
+
+  const toggleNavCollapsed = () => {
+    setNavCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(
+          "threadbase.nav-collapsed",
+          next ? "1" : "0",
+        );
+      } catch {
+        // Private mode: the preference simply does not persist.
+      }
+      return next;
+    });
+  };
+
 
   // A thread URL is authoritative: resolve it from the cached list, or fetch it
   // directly so a deep link works before any list has loaded.
@@ -367,9 +499,14 @@ function Workspace() {
     <>
       <AppShell
         mode="static"
-        header={{ height: { base: 48, sm: 38 } }}
+        header={{
+          height: {
+            base: "calc(48px + env(safe-area-inset-top))",
+            sm: "calc(38px + env(safe-area-inset-top))",
+          },
+        }}
         navbar={{
-          width: 260,
+          width: tablet && navCollapsed ? 0 : 260,
           breakpoint: "sm",
           collapsed: { mobile: !navOpened },
         }}
@@ -378,10 +515,14 @@ function Workspace() {
           breakpoint: "lg",
           collapsed: { mobile: true, desktop: !showAside },
         }}
-        footer={{ height: { base: 30, sm: 26 } }}
+        footer={{
+          height: { base: 56, sm: 26 },
+        }}
         padding={0}
         withBorder={false}
         className="shell"
+        data-nav-collapsed={navCollapsed ? "true" : undefined}
+        data-nav-open={navOpened ? "true" : undefined}
       >
         <TitleBar
           title={title}
@@ -395,10 +536,12 @@ function Workspace() {
           canManage={Boolean(selectedThread) && route.kind === "thread"}
           isPinned={selectedThread?.pinned ?? false}
           navOpened={navOpened}
-          onToggleNav={nav.toggle}
+          navCollapsed={navCollapsed}
+          onToggleNav={toggleNav}
+          onToggleNavCollapsed={toggleNavCollapsed}
           onOpenPalette={() => spotlight.open()}
           onOpenInbox={openInbox}
-          onOpenChanges={changes.open}
+          onOpenChanges={openChanges}
           onReviews={() => {
             if (!selectedThread) {
               notifications.show({
@@ -486,63 +629,91 @@ function Workspace() {
               onPresence={setOnlineUserIds}
             />
           ) : route.kind === "thread" ? (
-            <Center h="60vh">
-              <Loader size="sm" />
-            </Center>
+            <EmptyState loading title="Opening thread" />
           ) : (
             <WorkspaceEmpty />
           )}
         </AppShell.Main>
-        <AppShell.Aside p={0} className="aside">
-          {selectedThread ? (
-            asideTab === "changes" ? (
-              <RealChangesPanel
-                key={selectedThread.id}
-                threadId={selectedThread.id}
-                onShowFiles={() => setAsideTab("files")}
-              />
-            ) : (
-              <FilesPanel
-                key={selectedThread.id}
-                threadId={selectedThread.id}
-                onShowChanges={() => setAsideTab("changes")}
-              />
-            )
-          ) : null}
-        </AppShell.Aside>
-        <StatusBar
-          thread={selectedThread ?? undefined}
-          workspace={view !== "thread" || selectedThread === null}
-        />
+        {wide ? (
+          <AppShell.Aside p={0} className="aside">
+            {selectedThread ? (
+              asideTab === "changes" ? (
+                <RealChangesPanel
+                  key={selectedThread.id}
+                  threadId={selectedThread.id}
+                  onShowFiles={() => setAsideTab("files")}
+                />
+              ) : (
+                <FilesPanel
+                  key={selectedThread.id}
+                  threadId={selectedThread.id}
+                  onShowChanges={() => setAsideTab("changes")}
+                />
+              )
+            ) : null}
+          </AppShell.Aside>
+        ) : null}
+        {phone ? (
+          <MobileTabBar
+            view={view}
+            unreadCount={inboxUnread.data?.unread ?? 0}
+            threadsOpened={navOpened}
+            changesOpened={changesOpened}
+            changesEnabled={Boolean(selectedThread)}
+            onInbox={openInbox}
+            onThreads={toggleNav}
+            onChanges={openChangesFromTabs}
+            onSettings={openSettings}
+          />
+        ) : (
+          <StatusBar
+            thread={selectedThread ?? undefined}
+            workspace={view !== "thread" || selectedThread === null}
+          />
+        )}
+        {/* Inside the shell, so the transformed shell's stacking context keeps
+            the scrim below the navbar and header. */}
+        {phone && navOpened ? (
+          <button
+            type="button"
+            className="nav-scrim"
+            tabIndex={-1}
+            aria-label="Close navigation"
+            onClick={nav.close}
+          />
+        ) : null}
       </AppShell>
 
       {!wide && showAside ? (
         <Drawer
           opened={changesOpened}
           onClose={changes.close}
-          position="right"
-          size={phone ? "100%" : "min(92vw, 520px)"}
+          position={phone ? "bottom" : "right"}
+          size={phone ? "92%" : "min(92vw, 520px)"}
           padding={0}
           withCloseButton={false}
-          className="changes-drawer"
+          className={phone ? "changes-drawer changes-sheet" : "changes-drawer"}
         >
-          {selectedThread ? (
-            asideTab === "changes" ? (
-              <RealChangesPanel
-                key={selectedThread.id}
-                threadId={selectedThread.id}
-                onClose={changes.close}
-                onShowFiles={() => setAsideTab("files")}
-              />
-            ) : (
-              <FilesPanel
-                key={selectedThread.id}
-                threadId={selectedThread.id}
-                onClose={changes.close}
-                onShowChanges={() => setAsideTab("changes")}
-              />
-            )
-          ) : null}
+          <div className="sheet-stack">
+            {phone ? <SheetGrabber onClose={changes.close} /> : null}
+            {selectedThread ? (
+              asideTab === "changes" ? (
+                <RealChangesPanel
+                  key={selectedThread.id}
+                  threadId={selectedThread.id}
+                  onClose={changes.close}
+                  onShowFiles={() => setAsideTab("files")}
+                />
+              ) : (
+                <FilesPanel
+                  key={selectedThread.id}
+                  threadId={selectedThread.id}
+                  onClose={changes.close}
+                  onShowChanges={() => setAsideTab("changes")}
+                />
+              )
+            ) : null}
+          </div>
         </Drawer>
       ) : null}
 
@@ -581,7 +752,9 @@ function Workspace() {
         onOpenChanges={() => {
           review.close();
           setAsideTab("changes");
-          changes.open();
+          // Let the review's history entry unwind before the drawer pushes its
+          // own; otherwise the drawer can be dismissed by the review's back.
+          window.setTimeout(openChanges, 0);
         }}
       />
 
@@ -596,6 +769,8 @@ function Workspace() {
         shortcut={["mod + K"]}
         highlightQuery
         nothingFound="Nothing here."
+        onSpotlightOpen={() => setPaletteOpened(true)}
+        onSpotlightClose={() => setPaletteOpened(false)}
         searchProps={{
           placeholder: "Search threads or run a command…",
         }}

@@ -50,9 +50,6 @@ importers:
       '@tiptap/suggestion':
         specifier: ^3.33.1
         version: 3.33.1(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.1(@tiptap/pm@3.33.1))(@tiptap/pm@3.33.1)
-      dayjs:
-        specifier: ^1.11.23
-        version: 1.11.23
       diff:
         specifier: ^9.0.0
         version: 9.0.0
@@ -776,9 +773,6 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
-
-  dayjs@1.11.23:
-    resolution: {integrity: sha512-QDTCU0M0MxR3hQfnlDJfwekQiaanm1ubOD231u73WBckQ/fsamwRLiE2GBz6D3a/xF1NgfiDLJjXBa1hYOYTtQ==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -2057,8 +2051,6 @@ snapshots:
   cookie-es@3.1.1: {}
 
   csstype@3.2.3: {}
-
-  dayjs@1.11.23: {}
 
   debug@4.4.3:
     dependencies:

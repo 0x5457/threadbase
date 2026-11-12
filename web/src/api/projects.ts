@@ -35,3 +35,14 @@ export function listSkills(projectId: string) {
     `/api/projects/${projectId}/skills`,
   );
 }
+
+/**
+ * Removes the project together with every thread, worktree and branch
+ * Threadbase created for it. The repository directory is left untouched.
+ */
+export function deleteProject(projectId: string) {
+  return request<{ ok: boolean }>(
+    `/api/projects/${projectId}?confirm=true`,
+    { method: "DELETE" },
+  );
+}

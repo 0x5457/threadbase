@@ -191,7 +191,8 @@ export function ComposerToolbar({
             aria-label="Send"
             variant="filled"
             color="dark"
-            size={24}
+            size={26}
+            radius="xl"
             disabled={!hasText || sending || sendBlocked || !writable}
             loading={sending}
             onClick={onSend}

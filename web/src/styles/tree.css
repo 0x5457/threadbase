@@ -1,0 +1,41 @@
+/* tree: sidebar nesting gets a guide line and node dots, Delta style. */
+
+.side-project .mantine-NavLink-children {
+  position: relative;
+  padding-left: 6px;
+}
+
+.side-project .mantine-NavLink-children::before {
+  position: absolute;
+  top: 2px;
+  bottom: 6px;
+  left: 21px;
+  width: 1px;
+  background: var(--line-soft);
+  content: "";
+}
+
+.side-project .mantine-NavLink-children .side-nav {
+  position: relative;
+  padding-left: 22px;
+}
+
+.side-project .mantine-NavLink-children .side-nav::before {
+  position: absolute;
+  top: 50%;
+  left: 26px;
+  width: 4px;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: var(--line);
+  content: "";
+}
+
+.side-project .mantine-NavLink-children .side-nav[data-active]::before {
+  background: var(--brand);
+}
+
+.side-project .mantine-NavLink-children .side-nav:hover::before {
+  background: var(--ink-faint);
+}

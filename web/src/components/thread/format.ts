@@ -1,7 +1,5 @@
 /// Shared formatting for timeline rows.
 
-import dayjs from "dayjs";
-
 export { initials } from "../../lib/initials";
 
 export function describeTitle(title: string) {
@@ -9,6 +7,11 @@ export function describeTitle(title: string) {
   return flat.length > 96 ? `${flat.slice(0, 96)}…` : flat;
 }
 
+const clock = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 export function timeOf(ts: number) {
-  return dayjs(ts).format("hh:mm A");
+  return clock.format(new Date(ts));
 }

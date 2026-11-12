@@ -4,5 +4,4 @@ export type FileContentDto = {
   path: string;
   content: string;
   truncated: boolean;
-  language: string | null;
 };

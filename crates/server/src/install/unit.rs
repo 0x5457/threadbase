@@ -99,6 +99,9 @@ fn escape_quoted(value: &str) -> String {
     escape_specifiers(value)
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 /// Quote one ExecStart argument, including the executable itself.
@@ -111,6 +114,9 @@ fn quote_argument(value: &str) -> String {
             '\\' => quoted.push_str("\\\\"),
             '"' => quoted.push_str("\\\""),
             '$' => quoted.push_str("$$"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
             _ => quoted.push(character),
         }
     }
@@ -120,10 +126,9 @@ fn quote_argument(value: &str) -> String {
 
 /// Plain environment assignments stay unquoted unless the value needs quoting.
 fn environment_value(value: &str) -> String {
-    if value
-        .chars()
-        .any(|character| character.is_whitespace() || matches!(character, '"' | '\\'))
-    {
+    if value.chars().any(|character| {
+        character.is_whitespace() || character.is_control() || matches!(character, '"' | '\\')
+    }) {
         format!("\"{}\"", escape_quoted(value))
     } else {
         escape_specifiers(value)
@@ -180,6 +185,20 @@ mod tests {
             !unit.contains("0.0.0.0"),
             "unit must never expose a public bind"
         );
+    }
+
+    #[test]
+    fn unit_escapes_control_characters() {
+        let unit = render(&UnitSpec {
+            exe: Path::new("/bin/threadbase"),
+            data_dir: Path::new("/tmp/data\nExecStartPre=/bin/false"),
+            port: 7777,
+            public_origin: None,
+            admin: None,
+            path_env: None,
+        });
+        assert!(!unit.contains("\nExecStartPre="), "{unit}");
+        assert!(unit.contains("\\nExecStartPre="), "{unit}");
     }
 
     #[test]

@@ -176,7 +176,6 @@ pub async fn file_diff(
             path: path.to_owned(),
             old_path: None,
             status: FileStatus::Untracked,
-            language: None,
             binary: is_binary_bytes(&content),
             hunks: untracked_hunks(path, &content),
         });
@@ -205,7 +204,6 @@ pub async fn file_diff(
         path: path.to_owned(),
         old_path: None,
         status,
-        language: None,
         binary,
         hunks,
     })

@@ -961,7 +961,6 @@ pub struct FileContentDto {
     pub path: String,
     pub content: String,
     pub truncated: bool,
-    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1016,7 +1015,6 @@ pub struct FileDiffDto {
     pub path: String,
     pub old_path: Option<String>,
     pub status: FileStatus,
-    pub language: Option<String>,
     pub binary: bool,
     pub hunks: Vec<DiffHunkDto>,
 }

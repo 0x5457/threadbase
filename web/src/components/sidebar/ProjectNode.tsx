@@ -1,4 +1,13 @@
-import { ActionIcon, Group, Menu, NavLink, Text } from "@mantine/core";
+import {
+  ActionIcon,
+  Button,
+  Group,
+  Menu,
+  Modal,
+  NavLink,
+  Stack,
+  Text,
+} from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import {
   IconDots,
@@ -6,9 +15,13 @@ import {
   IconMessage,
   IconPlus,
   IconSettings,
+  IconTrash,
 } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 import { useState } from "react";
 import { listThreads, type Project, type ThreadSummary } from "../../api";
+import { deleteProject } from "../../api/projects";
 
 export function ProjectNode({
   project,
@@ -31,6 +44,23 @@ export function ProjectNode({
 }) {
   const active = activeProjectId === project.id;
   const [opened, setOpened] = useState(active);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const remove = async () => {
+    setRemoving(true);
+    try {
+      await deleteProject(project.id);
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      setRemoveOpen(false);
+      if (active) navigate("/inbox");
+    } finally {
+      setRemoving(false);
+    }
+  };
   const threads = useQuery({
     queryKey: ["threads", project.id],
     queryFn: () => listThreads(project.id),
@@ -121,8 +151,49 @@ export function ProjectNode({
             >
               Project settings
             </Menu.Item>
+            <Menu.Divider />
+            <Menu.Item
+              color="red"
+              leftSection={<IconTrash size={12} stroke={1.5} />}
+              onClick={() => setRemoveOpen(true)}
+            >
+              Remove project
+            </Menu.Item>
           </Menu.Dropdown>
         </Menu>
+
+        <Modal
+          opened={removeOpen}
+          onClose={() => setRemoveOpen(false)}
+          title={`Remove ${project.name}?`}
+          size="md"
+          centered
+        >
+          <Stack gap="sm">
+            <Text size="sm">
+              This removes the project from Threadbase together with its
+              threads, their worktrees and their branches.
+            </Text>
+            <Text size="sm" c="dimmed">
+              The repository folder itself stays where it is:{" "}
+              <Text component="span" ff="monospace" size="xs">
+                {project.path}
+              </Text>
+            </Text>
+            <Group justify="flex-end" gap="xs" mt={4}>
+              <Button variant="default" onClick={() => setRemoveOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                color="red"
+                loading={removing}
+                onClick={() => void remove()}
+              >
+                Remove project
+              </Button>
+            </Group>
+          </Stack>
+        </Modal>
       </div>
     </div>
   );

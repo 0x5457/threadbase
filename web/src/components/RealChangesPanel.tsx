@@ -25,10 +25,10 @@ import {
 } from "../api";
 import { DiffView } from "./DiffView";
 
-function patchFromDiff(diff: FileDiff) {
-  const oldPath = diff.oldPath ?? diff.path;
+function patchFromDiff(diff: FileDiff, oldPath: string | null) {
+  const previousPath = oldPath ?? diff.oldPath ?? diff.path;
   const patch: StructuredPatch = {
-    oldFileName: `a/${oldPath}`,
+    oldFileName: `a/${previousPath}`,
     newFileName: `b/${diff.path}`,
     oldHeader: undefined,
     newHeader: undefined,
@@ -131,9 +131,14 @@ export function RealChangesPanel({
     retry: false,
   });
 
+  const selectedFile =
+    changes?.files.find((file) => file.path === selected) ?? null;
   const patch = useMemo(
-    () => (diff.data ? patchFromDiff(diff.data) : null),
-    [diff.data],
+    () =>
+      diff.data && selectedFile
+        ? patchFromDiff(diff.data, selectedFile.oldPath)
+        : null,
+    [diff.data, selectedFile],
   );
 
   useEffect(() => {
@@ -155,7 +160,7 @@ export function RealChangesPanel({
         <Text size="sm" fw={500}>
           Changes
         </Text>
-        <Group gap={4} wrap="nowrap">
+        <Group gap={4} wrap="nowrap" className="changes-baseline">
           <IconGitBranch size={11} stroke={1.5} />
           <Text size="sm" c="dimmed">
             Since {changes?.baseLabel ?? "base"}
@@ -167,7 +172,7 @@ export function RealChangesPanel({
         <Text size="sm" className="stat-del">
           −{changes?.stats.deletions ?? 0}
         </Text>
-        <Box style={{ flex: 1 }} />
+        <Box className="changes-head-gap" />
         <Text size="xs" c="dimmed">
           {changes?.files.length ?? 0}{" "}
           {(changes?.files.length ?? 0) === 1 ? "file" : "files"}
@@ -226,6 +231,11 @@ export function RealChangesPanel({
                     {diff.error instanceof Error
                       ? diff.error.message
                       : "Cannot load diff"}
+                  </Text>
+                ) : diff.data && diff.data.hunks.length === 0 ? (
+                  <Text size="sm" c="dimmed" ta="center" py="xl">
+                    No textual changes to show (binary file or metadata-only
+                    rename).
                   </Text>
                 ) : patch ? (
                   <DiffView patch={patch} />

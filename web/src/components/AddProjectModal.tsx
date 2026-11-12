@@ -42,7 +42,7 @@ export function AddProjectModal({
   onClose,
   onAdded,
 }: AddProjectModalProps) {
-  const phone = useMediaQuery("(max-width: 48em)");
+  const phone = useMediaQuery("(max-width: 47.99em)");
   const [listing, setListing] = useState<DirectoryListing | null>(null);
   const [pathInput, setPathInput] = useState("");
   const [loading, setLoading] = useState(false);

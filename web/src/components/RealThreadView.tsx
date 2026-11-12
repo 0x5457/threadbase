@@ -1,8 +1,13 @@
 import { Alert, Center, Loader, UnstyledButton } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertCircle, IconArrowDown } from "@tabler/icons-react";
+import {
+  IconAlertCircle,
+  IconArrowDown,
+  IconChevronDown,
+} from "@tabler/icons-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Fragment,
   forwardRef,
   useCallback,
   useEffect,
@@ -37,6 +42,7 @@ import { AgentLog } from "./AgentLog";
 import { Composer } from "./Composer";
 import { ApprovalCard } from "./thread/ApprovalCard";
 import { CommentCard, CommentEditor } from "./thread/CommentCard";
+import { CommentThread } from "./thread/CommentThread";
 import { ElicitationCard } from "./thread/ElicitationCard";
 import { EmptyThread } from "./thread/EmptyThread";
 import { Message, Notice, Thinking } from "./thread/Message";
@@ -47,44 +53,129 @@ import { Tool } from "./thread/Tool";
 /// Virtuoso renders the transcript inside this wrapper so the document column,
 /// its padding and the text-width setting keep applying.
 
+/// A row is either a single reducer item or a run of consecutive tool calls,
+/// which Delta-style collapses into one "ran N tools" line.
+type ToolItem = Extract<ViewItem, { kind: "tool" }>;
+type TimelineRowItem =
+  | ViewItem
+  | { kind: "tools"; id: string; tools: ToolItem[] }
+  | {
+      kind: "run";
+      id: string;
+      thinking: Extract<ViewItem, { kind: "thinking" }>;
+      tools: ToolItem[];
+    };
+
 /// One transcript row. Rendering is a pure function of the reducer item so
 /// Virtuoso can mount and unmount rows freely while scrolling.
 function TimelineRow({
   item,
   active,
   comments,
-  commentKey,
+  commentsForTool,
+  threadKey,
+  openComments,
+  onToggleComments,
+  renderComment,
   editing,
   editor,
   onComment,
 }: {
-  item: ViewItem;
+  item: TimelineRowItem;
   active: boolean;
-  comments: ReactNode[];
-  commentKey: string | null;
+  comments: Comment[];
+  commentsForTool: (toolCallId: string) => Comment[];
+  threadKey: string | null;
+  openComments: Set<string>;
+  onToggleComments: (key: string) => void;
+  renderComment: (comment: Comment) => ReactNode;
   editing: string | null;
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
 }) {
+  const toolRow = (tool: ToolItem) => (
+    <Fragment key={tool.call.id}>
+      <Tool item={tool} />
+      <CommentThread
+        comments={commentsForTool(tool.call.id)}
+        threadKey={`t:${tool.call.id}`}
+        expanded={
+          openComments.has(`t:${tool.call.id}`) ||
+          editing === `t:${tool.call.id}`
+        }
+        onToggle={onToggleComments}
+        renderCard={renderComment}
+        editing={editing === `t:${tool.call.id}`}
+        editor={null}
+      />
+    </Fragment>
+  );
+
+  if (item.kind === "run") {
+    const count = item.thinking.count;
+    const thought = count > 1 ? `Thought ${count} times` : "Thought once";
+    const ran = ` · ran ${item.tools.length} ${
+      item.tools.length === 1 ? "tool" : "tools"
+    }`;
+    return (
+      <details className="run">
+        <summary title={item.thinking.text.trim().slice(0, 240)}>
+          <span>
+            {thought}
+            {ran}
+          </span>
+          <IconChevronDown size={11} stroke={1.5} />
+        </summary>
+        <div className="run-body">{item.tools.map(toolRow)}</div>
+      </details>
+    );
+  }
+
+  if (item.kind === "tools" && item.tools.length > 1) {
+    return (
+      <details className="tool-group">
+        <summary>
+          <span>ran {item.tools.length} tools</span>
+          <IconChevronDown size={11} stroke={1.5} />
+        </summary>
+        <div className="tool-group-body">{item.tools.map(toolRow)}</div>
+      </details>
+    );
+  }
+
+  const thread =
+    threadKey === null ? null : (
+      <CommentThread
+        comments={comments}
+        threadKey={threadKey}
+        expanded={openComments.has(threadKey)}
+        onToggle={onToggleComments}
+        renderCard={renderComment}
+        editing={editing === threadKey}
+        editor={
+          item.kind === "message"
+            ? editor({ kind: "message", messageId: item.id })
+            : null
+        }
+      />
+    );
+
   if (item.kind === "message") {
     return (
       <>
         <Message item={item} active={active} onComment={onComment} />
-        {comments}
-        {editing === commentKey
-          ? editor({ kind: "message", messageId: item.id })
-          : null}
+        {thread}
       </>
     );
   }
   switch (item.kind) {
     case "thinking":
-      return <Thinking count={item.count} />;
-    case "tool":
+      return <Thinking count={item.count} tools={item.tools} text={item.text} />;
+    case "tools":
       return (
         <>
-          <Tool item={item} />
-          {comments}
+          <Tool item={item.tools[0]} />
+          {thread}
         </>
       );
     case "notice":
@@ -125,6 +216,14 @@ export function RealThreadView({
   // visible, so a 10k-event transcript costs the same as a short one.
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+  const [openComments, setOpenComments] = useState<Set<string>>(new Set());
+  const toggleComments = (key: string) =>
+    setOpenComments((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const notifiedApprovals = useRef<Set<string>>(new Set());
 
   const bundleQuery = useQuery({
@@ -206,18 +305,43 @@ export function RealThreadView({
 
   // Rows handed to Virtuoso: every reducer block except a pending tool card,
   // which the approval card rendered in the footer replaces.
-  const rows = useMemo(
-    () =>
-      items.filter(
-        (item) =>
-          !(
-            pending.length > 0 &&
-            item.kind === "tool" &&
-            item.call.status === "pending"
-          ),
-      ),
-    [items, pending.length],
-  );
+  const rows = useMemo<TimelineRowItem[]>(() => {
+    const visible = items.filter(
+      (item) =>
+        !(
+          pending.length > 0 &&
+          item.kind === "tool" &&
+          item.call.status === "pending"
+        ),
+    );
+    const out: TimelineRowItem[] = [];
+    for (const item of visible) {
+      if (item.kind !== "tool") {
+        out.push(item);
+        continue;
+      }
+      const previous = out[out.length - 1];
+      if (previous?.kind === "run") {
+        previous.tools.push(item);
+        continue;
+      }
+      if (previous?.kind === "tools") {
+        previous.tools.push(item);
+        continue;
+      }
+      if (previous?.kind === "thinking" && previous.tools > 0) {
+        out[out.length - 1] = {
+          kind: "run",
+          id: `r:${previous.id}`,
+          thinking: previous,
+          tools: [item],
+        };
+        continue;
+      }
+      out.push({ kind: "tools", id: item.call.id, tools: [item] });
+    }
+    return out;
+  }, [items, pending.length]);
 
   useEffect(() => {
     setStickToBottom(true);
@@ -468,13 +592,16 @@ export function RealThreadView({
           computeItemKey={(index, item) =>
             item.kind === "message"
               ? `m:${item.id}`
-              : item.kind === "tool"
-                ? `t:${item.call.id}`
-                : `i:${index}`
+              : item.kind === "tools"
+                ? `g:${item.id}`
+                : item.kind === "run"
+                  ? item.id
+                  : `i:${index}`
           }
           components={{
             List: TimelineList,
-            Footer: () => <>{footerContent}</>,
+            Header: () => <div className="timeline-top-gap" />,
+            Footer: () => <div className="timeline-footer">{footerContent}</div>,
             EmptyPlaceholder: () =>
               live.error ? (
                 <Alert
@@ -492,19 +619,25 @@ export function RealThreadView({
             <TimelineRow
               item={item}
               active={bundle?.thread.status === "running"}
+              commentsForTool={(id) => commentsFor("tool_call", id)}
               comments={commentsFor(
-                item.kind === "message"
-                  ? "message"
-                  : item.kind === "tool"
-                    ? "tool_call"
-                    : "message",
+                item.kind === "message" ? "message" : "tool_call",
                 item.kind === "message"
                   ? item.id
-                  : item.kind === "tool"
-                    ? item.call.id
+                  : item.kind === "tools"
+                    ? item.tools[0].call.id
                     : "",
-              ).map(commentCard)}
-              commentKey={item.kind === "message" ? `m:${item.id}` : null}
+              )}
+              threadKey={
+                item.kind === "message"
+                  ? `m:${item.id}`
+                  : item.kind === "tools" && item.tools.length === 1
+                    ? `t:${item.tools[0].call.id}`
+                    : null
+              }
+              openComments={openComments}
+              onToggleComments={toggleComments}
+              renderComment={commentCard}
               editing={commentFor}
               editor={commentEditor}
               onComment={commentOnMessage}

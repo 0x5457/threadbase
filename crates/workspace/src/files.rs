@@ -103,7 +103,6 @@ pub fn read(root: &Path, relative: &str) -> Result<FileContentDto, FileError> {
         path: relative.to_owned(),
         content,
         truncated,
-        language: None,
     })
 }
 
@@ -215,17 +214,15 @@ mod tests {
     }
 
     #[test]
-    fn read_flags_binary_content_and_leaves_language_empty() {
+    fn read_flags_binary_content() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         std::fs::write(root.join("bin.dat"), b"hello\0world").unwrap();
         std::fs::write(root.join("text.txt"), b"hello world").unwrap();
         let binary = read(root, "bin.dat").unwrap();
         assert!(binary.truncated);
-        assert_eq!(binary.language, None);
         let text = read(root, "text.txt").unwrap();
         assert!(!text.truncated);
         assert_eq!(text.content, "hello world");
-        assert_eq!(text.language, None);
     }
 }

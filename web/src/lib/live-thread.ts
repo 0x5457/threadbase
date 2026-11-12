@@ -281,6 +281,10 @@ export function useLiveThread(
       if (typeof message.data === "string") handleServerMessage(message.data);
     };
 
+    // Partysocket synthesizes a 1000 close after transport errors; keep a
+    // distinct message so a dropped network does not read like a normal close.
+    next.onerror = () => setError("Live connection lost; reconnecting.");
+
     next.onclose = (event: CloseEvent) => {
       if (disposed) return;
       flush();
@@ -291,7 +295,9 @@ export function useLiveThread(
       setError(
         event.reason !== ""
           ? event.reason
-          : `Live connection closed (${event.code}); reconnecting.`,
+          : event.code === 1000
+            ? "Live connection lost; reconnecting."
+            : `Live connection closed (${event.code}); reconnecting.`,
       );
     };
 

@@ -187,7 +187,6 @@ export function ModelPicker({
   );
 
   const custom =
-    choices.length > 0 &&
     queryText.length > 0 &&
     !choices.some(
       (choice) =>

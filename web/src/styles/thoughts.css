@@ -1,0 +1,22 @@
+/* thoughts: reasoning reads as quiet metadata, never as a content block. */
+
+.thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: auto;
+  padding: 2px 0;
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  line-height: 1.5;
+  cursor: default;
+}
+
+.thinking-row svg {
+  flex: none;
+  opacity: 0.8;
+}
+
+.thinking-row:hover {
+  color: var(--ink-muted);
+}

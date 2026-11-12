@@ -178,9 +178,53 @@ function spliceText(doc: Y.Doc, body: Y.Text, next: string): void {
   const current = body.toString();
   if (current === next) return;
 
-  const changes = diffChars(current, next);
+  // Trim the common prefix and suffix first. Typical typing then diffs a few
+  // characters; a wholesale replacement is applied as one delete/insert and
+  // never runs Myers over the whole 16 KB block.
+  let start = 0;
+  const shortest = Math.min(current.length, next.length);
+  while (start < shortest && current[start] === next[start]) start += 1;
+  // Never cut a surrogate pair in half.
+  if (start > 0 && isHighSurrogate(current.charCodeAt(start - 1))) start -= 1;
+
+  let currentEnd = current.length;
+  let nextEnd = next.length;
+  while (currentEnd > start && nextEnd > start) {
+    const previous = current.charCodeAt(currentEnd - 1);
+    const candidate = next.charCodeAt(nextEnd - 1);
+    if (previous !== candidate) break;
+    if (
+      isLowSurrogate(previous) &&
+      currentEnd - 2 >= start &&
+      nextEnd - 2 >= start &&
+      isHighSurrogate(current.charCodeAt(currentEnd - 2)) &&
+      isHighSurrogate(next.charCodeAt(nextEnd - 2))
+    ) {
+      currentEnd -= 2;
+      nextEnd -= 2;
+      continue;
+    }
+    currentEnd -= 1;
+    nextEnd -= 1;
+  }
+
+  const middleCurrent = current.slice(start, currentEnd);
+  const middleNext = next.slice(start, nextEnd);
+  const replaceWholeMiddle = () => {
+    doc.transact(() => {
+      if (middleCurrent.length > 0) body.delete(start, middleCurrent.length);
+      if (middleNext.length > 0) body.insert(start, middleNext);
+    });
+  };
+
+  if (middleCurrent.length + middleNext.length > 2048) {
+    replaceWholeMiddle();
+    return;
+  }
+
+  const changes = diffChars(middleCurrent, middleNext);
   doc.transact(() => {
-    let index = 0;
+    let index = start;
     for (const change of changes) {
       if (change.removed) {
         body.delete(index, change.value.length);
@@ -192,6 +236,14 @@ function spliceText(doc: Y.Doc, body: Y.Text, next: string): void {
       }
     }
   });
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
 }
 
 interface AwarenessUser {

@@ -1,0 +1,78 @@
+/* diff: Delta-style panel chrome - flat surfaces, tabular counts, muted
+   baseline, and a quiet separator instead of stacked borders. */
+
+.changes-head {
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-head .mantine-Group-root svg {
+  color: var(--ink-faint);
+}
+
+.changes-head .mantine-Group-root .mantine-Text-root {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+}
+
+.changes-head .stat-add {
+  color: var(--add);
+  font-weight: 500;
+}
+
+.changes-head .stat-del {
+  color: var(--del);
+  font-weight: 500;
+}
+
+.changes-head .mantine-Button-root {
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11.5px;
+}
+
+.diff-wrap {
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0;
+}
+
+.diff-wrap :where(code, pre, .line-number, [class*="line-number"]) {
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-wrap [class*="line-number"] {
+  color: var(--ink-faint);
+  user-select: none;
+}
+
+/* Content layer: Delta keeps additions/deletions barely tinted, with a
+   slightly stronger gutter so the line numbers stay readable. The diffs
+   viewer exposes each surface as a CSS variable. */
+.diff-wrap {
+  --diffs-bg-addition: color-mix(in srgb, var(--add) 9%, var(--code));
+  --diffs-bg-addition-emphasis: color-mix(in srgb, var(--add) 16%, var(--code));
+  --diffs-bg-deletion: color-mix(in srgb, var(--del) 9%, var(--code));
+  --diffs-bg-deletion-emphasis: color-mix(in srgb, var(--del) 16%, var(--code));
+  --diffs-bg-context: var(--code);
+  --diffs-bg-addition-number-override: color-mix(in srgb, var(--add) 14%, var(--code));
+  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--del) 14%, var(--code));
+  --diffs-bg-context-gutter-override: color-mix(in srgb, var(--ink) 3%, var(--code));
+  --diffs-bg-separator: var(--line-soft);
+  --diffs-bg-hover-override: color-mix(in srgb, var(--ink) 4%, transparent);
+  --diffs-addition-color: var(--add);
+  --diffs-deletion-color: var(--del);
+}
+
+/* Dark reading: the code surface is already dark, so the tint comes from the
+   add/del background tokens instead of mixing towards --code. */
+[data-mantine-color-scheme="dark"] .diff-wrap {
+  --diffs-bg-addition: color-mix(in srgb, var(--add-bg) 70%, var(--code));
+  --diffs-bg-addition-emphasis: color-mix(in srgb, var(--add-bg) 95%, var(--code));
+  --diffs-bg-deletion: color-mix(in srgb, var(--del-bg) 70%, var(--code));
+  --diffs-bg-deletion-emphasis: color-mix(in srgb, var(--del-bg) 95%, var(--code));
+  --diffs-bg-addition-number-override: var(--add-bg);
+  --diffs-bg-deletion-number-override: var(--del-bg);
+  --diffs-bg-context-gutter-override: color-mix(in srgb, var(--ink) 5%, var(--code));
+  --diffs-bg-hover-override: color-mix(in srgb, var(--ink) 6%, transparent);
+}

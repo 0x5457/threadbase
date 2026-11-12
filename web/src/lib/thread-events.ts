@@ -29,12 +29,20 @@ export type ViewItem =
       id: string;
       role: "user" | "agent";
       name: string;
+      avatarUrl: string | null;
       color: string;
       text: string;
       ts: number;
       streaming: boolean;
     }
-  | { kind: "thinking"; id: string; text: string; ts: number; count: number }
+  | {
+      kind: "thinking";
+      id: string;
+      text: string;
+      ts: number;
+      count: number;
+      tools: number;
+    }
   | { kind: "tool"; call: ToolCallData; ts: number }
   | { kind: "notice"; level: "info" | "error"; text: string; ts: number }
   | { kind: "turn"; label: string; ts: number };
@@ -67,6 +75,7 @@ export function reduceEvents(
     id: string,
     role: "user" | "agent",
     name: string,
+    avatarUrl: string | null,
     color: string,
     chunk: string,
     ts: number,
@@ -80,6 +89,7 @@ export function reduceEvents(
         id,
         role,
         name,
+        avatarUrl,
         color,
         text: chunk,
         ts,
@@ -130,6 +140,7 @@ export function reduceEvents(
           String(payload.messageId),
           "user",
           name,
+          author.avatarUrl ?? null,
           author.color,
           visiblePrompt,
           event.ts,
@@ -143,6 +154,7 @@ export function reduceEvents(
           String(payload.messageId),
           payload.role === "user" ? "user" : "agent",
           displayName(author, payload.role === "user" ? "You" : agentName),
+          author?.avatarUrl ?? null,
           author?.color ?? "#6f7276",
           String(payload.text ?? ""),
           event.ts,
@@ -159,6 +171,7 @@ export function reduceEvents(
             message.author,
             message.role === "user" ? "You" : agentName,
           ),
+          message.author?.avatarUrl ?? null,
           message.author?.color ?? "#6f7276",
           message.text,
           message.createdAt,
@@ -182,11 +195,12 @@ export function reduceEvents(
               text,
               ts: event.ts,
               count: previous.count + 1,
+              tools: previous.tools,
             };
             break;
           }
           thinkingRows.set(id, items.length);
-          items.push({ kind: "thinking", id, text, ts: event.ts, count: 1 });
+          items.push({ kind: "thinking", id, text, ts: event.ts, count: 1, tools: 0 });
         } else {
           const row = items[existing];
           if (row.kind === "thinking") {
@@ -206,6 +220,10 @@ export function reduceEvents(
         const call = payload.call as ToolCallData;
         const existing = toolRows.get(call.id);
         if (existing === undefined) {
+          const last = items[items.length - 1];
+          if (last?.kind === "thinking") {
+            items[items.length - 1] = { ...last, tools: last.tools + 1 };
+          }
           toolRows.set(call.id, items.length);
           items.push({ kind: "tool", call, ts: event.ts });
         } else {

@@ -67,22 +67,25 @@ body {
 }
 
 [data-mantine-color-scheme="dark"] {
-  --paper: #131519;
-  --chrome: #171a1e;
-  --raised: #191c21;
-  --line: #30343a;
-  --line-soft: #25292e;
-  --ink: #acb2be;
-  --ink-muted: #9aa0aa;
-  --ink-faint: #828892;
-  --hover: #1f2227;
-  --selected: #292d33;
-  --code: #171a1e;
-  --brand: #e06a55;
-  --add: #a1c181;
-  --add-bg: #23301f;
-  --del: #d36151;
-  --del-bg: #35211f;
+  /* Warm dark, same paper family as the light theme rather than the old cool
+     gray. Measured on paper/chrome/raised: ink 11.0/10.1/9.7,
+     muted 6.6/6.1/5.9, faint 4.9/4.5/4.3. */
+  --paper: #1b1814;
+  --chrome: #211d18;
+  --raised: #242019;
+  --line: #3a342c;
+  --line-soft: #2c2721;
+  --ink: #e9e3d9;
+  --ink-muted: #b3aca1;
+  --ink-faint: #928b80;
+  --hover: #2a251d;
+  --selected: #332d24;
+  --code: #1f1b16;
+  --brand: #e0714f;
+  --add: #a7c98a;
+  --add-bg: #26301f;
+  --del: #d97a63;
+  --del-bg: #362321;
 }
 
 /* ── shell ─────────────────────────────────────────────────── */

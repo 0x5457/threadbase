@@ -253,8 +253,9 @@ fn redirect_error(message: &str) -> Response {
     (StatusCode::SEE_OTHER, headers).into_response()
 }
 
-/// Coarse budget for the unauthenticated auth endpoints: 30 requests per
-/// client IP per bucket within a 60-second window.
+/// Coarse budget for the unauthenticated auth endpoints: a burst of 30
+/// requests per client IP, then one every two seconds (about 30/minute
+/// sustained). The two endpoints keep independent buckets.
 const RATE_LIMIT: u32 = 30;
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
@@ -445,7 +446,7 @@ mod tests {
                         let mut headers = HeaderMap::new();
                         headers.insert(
                             "x-forwarded-for",
-                            HeaderValue::from_str(&format!("198.51.100.{worker}:{request}"))
+                            HeaderValue::from_str(&format!("198.51.{worker}.{request}"))
                                 .expect("valid test header"),
                         );
                         assert!(RateLimit::allow_callback(&headers, peer));

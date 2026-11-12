@@ -1,3 +1,83 @@
+/* ── safe areas ────────────────────────────────────────────── */
+
+/* The viewport opts into `viewport-fit=cover`, so the notch and the home
+   indicator have to be kept out of the chrome by hand. Mantine already adds
+   the bottom inset to the footer; the header and the horizontal edges are
+   ours. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+.header {
+  padding-top: var(--safe-top);
+}
+
+.header-left {
+  padding-left: calc(9px + var(--safe-left));
+}
+
+.header-right {
+  padding-right: calc(7px + var(--safe-right));
+}
+
+.sidebar-inner {
+  padding-left: var(--safe-left);
+}
+
+.statusbar {
+  padding-right: calc(10px + var(--safe-right));
+  padding-bottom: var(--safe-bottom);
+  padding-left: calc(10px + var(--safe-left));
+}
+
+.doc {
+  padding-right: max(24px, var(--safe-right));
+  padding-left: max(24px, var(--safe-left));
+}
+
+.composer-inner {
+  padding-right: max(24px, var(--safe-right));
+  padding-left: max(24px, var(--safe-left));
+}
+
+.mantine-Notifications-root {
+  padding-top: var(--safe-top);
+  padding-right: var(--safe-right);
+  padding-left: var(--safe-left);
+}
+
+/* ── overlay scrim ─────────────────────────────────────────── */
+
+.nav-scrim {
+  position: fixed;
+  /* Above the main content, below the navbar (Mantine's app z-index + 1). */
+  z-index: 100;
+  top: var(--app-shell-header-offset);
+  right: 0;
+  bottom: calc(var(--app-shell-footer-offset) + var(--safe-bottom));
+  left: 0;
+  display: none;
+  padding: 0;
+  border: 0;
+  background: rgb(0 0 0 / 32%);
+  cursor: default;
+}
+
+/* ── keyboard viewport ─────────────────────────────────────── */
+
+/* `.shell.shell` is deliberate: Mantine's `.m_89ab340[data-mode='static']`
+   has the same specificity and would otherwise win with `height: 100%`,
+   leaving the composer underneath the software keyboard. */
+@media (max-width: 74.99em), (pointer: coarse) {
+  .shell.shell {
+    height: var(--app-height, 100dvh);
+    transform: translateY(var(--app-offset, 0px));
+  }
+}
+
 /* ── responsive: tablet ────────────────────────────────────── */
 
 @media (hover: none) {
@@ -9,21 +89,25 @@
 
 @media (max-width: 74.99em) {
   .header .mantine-ActionIcon-root {
+    width: 32px;
+    height: 32px;
+  }
+
+  .side-nav {
+    height: 36px;
+  }
+
+  .composer-tools {
+    height: 32px;
+  }
+
+  .composer-tools .mantine-ActionIcon-root {
     width: 30px;
     height: 30px;
   }
 
-  .side-nav {
-    height: 32px;
-  }
-
-  .composer-tools .rt-IconButton {
-    width: 28px;
-    height: 28px;
-  }
-
   .change-row {
-    min-height: 32px;
+    min-height: 34px;
   }
 }
 
@@ -41,32 +125,45 @@
   }
 }
 
-/* ── responsive: phone ─────────────────────────────────────── */
-
-@media (max-width: 48em) {
-  .shell {
-    height: var(--app-height, 100dvh);
-    transform: translateY(var(--app-offset, 0px));
+/* The inline rail can be collapsed on tablets; phones already use the drawer.
+   The width itself comes from the AppShell navbar prop, so Mantine keeps its
+   own variables and grid columns in sync. */
+@media (min-width: 48em) and (max-width: 74.99em) {
+  .shell[data-nav-collapsed="true"] .sidebar {
+    display: none;
   }
 
-  /* Mantine positions the mobile navbar at the header offset but leaves its
-     height at 100dvh, pushing the sidebar footer below the viewport. Keep the
-     account/settings row above the status bar. */
+  .shell[data-nav-collapsed="true"] .header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+}
+
+/* ── responsive: phone ─────────────────────────────────────── */
+
+@media (max-width: 47.99em) {
   .mantine-AppShell-navbar.sidebar {
-    height: calc(var(--app-height, 100dvh) - 48px - 30px);
+    top: var(--app-shell-header-offset);
+    bottom: calc(
+      var(--app-shell-footer-offset) + env(safe-area-inset-bottom, 0px)
+    );
+    width: min(86vw, 340px);
+    height: auto;
+  }
+
+  .nav-scrim {
+    display: block;
   }
 
   .header {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
-  .header-left,
-  .header-right {
-    padding: 0 3px;
+  .header-left {
+    padding-left: max(4px, var(--safe-left));
   }
 
-  .header-left {
-    padding-left: 4px;
+  .header-right {
+    padding-right: max(3px, var(--safe-right));
   }
 
   .header-center {
@@ -79,8 +176,8 @@
   }
 
   .header .mantine-Burger-root {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
   }
 
   .doc-title {
@@ -88,31 +185,43 @@
   }
 
   .doc {
-    padding: 16px 14px 32px;
+    padding: 16px max(14px, var(--safe-right)) 32px
+      max(14px, var(--safe-left));
   }
 
   .settings-head {
-    padding: 12px 14px 10px;
+    padding: 12px max(14px, var(--safe-right)) 10px
+      max(14px, var(--safe-left));
   }
 
   .settings-body {
-    padding: 12px 14px;
+    padding: 12px max(14px, var(--safe-right));
   }
 
   .inbox-head {
-    padding: 12px 14px 10px;
+    padding: 12px max(14px, var(--safe-right)) 10px
+      max(14px, var(--safe-left));
   }
 
   .inbox-row {
-    padding: 10px 14px;
+    padding: 10px max(14px, var(--safe-right)) 10px
+      max(14px, var(--safe-left));
+  }
+
+  .changes-sheet .changes-head {
+    padding-right: max(10px, var(--safe-right));
+    padding-left: max(10px, var(--safe-left));
+  }
+
+  /* Mantine's full-screen modals reach the hardware edges; keep their
+     controls inside the safe area too. */
+  .mantine-Modal-content[data-full-screen="true"] {
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
   }
 
   .inbox-thread {
     max-width: 150px;
-  }
-
-  .inbox-time {
-    display: none;
   }
 
   .block {
@@ -145,7 +254,8 @@
   }
 
   .composer-inner {
-    padding: 8px 14px 8px;
+    padding: 8px max(14px, var(--safe-right)) 8px
+      max(14px, var(--safe-left));
   }
 
   .queue-bar {
@@ -164,13 +274,6 @@
     font-size: 17px;
   }
 
-  /* iOS zooms the page when a focused text control is smaller than 16px. */
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
-  textarea,
-  select {
-    font-size: 17px;
-  }
-
   .model-picker {
     max-width: 132px;
     min-height: 32px;
@@ -178,7 +281,7 @@
   }
 
   .composer-tools {
-    height: 34px;
+    height: 38px;
     padding-left: 30px;
   }
 
@@ -197,6 +300,299 @@
   }
 
   .statusbar {
-    padding: 0 8px;
+    padding-right: calc(8px + var(--safe-right));
+    padding-left: calc(8px + var(--safe-left));
   }
+
+  /* The tab bar owns these two destinations on phones. */
+  .header button[aria-label="Open changes"],
+  .burger-dot {
+    display: none;
+  }
+}
+
+/* ── touch targets ─────────────────────────────────────────── */
+
+/* Pointer capability, not viewport width, decides whether a finger is the
+   input device. Tablets previously inherited the compact desktop sizes (22px
+   composer controls) while phones got the larger ones. */
+@media (any-pointer: coarse) {
+  .header .mantine-ActionIcon-root,
+  .header .mantine-Burger-root {
+    width: 36px;
+    height: 36px;
+  }
+
+  .header .mantine-Button-root {
+    height: 34px;
+  }
+
+  .brand-row {
+    height: 36px;
+  }
+
+  .brand-row .mantine-ActionIcon-root {
+    width: 36px;
+    height: 36px;
+  }
+
+  .side-nav {
+    height: 40px;
+  }
+
+  .side-nav .mantine-NavLink-label {
+    font-size: 14.5px;
+  }
+
+  .side-project .project-menu {
+    top: 2px;
+    right: 26px;
+    width: 36px;
+    height: 36px;
+    opacity: 1;
+  }
+
+  .sidebar-footer {
+    height: 48px;
+  }
+
+  .sidebar-footer .mantine-ActionIcon-root {
+    width: 36px;
+    height: 36px;
+  }
+
+  .composer-tools {
+    height: 40px;
+  }
+
+  .composer-tools .mantine-ActionIcon-root {
+    width: 36px;
+    height: 36px;
+  }
+
+  .model-picker {
+    min-height: 36px;
+  }
+
+  .send-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .approval-actions .mantine-Button-root,
+  .approval-card .mantine-Button-root {
+    height: 40px;
+  }
+
+  .comment-card .mantine-Button-root,
+  .subagent-row .mantine-Button-root {
+    height: 36px;
+  }
+
+  .agent-log-head {
+    height: 36px;
+  }
+
+  .agent-log-copy {
+    width: 36px;
+    height: 36px;
+  }
+
+  .mantine-Modal-content .mantine-Button-root {
+    height: 38px;
+  }
+
+  .mantine-Menu-item {
+    min-height: 40px;
+  }
+
+  .model-picker-option,
+  .suggest-item {
+    min-height: 40px;
+  }
+
+  .block {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .comment-row {
+    margin-left: 42px;
+  }
+
+  .turn-gap {
+    margin-left: 42px;
+  }
+
+  /* The per-message comment action was hover-only, so touch users had no way
+     to comment on a message. Keep it in the gutter, below the avatar; the
+     block gets enough height that the button cannot spill into the next row
+     (where that row's gutter would swallow the tap). */
+  .message-block {
+    min-height: 68px;
+  }
+
+  .msg-comment-btn {
+    top: 24px;
+    right: auto;
+    left: -40px;
+    display: grid;
+    width: 36px;
+    height: 36px;
+  }
+
+  .comment-menu {
+    width: 36px;
+    height: 36px;
+    opacity: 1;
+  }
+
+  .comment-thread-trigger {
+    min-height: 36px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .queue-item {
+    height: 40px;
+  }
+
+  .queue-item .mantine-ActionIcon-root {
+    width: 36px;
+    height: 36px;
+  }
+
+  .changes-head {
+    height: 40px;
+  }
+
+  .changes-head .mantine-Button-root {
+    height: 36px;
+  }
+
+  .changes-head .mantine-ActionIcon-root {
+    width: 36px;
+    height: 36px;
+  }
+
+  .changes-tabs {
+    height: 40px;
+  }
+
+  .changes-tabs .mantine-Tabs-tab {
+    height: 40px;
+  }
+
+  .file-head {
+    height: 40px;
+  }
+
+  .change-row {
+    min-height: 40px;
+  }
+
+  .inbox-filter {
+    height: 36px;
+    padding: 0 10px;
+  }
+
+  .inbox-head .mantine-Button-root,
+  .settings-view .mantine-Button-root {
+    min-height: 36px;
+  }
+
+  /* iOS Safari zooms the page when a focused control is smaller than 16px. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+      [type="file"]
+    ):not([type="color"]),
+  textarea,
+  select {
+    font-size: 17px;
+  }
+}
+
+/* ── phone tab bar ─────────────────────────────────────────── */
+
+/* Replaces the status bar on phones; the branch/diff metadata stays in the
+   changes sheet. The footer height is 56px (base) in App.tsx. */
+.mobile-tabs {
+  display: flex;
+  align-items: stretch;
+  padding: 0 6px var(--safe-bottom);
+  border-top: 1px solid var(--line);
+  background: var(--chrome);
+  user-select: none;
+}
+
+.mobile-tab {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 2px 3px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 10.5px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.mobile-tab:active {
+  background: var(--hover);
+}
+
+.mobile-tab.active {
+  color: var(--ink);
+}
+
+.mobile-tab.active::before {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 26px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 0 0 2px 2px;
+  background: var(--brand);
+  content: "";
+}
+
+.mobile-tab:disabled {
+  opacity: 0.38;
+}
+
+.mobile-tab-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.mobile-tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -9px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-tab-label {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

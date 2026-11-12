@@ -20,7 +20,7 @@ use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
 use axum::http::Method;
 use sqlx::SqlitePool;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use threadbase_shared::{
     now_ms, ApiError, AuthMeDto, AuthStatusDto, AuthStatusResponse, UserAccess, UserDto,
 };
@@ -149,7 +149,8 @@ fn is_direct_local_request(parts: &Parts) -> bool {
 /// `x-forwarded-for` is only honoured when the direct peer is loopback, which
 /// is where a local terminator (Tailscale Funnel, a reverse proxy) sits. A
 /// remote peer cannot spoof its address through the header; its socket address
-/// is used instead. Only the closest forwarded hop is used.
+/// is used instead. The rightmost hop is the address appended by the trusted
+/// local proxy; an unparseable value falls back to the peer address.
 #[must_use]
 pub fn client_ip_for_headers(headers: &axum::http::HeaderMap, peer: Option<SocketAddr>) -> String {
     let peer_ip = peer.map(|addr| addr.ip());
@@ -157,11 +158,11 @@ pub fn client_ip_for_headers(headers: &axum::http::HeaderMap, peer: Option<Socke
         if let Some(hop) = headers
             .get("x-forwarded-for")
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.split(',').next())
+            .and_then(|value| value.rsplit(',').next())
             .map(str::trim)
-            .filter(|hop| !hop.is_empty())
+            .and_then(|hop| hop.parse::<IpAddr>().ok())
         {
-            return hop.to_owned();
+            return hop.to_string();
         }
     }
     peer_ip
@@ -409,10 +410,9 @@ mod tests {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert("x-forwarded-for", "203.0.113.9, 10.0.0.2".parse().unwrap());
         let loopback: SocketAddr = "127.0.0.1:5555".parse().unwrap();
-        assert_eq!(
-            client_ip_for_headers(&headers, Some(loopback)),
-            "203.0.113.9"
-        );
+        assert_eq!(client_ip_for_headers(&headers, Some(loopback)), "10.0.0.2");
+        headers.insert("x-forwarded-for", "not-an-ip".parse().unwrap());
+        assert_eq!(client_ip_for_headers(&headers, Some(loopback)), "127.0.0.1");
         let public: SocketAddr = "198.51.100.7:5555".parse().unwrap();
         assert_eq!(
             client_ip_for_headers(&headers, Some(public)),

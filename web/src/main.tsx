@@ -15,6 +15,7 @@ import {
   localStorageColorSchemeManager,
 } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
+import { useMediaQuery } from "@mantine/hooks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -30,6 +31,14 @@ import "./styles/approval.css";
 import "./styles/agent-log.css";
 import "./styles/composer.css";
 import "./styles/panels.css";
+import "./styles/comments.css";
+import "./styles/tree.css";
+import "./styles/thoughts.css";
+import "./styles/typography.css";
+import "./styles/diff.css";
+import "./styles/motion.css";
+import "./styles/empty.css";
+import "./styles/frame.css";
 import "./styles/responsive.css";
 
 const queryClient = new QueryClient({
@@ -136,6 +145,12 @@ function inviteToken() {
 
 installVisualViewportSync();
 
+/** Toasts sit over the composer on phones; keep them at the top instead. */
+function NotificationHost() {
+  const phone = useMediaQuery("(max-width: 47.99em)");
+  return <Notifications position={phone ? "top-center" : "bottom-right"} />;
+}
+
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root");
 
@@ -154,7 +169,7 @@ createRoot(root).render(
             <App />
           )}
         </AuthGate>
-        <Notifications position="bottom-right" />
+        <NotificationHost />
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,

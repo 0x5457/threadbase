@@ -9,8 +9,9 @@
 }
 
 .approval-head {
-  height: 27px;
+  height: 24px;
   border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--ink) 2%, transparent);
 }
 
 /* An approval has to be readable before it is granted: wrap instead of
@@ -251,3 +252,18 @@
   content: "";
 }
 
+
+/* Tighter body and a quieter title: an approval is a decision, not an article. */
+.approval-card .mantine-Box-root {
+  padding: 8px 10px;
+}
+
+.approval-card .mantine-Text-root.mantine-Text-md {
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.approval-actions {
+  margin-top: 6px;
+}

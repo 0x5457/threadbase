@@ -104,7 +104,6 @@ export function FilePreview({
                 file={{
                   name: fileName,
                   contents: fileData.content,
-                  lang: fileData.language ?? undefined,
                 }}
                 options={fileOptions}
                 disableWorkerPool

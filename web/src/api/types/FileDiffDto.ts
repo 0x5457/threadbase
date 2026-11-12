@@ -6,7 +6,6 @@ export type FileDiffDto = {
   path: string;
   oldPath: string | null;
   status: FileStatus;
-  language: string | null;
   binary: boolean;
   hunks: Array<DiffHunkDto>;
 };

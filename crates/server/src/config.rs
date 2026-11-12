@@ -237,7 +237,29 @@ fn normalize_authority(authority: &Authority) -> Option<String> {
         .and_then(|host| host.strip_suffix(']'))
         .unwrap_or(host);
     let host = host.trim_end_matches('.');
-    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+    if host.is_empty() {
+        return None;
+    }
+    // `Authority::host()` stops at `]`/`:` and ignores trailing junk; reject
+    // anything that is not exactly host or host:digits.
+    let bracketed = host.contains(':');
+    let host_repr = if bracketed {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    };
+    let raw = authority.as_str();
+    let port = authority.port();
+    let valid = match raw.strip_prefix(&host_repr) {
+        Some("") => port.is_none(),
+        Some(rest) => {
+            port.is_some()
+                && rest.starts_with(':')
+                && rest[1..].chars().all(|ch| ch.is_ascii_digit())
+        }
+        None => false,
+    };
+    valid.then(|| host.to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -262,6 +284,9 @@ mod tests {
         assert!(!config.is_allowed_host(""));
         assert!(!config.is_allowed_host("evil.example"));
         assert!(!config.is_allowed_host("127.0.0.2:7777"));
+        assert!(!config.is_allowed_host("[::1]junk"));
+        assert!(!config.is_allowed_host("[::1]evil:7777"));
+        assert!(!config.is_allowed_host("localhost:abc"));
 
         config.bind = "127.0.0.2:7777".parse().unwrap();
         assert!(config.is_allowed_host("127.0.0.2:7777"));
