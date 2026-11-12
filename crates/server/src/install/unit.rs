@@ -39,20 +39,29 @@ pub(crate) fn render(spec: &UnitSpec<'_>) -> String {
     unit.push_str("StartLimitIntervalSec=0\n\n");
     unit.push_str("[Service]\n");
     unit.push_str("Type=simple\n");
-    unit.push_str(&format!("ExecStart=\"{}\" serve\n", spec.exe.display()));
+    unit.push_str(&format!(
+        "ExecStart={} serve\n",
+        quote_argument(&spec.exe.to_string_lossy())
+    ));
     unit.push_str(&format!(
         "Environment=THREADBASE_BIND=127.0.0.1:{}\n",
         spec.port
     ));
     unit.push_str(&format!(
         "Environment=\"THREADBASE_DATA_DIR={}\"\n",
-        spec.data_dir.display()
+        escape_quoted(&spec.data_dir.to_string_lossy())
     ));
     if let Some(origin) = spec.public_origin {
-        unit.push_str(&format!("Environment=THREADBASE_PUBLIC_ORIGIN={origin}\n"));
+        unit.push_str(&format!(
+            "Environment=THREADBASE_PUBLIC_ORIGIN={}\n",
+            environment_value(origin)
+        ));
     }
     if let Some(admin) = spec.admin {
-        unit.push_str(&format!("Environment=THREADBASE_ADMINS={admin}\n"));
+        unit.push_str(&format!(
+            "Environment=THREADBASE_ADMINS={}\n",
+            environment_value(admin)
+        ));
     }
     // Secrets stay out of the unit, which systemd reads as a world-readable file.
     unit.push_str("EnvironmentFile=-%h/.config/threadbase/env\n");
@@ -64,7 +73,10 @@ pub(crate) fn render(spec: &UnitSpec<'_>) -> String {
                 seen.push(entry);
             }
         }
-        unit.push_str(&format!("Environment=\"PATH={}\"\n", seen.join(":")));
+        unit.push_str(&format!(
+            "Environment=\"PATH={}\"\n",
+            escape_quoted(&seen.join(":"))
+        ));
     }
     unit.push_str("Restart=on-failure\n");
     unit.push_str("RestartSec=2\n");
@@ -73,6 +85,48 @@ pub(crate) fn render(spec: &UnitSpec<'_>) -> String {
     unit.push_str("[Install]\n");
     unit.push_str("WantedBy=default.target\n");
     unit
+}
+
+/// `%` starts a systemd specifier even inside quotes, so literal text must use
+/// `%%`.
+fn escape_specifiers(value: &str) -> String {
+    value.replace('%', "%%")
+}
+
+/// Escape a value that is placed inside double quotes in the unit file.
+fn escape_quoted(value: &str) -> String {
+    escape_specifiers(value)
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
+/// Quote one ExecStart argument, including the executable itself.
+fn quote_argument(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for character in value.chars() {
+        match character {
+            '%' => quoted.push_str("%%"),
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '$' => quoted.push_str("$$"),
+            _ => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+/// Plain environment assignments stay unquoted unless the value needs quoting.
+fn environment_value(value: &str) -> String {
+    if value
+        .chars()
+        .any(|character| character.is_whitespace() || matches!(character, '"' | '\\'))
+    {
+        format!("\"{}\"", escape_quoted(value))
+    } else {
+        escape_specifiers(value)
+    }
 }
 
 /// The path this process was started from, so the unit points at the same file
@@ -161,6 +215,33 @@ mod tests {
         assert!(!unit.contains("THREADBASE_ADMINS"));
         assert!(!unit.contains("PATH="));
         assert!(unit.contains("THREADBASE_BIND=127.0.0.1:7788"));
+    }
+
+    #[test]
+    fn unit_escapes_specifiers_and_quotes_arguments() {
+        let unit = render(&UnitSpec {
+            exe: Path::new("/opt/Threadbase 100%/threadbase \"bin\""),
+            data_dir: Path::new("/home/ada/100% data"),
+            port: 7777,
+            public_origin: Some("https://example.test/100%"),
+            admin: Some("ada%admin"),
+            path_env: Some("/opt/100%/bin:/usr/bin"),
+        });
+        assert!(
+            unit.contains("ExecStart=\"/opt/Threadbase 100%%/threadbase \\\"bin\\\"\" serve"),
+            "{unit}"
+        );
+        assert!(
+            unit.contains("Environment=\"THREADBASE_DATA_DIR=/home/ada/100%% data\""),
+            "{unit}"
+        );
+        assert!(
+            unit.contains("THREADBASE_PUBLIC_ORIGIN=https://example.test/100%%"),
+            "{unit}"
+        );
+        assert!(unit.contains("THREADBASE_ADMINS=ada%%admin"), "{unit}");
+        assert!(unit.contains("\"PATH=/opt/100%%/bin:/usr/bin\""), "{unit}");
+        assert!(unit.contains("EnvironmentFile=-%h/.config/threadbase/env"));
     }
 
     #[test]

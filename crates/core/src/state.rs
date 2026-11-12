@@ -428,137 +428,58 @@ impl CommentMachine {
 // ---------------------------------------------------------------------------
 
 pub fn thread_status_str(status: ThreadStatus) -> &'static str {
-    match status {
-        ThreadStatus::Preparing => "preparing",
-        ThreadStatus::Idle => "idle",
-        ThreadStatus::Running => "running",
-        ThreadStatus::RequiresAction => "requires_action",
-        ThreadStatus::Interrupted => "interrupted",
-        ThreadStatus::Error => "error",
-        ThreadStatus::Archived => "archived",
-    }
+    status.as_str()
 }
 
 pub fn parse_thread_status(value: &str) -> Option<ThreadStatus> {
-    match value {
-        "preparing" => Some(ThreadStatus::Preparing),
-        "idle" => Some(ThreadStatus::Idle),
-        "running" => Some(ThreadStatus::Running),
-        "requires_action" => Some(ThreadStatus::RequiresAction),
-        "interrupted" => Some(ThreadStatus::Interrupted),
-        "error" => Some(ThreadStatus::Error),
-        "archived" => Some(ThreadStatus::Archived),
-        _ => None,
-    }
+    value.parse().ok()
 }
 
 // Initial state for a freshly bound agent session (diagnostic, non-authoritative).
 pub const INITIAL_BINDING_STATUS: &str = "idle";
 
 pub fn subagent_status_str(status: SubagentStatus) -> &'static str {
-    match status {
-        SubagentStatus::Running => "running",
-        SubagentStatus::RequiresAction => "requires_action",
-        SubagentStatus::Idle => "idle",
-        SubagentStatus::Cancelled => "cancelled",
-        SubagentStatus::Error => "error",
-    }
+    status.as_str()
 }
 
 pub fn parse_subagent_status(value: &str) -> Option<SubagentStatus> {
-    match value {
-        "running" => Some(SubagentStatus::Running),
-        "requires_action" => Some(SubagentStatus::RequiresAction),
-        "idle" => Some(SubagentStatus::Idle),
-        "cancelled" => Some(SubagentStatus::Cancelled),
-        "error" => Some(SubagentStatus::Error),
-        _ => None,
-    }
+    value.parse().ok()
 }
 
 pub fn queue_status_str(status: QueueStatus) -> &'static str {
-    match status {
-        QueueStatus::Queued => "queued",
-        QueueStatus::Sending => "sending",
-        QueueStatus::Sent => "sent",
-        QueueStatus::Superseded => "superseded",
-        QueueStatus::Dropped => "dropped",
-    }
+    status.as_str()
 }
 
 pub fn parse_queue_status(value: &str) -> Option<QueueStatus> {
-    match value {
-        "queued" => Some(QueueStatus::Queued),
-        "sending" => Some(QueueStatus::Sending),
-        "sent" => Some(QueueStatus::Sent),
-        "superseded" => Some(QueueStatus::Superseded),
-        "dropped" => Some(QueueStatus::Dropped),
-        _ => None,
-    }
+    value.parse().ok()
 }
 
 pub fn approval_status_str(status: ApprovalStatus) -> &'static str {
-    match status {
-        ApprovalStatus::Pending => "pending",
-        ApprovalStatus::Allowed => "allowed",
-        ApprovalStatus::Denied => "denied",
-        ApprovalStatus::Cancelled => "cancelled",
-    }
+    status.as_str()
 }
 
 pub fn parse_approval_status(value: &str) -> Option<ApprovalStatus> {
-    match value {
-        "pending" => Some(ApprovalStatus::Pending),
-        "allowed" => Some(ApprovalStatus::Allowed),
-        "denied" => Some(ApprovalStatus::Denied),
-        "cancelled" => Some(ApprovalStatus::Cancelled),
-        _ => None,
-    }
+    value.parse().ok()
 }
 
 pub fn approval_decision_str(decision: ApprovalDecision) -> &'static str {
-    match decision {
-        ApprovalDecision::AllowOnce => "allow_once",
-        ApprovalDecision::AllowSession => "allow_session",
-        ApprovalDecision::AllowThread => "allow_thread",
-        ApprovalDecision::Deny => "deny",
-    }
+    decision.as_str()
 }
 
 pub fn elicitation_status_str(status: ElicitationStatus) -> &'static str {
-    match status {
-        ElicitationStatus::Pending => "pending",
-        ElicitationStatus::Accepted => "accepted",
-        ElicitationStatus::Declined => "declined",
-        ElicitationStatus::Cancelled => "cancelled",
-    }
+    status.as_str()
 }
 
 pub fn parse_elicitation_status(value: &str) -> Option<ElicitationStatus> {
-    match value {
-        "pending" => Some(ElicitationStatus::Pending),
-        "accepted" => Some(ElicitationStatus::Accepted),
-        "declined" => Some(ElicitationStatus::Declined),
-        "cancelled" => Some(ElicitationStatus::Cancelled),
-        _ => None,
-    }
+    value.parse().ok()
 }
 
 pub fn comment_status_str(status: CommentStatus) -> &'static str {
-    match status {
-        CommentStatus::Pending => "pending",
-        CommentStatus::Delivered => "delivered",
-        CommentStatus::Resolved => "resolved",
-    }
+    status.as_str()
 }
 
 pub fn parse_comment_status(value: &str) -> Option<CommentStatus> {
-    match value {
-        "pending" => Some(CommentStatus::Pending),
-        "delivered" => Some(CommentStatus::Delivered),
-        "resolved" => Some(CommentStatus::Resolved),
-        _ => None,
-    }
+    value.parse().ok()
 }
 
 /// Map a target status to the action that produces it (None when unreachable).
@@ -571,22 +492,11 @@ pub fn comment_action_for(target: CommentStatus) -> Option<CommentAction> {
 }
 
 pub fn delivery_str(delivery: Delivery) -> &'static str {
-    match delivery {
-        Delivery::Injected => "injected",
-        Delivery::StoppedAndSent => "stopped_and_sent",
-        Delivery::Queued => "queued",
-        Delivery::Dropped => "dropped",
-    }
+    delivery.as_str()
 }
 
 pub fn parse_delivery(value: &str) -> Option<Delivery> {
-    match value {
-        "injected" => Some(Delivery::Injected),
-        "stopped_and_sent" => Some(Delivery::StoppedAndSent),
-        "queued" => Some(Delivery::Queued),
-        "dropped" => Some(Delivery::Dropped),
-        _ => None,
-    }
+    value.parse().ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,5 +1006,36 @@ mod tests {
         assert!(ReadRules::seen(Some("abc"), "abc"));
         assert!(!ReadRules::seen(Some("abc"), "def"));
         assert!(!ReadRules::seen(None, "abc"));
+    }
+}
+
+#[cfg(test)]
+mod string_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn persisted_status_strings_round_trip() {
+        for status in [
+            ThreadStatus::Preparing,
+            ThreadStatus::Idle,
+            ThreadStatus::Running,
+            ThreadStatus::RequiresAction,
+            ThreadStatus::Interrupted,
+            ThreadStatus::Error,
+            ThreadStatus::Archived,
+        ] {
+            assert_eq!(parse_thread_status(thread_status_str(status)), Some(status));
+        }
+        assert_eq!(
+            thread_status_str(ThreadStatus::RequiresAction),
+            "requires_action"
+        );
+        assert_eq!(parse_thread_status("unknown"), None);
+        assert_eq!(delivery_str(Delivery::StoppedAndSent), "stopped_and_sent");
+        assert_eq!(parse_delivery("unknown"), None);
+        assert_eq!(
+            approval_decision_str(ApprovalDecision::AllowOnce),
+            "allow_once"
+        );
     }
 }

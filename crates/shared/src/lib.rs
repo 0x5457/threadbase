@@ -17,12 +17,7 @@ pub use model::*;
 /// Milliseconds since the Unix epoch.
 #[must_use]
 pub fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    i64::try_from(millis).unwrap_or(i64::MAX)
+    jiff::Timestamp::now().as_millisecond()
 }
 
 /// Stable color assignment shared by presence cursors and draft awareness.

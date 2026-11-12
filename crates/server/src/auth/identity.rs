@@ -31,19 +31,10 @@ impl UserRow {
             display_name: self.display_name,
             avatar_url: self.avatar_url,
             is_admin: self.is_admin != 0,
-            access: parse_user_access(&self.access),
+            access: UserAccess::parse(&self.access),
             hidden_presence: self.hidden_presence != 0,
             created_at: self.created_at,
         }
-    }
-}
-
-fn parse_user_access(value: &str) -> UserAccess {
-    match value {
-        "member" => UserAccess::Member,
-        "read_only" => UserAccess::ReadOnly,
-        "disabled" => UserAccess::Disabled,
-        _ => UserAccess::Pending,
     }
 }
 

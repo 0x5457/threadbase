@@ -1,24 +1,12 @@
 use anyhow::Context;
+use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 use threadbase_server::app::AppState;
 use threadbase_server::config::Config;
 use threadbase_server::{db, doctor, install, routes, service, upgrade};
 use tracing_subscriber::EnvFilter;
 
-const HELP: &str = "\
-Threadbase - shared coding agent threads for small teams
-
-Usage:
-  threadbase [serve]           Start the local server (default)
-  threadbase doctor [--json]   Check the environment and agent adapters
-  threadbase upgrade [--check] Download and verify the latest release
-  threadbase install [options]
-                               One-command systemd deployment plus an HTTPS tunnel
-  threadbase service install [--print]
-                               Write a launchd/systemd user unit
-  threadbase --version         Print the version
-  threadbase --help            Print this help
-
+const ENV_HELP: &str = "\
 Environment:
   THREADBASE_DATA_DIR          Data directory (default: platform data dir)
   THREADBASE_BIND              Loopback address (default: 127.0.0.1:7777)
@@ -34,12 +22,82 @@ Environment:
                                (development only; ignored behind a tunnel)
   THREADBASE_LOG_JSON          Set to 1 for JSON logs
   THREADBASE_ACP_COMMAND       Override the ACP adapter command (development)
-  THREADBASE_RELEASE_BASE      Override the release download base URL
-";
+  THREADBASE_RELEASE_BASE      Override the release download base URL";
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "threadbase",
+    version,
+    about = "Threadbase - shared coding agent threads for small teams",
+    after_help = ENV_HELP
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Start the local server (default)
+    Serve,
+    /// Check the environment and agent adapters
+    Doctor {
+        /// Print the report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Download and verify the latest release
+    Upgrade {
+        /// Only check for a newer release
+        #[arg(long)]
+        check: bool,
+    },
+    /// One-command systemd deployment plus an HTTPS tunnel
+    ///
+    /// Configure a systemd user service for this binary and expose it over HTTPS.
+    /// Nothing is built, copied or downloaded: the unit runs the current executable.
+    Install(install::Options),
+    /// Write a launchd/systemd user unit
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
+    /// Print the version
+    #[command(hide = true)]
+    Version,
+}
+
+#[derive(Debug, Subcommand)]
+enum ServiceCommand {
+    /// Write a launchd/systemd user unit
+    Install {
+        /// Print the unit and change nothing
+        #[arg(long)]
+        print: bool,
+    },
+}
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run().await {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            let success = matches!(
+                error.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            );
+            if let Err(write_error) = error.print() {
+                eprintln!("threadbase: {write_error}");
+                return ExitCode::FAILURE;
+            }
+            return if success {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
+        }
+    };
+    match run(cli).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("threadbase: {error:#}");
@@ -48,48 +106,36 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run() -> anyhow::Result<()> {
-    let mut args = std::env::args().skip(1);
-    let command = args.next();
-    match command.as_deref() {
-        Some("--version" | "-V" | "version") => {
+async fn run(cli: Cli) -> anyhow::Result<()> {
+    match cli.command {
+        Some(Command::Version) => {
             println!("threadbase {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
-        Some("--help" | "-h" | "help") => {
-            print!("{HELP}");
-            return Ok(());
-        }
-        Some("doctor") => {
+        Some(Command::Doctor { json }) => {
             let config = Config::load().context("invalid configuration")?;
             let report = doctor::report(&config).await;
-            if args.any(|arg| arg == "--json") {
+            if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 doctor::print(&report);
             }
             return Ok(());
         }
-        Some("upgrade") => {
-            upgrade::run(args.any(|arg| arg == "--check")).await?;
+        Some(Command::Upgrade { check }) => {
+            upgrade::run(check).await?;
             return Ok(());
         }
-        Some("install") => {
-            let options = install::parse_args(args)?;
+        Some(Command::Install(options)) => {
             install::run(options).await?;
             return Ok(());
         }
-        Some("service") => {
-            if args.next().as_deref() != Some("install") {
-                anyhow::bail!("usage: threadbase service install [--print]");
-            }
-            service::install(args.any(|arg| arg == "--print"))?;
+        Some(Command::Service { command }) => {
+            let ServiceCommand::Install { print } = command;
+            service::install(print)?;
             return Ok(());
         }
-        Some("serve") | None => {}
-        Some(other) => {
-            anyhow::bail!("unknown command `{other}`; run `threadbase --help`");
-        }
+        Some(Command::Serve) | None => {}
     }
 
     let config = Config::load().context("invalid configuration")?;

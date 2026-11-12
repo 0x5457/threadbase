@@ -17,7 +17,7 @@ pub(crate) mod unit;
 use anyhow::{bail, Context};
 use std::path::Path;
 
-pub use args::{parse_args, print_help, Options, DEFAULT_HTTPS_PORT, DEFAULT_PORT};
+pub use args::{parse_args, Options, DEFAULT_HTTPS_PORT, DEFAULT_PORT};
 
 pub async fn run(options: Options) -> anyhow::Result<()> {
     if cfg!(not(target_os = "linux")) {
