@@ -3,7 +3,8 @@
 mod parse;
 
 use parse::{
-    file_line_stats, hash_bytes, hash_text, is_binary_file, language_for, parse_hunks, parse_status,
+    file_line_stats, hash_bytes, hash_text, is_binary_bytes, is_binary_file, parse_hunks,
+    parse_status,
 };
 
 use crate::auth::CurrentUser;
@@ -175,8 +176,8 @@ pub async fn file_diff(
             path: path.to_owned(),
             old_path: None,
             status: FileStatus::Untracked,
-            language: language_for(path).map(ToOwned::to_owned),
-            binary: content.contains(&0),
+            language: None,
+            binary: is_binary_bytes(&content),
             hunks: untracked_hunks(path, &content),
         });
     }
@@ -204,7 +205,7 @@ pub async fn file_diff(
         path: path.to_owned(),
         old_path: None,
         status,
-        language: language_for(path).map(ToOwned::to_owned),
+        language: None,
         binary,
         hunks,
     })
@@ -214,7 +215,7 @@ pub async fn file_diff(
 /// hunk. Anchor reconciliation reuses this definition to keep the same context
 /// hash and hunk id that `file_diff` exposes to clients.
 fn untracked_hunks(path: &str, content: &[u8]) -> Vec<DiffHunkDto> {
-    if content.contains(&0) {
+    if is_binary_bytes(content) {
         return Vec::new();
     }
     let text = String::from_utf8_lossy(content);
