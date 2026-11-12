@@ -2,6 +2,7 @@ import { useComputedColorScheme } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { PatchDiff } from "@pierre/diffs/react";
 import { memo, useMemo } from "react";
+import { useEffectiveDiffWrap } from "../lib/diff-wrap";
 
 /**
  * Thin adapter around Pierre's diff renderer. Pierre owns syntax
@@ -15,18 +16,19 @@ export const DiffView = memo(function DiffView({
 }) {
   const scheme = useComputedColorScheme("light");
   const narrow = useMediaQuery("(max-width: 74.99em)");
+  const wrap = useEffectiveDiffWrap(narrow);
 
   const options = useMemo(
     () => ({
       diffStyle: "unified" as const,
       disableFileHeader: true,
       themeType: scheme === "dark" ? ("dark" as const) : ("light" as const),
-      overflow: narrow ? ("wrap" as const) : ("scroll" as const),
+      overflow: wrap ? ("wrap" as const) : ("scroll" as const),
       diffIndicators: "bars" as const,
       lineDiffType: "word-alt" as const,
       hunkSeparators: "simple" as const,
     }),
-    [scheme, narrow],
+    [scheme, wrap],
   );
 
   return (

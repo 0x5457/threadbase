@@ -267,3 +267,75 @@
 .approval-actions {
   margin-top: 6px;
 }
+
+/* ── queue gestures ────────────────────────────────────────── */
+
+.queue-item {
+  position: relative;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+.queue-item-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 6px;
+  background: var(--paper);
+  touch-action: pan-y;
+}
+
+.queue-item.dragging .queue-item-body {
+  background: var(--selected);
+}
+
+.queue-grip {
+  display: grid;
+  width: 18px;
+  height: 100%;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: grab;
+  touch-action: none;
+}
+
+.queue-grip:disabled {
+  cursor: default;
+  opacity: 0.25;
+}
+
+.queue-grip:active {
+  cursor: grabbing;
+}
+
+.queue-drop-hint {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 10px;
+  background: color-mix(in srgb, var(--del) 12%, transparent);
+  color: var(--del);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+@media (any-pointer: coarse) {
+  .queue-grip {
+    width: 28px;
+  }
+
+  .queue-bar {
+    max-height: 160px;
+  }
+}

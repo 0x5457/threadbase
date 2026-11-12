@@ -1,9 +1,19 @@
-import { Alert, Center, Loader, UnstyledButton } from "@mantine/core";
+import {
+  Alert,
+  Button,
+  Center,
+  Group,
+  Loader,
+  Text,
+  UnstyledButton,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   IconAlertCircle,
   IconArrowDown,
   IconChevronDown,
+  IconCopy,
+  IconMessagePlus,
 } from "@tabler/icons-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -26,7 +36,9 @@ import {
   getMe,
   getState,
   getThreadBundle,
+  reorderQueue,
   respondElicitation,
+  restoreQueueItem,
   sendComment,
   updateComment,
   updateThread,
@@ -38,6 +50,7 @@ import {
 } from "../api";
 import { useLiveThread } from "../lib/live-thread";
 import { reduceEvents, type ViewItem } from "../lib/thread-events";
+import { ActionSheet } from "./ActionSheet";
 import { AgentLog } from "./AgentLog";
 import { Composer } from "./Composer";
 import { ApprovalCard } from "./thread/ApprovalCard";
@@ -46,6 +59,7 @@ import { CommentThread } from "./thread/CommentThread";
 import { ElicitationCard } from "./thread/ElicitationCard";
 import { EmptyThread } from "./thread/EmptyThread";
 import { Message, Notice, Thinking } from "./thread/Message";
+import { timeOf } from "./thread/format";
 import { QueueBar } from "./thread/QueueBar";
 import { SubagentList } from "./thread/SubagentList";
 import { Tool } from "./thread/Tool";
@@ -80,6 +94,7 @@ function TimelineRow({
   editing,
   editor,
   onComment,
+  onMessageLongPress,
 }: {
   item: TimelineRowItem;
   active: boolean;
@@ -92,6 +107,7 @@ function TimelineRow({
   editing: string | null;
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
+  onMessageLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
 }) {
   const toolRow = (tool: ToolItem) => (
     <Fragment key={tool.call.id}>
@@ -163,7 +179,12 @@ function TimelineRow({
   if (item.kind === "message") {
     return (
       <>
-        <Message item={item} active={active} onComment={onComment} />
+        <Message
+          item={item}
+          active={active}
+          onComment={onComment}
+          onLongPress={onMessageLongPress}
+        />
         {thread}
       </>
     );
@@ -211,6 +232,10 @@ export function RealThreadView({
   const [commentBusy, setCommentBusy] = useState<string | null>(null);
   const [commentFor, setCommentFor] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
+  const [messageSheet, setMessageSheet] = useState<Extract<
+    ViewItem,
+    { kind: "message" }
+  > | null>(null);
   const [commentSaving, setCommentSaving] = useState(false);
   // A long session can hold thousands of blocks; Virtuoso mounts only what is
   // visible, so a 10k-event transcript costs the same as a short one.
@@ -439,15 +464,56 @@ export function RealThreadView({
     }
   };
 
+  const restore = async (itemId: string) => {
+    try {
+      await restoreQueueItem(threadId, itemId);
+      refresh();
+      notifications.show({ message: "Message restored", color: "teal" });
+    } catch (cause) {
+      reportFailure(cause, "Could not restore message");
+    }
+  };
+
   const drop = async (itemId: string) => {
     setDropping(itemId);
     try {
       await dropQueueItem(threadId, itemId);
       refresh();
+      notifications.show({
+        id: `queue-drop-${itemId}`,
+        autoClose: 6000,
+        withCloseButton: true,
+        message: (
+          <Group gap="xs" wrap="nowrap">
+            <Text size="sm">Message dropped</Text>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="gray"
+              onClick={() => {
+                notifications.hide(`queue-drop-${itemId}`);
+                void restore(itemId);
+              }}
+            >
+              Undo
+            </Button>
+          </Group>
+        ),
+      });
     } catch (cause) {
       reportFailure(cause, "Could not drop message");
     } finally {
       setDropping(null);
+    }
+  };
+
+  const reorder = async (ids: string[]) => {
+    try {
+      await reorderQueue(threadId, ids);
+      refresh();
+    } catch (cause) {
+      reportFailure(cause, "Could not reorder queue");
+      refresh();
     }
   };
 
@@ -510,6 +576,11 @@ export function RealThreadView({
   const commentOnMessage = useCallback(
     (messageId: string) => openComment(`m:${messageId}`),
     [openComment],
+  );
+
+  const openMessageSheet = useCallback(
+    (item: Extract<ViewItem, { kind: "message" }>) => setMessageSheet(item),
+    [],
   );
 
   const commentEditor = (anchor: CommentAnchor) => (
@@ -641,6 +712,7 @@ export function RealThreadView({
               editing={commentFor}
               editor={commentEditor}
               onComment={commentOnMessage}
+              onMessageLongPress={openMessageSheet}
             />
           )}
         />
@@ -660,9 +732,55 @@ export function RealThreadView({
         </UnstyledButton>
       ) : null}
       </div>
+      <ActionSheet
+        opened={messageSheet !== null}
+        onClose={() => setMessageSheet(null)}
+        title={messageSheet?.name}
+        subtitle={
+          messageSheet
+            ? `${messageSheet.role === "agent" ? "Agent" : "Message"} · ${timeOf(messageSheet.ts)}`
+            : undefined
+        }
+        actions={
+          messageSheet
+            ? [
+                {
+                  label: "Comment on message",
+                  icon: <IconMessagePlus size={17} stroke={1.5} />,
+                  onSelect: () => commentOnMessage(messageSheet.id),
+                },
+                {
+                  label: "Copy text",
+                  icon: <IconCopy size={17} stroke={1.5} />,
+                  onSelect: () => {
+                    void navigator.clipboard
+                      ?.writeText(messageSheet.text)
+                      .then(() =>
+                        notifications.show({
+                          message: "Message copied",
+                          color: "teal",
+                        }),
+                      )
+                      .catch(() =>
+                        notifications.show({
+                          message: "Could not copy message",
+                          color: "red",
+                        }),
+                      );
+                  },
+                },
+              ]
+            : []
+        }
+      />
       <div className="composer-stack">
         <AgentLog lines={diagnostics} />
-        <QueueBar items={queue} busy={dropping} onDrop={(id) => void drop(id)} />
+        <QueueBar
+          items={queue}
+          busy={dropping}
+          onDrop={(id) => void drop(id)}
+          onReorder={(ids) => void reorder(ids)}
+        />
         <Composer
           threadId={threadId}
           canWrite={bundle?.role === "owner" || bundle?.role === "editor"}

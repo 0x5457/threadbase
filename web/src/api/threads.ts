@@ -134,6 +134,21 @@ export function dropQueueItem(threadId: string, itemId: string) {
   );
 }
 
+export function restoreQueueItem(threadId: string, itemId: string) {
+  return jsonRequest<OkResponse>(
+    `/api/threads/${threadId}/queue/${itemId}/restore`,
+    "POST",
+  );
+}
+
+export function reorderQueue(threadId: string, itemIds: string[]) {
+  return jsonRequest<OkResponse>(
+    `/api/threads/${threadId}/queue/order`,
+    "POST",
+    { itemIds },
+  );
+}
+
 export function cancelSubagent(threadId: string, subagentId: string) {
   return jsonRequest<OkResponse>(
     `/api/threads/${threadId}/subagents/${subagentId}/cancel`,

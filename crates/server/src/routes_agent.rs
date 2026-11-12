@@ -22,9 +22,14 @@ pub fn router() -> Router<AppState> {
             "/api/threads/{thread_id}/subagents/{subagent_id}/cancel",
             post(cancel_subagent),
         )
+        .route("/api/threads/{thread_id}/queue/order", post(reorder_queue))
         .route(
             "/api/threads/{thread_id}/queue/{item_id}",
             delete(drop_queue_item),
+        )
+        .route(
+            "/api/threads/{thread_id}/queue/{item_id}/restore",
+            post(restore_queue_item),
         )
 }
 
@@ -188,6 +193,41 @@ async fn drop_queue_item(
 ) -> Result<Json<OkResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
     crate::queue::remove(&state.pool, &state.projection, &thread_id, &item_id).await?;
+    let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn restore_queue_item(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, item_id)): Path<(String, String)>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    crate::queue::restore(&state.pool, &state.projection, &thread_id, &item_id).await?;
+    let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReorderQueueRequest {
+    item_ids: Vec<String>,
+}
+
+async fn reorder_queue(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<ReorderQueueRequest>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    crate::queue::reorder(
+        &state.pool,
+        &state.projection,
+        &thread_id,
+        &request.item_ids,
+    )
+    .await?;
     let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
     Ok(Json(OkResponse { ok: true }))
 }

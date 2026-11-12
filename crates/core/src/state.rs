@@ -344,6 +344,7 @@ pub enum QueueAction {
     PromptFailed,
     Supersede,
     Delete,
+    Restore,
 }
 
 pub struct QueueMachine;
@@ -376,6 +377,10 @@ impl QueueMachine {
             QueueAction::Delete => match current {
                 QueueStatus::Queued => QueueStatus::Dropped,
                 _ => return Err(illegal(Self::ENTITY, current, "delete")),
+            },
+            QueueAction::Restore => match current {
+                QueueStatus::Dropped => QueueStatus::Queued,
+                _ => return Err(illegal(Self::ENTITY, current, "restore")),
             },
         };
         Ok(next)
@@ -868,6 +873,10 @@ mod tests {
         assert_eq!(
             QueueMachine::transition(QueueStatus::Queued, &QueueAction::Delete).unwrap(),
             QueueStatus::Dropped
+        );
+        assert_eq!(
+            QueueMachine::transition(QueueStatus::Dropped, &QueueAction::Restore).unwrap(),
+            QueueStatus::Queued
         );
     }
 

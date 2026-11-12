@@ -41,6 +41,7 @@ import {
 } from "./api";
 import type { InboxPageDto } from "./api/types/InboxPageDto";
 import { FilesPanel } from "./components/FilesPanel";
+import { DrawerResizeHandle } from "./components/DrawerResizeHandle";
 import { InboxView } from "./components/InboxView";
 import { MobileTabBar } from "./components/MobileTabBar";
 import { RealChangesPanel } from "./components/RealChangesPanel";
@@ -129,11 +130,28 @@ function Workspace() {
     }
   });
   const [asideTab, setAsideTab] = useState<"changes" | "files">("changes");
+  const [changesWidth, setChangesWidth] = useState(() => {
+    try {
+      const stored = Number(
+        window.localStorage.getItem("threadbase.changes-width"),
+      );
+      return Number.isFinite(stored) && stored >= 360 ? stored : 520;
+    } catch {
+      return 520;
+    }
+  });
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const wide = useMediaQuery("(min-width: 1200px)");
   const phone = useMediaQuery("(max-width: 47.99em)");
   const tablet = useMediaQuery("(min-width: 48em) and (max-width: 74.99em)");
+  const changesDrawerWidth = Math.max(
+    360,
+    Math.min(
+      changesWidth,
+      Math.min(760, Math.round(window.innerWidth * 0.8)),
+    ),
+  );
   const [paletteOpened, setPaletteOpened] = useState(false);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
@@ -252,6 +270,22 @@ function Workspace() {
   const toggleNav = () => {
     if (!navOpened) blurActiveInput();
     nav.toggle();
+  };
+
+  const resizeChanges = (width: number) => {
+    const next = Math.max(
+      360,
+      Math.min(width, Math.min(760, Math.round(window.innerWidth * 0.8))),
+    );
+    setChangesWidth(next);
+    try {
+      window.localStorage.setItem(
+        "threadbase.changes-width",
+        String(next),
+      );
+    } catch {
+      // Private mode: the width simply does not persist.
+    }
   };
 
   const toggleNavCollapsed = () => {
@@ -690,11 +724,17 @@ function Workspace() {
           opened={changesOpened}
           onClose={changes.close}
           position={phone ? "bottom" : "right"}
-          size={phone ? "92%" : "min(92vw, 520px)"}
+          size={phone ? "92%" : changesDrawerWidth}
           padding={0}
           withCloseButton={false}
           className={phone ? "changes-drawer changes-sheet" : "changes-drawer"}
         >
+          {!phone ? (
+            <DrawerResizeHandle
+              width={changesDrawerWidth}
+              onResize={resizeChanges}
+            />
+          ) : null}
           <div className="sheet-stack">
             {phone ? <SheetGrabber onClose={changes.close} /> : null}
             {selectedThread ? (

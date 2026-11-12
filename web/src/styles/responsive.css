@@ -610,3 +610,58 @@
 .side-nav:active {
   background: var(--selected);
 }
+
+/* ── inbox swipe reveal ───────────────────────────────────── */
+
+.inbox-row-shell {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.inbox-row-shell .inbox-row {
+  position: relative;
+  z-index: 1;
+  border-bottom: 0;
+  background: var(--paper);
+  transition: transform 160ms ease;
+  touch-action: pan-y;
+}
+
+.inbox-row-shell .inbox-row:hover {
+  background: var(--hover);
+}
+
+.inbox-row-shell .inbox-row.unread {
+  background: color-mix(in srgb, var(--ink) 2%, var(--paper));
+}
+
+.inbox-swipe-action {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: 84px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: var(--selected);
+  color: var(--ink);
+  font: inherit;
+  font-size: 10.5px;
+  touch-action: manipulation;
+}
+
+.inbox-row-shell.unread .inbox-swipe-action {
+  background: var(--add-bg);
+  color: var(--add);
+}
+
+.inbox-swipe-action:active {
+  filter: brightness(0.96);
+}

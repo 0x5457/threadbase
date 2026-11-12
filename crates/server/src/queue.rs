@@ -187,6 +187,104 @@ pub async fn remove(
     .await
 }
 
+/// Undo a drop: put a dropped queued message back in its original slot.
+pub async fn restore(
+    pool: &SqlitePool,
+    projection: &Projection,
+    thread_id: &str,
+    item_id: &str,
+) -> Result<QueueStatus, ServerError> {
+    let current = status_of(pool, item_id).await?;
+    if current != QueueStatus::Dropped {
+        return Err(ServerError(ApiError::not_found(
+            "dropped message not found",
+        )));
+    }
+    transition_from(
+        pool,
+        projection,
+        thread_id,
+        item_id,
+        current,
+        &QueueAction::Restore,
+        None,
+    )
+    .await
+}
+
+/// Reorder the queued inputs. Sending/superseded rows keep their slots; the
+/// queued rows are re-slotted in the requested order. Unknown or repeated ids
+/// are ignored, so a stale drag cannot corrupt another thread's queue.
+pub async fn reorder(
+    pool: &SqlitePool,
+    projection: &Projection,
+    thread_id: &str,
+    item_ids: &[String],
+) -> Result<(), ServerError> {
+    let all: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM queued_inputs WHERE thread_id = ? AND status IN (?, ?, ?)
+         ORDER BY position ASC, created_at ASC",
+    )
+    .bind(thread_id)
+    .bind(queue_status_str(QueueStatus::Queued))
+    .bind(queue_status_str(QueueStatus::Sending))
+    .bind(queue_status_str(QueueStatus::Superseded))
+    .fetch_all(pool)
+    .await?;
+    let queued: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM queued_inputs WHERE thread_id = ? AND status = ?
+         ORDER BY position ASC, created_at ASC",
+    )
+    .bind(thread_id)
+    .bind(queue_status_str(QueueStatus::Queued))
+    .fetch_all(pool)
+    .await?;
+
+    use std::collections::HashSet;
+    let queued_set: HashSet<&str> = queued.iter().map(String::as_str).collect();
+    let mut requested: Vec<String> = Vec::new();
+    for id in item_ids {
+        if queued_set.contains(id.as_str()) && !requested.iter().any(|x| x == id) {
+            requested.push(id.clone());
+        }
+    }
+    for id in &queued {
+        if !requested.contains(id) {
+            requested.push(id.clone());
+        }
+    }
+
+    // Replace only the queued slots in the full ordered list, preserving the
+    // positions of in-flight and superseded rows.
+    let mut next = requested.into_iter();
+    let mut order: Vec<String> = Vec::with_capacity(all.len());
+    for id in &all {
+        if queued_set.contains(id.as_str()) {
+            order.push(next.next().unwrap_or_else(|| id.clone()));
+        } else {
+            order.push(id.clone());
+        }
+    }
+
+    let mut tx = pool.begin().await?;
+    let now = now_ms();
+    for (index, id) in order.iter().enumerate() {
+        sqlx::query(
+            "UPDATE queued_inputs SET position = ?, updated_at = ?
+             WHERE id = ? AND thread_id = ?",
+        )
+        .bind(i64::try_from(index).unwrap_or(0) + 1)
+        .bind(now)
+        .bind(id)
+        .bind(thread_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    projection.publish(thread_id).await;
+    Ok(())
+}
+
 /// Mark every still-queued item superseded when a turn is cancelled or a new
 /// prompt takes over.
 pub async fn supersede(

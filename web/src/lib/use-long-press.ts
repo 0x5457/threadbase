@@ -34,11 +34,13 @@ export function useLongPress(onLongPress: () => void, delay = 480) {
 
   return {
     onPointerDown: (event: ReactPointerEvent) => {
+      // A click after a long press may be delivered by the mouse even on a
+      // hybrid device; clear the suppression before bailing out for mice.
+      fired.current = false;
       if (event.pointerType === "mouse") return;
       // Nested rows (a thread inside a project) both register a long press;
       // only the row under the finger should win.
       event.stopPropagation();
-      fired.current = false;
       origin.current = { x: event.clientX, y: event.clientY };
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => {

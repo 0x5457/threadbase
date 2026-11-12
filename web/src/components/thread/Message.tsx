@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { memo } from "react";
 import type { ViewItem } from "../../lib/thread-events";
+import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
 
 const REMARK_PLUGINS = [remarkGfm];
@@ -15,16 +16,20 @@ const REMARK_PLUGINS = [remarkGfm];
 export const Message = memo(function Message({
   item,
   onComment,
+  onLongPress,
   active,
 }: {
   item: Extract<ViewItem, { kind: "message" }>;
   onComment: (messageId: string) => void;
+  onLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
   active: boolean;
 }) {
   const agent = item.role === "agent";
+  const press = useLongPress(() => onLongPress(item));
+
   return (
     <div className="block message-block">
-      <div className="block-gutter">
+      <div className="block-gutter" {...press}>
         <Avatar
           size={16}
           radius={agent ? 4 : "xl"}

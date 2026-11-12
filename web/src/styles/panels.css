@@ -387,3 +387,58 @@
 .action-sheet-cancel:active {
   background: var(--hover);
 }
+
+/* ── tablet drawer resize ─────────────────────────────────── */
+
+.drawer-resize {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.drawer-resize::before {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 6px;
+  height: 34px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: var(--line-soft);
+  content: "";
+}
+
+.drawer-resize::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--line);
+  content: "";
+}
+
+.drawer-resize:hover::after,
+.drawer-resize:active::after,
+.drawer-resize:focus-visible::after {
+  background: var(--ink-muted);
+}
+
+.drawer-resize:hover::before,
+.drawer-resize:active::before,
+.drawer-resize:focus-visible::before {
+  background: var(--ink-faint);
+}
+
+.changes-drawer:not(.changes-sheet) .changes {
+  padding-left: 8px;
+}
+
+.changes-drawer:not(.changes-sheet) .change-diff-tools {
+  padding-left: 14px;
+}

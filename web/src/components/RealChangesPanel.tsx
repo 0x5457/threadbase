@@ -10,10 +10,13 @@ import {
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { formatPatch, type StructuredPatch } from "diff";
+import { useMediaQuery } from "@mantine/hooks";
 import {
   IconFile,
   IconFiles,
   IconGitBranch,
+  IconTextWrap,
+  IconTextWrapDisabled,
   IconX,
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
@@ -23,6 +26,10 @@ import {
   type FileChange,
   type FileDiff,
 } from "../api";
+import {
+  toggleDiffWrap,
+  useEffectiveDiffWrap,
+} from "../lib/diff-wrap";
 import { DiffView } from "./DiffView";
 
 function patchFromDiff(diff: FileDiff, oldPath: string | null) {
@@ -107,6 +114,8 @@ export function RealChangesPanel({
   onShowFiles?: () => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const narrow = useMediaQuery("(max-width: 74.99em)");
+  const wrap = useEffectiveDiffWrap(narrow);
   const bundle = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => getThreadBundle(threadId),
@@ -222,6 +231,21 @@ export function RealChangesPanel({
             </div>
             {selected ? (
               <div className="change-diff">
+                <div className="change-diff-tools">
+                  <button
+                    type="button"
+                    className="diff-wrap-toggle"
+                    aria-pressed={wrap}
+                    onClick={() => toggleDiffWrap(narrow)}
+                  >
+                    {wrap ? (
+                      <IconTextWrap size={13} stroke={1.5} />
+                    ) : (
+                      <IconTextWrapDisabled size={13} stroke={1.5} />
+                    )}
+                    {wrap ? "Wrap" : "Scroll"}
+                  </button>
+                </div>
                 {diff.isPending ? (
                   <Group justify="center" py="lg">
                     <Loader size="xs" />

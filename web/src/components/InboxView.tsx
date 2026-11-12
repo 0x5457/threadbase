@@ -21,7 +21,7 @@ import {
   IconMail,
   IconMessage,
 } from "@tabler/icons-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   listInbox,
   markAllInboxRead,
@@ -68,23 +68,153 @@ function timeOf(ts: number) {
   return inboxTime.format(new Date(ts));
 }
 
+const SWIPE_ACTION_WIDTH = 84;
+
 function InboxRow({
   item,
   onOpen,
   onLongPress,
+  onMarkRead,
+  onCopyLink,
 }: {
   item: InboxItem;
   onOpen: (item: InboxItem) => void;
   onLongPress: (item: InboxItem) => void;
+  onMarkRead: (item: InboxItem) => void;
+  onCopyLink: (item: InboxItem) => void;
 }) {
   const longPress = useLongPress(() => onLongPress(item));
+  const [open, setOpen] = useState(false);
+  const [dx, setDx] = useState(0);
+  const [swiping, setSwiping] = useState(false);
+  const gesture = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    base: number;
+    active: boolean;
+    dx: number;
+  } | null>(null);
+  const suppressClick = useRef(false);
+
+  const close = () => {
+    setOpen(false);
+    setDx(0);
+  };
+
+  const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    longPress.onPointerDown(event);
+    if (event.pointerType === "mouse") return;
+    const target = event.target;
+    if (target instanceof Element && target.closest(".inbox-swipe-action")) {
+      return;
+    }
+    gesture.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      base: open ? -SWIPE_ACTION_WIDTH : 0,
+      active: false,
+      dx: open ? -SWIPE_ACTION_WIDTH : 0,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSwiping(true);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    longPress.onPointerMove(event);
+    const current = gesture.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    const raw = event.clientX - current.x;
+    const vertical = event.clientY - current.y;
+    if (!current.active) {
+      if (Math.abs(raw) < 8) return;
+      if (Math.abs(vertical) > Math.abs(raw)) {
+        gesture.current = null;
+        setSwiping(false);
+        setDx(current.base);
+        return;
+      }
+      current.active = true;
+    }
+    current.dx = Math.max(
+      -SWIPE_ACTION_WIDTH,
+      Math.min(0, current.base + raw),
+    );
+    setDx(current.dx);
+  };
+
+  const endSwipe = () => {
+    longPress.onPointerUp();
+    const current = gesture.current;
+    gesture.current = null;
+    setSwiping(false);
+    if (!current) return;
+    if (current.active) {
+      const next =
+        current.dx < -SWIPE_ACTION_WIDTH / 2 ? -SWIPE_ACTION_WIDTH : 0;
+      setDx(next);
+      setOpen(next < 0);
+      suppressClick.current = true;
+      window.setTimeout(() => {
+        suppressClick.current = false;
+      }, 0);
+    }
+  };
+
+  const cancelSwipe = () => {
+    longPress.onPointerCancel();
+    gesture.current = null;
+    setSwiping(false);
+    setDx(open ? -SWIPE_ACTION_WIDTH : 0);
+  };
 
   return (
-    <UnstyledButton
-      className={`inbox-row${item.read ? "" : " unread"}`}
-      onClick={() => onOpen(item)}
-      {...longPress}
-    >
+    <div className={`inbox-row-shell${item.read ? "" : " unread"}`}>
+      <button
+        type="button"
+        className="inbox-swipe-action"
+        tabIndex={open ? 0 : -1}
+        aria-hidden={!open}
+        onClick={() => {
+          close();
+          if (item.read) onCopyLink(item);
+          else onMarkRead(item);
+        }}
+      >
+        {item.read ? (
+          <IconCopy size={16} stroke={1.5} />
+        ) : (
+          <IconCheck size={16} stroke={1.5} />
+        )}
+        <span>{item.read ? "Copy" : "Read"}</span>
+      </button>
+      <UnstyledButton
+        className={`inbox-row${item.read ? "" : " unread"}`}
+        style={{
+          transform: dx !== 0 ? `translateX(${dx}px)` : undefined,
+          transition: swiping ? "none" : undefined,
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endSwipe}
+        onPointerCancel={cancelSwipe}
+        onClickCapture={(event) => {
+          longPress.onClickCapture(event);
+          if (suppressClick.current) {
+            suppressClick.current = false;
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (open) {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }
+        }}
+        onClick={() => onOpen(item)}
+      >
       <Box className="inbox-icon">{kindIcon(item.kind)}</Box>
       <Box className="inbox-body">
         <Group gap={6} wrap="nowrap">
@@ -109,7 +239,8 @@ function InboxRow({
       <Text size="xs" c="dimmed" className="inbox-time">
         {timeOf(item.createdAt)}
       </Text>
-    </UnstyledButton>
+      </UnstyledButton>
+    </div>
   );
 }
 
@@ -260,6 +391,8 @@ export function InboxView({
               item={item}
               onOpen={onOpenThread}
               onLongPress={setSheetItem}
+              onMarkRead={markRead}
+              onCopyLink={copyLink}
             />
           ))
         )}
