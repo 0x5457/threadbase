@@ -34,6 +34,10 @@ const HISTORY_TURNS: u32 = 20;
 /// Hard row cap for one cold page: a runaway turn must not turn a refresh into
 /// a multi-megabyte transfer.
 const HISTORY_ROWS: u32 = 20_000;
+/// Scrolling back fetches smaller windows than a cold load: each request should
+/// land fast even on a slow link, and the reader rarely needs 20 turns at once.
+const OLDER_TURNS: u32 = 8;
+const OLDER_ROWS: u32 = 4_000;
 
 #[derive(Clone)]
 pub struct EventStore {
@@ -229,7 +233,7 @@ impl EventStore {
         )
         .bind(thread_id.as_str())
         .bind(before)
-        .bind(i64::from(HISTORY_TURNS))
+        .bind(i64::from(OLDER_TURNS))
         .fetch_one(&self.pool)
         .await?;
         let rows = sqlx::query_as::<_, EventRow>(
@@ -242,7 +246,7 @@ impl EventStore {
         .bind(thread_id.as_str())
         .bind(from.unwrap_or(0))
         .bind(before)
-        .bind(i64::from(HISTORY_ROWS))
+        .bind(i64::from(OLDER_ROWS))
         .fetch_all(&self.pool)
         .await?;
         let events = rows

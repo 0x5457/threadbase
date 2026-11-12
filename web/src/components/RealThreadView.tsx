@@ -323,6 +323,7 @@ export const RealThreadView = memo(function RealThreadView({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+  const stickRef = useRef(true);
   // Virtuoso's firstItemIndex keeps the viewport anchored when older rows are
   // prepended; the absolute indices only ever grow downwards.
   const [firstItemIndex, setFirstItemIndex] = useState(1_000_000);
@@ -519,11 +520,16 @@ export const RealThreadView = memo(function RealThreadView({
   const scrolledFor = useRef<string | null>(null);
   // `scrollToIndex(LAST, align: "end")` stops at the last row, leaving the
   // footer below the fold. Scrolling the element itself lands on the true end.
-  const scrollToLatest = useCallback((behavior: "auto" | "smooth" = "auto") => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    scroller.scrollTo({ top: scroller.scrollHeight, behavior });
-  }, []);
+  const scrollToLatest = useCallback(
+    (behavior: "auto" | "smooth" = "auto", force = false) => {
+      // The post-load correction must not yank a reader who already scrolled up.
+      if (!force && !stickRef.current) return;
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+    },
+    [],
+  );
   useEffect(() => {
     if (rows.length === 0) return;
     if (scrolledFor.current === threadId) return;
@@ -920,7 +926,10 @@ export const RealThreadView = memo(function RealThreadView({
             firstItemIndex + Math.max(0, rows.length - 1)
           }
           followOutput={(atBottom) => (atBottom ? "smooth" : false)}
-          atBottomStateChange={setStickToBottom}
+          atBottomStateChange={(atBottom) => {
+            stickRef.current = atBottom;
+            setStickToBottom(atBottom);
+          }}
           increaseViewportBy={{ top: 600, bottom: 800 }}
           computeItemKey={(index, item) =>
             item.kind === "message"
@@ -1003,8 +1012,9 @@ export const RealThreadView = memo(function RealThreadView({
             // The tail may still be unmeasured and rows above may have just
             // changed height; correct the landing once more after the smooth
             // scroll settles.
-            scrollToLatest("smooth");
-            window.setTimeout(() => scrollToLatest(), 400);
+            stickRef.current = true;
+            scrollToLatest("smooth", true);
+            window.setTimeout(() => scrollToLatest("auto", true), 400);
             setStickToBottom(true);
           }}
         >
