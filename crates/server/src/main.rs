@@ -146,6 +146,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let pool = db::connect(&config.db_path).await?;
 
     let state = AppState::new(config.clone(), pool);
+    // The previous process died with every agent child; make persisted state
+    // say so and resume input the user had already queued.
+    if let Err(error) = state.agents.recover_after_restart().await {
+        tracing::warn!(%error, "startup recovery failed");
+    }
     let app = routes::router(state);
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await

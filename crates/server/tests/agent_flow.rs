@@ -96,6 +96,7 @@ async fn fixture() -> Option<Fixture> {
         &CreateProjectRequest {
             path: repo.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await

@@ -1,9 +1,8 @@
 import {
   Alert,
   Button,
-  Center,
   Group,
-  Loader,
+  Skeleton,
   Text,
   UnstyledButton,
 } from "@mantine/core";
@@ -815,10 +814,30 @@ export const RealThreadView = memo(function RealThreadView({
   );
 
   if (bundleQuery.isPending && live.events.length === 0) {
+    // Slow links should see the shape of a transcript instead of a bare spinner.
     return (
-      <Center h="100%">
-        <Loader size="sm" />
-      </Center>
+      <div
+        className="doc timeline-doc thread-skeleton"
+        aria-busy="true"
+        aria-label="Loading thread"
+      >
+        {[0, 1, 2, 3].map((row) => (
+          <div key={row} className="block">
+            <div className="block-gutter">
+              <Skeleton height={22} width={22} circle />
+            </div>
+            <div className="block-body">
+              <Skeleton height={10} width={`${28 + row * 6}%`} mb={8} />
+              <Skeleton height={12} width={`${94 - row * 5}%`} mb={6} />
+              <Skeleton
+                height={12}
+                width={`${72 + (row % 2) * 12}%`}
+                mb={row === 3 ? 0 : 14}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
     );
   }
 

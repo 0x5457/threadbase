@@ -75,8 +75,30 @@ impl AgentManager {
             starts: crate::locks::KeyedLocks::new(),
             queue_tx: queue_tx.clone(),
         });
-        queue_worker::spawn(inner.clone(), queue_rx);
-        Self { inner }
+        let manager = Self { inner };
+        queue_worker::spawn(manager.clone(), queue_rx);
+        manager
+    }
+
+    /// Clean up after a restart. Threads whose agent processes died with the
+    /// old process are reset to idle, prompts that can no longer be answered
+    /// are cancelled, and input queued behind the interrupted turn is handed
+    /// back to the queue worker so it resumes on a fresh adapter.
+    pub async fn recover_after_restart(&self) -> Result<(), ServerError> {
+        let reconciled = threads::reconcile_after_restart(
+            &self.inner.pool,
+            &self.inner.events,
+            &self.inner.projection,
+        )
+        .await?;
+        for thread_id in reconciled {
+            cancel_pending_approvals(&self.inner, &thread_id).await;
+            cancel_pending_elicitations(&self.inner, &thread_id).await;
+            if has_queued_input(&self.inner.pool, &thread_id).await {
+                self.kick_queue(&thread_id);
+            }
+        }
+        Ok(())
     }
 
     pub async fn restart(&self, thread_id: &str) -> Result<(), ServerError> {
@@ -92,6 +114,12 @@ impl AgentManager {
             ThreadAction::Restart,
         )
         .await?;
+        // The interrupted turn is gone with the old adapter; a stale id would
+        // make steering and the projection think a turn is still active.
+        sqlx::query("UPDATE threads SET current_turn_id = NULL WHERE id = ?")
+            .bind(thread_id)
+            .execute(&self.inner.pool)
+            .await?;
         self.ensure_started(thread_id).await
     }
 
@@ -836,6 +864,17 @@ async fn new_session(
         .await
         .map(Some)
         .map_err(|error| ServerError::internal(format!("agent session failed: {error}")))
+}
+
+async fn has_queued_input(pool: &SqlitePool, thread_id: &str) -> bool {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
+    )
+    .bind(thread_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or_default();
+    count > 0
 }
 
 async fn cancel_pending_approvals(inner: &Inner, thread_id: &str) {

@@ -194,9 +194,13 @@
   padding: 28px 24px 48px;
 }
 
+.thread-skeleton .block {
+  margin-bottom: 18px;
+}
+
 .block {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr);
   column-gap: 2px;
 }
 

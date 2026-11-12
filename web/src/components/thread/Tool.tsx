@@ -180,9 +180,15 @@ export const Tool = memo(function Tool({
 }) {
   const call: ToolCallData = item.call;
   const path = call.locations[0]?.path;
-  const preview = call.diff?.patch
-    ? diffTextPreview(call.diff.patch)
-    : toolPreview(call);
+  const patch = call.diff?.patch ?? null;
+  // Short edits show the real diff inline, the way the edit tool used to read.
+  // Long ones keep a changed-lines preview and a "Full diff" toggle.
+  const inlineDiff = Boolean(patch && call.kind === "edit" && patch.split("\n").length <= 60);
+  const preview = inlineDiff
+    ? null
+    : patch
+      ? diffTextPreview(patch)
+      : toolPreview(call);
   const output = parseOutput(call.output);
   const outputImages = output?.filter(
     (block): block is Extract<OutputBlock, { type: "image" }> =>
@@ -192,7 +198,7 @@ export const Tool = memo(function Tool({
     ?.filter((block): block is Extract<OutputBlock, { type: "text" }> => block.type === "text")
     .map((block) => block.text)
     .join("\n");
-  const detailsLabel = call.diff?.patch
+  const detailsLabel = patch
     ? "Full diff"
     : (DETAIL_LABELS[call.kind] ?? "Details");
   // Shell tools stream stdout/stderr into `output`; show its opening lines
@@ -204,8 +210,9 @@ export const Tool = memo(function Tool({
       : [];
   // Image results are the content: no input JSON toggle to open.
   const hasDetails = Boolean(
-    call.diff?.patch ||
-      (outputImages.length === 0 && (call.input || call.output)),
+    patch
+      ? !inlineDiff
+      : outputImages.length === 0 && (call.input || call.output),
   );
   return (
     <div className="block">
@@ -228,6 +235,7 @@ export const Tool = memo(function Tool({
             </Text>
           ) : null}
         </Group>
+        {inlineDiff && patch ? <DiffView patch={patch} /> : null}
         {preview ? (
           <div className="tool-lines">
             {preview.lines.map((line, index) => (
@@ -295,7 +303,7 @@ export const Tool = memo(function Tool({
             </summary>
             {expanded ? (
               <>
-                {call.diff?.patch ? <DiffView patch={call.diff.patch} /> : null}
+                {patch ? <DiffView patch={patch} /> : null}
                 {!call.diff?.patch && outputText ? (
                   <pre className="cmd">{outputText}</pre>
                 ) : null}

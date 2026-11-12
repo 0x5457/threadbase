@@ -225,7 +225,7 @@
   }
 
   .block {
-    grid-template-columns: 28px minmax(0, 1fr);
+    grid-template-columns: 36px minmax(0, 1fr);
   }
 
   .prose {
@@ -234,11 +234,11 @@
   }
 
   .comment-row {
-    margin-left: 30px;
+    margin-left: 38px;
   }
 
   .turn-gap {
-    margin-left: 30px;
+    margin-left: 38px;
   }
 
   .side-nav {
@@ -421,15 +421,15 @@
   }
 
   .block {
-    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-columns: 44px minmax(0, 1fr);
   }
 
   .comment-row {
-    margin-left: 42px;
+    margin-left: 46px;
   }
 
   .turn-gap {
-    margin-left: 42px;
+    margin-left: 46px;
   }
 
   /* The per-message comment action was hover-only, so touch users had no way

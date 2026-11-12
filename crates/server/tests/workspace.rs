@@ -6,7 +6,7 @@ use std::process::Command;
 use tempfile::TempDir;
 use threadbase_server::auth::CurrentUser;
 use threadbase_server::events::EventStore;
-use threadbase_server::{auth, comments, db, diff, projects, threads};
+use threadbase_server::{auth, comments, db, diff, projects, queue, threads};
 use threadbase_shared::api::{
     CreateCommentRequest, CreateProjectRequest, CreateThreadRequest, ForkThreadRequest,
     UpdateThreadRequest,
@@ -100,6 +100,7 @@ async fn create_project(fixture: &Fixture) -> threadbase_shared::ProjectDto {
         &CreateProjectRequest {
             path: fixture.repo.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await
@@ -125,6 +126,92 @@ async fn create_thread(fixture: &Fixture, project_id: &str) -> threadbase_shared
     )
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn restart_recovery_resets_interrupted_threads() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+
+    // Simulate a server that died in the middle of a turn, with input queued
+    // behind that turn.
+    let turn_id = "turn_interrupted";
+    sqlx::query("UPDATE threads SET status = 'running', current_turn_id = ? WHERE id = ?")
+        .bind(turn_id)
+        .bind(thread.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_bindings SET status = 'running' WHERE thread_id = ?")
+        .bind(thread.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    queue::enqueue(
+        &fixture.pool,
+        queue::NewQueuedInput {
+            thread_id: thread.id.as_str(),
+            author_id: fixture.current.user.id.as_str(),
+            text: "after the restart",
+            authors_json: None,
+            attachments_json: None,
+            created_at: threadbase_shared::now_ms(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let events = EventStore::new(fixture.pool.clone());
+    let projection = test_projection(&fixture.pool);
+    let reconciled = threads::reconcile_after_restart(&fixture.pool, &events, &projection)
+        .await
+        .unwrap();
+    assert_eq!(reconciled, vec![thread.id.to_string()]);
+
+    let reloaded = threads::get(&fixture.pool, thread.id.as_str(), &fixture.current)
+        .await
+        .unwrap();
+    assert_eq!(reloaded.status, ThreadStatus::Idle);
+    let current_turn: Option<String> =
+        sqlx::query_scalar("SELECT current_turn_id FROM threads WHERE id = ?")
+            .bind(thread.id.as_str())
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert!(current_turn.is_none());
+
+    let (kind, payload): (String, String) = sqlx::query_as(
+        "SELECT kind, payload_json FROM events WHERE thread_id = ? ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(thread.id.as_str())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(kind, "turn_error");
+    assert!(payload.contains(turn_id), "{payload}");
+
+    let binding: String =
+        sqlx::query_scalar("SELECT status FROM agent_bindings WHERE thread_id = ?")
+            .bind(thread.id.as_str())
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(binding, "idle");
+
+    // Queued input survives the reset; a second boot has nothing left to do.
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
+    )
+    .bind(thread.id.as_str())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(queued, 1);
+    let again = threads::reconcile_after_restart(&fixture.pool, &events, &projection)
+        .await
+        .unwrap();
+    assert!(again.is_empty());
 }
 
 #[tokio::test]
@@ -189,6 +276,7 @@ async fn project_validation_and_thread_lifecycle() {
         &CreateProjectRequest {
             path: non_git.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await
@@ -205,6 +293,7 @@ async fn project_validation_and_thread_lifecycle() {
         &CreateProjectRequest {
             path: empty.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await
@@ -222,6 +311,7 @@ async fn project_validation_and_thread_lifecycle() {
         &CreateProjectRequest {
             path: "relative/repo".into(),
             name: None,
+            create: false,
         },
     )
     .await
@@ -236,6 +326,7 @@ async fn project_validation_and_thread_lifecycle() {
         &CreateProjectRequest {
             path: fixture.repo.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await

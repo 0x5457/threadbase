@@ -102,6 +102,7 @@ async fn real_codex_streams_a_reply() {
         &CreateProjectRequest {
             path: repo.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await

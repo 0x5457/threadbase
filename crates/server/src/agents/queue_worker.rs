@@ -1,23 +1,26 @@
 //! Drains the persisted input queue for a thread.
 
-use super::{begin_turn, Inner, TurnStart};
+use super::{begin_turn, AgentManager, Inner, TurnStart};
 use crate::error::ServerError;
 use crate::{queue, threads};
-use std::sync::Arc;
 use threadbase_shared::{Delivery, ThreadStatus, UserBrief};
 use tokio::sync::mpsc;
 
-pub(crate) fn spawn(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<String>) {
+pub(crate) fn spawn(manager: AgentManager, mut rx: mpsc::UnboundedReceiver<String>) {
     tokio::spawn(async move {
         while let Some(thread_id) = rx.recv().await {
-            if let Err(error) = process(&inner, &thread_id).await {
+            if let Err(error) = process(&manager, &thread_id).await {
                 tracing::warn!(%error, thread_id, "queue processing failed");
             }
         }
     });
 }
 
-async fn process(inner: &Arc<Inner>, thread_id: &str) -> Result<(), ServerError> {
+async fn process(manager: &AgentManager, thread_id: &str) -> Result<(), ServerError> {
+    // The adapter may be gone: after a restart, or because nothing has started
+    // it yet. Queued input still means "run this", so bring it back first.
+    manager.ensure_started(thread_id).await?;
+    let inner = &manager.inner;
     let Some(session) = inner.session(thread_id).await else {
         return Err(ServerError::internal("agent is not running"));
     };
