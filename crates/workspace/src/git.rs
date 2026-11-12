@@ -8,6 +8,8 @@ use tokio::process::Command;
 pub enum GitError {
     #[error("not a git repository: {0}")]
     NotARepository(String),
+    #[error("repository has no commits yet: {0}")]
+    NoCommits(String),
     #[error("invalid branch name: {0}")]
     InvalidBranch(String),
     #[error("git command failed: {command}\n{stderr}")]
@@ -92,7 +94,12 @@ pub async fn inspect(path: &Path) -> Result<GitInfo, GitError> {
     let branch = git_allow_failure(&root, &["branch", "--show-current"])
         .await?
         .filter(|value| !value.is_empty());
-    let head_sha = git(&root, &["rev-parse", "HEAD"]).await?;
+    // A freshly `git init`-ed directory is a repository, but its HEAD is unborn.
+    // Diffs and worktrees need a commit to point at, so report that separately
+    // instead of mislabelling the directory as "not a git repository".
+    let head_sha = git_allow_failure(&root, &["rev-parse", "--verify", "--quiet", "HEAD"])
+        .await?
+        .ok_or_else(|| GitError::NoCommits(root.display().to_string()))?;
     let status = git(&root, &["status", "--porcelain"]).await?;
     Ok(GitInfo {
         root,
@@ -274,6 +281,14 @@ mod tests {
         assert_eq!(info.branch.as_deref(), Some("main"));
         assert!(info.clean);
         assert!(!info.head_sha.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reports_repository_without_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-b", "main"]).await.unwrap();
+        let error = inspect(dir.path()).await.unwrap_err();
+        assert!(matches!(&error, GitError::NoCommits(_)), "{error:?}");
     }
 
     #[tokio::test]

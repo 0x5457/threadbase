@@ -47,7 +47,9 @@ export function AddProjectModal({
   const [pathInput, setPathInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ title: string; message: string } | null>(
+    null,
+  );
 
   const load = useCallback(async (path?: string) => {
     setLoading(true);
@@ -57,7 +59,11 @@ export function AddProjectModal({
       setListing(next);
       setPathInput(next.path);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Cannot read directory");
+      setError({
+        title: "Cannot open directory",
+        message:
+          cause instanceof Error ? cause.message : "Cannot read directory",
+      });
     } finally {
       setLoading(false);
     }
@@ -83,7 +89,10 @@ export function AddProjectModal({
       onAdded?.(project);
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Cannot add project");
+      setError({
+        title: "Cannot add project",
+        message: cause instanceof Error ? cause.message : "Cannot add project",
+      });
     } finally {
       setAdding(false);
     }
@@ -165,9 +174,9 @@ export function AddProjectModal({
           icon={<IconAlertCircle size={14} />}
           color="red"
           mb="xs"
-          title="Cannot open directory"
+          title={error.title}
         >
-          {error}
+          {error.message}
         </Alert>
       ) : null}
 

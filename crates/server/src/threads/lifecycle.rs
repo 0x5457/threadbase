@@ -99,9 +99,9 @@ pub async fn create(
 ) -> Result<ThreadDto, ServerError> {
     let project = projects::row(pool, project_id).await?;
     let project_root = PathBuf::from(&project.path);
-    if git::inspect(&project_root).await.is_err() {
+    if let Err(error) = git::inspect(&project_root).await {
         return Err(ServerError(ApiError::validation(
-            "project path is no longer a git repository",
+            projects::inspect_message(&error),
         )));
     }
     let base_branch = request

@@ -1,6 +1,7 @@
 /* thoughts: reasoning reads as quiet metadata, never as a content block. */
 
 .thinking-row {
+  color: var(--hint);
   display: flex;
   align-items: center;
   gap: 4px;

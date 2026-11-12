@@ -195,6 +195,27 @@ async fn project_validation_and_thread_lifecycle() {
     .unwrap_err();
     assert_eq!(err.0.code, ErrorCode::Validation);
 
+    // A repository without commits is still a repository; say so instead of
+    // claiming the directory is not one.
+    let empty = TempDir::new().unwrap();
+    git(empty.path(), &["init", "-b", "main"]);
+    let err = projects::create(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: empty.path().to_string_lossy().to_string(),
+            name: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Validation);
+    assert!(
+        err.0.message.contains("no commits"),
+        "unexpected message: {}",
+        err.0.message
+    );
+
     let err = projects::create(
         &fixture.pool,
         &fixture.current,

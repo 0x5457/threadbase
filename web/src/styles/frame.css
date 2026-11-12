@@ -16,15 +16,15 @@
 }
 
 .window-lights span:nth-child(1) {
-  background: #e3685a;
+  background: var(--error);
 }
 
 .window-lights span:nth-child(2) {
-  background: #e2b04a;
+  background: var(--warning);
 }
 
 .window-lights span:nth-child(3) {
-  background: #5fae63;
+  background: var(--success);
 }
 
 @media (min-width: 75em) {

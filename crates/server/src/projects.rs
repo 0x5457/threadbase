@@ -23,6 +23,18 @@ pub struct ProjectRow {
     pub last_activity_at: Option<i64>,
 }
 
+/// Validation message for a directory that cannot host a project. Names the
+/// actual problem: a repository without commits is not the same as no
+/// repository at all.
+pub(crate) fn inspect_message(error: &git::GitError) -> &'static str {
+    match error {
+        git::GitError::NoCommits(_) => {
+            "the repository has no commits yet; make an initial commit first"
+        }
+        _ => "the directory is not a git repository",
+    }
+}
+
 const PROJECT_SELECT: &str = "
     SELECT p.id, p.name, p.path, p.remote_url, p.default_branch, p.created_at,
       (SELECT COUNT(*) FROM threads t WHERE t.project_id = p.id AND t.archived_at IS NULL) AS active_threads,
@@ -78,11 +90,9 @@ pub async fn create(
             "project path must be absolute",
         )));
     }
-    let info: GitInfo = git::inspect(&path).await.map_err(|_| {
-        ServerError(ApiError::validation(
-            "the directory is not a git repository",
-        ))
-    })?;
+    let info: GitInfo = git::inspect(&path)
+        .await
+        .map_err(|error| ServerError(ApiError::validation(inspect_message(&error))))?;
     let canonical = info.root.to_string_lossy().to_string();
     let exists: Option<String> = sqlx::query_scalar("SELECT id FROM projects WHERE path = ?")
         .bind(&canonical)
@@ -226,11 +236,9 @@ pub async fn update(
                 "project path must be absolute",
             )));
         }
-        let info = git::inspect(&path_buf).await.map_err(|_| {
-            ServerError(ApiError::validation(
-                "the directory is not a git repository",
-            ))
-        })?;
+        let info = git::inspect(&path_buf)
+            .await
+            .map_err(|error| ServerError(ApiError::validation(inspect_message(&error))))?;
         let canonical = info.root.to_string_lossy().to_string();
         let duplicate: Option<String> =
             sqlx::query_scalar("SELECT id FROM projects WHERE path = ? AND id != ?")

@@ -5,6 +5,7 @@ import {
   IconMessagePlus,
 } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { memo } from "react";
@@ -13,6 +14,7 @@ import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+const REHYPE_PLUGINS = [rehypeHighlight];
 
 export const Message = memo(function Message({
   item,
@@ -77,7 +79,7 @@ export const Message = memo(function Message({
         ) : null}
         <div className={streaming ? "prose streaming" : "prose"}>
           {agent ? (
-            <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
               {item.text}
             </ReactMarkdown>
           ) : (

@@ -94,7 +94,11 @@ function FileRow({
             <Text size="xs" className="stat-del">
               −{file.deletions}
             </Text>
-            <Text size="xs" c="dimmed" ff="monospace">
+            <Text
+              size="xs"
+              ff="monospace"
+              className={`file-status ${file.status}`}
+            >
               {statusLetter[file.status] ?? "?"}
             </Text>
           </Group>
