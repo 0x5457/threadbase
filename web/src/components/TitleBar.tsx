@@ -12,6 +12,7 @@ import {
   IconInbox,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
+  IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconMoon,
   IconSearch,
@@ -33,6 +34,9 @@ interface TitleBarProps {
   /** Unread inbox items; the red dot is rendered only when this is non-zero. */
   unreadCount: number;
   canOpenChanges: boolean;
+  /** Desktop changes panel is hidden; the toggle reveals it again. */
+  asideCollapsed: boolean;
+  onToggleAside: () => void;
   navOpened: boolean;
   navCollapsed: boolean;
   onToggleNav: () => void;
@@ -58,6 +62,8 @@ export function TitleBar({
   onlineUserIds,
   unreadCount,
   canOpenChanges,
+  asideCollapsed,
+  onToggleAside,
   navOpened,
   navCollapsed,
   onToggleNav,
@@ -178,15 +184,32 @@ export function TitleBar({
 
       <div className="header-right">
         {canOpenChanges && !navOpened ? (
-          <Tooltip label="Changes">
-            <ActionIcon
-              aria-label="Open changes"
-              hiddenFrom="lg"
-              onClick={onOpenChanges}
+          <>
+            <Tooltip
+              label={asideCollapsed ? "Show changes  ⌘⇧B" : "Hide changes  ⌘⇧B"}
             >
-              <IconLayoutSidebarRightExpand size={16} stroke={1.5} />
-            </ActionIcon>
-          </Tooltip>
+              <ActionIcon
+                aria-label={asideCollapsed ? "Show changes" : "Hide changes"}
+                visibleFrom="lg"
+                onClick={onToggleAside}
+              >
+                {asideCollapsed ? (
+                  <IconLayoutSidebarRightExpand size={16} stroke={1.5} />
+                ) : (
+                  <IconLayoutSidebarRightCollapse size={16} stroke={1.5} />
+                )}
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="Changes">
+              <ActionIcon
+                aria-label="Open changes"
+                hiddenFrom="lg"
+                onClick={onOpenChanges}
+              >
+                <IconLayoutSidebarRightExpand size={16} stroke={1.5} />
+              </ActionIcon>
+            </Tooltip>
+          </>
         ) : null}
         {!navOpened ? (
           <Box hiddenFrom="md">

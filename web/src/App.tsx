@@ -127,6 +127,15 @@ function Workspace() {
       return false;
     }
   });
+  const [asideCollapsed, setAsideCollapsed] = useState(() => {
+    try {
+      return (
+        window.localStorage.getItem("threadbase.aside-collapsed") === "1"
+      );
+    } catch {
+      return false;
+    }
+  });
   const [asideTab, setAsideTab] = useState<"changes" | "files">("changes");
   const [changesWidth, setChangesWidth] = useState(() => {
     try {
@@ -246,8 +255,28 @@ function Workspace() {
     };
   }, []);
 
+  const setAsideOpen = (open: boolean) => {
+    setAsideCollapsed(!open);
+    try {
+      window.localStorage.setItem(
+        "threadbase.aside-collapsed",
+        open ? "0" : "1",
+      );
+    } catch {
+      // Private mode: the preference simply does not persist.
+    }
+  };
+
+  const collapseAside = () => setAsideOpen(false);
+  const toggleAside = () => setAsideOpen(asideCollapsed);
+
   const openChanges = () => {
     blurActiveInput();
+    // The desktop panel is persistent, not a drawer: reveal it in place.
+    if (wide) {
+      setAsideOpen(true);
+      return;
+    }
     changes.open();
   };
 
@@ -341,6 +370,30 @@ function Workspace() {
   }, [routeThreadId, allThreads.data]);
 
   const showAside = view === "thread" && selectedThread !== null;
+
+  // ⌘/Ctrl+Shift+B hides or reveals the changes panel without leaving the
+  // thread; the preference persists like the nav width.
+  useEffect(() => {
+    if (!showAside) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+      if (event.key.toLowerCase() !== "b") return;
+      event.preventDefault();
+      setAsideCollapsed((current) => {
+        try {
+          window.localStorage.setItem(
+            "threadbase.aside-collapsed",
+            current ? "0" : "1",
+          );
+        } catch {
+          // Private mode: the preference simply does not persist.
+        }
+        return !current;
+      });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showAside]);
   const title =
     view === "inbox"
       ? "Inbox"
@@ -546,7 +599,7 @@ function Workspace() {
         aside={{
           width: 420,
           breakpoint: "lg",
-          collapsed: { mobile: true, desktop: !showAside },
+          collapsed: { mobile: true, desktop: !showAside || asideCollapsed },
         }}
         footer={{
           height: { base: 56, sm: 26 },
@@ -566,6 +619,8 @@ function Workspace() {
           onlineUserIds={onlineUserIds}
           unreadCount={inboxUnread.data?.unread ?? 0}
           canOpenChanges={showAside}
+          asideCollapsed={asideCollapsed}
+          onToggleAside={toggleAside}
           canManage={Boolean(selectedThread) && route.kind === "thread"}
           isPinned={selectedThread?.pinned ?? false}
           navOpened={navOpened}
@@ -665,12 +720,14 @@ function Workspace() {
                   key={selectedThread.id}
                   threadId={selectedThread.id}
                   onShowFiles={() => setAsideTab("files")}
+                  onClose={collapseAside}
                 />
               ) : (
                 <FilesPanel
                   key={selectedThread.id}
                   threadId={selectedThread.id}
                   onShowChanges={() => setAsideTab("changes")}
+                  onClose={collapseAside}
                 />
               )
             ) : null}
