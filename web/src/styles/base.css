@@ -42,21 +42,22 @@ body {
 }
 
 :root {
-  --paper: #f7f7f4;
-  --chrome: #e7e8e5;
-  --raised: #fbfbf8;
-  --line: #ced1cb;
-  --line-soft: #dcddd7;
-  --ink: #242529;
-  /* Secondary text is graded by contrast, not by guessing: muted lands around
-     7:1 and faint still clears AA 4.5:1 on paper, chrome and raised surfaces.
-     The old pair measured 3.9-4.7 and 2.2-2.7, which read as washed out. */
-  --ink-muted: #52555a;
-  --ink-faint: #64676c;
-  --hover: #e0e1dc;
-  --selected: #d7d8d3;
-  --code: #f1f1ed;
-  --brand: #d85540;
+  /* Warm paper neutrals in the Delta register: the surfaces read as paper
+     rather than gray, and every secondary tone is graded against them.
+     Measured on paper / chrome / raised: ink 11.4/10.5/11.8,
+     muted 6.1/5.7/6.3, faint 5.1/4.7/5.3. */
+  --paper: #faf8f3;
+  --chrome: #f2efe8;
+  --raised: #fdfcf9;
+  --line: #e2ddd3;
+  --line-soft: #ebe7de;
+  --ink: #33363d;
+  --ink-muted: #5b5e66;
+  --ink-faint: #676a72;
+  --hover: #efece4;
+  --selected: #e7e2d8;
+  --code: #f5f2ec;
+  --brand: #c2492c;
   --comment: #b58de3;
   --add: #2f7a3a;
   --add-bg: #dfeadb;

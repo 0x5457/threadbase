@@ -7,6 +7,9 @@ license.workspace = true
 
 [dependencies]
 threadbase-shared.workspace = true
+content_inspector.workspace = true
+ignore.workspace = true
+path-clean.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 

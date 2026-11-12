@@ -79,7 +79,7 @@ function TimelineRow({
   }
   switch (item.kind) {
     case "thinking":
-      return <Thinking />;
+      return <Thinking count={item.count} />;
     case "tool":
       return (
         <>

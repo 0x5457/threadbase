@@ -59,13 +59,14 @@ export const Message = memo(function Message({
   );
 });
 
-export const Thinking = memo(function Thinking() {
+export const Thinking = memo(function Thinking({ count = 1 }: { count?: number }) {
   return (
     <div className="block">
       <div className="block-gutter" />
       <div className="block-body">
         <Text size="sm" c="dimmed" className="thinking-row">
-          <IconClock size={11} stroke={1.5} /> Thought for a moment
+          <IconClock size={11} stroke={1.5} />{" "}
+          {count > 1 ? `Thought ${count} times` : "Thought for a moment"}
         </Text>
       </div>
     </div>

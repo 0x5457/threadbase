@@ -166,9 +166,9 @@
 }
 
 .doc {
-  width: min(760px, 100%);
+  width: min(720px, 100%);
   margin: 0 auto;
-  padding: 22px 24px 40px;
+  padding: 28px 24px 48px;
 }
 
 .block {
@@ -195,11 +195,10 @@
 }
 
 .prose {
-  max-width: 68ch;
   color: var(--ink);
-  font-family: var(--mantine-font-family);
-  font-size: 14.5px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.65;
+  letter-spacing: 0.005em;
 }
 
 .prose p {

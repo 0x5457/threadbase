@@ -16,6 +16,7 @@ similar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+which.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

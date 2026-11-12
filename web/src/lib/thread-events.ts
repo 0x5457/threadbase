@@ -34,7 +34,7 @@ export type ViewItem =
       ts: number;
       streaming: boolean;
     }
-  | { kind: "thinking"; id: string; text: string; ts: number }
+  | { kind: "thinking"; id: string; text: string; ts: number; count: number }
   | { kind: "tool"; call: ToolCallData; ts: number }
   | { kind: "notice"; level: "info" | "error"; text: string; ts: number }
   | { kind: "turn"; label: string; ts: number };
@@ -171,8 +171,22 @@ export function reduceEvents(
         const text = String(payload.text ?? "");
         const existing = thinkingRows.get(id);
         if (existing === undefined) {
+          // Consecutive thoughts read as one line ("Thought 3 times") instead
+          // of repeating the same row for every internal step.
+          const previous = items[items.length - 1];
+          if (previous?.kind === "thinking") {
+            thinkingRows.set(id, items.length - 1);
+            items[items.length - 1] = {
+              ...previous,
+              id,
+              text,
+              ts: event.ts,
+              count: previous.count + 1,
+            };
+            break;
+          }
           thinkingRows.set(id, items.length);
-          items.push({ kind: "thinking", id, text, ts: event.ts });
+          items.push({ kind: "thinking", id, text, ts: event.ts, count: 1 });
         } else {
           const row = items[existing];
           if (row.kind === "thinking") {
