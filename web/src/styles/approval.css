@@ -143,7 +143,13 @@
   white-space: nowrap;
 }
 
-.stream-caret {
+/* Rendered through ::after on the last markdown block: a sibling span would be
+   laid out after block-level <p> children, i.e. on its own line below the text. */
+.prose.streaming
+  > :is(p, h1, h2, h3, h4, h5, h6, blockquote):last-child::after,
+.prose.streaming > :is(ul, ol):last-child > li:last-child::after,
+.prose.streaming > pre:last-child > code::after {
+  content: "";
   display: inline-block;
   width: 6px;
   height: 13px;

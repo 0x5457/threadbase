@@ -26,6 +26,9 @@ export const Message = memo(function Message({
 }) {
   const agent = item.role === "agent";
   const press = useLongPress(() => onLongPress(item));
+  // Waiting for the first chunk owns no text yet: a caret then would hang
+  // under the previous block instead of tracking the agent's output.
+  const streaming = item.streaming && active && item.text.trim().length > 0;
 
   return (
     <div className="block message-block">
@@ -51,7 +54,7 @@ export const Message = memo(function Message({
         >
           <IconMessagePlus size={12} stroke={1.5} />
         </ActionIcon>
-        <div className="prose">
+        <div className={streaming ? "prose streaming" : "prose"}>
           {agent ? (
             <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>
               {item.text}
@@ -59,7 +62,6 @@ export const Message = memo(function Message({
           ) : (
             <p>{item.text}</p>
           )}
-          {item.streaming && active ? <span className="stream-caret" /> : null}
         </div>
       </div>
     </div>
