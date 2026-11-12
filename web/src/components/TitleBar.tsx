@@ -89,6 +89,11 @@ export function TitleBar({
   return (
     <AppShell.Header className="header">
       <div className="header-left">
+        <span className="window-lights" aria-hidden="true" title="Window">
+          <span />
+          <span />
+          <span />
+        </span>
         <Box className="burger-slot" hiddenFrom="sm">
           <Burger
             opened={navOpened}

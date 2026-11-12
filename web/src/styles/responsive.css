@@ -303,6 +303,12 @@
     padding-right: calc(8px + var(--safe-right));
     padding-left: calc(8px + var(--safe-left));
   }
+
+  /* The tab bar owns these two destinations on phones. */
+  .header button[aria-label="Open changes"],
+  .burger-dot {
+    display: none;
+  }
 }
 
 /* ── touch targets ─────────────────────────────────────────── */
@@ -502,4 +508,91 @@
   select {
     font-size: 17px;
   }
+}
+
+/* ── phone tab bar ─────────────────────────────────────────── */
+
+/* Replaces the status bar on phones; the branch/diff metadata stays in the
+   changes sheet. The footer height is 56px (base) in App.tsx. */
+.mobile-tabs {
+  display: flex;
+  align-items: stretch;
+  padding: 0 6px var(--safe-bottom);
+  border-top: 1px solid var(--line);
+  background: var(--chrome);
+  user-select: none;
+}
+
+.mobile-tab {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 2px 3px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 10.5px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.mobile-tab:active {
+  background: var(--hover);
+}
+
+.mobile-tab.active {
+  color: var(--ink);
+}
+
+.mobile-tab.active::before {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 26px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 0 0 2px 2px;
+  background: var(--brand);
+  content: "";
+}
+
+.mobile-tab:disabled {
+  opacity: 0.38;
+}
+
+.mobile-tab-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.mobile-tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -9px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-tab-label {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -151,6 +151,38 @@ pub async fn can_edit(
     Ok(created_by.as_deref() == Some(user.user.id.as_str()))
 }
 
+/// Removes a project with everything Threadbase created for it: every thread
+/// row, its worktree on disk and its branch. The repository directory itself is
+/// the user's and is never touched.
+pub async fn delete(pool: &SqlitePool, project_id: &str) -> Result<(), ServerError> {
+    let project = row(pool, project_id).await?;
+    let threads: Vec<(String, Option<String>, String)> =
+        sqlx::query_as("SELECT id, worktree_path, branch FROM threads WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_all(pool)
+            .await?;
+    for (_, worktree, branch) in threads {
+        if let Some(worktree) = worktree.as_deref() {
+            let path = PathBuf::from(worktree);
+            if path.exists() {
+                let _ = threadbase_workspace::git::remove_worktree(
+                    Path::new(&project.path),
+                    &path,
+                    true,
+                )
+                .await;
+            }
+        }
+        let _ =
+            threadbase_workspace::git::delete_branch(Path::new(&project.path), &branch, true).await;
+    }
+    sqlx::query("DELETE FROM projects WHERE id = ?")
+        .bind(project_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn update(
     pool: &SqlitePool,
     project_id: &str,

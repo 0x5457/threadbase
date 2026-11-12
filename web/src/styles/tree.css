@@ -9,7 +9,7 @@
   position: absolute;
   top: 2px;
   bottom: 6px;
-  left: 22px;
+  left: 21px;
   width: 1px;
   background: var(--line-soft);
   content: "";
@@ -17,27 +17,25 @@
 
 .side-project .mantine-NavLink-children .side-nav {
   position: relative;
-  padding-left: 18px;
+  padding-left: 22px;
 }
 
 .side-project .mantine-NavLink-children .side-nav::before {
   position: absolute;
   top: 50%;
-  left: 19px;
-  width: 5px;
-  height: 5px;
+  left: 26px;
+  width: 4px;
+  height: 4px;
   transform: translateY(-50%);
-  border: 1px solid var(--line);
   border-radius: 50%;
-  background: var(--paper);
+  background: var(--line);
   content: "";
 }
 
 .side-project .mantine-NavLink-children .side-nav[data-active]::before {
-  border-color: var(--brand);
   background: var(--brand);
 }
 
 .side-project .mantine-NavLink-children .side-nav:hover::before {
-  border-color: var(--ink-faint);
+  background: var(--ink-faint);
 }

@@ -34,6 +34,7 @@ import {
 import type { InboxPageDto } from "./api/types/InboxPageDto";
 import { FilesPanel } from "./components/FilesPanel";
 import { InboxView } from "./components/InboxView";
+import { MobileTabBar } from "./components/MobileTabBar";
 import { RealChangesPanel } from "./components/RealChangesPanel";
 import { RealThreadView } from "./components/RealThreadView";
 import { ReviewDialog } from "./components/ReviewDialog";
@@ -216,6 +217,19 @@ export function App() {
   const openChanges = () => {
     blurActiveInput();
     changes.open();
+  };
+
+  // The phone tab bar opens the sheet from the bottom; when the nav drawer is
+  // over the thread, let it finish its close transition first, otherwise the
+  // two overlays fight over the same history entry.
+  const openChangesFromTabs = () => {
+    if (!selectedThread) return;
+    if (navOpened) {
+      nav.close();
+      window.setTimeout(openChanges, 220);
+      return;
+    }
+    openChanges();
   };
 
   const toggleNav = () => {
@@ -491,7 +505,7 @@ export function App() {
           collapsed: { mobile: true, desktop: !showAside },
         }}
         footer={{
-          height: { base: 30, sm: 26 },
+          height: { base: 56, sm: 26 },
         }}
         padding={0}
         withBorder={false}
@@ -628,10 +642,24 @@ export function App() {
             ) : null}
           </AppShell.Aside>
         ) : null}
-        <StatusBar
-          thread={selectedThread ?? undefined}
-          workspace={view !== "thread" || selectedThread === null}
-        />
+        {phone ? (
+          <MobileTabBar
+            view={view}
+            unreadCount={inboxUnread.data?.unread ?? 0}
+            threadsOpened={navOpened}
+            changesOpened={changesOpened}
+            changesEnabled={Boolean(selectedThread)}
+            onInbox={openInbox}
+            onThreads={toggleNav}
+            onChanges={openChangesFromTabs}
+            onSettings={openSettings}
+          />
+        ) : (
+          <StatusBar
+            thread={selectedThread ?? undefined}
+            workspace={view !== "thread" || selectedThread === null}
+          />
+        )}
         {/* Inside the shell, so the transformed shell's stacking context keeps
             the scrim below the navbar and header. */}
         {phone && navOpened ? (

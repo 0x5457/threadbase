@@ -14,7 +14,13 @@
 
 /* The virtualized list is the document column: same measure, padding and
    text-width setting as the non-virtualized pages. */
-.timeline-doc {
+/* Virtuoso writes `padding: 0` inline on its list, so vertical breathing room
+   lives in the header/footer slots it renders around the rows. */
+.timeline-top-gap {
+  height: 24px;
+}
+
+.timeline-footer {
   padding-bottom: 40px;
 }
 
@@ -343,11 +349,14 @@
 }
 
 
-/* Consecutive tool calls collapse into one line, Delta style. */
+/* Consecutive tool calls collapse into one line, Delta style. A run merges the
+   thought that produced them with the tools it ran. */
+.run,
 .tool-group {
   margin: 2px 0;
 }
 
+.run > summary,
 .tool-group > summary {
   display: flex;
   width: fit-content;
@@ -360,14 +369,30 @@
   cursor: pointer;
 }
 
+.run > summary::-webkit-details-marker,
 .tool-group > summary::-webkit-details-marker {
   display: none;
 }
 
+.run > summary:hover,
 .tool-group > summary:hover {
   color: var(--ink);
 }
 
+.run-body,
 .tool-group-body {
   padding-left: 2px;
+}
+
+/* Avatars are identity hints, not decoration: small, quiet, aligned to the
+   first text line. Agents read as a rounded square so they never look like a
+   person in the thread. */
+.block-gutter .mantine-Avatar-root {
+  margin-top: 1px;
+}
+
+.block-gutter .avatar-agent {
+  color: var(--ink-muted);
+  font-size: 8px;
+  letter-spacing: 0.02em;
 }

@@ -63,3 +63,16 @@
   --diffs-addition-color: var(--add);
   --diffs-deletion-color: var(--del);
 }
+
+/* Dark reading: the code surface is already dark, so the tint comes from the
+   add/del background tokens instead of mixing towards --code. */
+[data-mantine-color-scheme="dark"] .diff-wrap {
+  --diffs-bg-addition: color-mix(in srgb, var(--add-bg) 70%, var(--code));
+  --diffs-bg-addition-emphasis: color-mix(in srgb, var(--add-bg) 95%, var(--code));
+  --diffs-bg-deletion: color-mix(in srgb, var(--del-bg) 70%, var(--code));
+  --diffs-bg-deletion-emphasis: color-mix(in srgb, var(--del-bg) 95%, var(--code));
+  --diffs-bg-addition-number-override: var(--add-bg);
+  --diffs-bg-deletion-number-override: var(--del-bg);
+  --diffs-bg-context-gutter-override: color-mix(in srgb, var(--ink) 5%, var(--code));
+  --diffs-bg-hover-override: color-mix(in srgb, var(--ink) 6%, transparent);
+}

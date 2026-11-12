@@ -29,7 +29,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/projects", get(list_projects).post(create_project))
         .route(
             "/api/projects/{project_id}",
-            get(get_project).patch(update_project),
+            get(get_project)
+                .patch(update_project)
+                .delete(delete_project),
         )
         .route(
             "/api/projects/{project_id}/threads",
@@ -233,6 +235,26 @@ async fn update_thread(
 #[derive(Debug, Deserialize)]
 struct DeleteQuery {
     confirm: Option<bool>,
+}
+
+async fn delete_project(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(project_id): Path<String>,
+    Query(query): Query<DeleteQuery>,
+) -> Result<Json<OkResponse>, ServerError> {
+    if query.confirm != Some(true) {
+        return Err(ServerError(ApiError::validation(
+            "removing a project requires confirm=true; its threads, worktrees and branches will be removed",
+        )));
+    }
+    if !projects::can_edit(&state.pool, &project_id, &user).await? {
+        return Err(ServerError(ApiError::forbidden(
+            "only the project creator or an admin can remove this project",
+        )));
+    }
+    projects::delete(&state.pool, &project_id).await?;
+    Ok(Json(OkResponse { ok: true }))
 }
 
 async fn delete_thread(

@@ -26,11 +26,13 @@ export const Message = memo(function Message({
     <div className="block message-block">
       <div className="block-gutter">
         <Avatar
-          size={18}
-          radius="xl"
-          color={agent ? "gray" : "brand"}
-          variant={agent ? "light" : "filled"}
+          size={16}
+          radius={agent ? 4 : "xl"}
+          color="gray"
+          variant="light"
+          src={item.avatarUrl ?? undefined}
           title={`${item.name} · ${timeOf(item.ts)}`}
+          className={agent ? "avatar-agent" : "avatar-user"}
         >
           {agent ? "AI" : initials(item.name)}
         </Avatar>

@@ -38,6 +38,7 @@ import "./styles/typography.css";
 import "./styles/diff.css";
 import "./styles/motion.css";
 import "./styles/empty.css";
+import "./styles/frame.css";
 import "./styles/responsive.css";
 
 const queryClient = new QueryClient({

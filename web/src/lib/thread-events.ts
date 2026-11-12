@@ -29,6 +29,7 @@ export type ViewItem =
       id: string;
       role: "user" | "agent";
       name: string;
+      avatarUrl: string | null;
       color: string;
       text: string;
       ts: number;
@@ -74,6 +75,7 @@ export function reduceEvents(
     id: string,
     role: "user" | "agent",
     name: string,
+    avatarUrl: string | null,
     color: string,
     chunk: string,
     ts: number,
@@ -87,6 +89,7 @@ export function reduceEvents(
         id,
         role,
         name,
+        avatarUrl,
         color,
         text: chunk,
         ts,
@@ -137,6 +140,7 @@ export function reduceEvents(
           String(payload.messageId),
           "user",
           name,
+          author.avatarUrl ?? null,
           author.color,
           visiblePrompt,
           event.ts,
@@ -150,6 +154,7 @@ export function reduceEvents(
           String(payload.messageId),
           payload.role === "user" ? "user" : "agent",
           displayName(author, payload.role === "user" ? "You" : agentName),
+          author?.avatarUrl ?? null,
           author?.color ?? "#6f7276",
           String(payload.text ?? ""),
           event.ts,
@@ -166,6 +171,7 @@ export function reduceEvents(
             message.author,
             message.role === "user" ? "You" : agentName,
           ),
+          message.author?.avatarUrl ?? null,
           message.author?.color ?? "#6f7276",
           message.text,
           message.createdAt,

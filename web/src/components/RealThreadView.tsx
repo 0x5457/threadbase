@@ -55,12 +55,15 @@ import { Tool } from "./thread/Tool";
 
 /// A row is either a single reducer item or a run of consecutive tool calls,
 /// which Delta-style collapses into one "ran N tools" line.
+type ToolItem = Extract<ViewItem, { kind: "tool" }>;
 type TimelineRowItem =
   | ViewItem
+  | { kind: "tools"; id: string; tools: ToolItem[] }
   | {
-      kind: "tools";
+      kind: "run";
       id: string;
-      tools: Extract<ViewItem, { kind: "tool" }>[];
+      thinking: Extract<ViewItem, { kind: "thinking" }>;
+      tools: ToolItem[];
     };
 
 /// One transcript row. Rendering is a pure function of the reducer item so
@@ -90,6 +93,44 @@ function TimelineRow({
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
 }) {
+  const toolRow = (tool: ToolItem) => (
+    <Fragment key={tool.call.id}>
+      <Tool item={tool} />
+      <CommentThread
+        comments={commentsForTool(tool.call.id)}
+        threadKey={`t:${tool.call.id}`}
+        expanded={
+          openComments.has(`t:${tool.call.id}`) ||
+          editing === `t:${tool.call.id}`
+        }
+        onToggle={onToggleComments}
+        renderCard={renderComment}
+        editing={editing === `t:${tool.call.id}`}
+        editor={null}
+      />
+    </Fragment>
+  );
+
+  if (item.kind === "run") {
+    const count = item.thinking.count;
+    const thought = count > 1 ? `Thought ${count} times` : "Thought once";
+    const ran = ` · ran ${item.tools.length} ${
+      item.tools.length === 1 ? "tool" : "tools"
+    }`;
+    return (
+      <details className="run">
+        <summary title={item.thinking.text.trim().slice(0, 240)}>
+          <span>
+            {thought}
+            {ran}
+          </span>
+          <IconChevronDown size={11} stroke={1.5} />
+        </summary>
+        <div className="run-body">{item.tools.map(toolRow)}</div>
+      </details>
+    );
+  }
+
   if (item.kind === "tools" && item.tools.length > 1) {
     return (
       <details className="tool-group">
@@ -97,25 +138,7 @@ function TimelineRow({
           <span>ran {item.tools.length} tools</span>
           <IconChevronDown size={11} stroke={1.5} />
         </summary>
-        <div className="tool-group-body">
-          {item.tools.map((tool) => (
-            <Fragment key={tool.call.id}>
-              <Tool item={tool} />
-              <CommentThread
-                comments={commentsForTool(tool.call.id)}
-                threadKey={`t:${tool.call.id}`}
-                expanded={
-                  openComments.has(`t:${tool.call.id}`) ||
-                  editing === `t:${tool.call.id}`
-                }
-                onToggle={onToggleComments}
-                renderCard={renderComment}
-                editing={editing === `t:${tool.call.id}`}
-                editor={null}
-              />
-            </Fragment>
-          ))}
-        </div>
+        <div className="tool-group-body">{item.tools.map(toolRow)}</div>
       </details>
     );
   }
@@ -293,16 +316,29 @@ export function RealThreadView({
     );
     const out: TimelineRowItem[] = [];
     for (const item of visible) {
-      if (item.kind === "tool") {
-        const previous = out[out.length - 1];
-        if (previous?.kind === "tools") {
-          previous.tools.push(item);
-          continue;
-        }
-        out.push({ kind: "tools", id: item.call.id, tools: [item] });
+      if (item.kind !== "tool") {
+        out.push(item);
         continue;
       }
-      out.push(item);
+      const previous = out[out.length - 1];
+      if (previous?.kind === "run") {
+        previous.tools.push(item);
+        continue;
+      }
+      if (previous?.kind === "tools") {
+        previous.tools.push(item);
+        continue;
+      }
+      if (previous?.kind === "thinking" && previous.tools > 0) {
+        out[out.length - 1] = {
+          kind: "run",
+          id: `r:${previous.id}`,
+          thinking: previous,
+          tools: [item],
+        };
+        continue;
+      }
+      out.push({ kind: "tools", id: item.call.id, tools: [item] });
     }
     return out;
   }, [items, pending.length]);
@@ -558,11 +594,14 @@ export function RealThreadView({
               ? `m:${item.id}`
               : item.kind === "tools"
                 ? `g:${item.id}`
-                : `i:${index}`
+                : item.kind === "run"
+                  ? item.id
+                  : `i:${index}`
           }
           components={{
             List: TimelineList,
-            Footer: () => <>{footerContent}</>,
+            Header: () => <div className="timeline-top-gap" />,
+            Footer: () => <div className="timeline-footer">{footerContent}</div>,
             EmptyPlaceholder: () =>
               live.error ? (
                 <Alert
