@@ -623,6 +623,7 @@ pub enum Panel {
     Changes,
     Approvals,
     Files,
+    Terminal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

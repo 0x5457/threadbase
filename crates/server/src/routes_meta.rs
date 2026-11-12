@@ -23,6 +23,7 @@ async fn state(
     Ok(Json(StateResponse {
         settings: crate::settings::load(&app.pool, &user).await?,
         user: user.user,
+        terminal: app.config.terminal,
     }))
 }
 
@@ -32,6 +33,6 @@ async fn update_settings(
     Json(patch): Json<SettingsPatch>,
 ) -> Result<Json<StateResponse>, ServerError> {
     Ok(Json(
-        crate::settings::update(&app.pool, &user, patch).await?,
+        crate::settings::update(&app.pool, &user, patch, app.config.terminal).await?,
     ))
 }

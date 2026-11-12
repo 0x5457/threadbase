@@ -1,0 +1,216 @@
+/* ── terminal drawer ──────────────────────────────────────── */
+
+/* The drawer is the third grid row of `.main`: transcript, composer, terminal.
+   Its height is set inline and dragged from the top edge. */
+
+.terminal-drawer {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+}
+
+/* Above the app shell chrome (Mantine navbar/aside sit around 100-200) and
+   below modals (200), so a dialog still opens on top of the terminal. */
+.terminal-drawer[data-fullscreen="true"] {
+  position: fixed;
+  inset: 0;
+  z-index: 190;
+  border-top: none;
+  background: var(--paper);
+}
+
+.terminal-resize {
+  flex: none;
+  height: 7px;
+  margin-bottom: -7px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.terminal-resize:hover {
+  background: var(--line-soft);
+}
+
+.terminal-head {
+  display: flex;
+  height: 30px;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--line-soft);
+  white-space: nowrap;
+}
+
+.terminal-head > * {
+  flex: none;
+}
+
+.terminal-cwd {
+  /* The only elastic item in the header: a long path truncates instead of
+     pushing the controls off a narrow screen. */
+  overflow: hidden;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46ch;
+  cursor: copy;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.terminal-title {
+  flex: none;
+  font-weight: 500;
+}
+
+.terminal-head-gap {
+  flex: 1;
+}
+
+.terminal-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+
+.terminal-dot.live {
+  background: var(--add);
+}
+
+.terminal-dot.connecting {
+  background: var(--ink-faint);
+  animation: terminal-pulse 1.2s ease-in-out infinite;
+}
+
+.terminal-dot.exited {
+  background: var(--brand);
+}
+
+.terminal-dot.error {
+  background: var(--del);
+}
+
+@keyframes terminal-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.terminal-notice {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--chrome);
+}
+
+.terminal-notice[data-kind="error"],
+.terminal-notice[data-kind="exited"] {
+  background: color-mix(in srgb, var(--brand) 8%, var(--chrome));
+}
+
+.terminal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 2px 2px 8px;
+  overflow: hidden;
+}
+
+.terminal-body .xterm {
+  height: 100%;
+}
+
+/* Scrollback lives in tmux and the wheel is forwarded to it, so xterm's own
+   viewport scrollbar is dead weight: it also paints a strip below the screen. */
+.terminal-body .xterm-viewport {
+  overflow: hidden !important;
+  background-color: transparent !important;
+  scrollbar-width: none;
+}
+
+.terminal-keys {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--chrome);
+}
+
+.terminal-key {
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1;
+}
+
+.terminal-key:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.terminal-key:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.terminal-key-danger {
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 30%, var(--line));
+}
+
+/* Phones get a read-only, full-screen terminal: the drawer would leave no room
+   for the soft keyboard, and the ticket is watcher-only anyway. */
+@media (max-width: 47.99em) {
+  .terminal-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 190;
+    border-top: none;
+  }
+
+  .terminal-resize {
+    display: none;
+  }
+
+  .terminal-cwd {
+    max-width: 16ch;
+  }
+}
+
+/* Status bar chip: a shell is alive but its drawer is closed. */
+.status-terminal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.status-terminal:hover {
+  background: var(--hover);
+  color: var(--ink);
+}

@@ -20,6 +20,7 @@ pub async fn update(
     pool: &SqlitePool,
     user: &CurrentUser,
     patch: SettingsPatch,
+    terminal: bool,
 ) -> Result<StateResponse, ServerError> {
     let mut settings = load(pool, user).await?;
     if let Some(theme) = patch.theme {
@@ -85,5 +86,6 @@ pub async fn update(
     Ok(StateResponse {
         settings,
         user: refreshed,
+        terminal,
     })
 }

@@ -1,14 +1,36 @@
 import { AppShell, Divider, Group, Text } from "@mantine/core";
-import { IconFolder, IconGitBranch, IconLayoutGrid } from "@tabler/icons-react";
+import {
+  IconFolder,
+  IconGitBranch,
+  IconLayoutGrid,
+  IconTerminal2,
+} from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { getMe, getThreadBundle, type ThreadSummary } from "../api";
+
+function TerminalChip({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="status-terminal"
+      onClick={onClick}
+      title="A shell is still running — open the terminal"
+    >
+      <IconTerminal2 size={11} stroke={1.5} />
+      <span>terminal</span>
+    </button>
+  );
+}
 
 export function StatusBar({
   thread,
   workspace,
+  terminal,
 }: {
   thread?: ThreadSummary;
   workspace?: boolean;
+  /** Present when a shell is alive but its drawer is closed. */
+  terminal?: { onClick: () => void };
 }) {
   const bundle = useQuery({
     queryKey: ["thread", thread?.id],
@@ -36,6 +58,7 @@ export function StatusBar({
           </Text>
         </Group>
         <div className="spacer" />
+        {terminal ? <TerminalChip onClick={terminal.onClick} /> : null}
         <Text size="xs" c="dimmed">
           Threadbase
         </Text>
@@ -66,6 +89,7 @@ export function StatusBar({
       </Group>
       <div className="spacer" />
       <Group gap={10} wrap="nowrap">
+        {terminal ? <TerminalChip onClick={terminal.onClick} /> : null}
         {readOnly ? (
           <Text size="xs" className="status-readonly" title="Your account can read but not write">
             read-only

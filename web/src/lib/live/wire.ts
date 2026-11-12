@@ -31,7 +31,8 @@ export function isPanel(value: string | null): value is LivePanel {
     value === "transcript" ||
     value === "changes" ||
     value === "approvals" ||
-    value === "files"
+    value === "files" ||
+    value === "terminal"
   );
 }
 

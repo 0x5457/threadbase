@@ -102,7 +102,9 @@ body {
 
 .main {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  /* transcript, composer, terminal drawer (the drawer row collapses to 0
+     height when it is closed, so two children keep the old layout). */
+  grid-template-rows: minmax(0, 1fr) auto auto;
   min-height: 0;
   overflow: hidden;
   padding: 0;

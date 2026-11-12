@@ -33,6 +33,13 @@ pub struct Config {
     /// `Secure` cookie flag. Derived from `public_origin`, overridable.
     pub cookie_secure: bool,
     pub log_json: bool,
+    /// `THREADBASE_TERMINAL=1` turns on the browser terminal. A shell over HTTP
+    /// is remote code execution by design, so it stays off unless asked for.
+    pub terminal: bool,
+    /// Login shell started by tmux; `$SHELL` when it looks like a path.
+    pub terminal_shell: String,
+    /// tmux socket name. Tests and side-by-side instances use their own.
+    pub terminal_socket: String,
 }
 
 /// Test and tooling defaults. Production always goes through [`Config::load`],
@@ -51,6 +58,9 @@ impl Default for Config {
             session_seconds: 30 * 24 * 60 * 60,
             cookie_secure: false,
             log_json: false,
+            terminal: false,
+            terminal_shell: "/bin/bash".to_owned(),
+            terminal_socket: crate::terminal::SOCKET.to_owned(),
         }
     }
 }
@@ -125,6 +135,14 @@ impl Config {
                 .as_deref()
                 .is_some_and(|origin| origin.starts_with("https://")),
         };
+        let terminal = std::env::var("THREADBASE_TERMINAL")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        let terminal_shell = non_empty("THREADBASE_TERMINAL_SHELL")
+            .or_else(|| non_empty("SHELL"))
+            .unwrap_or_else(|| "/bin/bash".to_owned());
+        let terminal_socket = non_empty("THREADBASE_TERMINAL_SOCKET")
+            .unwrap_or_else(|| crate::terminal::SOCKET.to_owned());
         Ok(Self {
             data_dir,
             db_path,
@@ -137,6 +155,9 @@ impl Config {
             session_seconds: session_days * 24 * 60 * 60,
             cookie_secure,
             log_json,
+            terminal,
+            terminal_shell,
+            terminal_socket,
         })
     }
 

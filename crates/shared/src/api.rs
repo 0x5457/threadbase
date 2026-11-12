@@ -1,7 +1,7 @@
 //! API level request and response envelopes.
 
 use crate::event::EventEnvelope;
-use crate::ids::{CommentId, ProjectId, ThreadId};
+use crate::ids::{CommentId, ProjectId, ThreadId, UserId};
 use crate::model::{
     ApprovalDecision, ApprovalDto, AuthStatusDto, BaselineDto, ChangesDto, CommentAnchor,
     CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto, FileContentDto,
@@ -374,6 +374,9 @@ pub struct ApprovalResolvedResponse {
 pub struct StateResponse {
     pub settings: SettingsDto,
     pub user: UserDto,
+    /// The browser terminal is opt-in per server; the UI hides its entry points
+    /// when this is false.
+    pub terminal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -493,4 +496,56 @@ pub struct SkillDto {
 #[ts(export)]
 pub struct SkillsResponse {
     pub skills: Vec<SkillDto>,
+}
+
+/// A shared shell. `id` is the tmux session name, which is also the URL segment
+/// used by the terminal socket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TerminalSessionDto {
+    pub id: String,
+    pub thread_id: Option<ThreadId>,
+    /// Live working directory as tmux reports it, not the spawn directory.
+    pub cwd: String,
+    pub alive: bool,
+    /// The user currently holding the keyboard, when somebody is attached.
+    pub controller: Option<UserId>,
+    pub viewers: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TerminalSessionResponse {
+    pub session: TerminalSessionDto,
+    /// Single-use ticket for the WebSocket upgrade; the browser cannot send
+    /// custom headers on a WebSocket, so the POST mints the credential.
+    pub ticket: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TerminalSessionsResponse {
+    pub sessions: Vec<TerminalSessionDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CreateTerminalSessionRequest {
+    /// `None` opens a shell in the home directory instead of a thread worktree.
+    pub thread_id: Option<ThreadId>,
+    pub cols: Option<u16>,
+    pub rows: Option<u16>,
+    /// Screens that cannot type (phones) ask for a watcher-only ticket.
+    pub watch_only: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AttachTerminalSessionRequest {
+    pub watch_only: Option<bool>,
 }

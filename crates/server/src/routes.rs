@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::routes_files::router())
         .merge(crate::routes_fs::router())
         .merge(crate::routes_skills::router())
+        .merge(crate::routes_terminal::router())
         .route("/api/health", get(health))
         .route("/ws", get(crate::ws::handler))
         .route("/ws/drafts/{thread_id}", get(crate::drafts::handler))

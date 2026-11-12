@@ -30,6 +30,7 @@ import "./styles/approval.css";
 import "./styles/agent-log.css";
 import "./styles/composer.css";
 import "./styles/panels.css";
+import "./styles/terminal.css";
 import "./styles/comments.css";
 import "./styles/tree.css";
 import "./styles/thoughts.css";
