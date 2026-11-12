@@ -406,6 +406,14 @@
   color: var(--ink-faint);
 }
 
+.tool-duration {
+  margin-left: auto;
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* The opening lines of a tool call are visible by default: enough to see what
    the agent is touching without opening the full input/output. */
 .tool-lines {

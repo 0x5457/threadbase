@@ -55,7 +55,7 @@ export function TitleActions({
             leftSection={<IconGitMerge size={13} stroke={1.5} />}
             onClick={onMerge}
           >
-            Merge
+            Apply changes
           </Button>
         </>
       ) : null}

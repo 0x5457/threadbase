@@ -33,7 +33,8 @@ export type UpdateThreadPatch = Partial<
 >;
 
 export interface CreateThreadInput {
-  title: string;
+  /** Optional; the server names the thread from the first message when empty. */
+  title?: string;
   agent: string;
   model?: string | null;
   effort?: string | null;
@@ -75,7 +76,7 @@ export function getFileDiff(threadId: string, path: string, baseline?: Baseline)
 
 export function createThread(projectId: string, input: CreateThreadInput) {
   const body: CreateThreadRequest = {
-    title: input.title,
+    title: input.title?.trim() || null,
     agent: input.agent,
     model: input.model ?? null,
     effort: input.effort ?? null,

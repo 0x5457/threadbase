@@ -1,5 +1,6 @@
 import { ActionIcon, Loader } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
+import type { Usage } from "../api/types/Usage";
 import { PickerAgentContext } from "../lib/model-prefs";
 import { ComposerInput } from "./composer/ComposerInput";
 import { ComposerToolbar } from "./composer/ComposerToolbar";
@@ -27,6 +28,8 @@ interface ComposerProps {
   userColor?: string;
   /** Viewers see the shared draft but cannot write or send. */
   canWrite?: boolean;
+  /** Latest token/context usage reported by the agent. */
+  usage?: Usage | null;
   /** Live presence count for this thread. */
   watching?: number;
   /** When false, plain Enter sends and Shift+Enter inserts a newline. */
@@ -43,6 +46,7 @@ export function Composer({
   onEffortChange,
   onSent,
   onThreadComment,
+  usage,
   watching,
   sendWithModifier = true,
   userId,
@@ -169,6 +173,7 @@ export function Composer({
           />
           <ComposerToolbar
             agent={session.agent}
+            usage={usage}
             watching={watching}
             draftActive={session.draft.active}
             draftSynced={session.draft.synced}

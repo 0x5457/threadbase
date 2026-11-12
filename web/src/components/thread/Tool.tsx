@@ -5,7 +5,7 @@ import type { ToolKind } from "../../api/types/ToolKind";
 import type { ViewItem } from "../../lib/thread-events";
 import { DiffView } from "../DiffView";
 import { StatusDot } from "./StatusDot";
-import { describeTitle } from "./format";
+import { describeTitle, formatDuration } from "./format";
 import { memo } from "react";
 
 /** Short verb per tool kind: the head names the action, the preview the content. */
@@ -215,6 +215,11 @@ export const Tool = memo(function Tool({
             ) : null}
           </Text>
           <StatusDot status={call.status} />
+          {call.status !== "pending" && call.updatedAt > call.createdAt ? (
+            <Text size="xs" className="tool-duration">
+              {formatDuration(call.updatedAt - call.createdAt)}
+            </Text>
+          ) : null}
         </Group>
         {preview ? (
           <div className="tool-lines">

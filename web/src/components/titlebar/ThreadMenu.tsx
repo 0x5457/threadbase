@@ -49,7 +49,7 @@ export function ThreadMenu({
               leftSection={<IconGitMerge size={13} />}
               onClick={onMerge}
             >
-              Merge
+              Apply changes
             </Menu.Item>
             <Menu.Item
               leftSection={<IconListCheck size={13} />}

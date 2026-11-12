@@ -91,6 +91,36 @@
   padding: 6px 24px 4px;
 }
 
+/* Agent-reported context usage: a 3px gauge plus the percentage. */
+.context-meter {
+  flex: none;
+  align-items: center;
+}
+
+.context-meter-bar {
+  display: block;
+  width: 34px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.context-meter-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ink-faint);
+}
+
+.context-meter.hot .context-meter-bar > span {
+  background: var(--del);
+}
+
+.context-meter.hot .mantine-Text-root {
+  color: var(--del);
+}
+
 /* Pasted images preview above the input; each chip is the upload's progress. */
 .composer-images {
   display: flex;

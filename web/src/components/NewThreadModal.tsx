@@ -73,12 +73,12 @@ export function NewThreadModal({
   }, [opened, stateQuery.data]);
 
   const create = async () => {
-    if (!project || !title.trim()) return;
+    if (!project) return;
     setSubmitting(true);
     setError(null);
     try {
       const { thread } = await createThread(project.id, {
-        title: title.trim(),
+        title: title.trim() || undefined,
         agent,
         // The model picker lives in the thread composer now, where it can show
         // what the agent actually advertises. Only the saved default applies here.
@@ -108,7 +108,7 @@ export function NewThreadModal({
       <Stack gap="sm">
         <TextInput
           label="Title"
-          placeholder="What should the agent work on?"
+          placeholder="Optional — named from your first message"
           leftSection={<IconMessage size={14} stroke={1.5} />}
           value={title}
           onChange={(event) => setTitle(event.currentTarget.value)}
@@ -143,7 +143,9 @@ export function NewThreadModal({
           description="A threadbase/<id> branch and worktree; changes stay reviewable and never touch your working tree."
         />
         <Text size="xs" c="dimmed">
-          Base branch <strong>{project?.defaultBranch ?? "main"}</strong>.{" "}
+          Leave the title empty to name the thread from the first line of your
+          first message. Base branch{" "}
+          <strong>{project?.defaultBranch ?? "main"}</strong>.{" "}
           {worktree
             ? "The agent gets its own worktree so every change stays reviewable."
             : "Without a worktree the agent edits the project directory directly, so its changes are live in your working tree."}{" "}
@@ -162,7 +164,6 @@ export function NewThreadModal({
           <Button
             color="dark"
             loading={submitting}
-            disabled={!title.trim()}
             onClick={() => void create()}
           >
             Start thread

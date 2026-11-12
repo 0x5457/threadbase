@@ -61,7 +61,7 @@ import { CommentThread } from "./thread/CommentThread";
 import { ElicitationCard } from "./thread/ElicitationCard";
 import { EmptyThread } from "./thread/EmptyThread";
 import { Message, Notice, Thinking } from "./thread/Message";
-import { timeOf } from "./thread/format";
+import { formatDuration, timeOf } from "./thread/format";
 import { QueueBar } from "./thread/QueueBar";
 import { SubagentList } from "./thread/SubagentList";
 import { Tool } from "./thread/Tool";
@@ -143,6 +143,18 @@ function TimelineRow({
 
   // A run shows its opening tools inline: a collapsed summary alone said that
   // the agent ran tools, never what it was doing. The rest stays one click away.
+  // Total tool time says more than the count alone; wall-clock spans would
+  // include user idle time between turns.
+  const toolDuration = (tools: ToolItem[]) =>
+    tools.reduce(
+      (total, tool) =>
+        total +
+        (tool.call.status === "pending"
+          ? 0
+          : Math.max(0, tool.call.updatedAt - tool.call.createdAt)),
+      0,
+    );
+
   const groupTools = (tools: ToolItem[], key: string) => {
     const preview = tools.slice(0, PREVIEW_TOOLS);
     const rest = tools.slice(PREVIEW_TOOLS);
@@ -176,9 +188,10 @@ function TimelineRow({
   if (item.kind === "run") {
     const count = item.thinking.count;
     const thought = count > 1 ? `Thought ${count} times` : "Thought once";
+    const elapsed = toolDuration(item.tools);
     const ran = ` · ran ${item.tools.length} ${
       item.tools.length === 1 ? "tool" : "tools"
-    }`;
+    }${elapsed > 0 ? ` · ${formatDuration(elapsed)}` : ""}`;
     return (
       <div className="run">
         <div
@@ -199,7 +212,12 @@ function TimelineRow({
     return (
       <div className="tool-group">
         <div className="run-head">
-          <span>ran {item.tools.length} tools</span>
+          <span>
+            ran {item.tools.length} tools
+            {toolDuration(item.tools) > 0
+              ? ` · ${formatDuration(toolDuration(item.tools))}`
+              : ""}
+          </span>
         </div>
         {groupTools(item.tools, item.id)}
       </div>
@@ -354,7 +372,7 @@ export function RealThreadView({
     [onPresence],
   );
 
-  const { items, diagnostics } = useMemo(
+  const { items, diagnostics, usage } = useMemo(
     () =>
       reduceEvents(
         live.events.filter((event) => !event.subagentId),
@@ -918,6 +936,7 @@ export function RealThreadView({
             applyConfig({ effort }, "Could not update effort")
           }
           onSent={refresh}
+          usage={usage}
           watching={
             live.presence.focuses.filter(
               (focus) => focus.threadId === threadId && !focus.hidden,
