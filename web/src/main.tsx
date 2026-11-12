@@ -30,6 +30,12 @@ import "./styles/approval.css";
 import "./styles/agent-log.css";
 import "./styles/composer.css";
 import "./styles/panels.css";
+import "./styles/comments.css";
+import "./styles/tree.css";
+import "./styles/thoughts.css";
+import "./styles/typography.css";
+import "./styles/diff.css";
+import "./styles/motion.css";
 import "./styles/responsive.css";
 
 const queryClient = new QueryClient({
