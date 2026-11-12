@@ -487,7 +487,6 @@ async fn diff_comment_drift_and_revert_to_base() {
     let events = EventStore::new(fixture.pool.clone());
     let comment = comments::create(
         &fixture.pool,
-        &test_projection(&fixture.pool),
         &events,
         thread.id.as_str(),
         &fixture.current,

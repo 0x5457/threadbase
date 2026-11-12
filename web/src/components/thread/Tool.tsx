@@ -5,8 +5,13 @@ import type { ViewItem } from "../../lib/thread-events";
 import { DiffView } from "../DiffView";
 import { StatusDot } from "./StatusDot";
 import { describeTitle } from "./format";
+import { memo } from "react";
 
-export function Tool({ item }: { item: Extract<ViewItem, { kind: "tool" }> }) {
+export const Tool = memo(function Tool({
+  item,
+}: {
+  item: Extract<ViewItem, { kind: "tool" }>;
+}) {
   const call: ToolCallData = item.call;
   const path = call.locations[0]?.path;
   return (
@@ -39,4 +44,4 @@ export function Tool({ item }: { item: Extract<ViewItem, { kind: "tool" }> }) {
       </div>
     </div>
   );
-}
+});

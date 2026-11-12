@@ -63,12 +63,15 @@ export function reduceEvents(
     }
     const row = items[existing];
     if (row.kind !== "message") return;
-    row.text =
-      chunk.startsWith(row.text) || row.text === ""
-        ? chunk
-        : row.text + chunk;
-    row.streaming = streaming;
-    row.ts = ts;
+    items[existing] = {
+      ...row,
+      text:
+        chunk.startsWith(row.text) || row.text === ""
+          ? chunk
+          : row.text + chunk,
+      streaming,
+      ts,
+    };
   };
 
   for (const event of events) {
@@ -138,10 +141,13 @@ export function reduceEvents(
         } else {
           const row = items[existing];
           if (row.kind === "thinking") {
-            row.text =
-              text.startsWith(row.text) || row.text === ""
-                ? text
-                : row.text + text;
+            items[existing] = {
+              ...row,
+              text:
+                text.startsWith(row.text) || row.text === ""
+                  ? text
+                  : row.text + text,
+            };
           }
         }
         break;
@@ -156,8 +162,7 @@ export function reduceEvents(
         } else {
           const row = items[existing];
           if (row.kind === "tool") {
-            row.call = call;
-            row.ts = event.ts;
+            items[existing] = { ...row, call, ts: event.ts };
           }
         }
         break;
@@ -205,8 +210,11 @@ export function reduceEvents(
         break;
       }
       case "turn_ended": {
-        for (const row of items) {
-          if (row.kind === "message") row.streaming = false;
+        for (let index = 0; index < items.length; index += 1) {
+          const row = items[index];
+          if (row.kind === "message" && row.streaming) {
+            items[index] = { ...row, streaming: false };
+          }
         }
         const reason = String(payload.stopReason ?? "");
         if (reason && reason !== "end_turn") {

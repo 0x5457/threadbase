@@ -63,10 +63,3 @@ export function revokeInvite(threadId: string, inviteId: string) {
     "DELETE",
   );
 }
-
-export function requestAccess(threadId: string) {
-  return jsonRequest<OkResponse>(
-    `/api/threads/${threadId}/request-access`,
-    "POST",
-  );
-}

@@ -3,7 +3,6 @@ import type { AgentConfigResponse } from "./types/AgentConfigResponse";
 import type { ApprovalDecision } from "./types/ApprovalDecision";
 import type { ApprovalDto } from "./types/ApprovalDto";
 import type { ApprovalResolvedResponse } from "./types/ApprovalResolvedResponse";
-import type { ApprovalsPageDto } from "./types/ApprovalsPageDto";
 import type { CommentAnchor } from "./types/CommentAnchor";
 import type { CommentDto } from "./types/CommentDto";
 import type { CommentResponse } from "./types/CommentResponse";
@@ -12,7 +11,6 @@ import type { ElicitationAction } from "./types/ElicitationAction";
 import type { ElicitationDto } from "./types/ElicitationDto";
 import type { ElicitationResolvedResponse } from "./types/ElicitationResolvedResponse";
 import type { QueueItemDto } from "./types/QueueItemDto";
-import type { QueueResponse } from "./types/QueueResponse";
 import type { SubagentDto } from "./types/SubagentDto";
 import type { ToolCallData } from "./types/ToolCallData";
 
@@ -28,10 +26,6 @@ export function getAgentConfig(threadId: string) {
   return request<AgentConfigResponse>(
     `/api/threads/${threadId}/agent-config?ensure=true`,
   );
-}
-
-export function listApprovals(threadId: string) {
-  return request<ApprovalsPageDto>(`/api/threads/${threadId}/approvals`);
 }
 
 export function decideApproval(
@@ -56,10 +50,6 @@ export function respondElicitation(
     "POST",
     { action, values: values ?? null },
   );
-}
-
-export function listQueue(threadId: string) {
-  return request<QueueResponse>(`/api/threads/${threadId}/queue`);
 }
 
 export function createComment(

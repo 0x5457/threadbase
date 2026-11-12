@@ -344,7 +344,6 @@ pub enum QueueAction {
     PromptFailed,
     Supersede,
     Delete,
-    Retry,
 }
 
 pub struct QueueMachine;
@@ -377,10 +376,6 @@ impl QueueMachine {
             QueueAction::Delete => match current {
                 QueueStatus::Queued => QueueStatus::Dropped,
                 _ => return Err(illegal(Self::ENTITY, current, "delete")),
-            },
-            QueueAction::Retry => match current {
-                QueueStatus::Queued | QueueStatus::Superseded => QueueStatus::Queued,
-                _ => return Err(illegal(Self::ENTITY, current, "retry")),
             },
         };
         Ok(next)
@@ -601,11 +596,6 @@ pub fn parse_delivery(value: &str) -> Option<Delivery> {
 pub struct ReadRules;
 
 impl ReadRules {
-    /// A thread is unread while the newest event sequence is past the last read.
-    pub fn thread_unread(last_read_seq: u64, max_seq: u64) -> bool {
-        max_seq > last_read_seq
-    }
-
     /// Inbox items are unread until `read_at` is set.
     pub fn inbox_unread(read_at: Option<i64>) -> bool {
         read_at.is_none()
@@ -969,10 +959,6 @@ mod tests {
             QueueMachine::transition(QueueStatus::Queued, &QueueAction::Delete).unwrap(),
             QueueStatus::Dropped
         );
-        assert_eq!(
-            QueueMachine::transition(QueueStatus::Superseded, &QueueAction::Retry).unwrap(),
-            QueueStatus::Queued
-        );
     }
 
     #[test]
@@ -985,7 +971,6 @@ mod tests {
         assert!(
             QueueMachine::transition(QueueStatus::Queued, &QueueAction::PromptSucceeded).is_err()
         );
-        assert!(QueueMachine::transition(QueueStatus::Sent, &QueueAction::Retry).is_err());
     }
 
     // ----- agent session -----
@@ -1106,8 +1091,6 @@ mod tests {
 
     #[test]
     fn read_rules() {
-        assert!(ReadRules::thread_unread(4, 5));
-        assert!(!ReadRules::thread_unread(5, 5));
         assert!(ReadRules::inbox_unread(None));
         assert!(!ReadRules::inbox_unread(Some(1)));
         assert!(ReadRules::seen(Some("abc"), "abc"));

@@ -2,7 +2,6 @@
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;
-use crate::authz;
 use crate::error::ServerError;
 use axum::extract::{Path, State};
 use axum::routing::{delete, get, post};
@@ -10,13 +9,12 @@ use axum::Json;
 use axum::Router;
 use threadbase_shared::api::{DecisionRequest, ElicitationResponseRequest, InboxReadRequest};
 use threadbase_shared::{
-    ApprovalResolvedResponse, ApprovalRulesResponse, ApprovalsPageDto, ElicitationResolvedResponse,
-    InboxPageDto, OkResponse,
+    ApprovalResolvedResponse, ApprovalRulesResponse, ElicitationResolvedResponse, InboxPageDto,
+    OkResponse,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/threads/{thread_id}/approvals", get(list_approvals))
         .route("/api/approvals/{approval_id}/decide", post(decide_approval))
         .route(
             "/api/threads/{thread_id}/approvals/{approval_id}/decision",
@@ -30,18 +28,6 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/inbox", get(list_inbox))
         .route("/api/inbox/read", post(read_inbox))
-}
-
-async fn list_approvals(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(thread_id): Path<String>,
-) -> Result<Json<ApprovalsPageDto>, ServerError> {
-    authz::require_read(&state.pool, &thread_id, &user).await?;
-    Ok(Json(ApprovalsPageDto {
-        approvals: crate::approvals::list_pending_for_thread(&state.pool, &thread_id).await?,
-        elicitations: crate::elicitations::list_for_thread(&state.pool, &thread_id).await?,
-    }))
 }
 
 async fn decide_approval(

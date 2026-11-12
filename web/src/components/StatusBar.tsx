@@ -1,7 +1,7 @@
 import { AppShell, Divider, Group, Text } from "@mantine/core";
 import { IconFolder, IconGitBranch, IconLayoutGrid } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { getThreadChanges, type ThreadSummary } from "../api";
+import { getThreadBundle, type ThreadSummary } from "../api";
 
 export function StatusBar({
   thread,
@@ -10,14 +10,14 @@ export function StatusBar({
   thread?: ThreadSummary;
   workspace?: boolean;
 }) {
-  const changes = useQuery({
-    queryKey: ["thread-changes", thread?.id],
-    queryFn: () => getThreadChanges(thread!.id),
+  const bundle = useQuery({
+    queryKey: ["thread", thread?.id],
+    queryFn: () => getThreadBundle(thread!.id),
     enabled: Boolean(thread),
-    staleTime: 5_000,
+    staleTime: 2_000,
     retry: false,
   });
-  const stats = changes.data?.stats;
+  const stats = bundle.data?.bundle.changes.stats;
 
   if (workspace || !thread) {
     return (

@@ -17,7 +17,7 @@ use threadbase_shared::api::{
     ThreadState, UpdateProjectRequest, UpdateThreadRequest,
 };
 use threadbase_shared::{
-    ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse, OkResponse,
+    ApiError, BaselineDto, BaselineKind, FileDiffDto, MergeBackResponse, OkResponse,
     ProjectResponse, ProjectsResponse, ThreadResponse, ThreadsResponse,
 };
 
@@ -40,7 +40,6 @@ pub fn router() -> Router<AppState> {
             get(get_thread).patch(update_thread).delete(delete_thread),
         )
         .route("/api/threads/{thread_id}/fork", post(fork_thread))
-        .route("/api/threads/{thread_id}/changes", get(thread_changes))
         .route(
             "/api/threads/{thread_id}/changes/file",
             get(thread_file_diff),
@@ -271,12 +270,6 @@ async fn fork_thread(
 }
 
 #[derive(Debug, Deserialize)]
-struct BaselineQuery {
-    kind: Option<String>,
-    commit: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct FileDiffQuery {
     kind: Option<String>,
     commit: Option<String>,
@@ -307,19 +300,6 @@ async fn revert_thread(
     )
     .await;
     Ok(Json(OkResponse { ok: true }))
-}
-
-async fn thread_changes(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(thread_id): Path<String>,
-    Query(query): Query<BaselineQuery>,
-) -> Result<Json<ChangesDto>, ServerError> {
-    authz::require_read(&state.pool, &thread_id, &user).await?;
-    let row = threads::load_row(&state.pool, &thread_id).await?;
-    Ok(Json(
-        diff::list(&state.pool, &row, &user, &baseline(query)).await?,
-    ))
 }
 
 async fn thread_file_diff(
@@ -395,13 +375,6 @@ async fn merge_back(
         .await?;
     }
     Ok(Json(result))
-}
-
-fn baseline(query: BaselineQuery) -> BaselineDto {
-    BaselineDto {
-        kind: parse_kind(query.kind.as_deref()),
-        commit: query.commit,
-    }
 }
 
 fn parse_kind(value: Option<&str>) -> BaselineKind {

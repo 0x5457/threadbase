@@ -2,20 +2,18 @@
 
 use crate::app::AppState;
 use crate::assets;
-use crate::auth::{needs_admin, CurrentUser};
-use crate::authz;
+use crate::auth::needs_admin;
 use crate::error::ServerError;
 use crate::middleware::{csrf_guard, security_headers};
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::{StatusCode, Uri};
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
-use serde::Deserialize;
 use std::time::Duration;
-use threadbase_shared::{EventsPageDto, HealthResponse, ThreadId};
+use threadbase_shared::HealthResponse;
 use tower_http::compression::CompressionLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
@@ -36,7 +34,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/ws", get(crate::ws::handler))
         .route("/ws/drafts/{thread_id}", get(crate::drafts::handler))
-        .route("/api/threads/{thread_id}/events", get(thread_events))
         .fallback(static_asset)
         .with_state(state)
         .layer(from_fn_with_state(csrf_state, csrf_guard))
@@ -59,30 +56,6 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, S
         needs_admin: needs_admin(&state.pool).await?,
         bind: state.config.bind.to_string(),
     }))
-}
-
-#[derive(Debug, Deserialize)]
-struct EventsQuery {
-    after_seq: Option<u64>,
-    limit: Option<u32>,
-}
-
-async fn thread_events(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(thread_id): Path<String>,
-    Query(query): Query<EventsQuery>,
-) -> Result<Json<EventsPageDto>, ServerError> {
-    authz::require_read(&state.pool, &thread_id, &user).await?;
-    let page = state
-        .events
-        .page(
-            &ThreadId::from(thread_id),
-            query.after_seq.unwrap_or(0),
-            query.limit.unwrap_or(200),
-        )
-        .await?;
-    Ok(Json(page))
 }
 
 async fn static_asset(uri: Uri) -> impl IntoResponse {

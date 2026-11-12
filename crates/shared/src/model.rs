@@ -438,11 +438,9 @@ pub struct ThreadDto {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
     pub pinned: bool,
-    pub unread: bool,
     pub share_level: ShareLevel,
     pub participants: Vec<Participant>,
     pub pending_approvals: u32,
-    pub queued_inputs: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

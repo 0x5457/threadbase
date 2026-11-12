@@ -124,6 +124,27 @@ export function useLiveThread(
       setEvents(next.ordered);
     };
 
+    // Token deltas arrive many times per frame. Buffering them keeps the
+    // event-store merge and React render to at most once per animation frame.
+    let pendingEvents: ThreadEvent[] = [];
+    let flushFrame: number | null = null;
+    const flush = () => {
+      flushFrame = null;
+      if (pendingEvents.length === 0) return;
+      const batch = pendingEvents;
+      pendingEvents = [];
+      publish(mergeEvents(storeRef.current, batch));
+    };
+    const queueEvent = (event: ThreadEvent) => {
+      pendingEvents.push(event);
+      if (flushFrame !== null) return;
+      if (typeof window.requestAnimationFrame === "function") {
+        flushFrame = window.requestAnimationFrame(flush);
+      } else {
+        flush();
+      }
+    };
+
     const sendSubscribe = () => {
       sendJson(socket, {
         type: "subscribe",
@@ -133,6 +154,7 @@ export function useLiveThread(
     };
 
     const applyPage = (page: LiveEventsPage) => {
+      flush();
       const next = page.resync
         ? replaceEvents(page.events)
         : mergeEvents(storeRef.current, page.events);
@@ -172,7 +194,7 @@ export function useLiveThread(
           if (eventThreadId !== null && eventThreadId !== threadId) return;
           const event = parseThreadEvent(envelope);
           if (event === null) return;
-          publish(mergeEvents(storeRef.current, [event]));
+          queueEvent(event);
           return;
         }
         case "presence": {
@@ -206,6 +228,11 @@ export function useLiveThread(
     };
 
     const clearTimers = () => {
+      if (flushFrame !== null) {
+        window.cancelAnimationFrame(flushFrame);
+        flushFrame = null;
+      }
+      pendingEvents = [];
       if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -270,6 +297,7 @@ export function useLiveThread(
         if (socket === next) socket = null;
         if (socketRef.current === next) socketRef.current = null;
         if (disposed) return;
+        flush();
         clearTimers();
         // Only a connection that stayed up resets the ladder, so a server that
         // accepts and immediately closes cannot turn this into a hot loop.

@@ -9,7 +9,6 @@ import type { Role } from "./Role";
 import type { ShareStateDto } from "./ShareStateDto";
 import type { SubagentDto } from "./SubagentDto";
 import type { ThreadDto } from "./ThreadDto";
-import type { ThreadMemberDto } from "./ThreadMemberDto";
 
 export type ThreadBundleDto = {
   thread: ThreadDto;
@@ -24,6 +23,5 @@ export type ThreadBundleDto = {
   queue: Array<QueueItemDto>;
   comments: Array<CommentDto>;
   changes: ChangesDto;
-  members: Array<ThreadMemberDto>;
   share: ShareStateDto;
 };

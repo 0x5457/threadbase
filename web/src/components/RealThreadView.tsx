@@ -2,7 +2,14 @@ import { Alert, Center, Loader, ScrollArea } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   cancelSubagent,
   createComment,
@@ -280,10 +287,15 @@ export function RealThreadView({
     />
   );
 
-  const openComment = (key: string) => {
+  const openComment = useCallback((key: string) => {
     setCommentFor(key);
     setCommentBody("");
-  };
+  }, []);
+
+  const commentOnMessage = useCallback(
+    (messageId: string) => openComment(`m:${messageId}`),
+    [openComment],
+  );
 
   const commentEditor = (anchor: CommentAnchor) => (
     <CommentEditor
@@ -353,7 +365,7 @@ export function RealThreadView({
                     <Message
                       item={item}
                       active={bundle?.thread.status === "running"}
-                      onComment={() => openComment(key)}
+                      onComment={commentOnMessage}
                     />
                     {commentsFor("message", item.id).map(commentCard)}
                     {commentFor === key

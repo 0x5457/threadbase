@@ -187,35 +187,6 @@ pub async fn remove(
     .await
 }
 
-pub async fn retry(
-    pool: &SqlitePool,
-    projection: &Projection,
-    thread_id: &str,
-    item_id: &str,
-) -> Result<QueueStatus, ServerError> {
-    let current = status_of(pool, item_id).await?;
-    if QueueMachine::is_terminal(current) {
-        return Err(ServerError(ApiError::not_found(
-            "queued message not found or already sent",
-        )));
-    }
-    let next = QueueMachine::transition(current, &QueueAction::Retry)
-        .map_err(|error| ServerError::internal(error.to_string()))?;
-    sqlx::query(
-        "UPDATE queued_inputs SET status = ?, superseded = 0, updated_at = ?
-         WHERE id = ? AND status IN (?, ?)",
-    )
-    .bind(queue_status_str(next))
-    .bind(now_ms())
-    .bind(item_id)
-    .bind(queue_status_str(QueueStatus::Queued))
-    .bind(queue_status_str(QueueStatus::Superseded))
-    .execute(pool)
-    .await?;
-    projection.publish(thread_id).await;
-    Ok(next)
-}
-
 /// Mark every still-queued item superseded when a turn is cancelled or a new
 /// prompt takes over.
 pub async fn supersede(
@@ -496,35 +467,6 @@ mod tests {
             QueueStatus::Dropped
         );
         assert_eq!(status_of(&pool, "q1").await.unwrap(), QueueStatus::Dropped);
-    }
-
-    #[tokio::test]
-    async fn retry_restores_superseded_item_to_queued() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q1",
-            QueueStatus::Superseded,
-            1,
-        )
-        .await;
-        sqlx::query("UPDATE queued_inputs SET superseded = 1 WHERE id = 'q1'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            retry(&pool, &projection(&pool), thread.as_str(), "q1")
-                .await
-                .unwrap(),
-            QueueStatus::Queued
-        );
-        let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].status, QueueStatus::Queued);
-        assert!(!items[0].superseded);
     }
 
     #[tokio::test]

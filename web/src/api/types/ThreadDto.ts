@@ -24,9 +24,7 @@ export type ThreadDto = {
   updatedAt: number;
   archivedAt: number | null;
   pinned: boolean;
-  unread: boolean;
   shareLevel: ShareLevel;
   participants: Array<Participant>;
   pendingApprovals: number;
-  queuedInputs: number;
 };

@@ -6,7 +6,6 @@ use crate::error::ServerError;
 use crate::projects;
 use sqlx::{FromRow, QueryBuilder, SqlitePool};
 use std::collections::HashMap;
-use threadbase_core::state::ReadRules;
 use threadbase_shared::{
     ApiError, Participant, Role, ShareLevel, ThreadDto, ThreadMemberDto, ThreadStatus, UserBrief,
 };
@@ -48,9 +47,6 @@ const VISIBLE_TO_USER: &str = "(
 #[derive(Clone, Default)]
 struct Aggregate {
     pending_approvals: i64,
-    queued_inputs: i64,
-    max_seq: i64,
-    last_read: i64,
 }
 
 pub async fn load_row(pool: &SqlitePool, thread_id: &str) -> Result<ThreadRow, ServerError> {
@@ -70,7 +66,7 @@ pub async fn get(
 ) -> Result<ThreadDto, ServerError> {
     authz::require_read(pool, thread_id, user).await?;
     let row = load_row(pool, thread_id).await?;
-    dto(pool, &row, user).await
+    dto(pool, &row).await
 }
 
 pub async fn list(
@@ -94,7 +90,7 @@ pub async fn list(
     .bind(user.user.id.as_str())
     .fetch_all(pool)
     .await?;
-    dtos(pool, rows, user).await
+    dtos(pool, rows).await
 }
 
 pub async fn list_all(
@@ -114,16 +110,12 @@ pub async fn list_all(
     .bind(user.user.id.as_str())
     .fetch_all(pool)
     .await?;
-    dtos(pool, rows, user).await
+    dtos(pool, rows).await
 }
 
-pub async fn dto(
-    pool: &SqlitePool,
-    row: &ThreadRow,
-    user: &CurrentUser,
-) -> Result<ThreadDto, ServerError> {
+pub async fn dto(pool: &SqlitePool, row: &ThreadRow) -> Result<ThreadDto, ServerError> {
     let ids = [row.id.as_str()];
-    let aggregates = aggregates(pool, &ids, user.user.id.as_str()).await?;
+    let aggregates = aggregates(pool, &ids).await?;
     let mut participants = participants_by_thread(pool, &ids).await?;
     if participants.get(&row.id).is_none_or(Vec::is_empty) {
         if let Some(creator) = creator_participant(pool, &row.created_by, row.created_at).await {
@@ -138,13 +130,9 @@ pub async fn dto(
     ))
 }
 
-async fn dtos(
-    pool: &SqlitePool,
-    rows: Vec<ThreadRow>,
-    user: &CurrentUser,
-) -> Result<Vec<ThreadDto>, ServerError> {
+async fn dtos(pool: &SqlitePool, rows: Vec<ThreadRow>) -> Result<Vec<ThreadDto>, ServerError> {
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-    let aggregates = aggregates(pool, &ids, user.user.id.as_str()).await?;
+    let aggregates = aggregates(pool, &ids).await?;
     let mut participants = participants_by_thread(pool, &ids).await?;
     for row in &rows {
         if participants.get(&row.id).is_none_or(Vec::is_empty) {
@@ -170,8 +158,6 @@ fn to_dto(
     aggregate: Aggregate,
     participants: Vec<Participant>,
 ) -> ThreadDto {
-    let max_seq = u64::try_from(aggregate.max_seq).unwrap_or(0);
-    let last_read = u64::try_from(aggregate.last_read).unwrap_or(0);
     ThreadDto {
         id: id.into(),
         project_id: row.project_id.clone().into(),
@@ -191,11 +177,9 @@ fn to_dto(
         updated_at: row.updated_at,
         archived_at: row.archived_at,
         pinned: row.pinned != 0,
-        unread: ReadRules::thread_unread(last_read, max_seq),
         share_level: ShareLevel::parse(&row.share_level),
         participants,
         pending_approvals: u32::try_from(aggregate.pending_approvals).unwrap_or(0),
-        queued_inputs: u32::try_from(aggregate.queued_inputs).unwrap_or(0),
     }
 }
 
@@ -204,7 +188,6 @@ fn to_dto(
 async fn aggregates(
     pool: &SqlitePool,
     ids: &[&str],
-    user_id: &str,
 ) -> Result<HashMap<String, Aggregate>, ServerError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
@@ -212,16 +195,9 @@ async fn aggregates(
     let mut query = QueryBuilder::new(
         "SELECT t.id,
             (SELECT COUNT(*) FROM approvals a
-              WHERE a.thread_id = t.id AND a.status = 'pending') AS pending_approvals,
-            (SELECT COUNT(*) FROM queued_inputs q
-              WHERE q.thread_id = t.id AND q.status = 'queued') AS queued_inputs,
-            (SELECT COALESCE(MAX(seq), 0) FROM events e
-              WHERE e.thread_id = t.id) AS max_seq,
-            COALESCE((SELECT last_read_seq FROM thread_reads r
-              WHERE r.thread_id = t.id AND r.user_id = ",
+              WHERE a.thread_id = t.id AND a.status = 'pending') AS pending_approvals
+         FROM threads t WHERE t.id IN (",
     );
-    query.push_bind(user_id);
-    query.push("), 0) AS last_read FROM threads t WHERE t.id IN (");
     let mut separated = query.separated(", ");
     for id in ids {
         separated.push_bind(*id);
@@ -235,9 +211,6 @@ async fn aggregates(
                 row.id,
                 Aggregate {
                     pending_approvals: row.pending_approvals,
-                    queued_inputs: row.queued_inputs,
-                    max_seq: row.max_seq,
-                    last_read: row.last_read,
                 },
             )
         })
@@ -248,9 +221,6 @@ async fn aggregates(
 struct AggregateRow {
     id: String,
     pending_approvals: i64,
-    queued_inputs: i64,
-    max_seq: i64,
-    last_read: i64,
 }
 
 async fn participants_by_thread(

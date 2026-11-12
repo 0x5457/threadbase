@@ -1,14 +1,18 @@
 import { useComputedColorScheme } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { PatchDiff } from "@pierre/diffs/react";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 
 /**
  * Thin adapter around Pierre's diff renderer. Pierre owns syntax
  * highlighting, line numbers, and the diff layout; this component only
  * supplies the surface tokens so the diff sits inside the thread.
  */
-export function DiffView({ patch }: { patch: string }) {
+export const DiffView = memo(function DiffView({
+  patch,
+}: {
+  patch: string;
+}) {
   const scheme = useComputedColorScheme("light");
   const narrow = useMediaQuery("(max-width: 74.99em)");
 
@@ -30,4 +34,4 @@ export function DiffView({ patch }: { patch: string }) {
       <PatchDiff patch={patch} options={options} disableWorkerPool />
     </div>
   );
-}
+});

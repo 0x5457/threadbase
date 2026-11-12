@@ -6,16 +6,19 @@ import {
 } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { memo } from "react";
 import type { ViewItem } from "../../lib/thread-events";
 import { initials, timeOf } from "./format";
 
-export function Message({
+const REMARK_PLUGINS = [remarkGfm];
+
+export const Message = memo(function Message({
   item,
   onComment,
   active,
 }: {
   item: Extract<ViewItem, { kind: "message" }>;
-  onComment: () => void;
+  onComment: (messageId: string) => void;
   active: boolean;
 }) {
   const agent = item.role === "agent";
@@ -37,13 +40,13 @@ export function Message({
           className="msg-comment-btn"
           size={18}
           aria-label="Comment on message"
-          onClick={onComment}
+          onClick={() => onComment(item.id)}
         >
           <IconMessagePlus size={12} stroke={1.5} />
         </ActionIcon>
         <div className="prose">
           {agent ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>
               {item.text}
             </ReactMarkdown>
           ) : (
@@ -54,9 +57,9 @@ export function Message({
       </div>
     </div>
   );
-}
+});
 
-export function Thinking() {
+export const Thinking = memo(function Thinking() {
   return (
     <div className="block">
       <div className="block-gutter" />
@@ -67,9 +70,9 @@ export function Thinking() {
       </div>
     </div>
   );
-}
+});
 
-export function Notice({
+export const Notice = memo(function Notice({
   item,
 }: {
   item: Extract<ViewItem, { kind: "notice" }>;
@@ -91,5 +94,4 @@ export function Notice({
       </div>
     </div>
   );
-}
-
+});

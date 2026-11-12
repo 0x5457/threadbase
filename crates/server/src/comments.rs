@@ -3,9 +3,9 @@
 use crate::auth::CurrentUser;
 use crate::error::ServerError;
 use crate::events::EventStore;
-use crate::projection::Projection;
 use sqlx::{FromRow, SqlitePool};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use threadbase_core::state::{
     comment_action_for, comment_status_str, parse_comment_status, CommentAction, CommentMachine,
 };
@@ -78,7 +78,6 @@ pub async fn load(pool: &SqlitePool, comment_id: &str) -> Result<CommentDto, Ser
 
 pub async fn create(
     pool: &SqlitePool,
-    projection: &Projection,
     events: &EventStore,
     thread_id: &str,
     user: &CurrentUser,
@@ -123,13 +122,11 @@ pub async fn create(
         )
         .await?;
     notify_mentions(pool, thread_id, body, &id, &user.user).await?;
-    projection.publish(thread_id).await;
     Ok(comment)
 }
 
 pub async fn update(
     pool: &SqlitePool,
-    projection: &Projection,
     events: &EventStore,
     comment_id: &str,
     user: &CurrentUser,
@@ -161,14 +158,7 @@ pub async fn update(
     if let Some(status) = request.status {
         let action = comment_action_for(status)
             .ok_or_else(|| ServerError::internal("cannot transition to draft"))?;
-        transition(
-            pool,
-            projection,
-            current.thread_id.as_str(),
-            comment_id,
-            action,
-        )
-        .await?;
+        transition(pool, comment_id, action).await?;
     }
     let comment = load(pool, comment_id).await?;
     events
@@ -204,21 +194,12 @@ pub async fn delete(
 
 pub async fn mark_delivered(
     pool: &SqlitePool,
-    projection: &Projection,
     events: &EventStore,
     comment_id: &str,
     user: &CurrentUser,
     delivered_seq: Option<u64>,
 ) -> Result<CommentDto, ServerError> {
-    let current = load(pool, comment_id).await?;
-    set_delivered(
-        pool,
-        projection,
-        current.thread_id.as_str(),
-        comment_id,
-        delivered_seq,
-    )
-    .await?;
+    set_delivered(pool, comment_id, delivered_seq).await?;
     let comment = load(pool, comment_id).await?;
     events
         .append(
@@ -235,22 +216,44 @@ pub async fn mark_delivered(
 
 pub async fn mark_pending_delivered(
     pool: &SqlitePool,
-    projection: &Projection,
     events: &EventStore,
-    thread_id: &str,
+    pending: &[CommentDto],
     user: &CurrentUser,
     delivered_seq: Option<u64>,
 ) -> Result<(), ServerError> {
-    for comment in pending_for_thread(pool, thread_id).await? {
-        mark_delivered(
-            pool,
-            projection,
-            events,
-            comment.id.as_str(),
-            user,
-            delivered_seq,
-        )
-        .await?;
+    let Some(first) = pending.first() else {
+        return Ok(());
+    };
+    // One UPDATE for the whole thread; RETURNING tells us which comments were
+    // still pending when it ran.
+    let updated: Vec<String> = sqlx::query_scalar(
+        "UPDATE comments SET status = ?, delivered_seq = ?, updated_at = ?
+         WHERE thread_id = ? AND status = ?
+         RETURNING id",
+    )
+    .bind(comment_status_str(CommentStatus::Delivered))
+    .bind(delivered_seq.and_then(|value| i64::try_from(value).ok()))
+    .bind(now_ms())
+    .bind(first.thread_id.as_str())
+    .bind(comment_status_str(CommentStatus::Pending))
+    .fetch_all(pool)
+    .await?;
+    let ids: HashSet<&str> = updated.iter().map(String::as_str).collect();
+    for comment in pending {
+        if !ids.contains(comment.id.as_str()) {
+            continue;
+        }
+        let mut delivered = comment.clone();
+        delivered.status = CommentStatus::Delivered;
+        delivered.delivered_seq = delivered_seq;
+        events
+            .append(
+                &ThreadId::from(delivered.thread_id.0.clone()),
+                Actor::user(&UserBrief::from_user(&user.user)),
+                ThreadEvent::CommentUpdated { comment: delivered },
+                Default::default(),
+            )
+            .await?;
     }
     Ok(())
 }
@@ -301,8 +304,6 @@ async fn insert(
 
 async fn transition(
     pool: &SqlitePool,
-    projection: &Projection,
-    thread_id: &str,
     comment_id: &str,
     action: CommentAction,
 ) -> Result<CommentStatus, ServerError> {
@@ -326,14 +327,11 @@ async fn transition(
         .bind(comment_status_str(current))
         .execute(pool)
         .await?;
-    projection.publish(thread_id).await;
     Ok(next)
 }
 
 async fn set_delivered(
     pool: &SqlitePool,
-    projection: &Projection,
-    thread_id: &str,
     comment_id: &str,
     delivered_seq: Option<u64>,
 ) -> Result<CommentStatus, ServerError> {
@@ -360,7 +358,6 @@ async fn set_delivered(
     .bind(comment_status_str(current))
     .execute(pool)
     .await?;
-    projection.publish(thread_id).await;
     Ok(next)
 }
 

@@ -6,7 +6,7 @@ use crate::model::{
     ApprovalDecision, ApprovalDto, AuthStatusDto, BaselineDto, ChangesDto, CommentAnchor,
     CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto, FileContentDto,
     FileEntryDto, InboxItemDto, InviteDto, ProjectDto, QueueItemDto, Role, SettingsDto, ShareLevel,
-    ShareStateDto, SubagentDto, ThreadDto, ThreadMemberDto, UserAccess, UserBrief, UserDto,
+    ShareStateDto, SubagentDto, ThreadDto, UserAccess, UserBrief, UserDto,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -255,7 +255,6 @@ pub struct ThreadBundleDto {
     pub queue: Vec<QueueItemDto>,
     pub comments: Vec<CommentDto>,
     pub changes: ChangesDto,
-    pub members: Vec<ThreadMemberDto>,
     pub share: ShareStateDto,
 }
 
@@ -275,14 +274,6 @@ pub struct ThreadState {
     pub pending_elicitations: u32,
     pub queued_inputs: u32,
     pub active_subagents: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ApprovalsPageDto {
-    pub approvals: Vec<ApprovalDto>,
-    pub elicitations: Vec<ElicitationDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -500,13 +491,6 @@ pub struct ThreadBundleResponse {
 #[ts(export)]
 pub struct ThreadsResponse {
     pub threads: Vec<ThreadDto>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct QueueResponse {
-    pub items: Vec<QueueItemDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

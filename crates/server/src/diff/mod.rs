@@ -107,24 +107,25 @@ pub async fn list(
     let seen_map = seen_hashes(pool, row, user, &resolved.reference).await?;
     let mut seen_count = 0;
     for file in files.values_mut() {
+        // Hashing a changed file is only needed when the user has actually
+        // marked it seen; the common case has an empty seen map.
+        let Some(stored) = seen_map.get(&file.path) else {
+            continue;
+        };
         let current = current_hash(&worktree, &file.path).await;
-        match seen_map.get(&file.path) {
-            Some(stored) if ReadRules::seen(Some(stored), &current) => {
-                file.seen = true;
-                seen_count += 1;
-            }
-            Some(_) => {
-                sqlx::query(
-                    "DELETE FROM seen_files WHERE thread_id = ? AND user_id = ? AND path = ? AND baseline = ?",
-                )
-                .bind(&row.id)
-                .bind(user.user.id.as_str())
-                .bind(&file.path)
-                .bind(&resolved.reference)
-                .execute(pool)
-                .await?;
-            }
-            None => {}
+        if ReadRules::seen(Some(stored), &current) {
+            file.seen = true;
+            seen_count += 1;
+        } else {
+            sqlx::query(
+                "DELETE FROM seen_files WHERE thread_id = ? AND user_id = ? AND path = ? AND baseline = ?",
+            )
+            .bind(&row.id)
+            .bind(user.user.id.as_str())
+            .bind(&file.path)
+            .bind(&resolved.reference)
+            .execute(pool)
+            .await?;
         }
     }
     let mut additions = 0;

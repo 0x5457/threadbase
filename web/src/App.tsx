@@ -99,8 +99,6 @@ export function App() {
     queryKey: ["inbox", "unread"],
     queryFn: () => listInbox("unread"),
     staleTime: 5_000,
-    refetchInterval: 5_000,
-    refetchIntervalInBackground: false,
   });
 
   // Give the first screen a real URL instead of leaving the bar at "/".

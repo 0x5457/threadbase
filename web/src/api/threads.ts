@@ -3,7 +3,6 @@ import type { ChangesDto } from "./types/ChangesDto";
 import type { CreateThreadRequest } from "./types/CreateThreadRequest";
 import type { DeliveryMode } from "./types/DeliveryMode";
 import type { EventEnvelope } from "./types/EventEnvelope";
-import type { EventsPageDto } from "./types/EventsPageDto";
 import type { FileChangeDto } from "./types/FileChangeDto";
 import type { FileDiffDto } from "./types/FileDiffDto";
 import type { ForkThreadRequest } from "./types/ForkThreadRequest";
@@ -45,15 +44,6 @@ export interface Baseline {
   commit?: string | null;
 }
 
-function baselineQuery(baseline?: Baseline): string {
-  if (!baseline) return "";
-  const params = new URLSearchParams();
-  if (baseline.kind) params.set("kind", baseline.kind);
-  if (baseline.commit) params.set("commit", baseline.commit);
-  const query = params.toString();
-  return query ? `?${query}` : "";
-}
-
 export function listAllThreads() {
   return request<ThreadsResponse>("/api/threads");
 }
@@ -70,24 +60,12 @@ export function getThreadBundle(threadId: string) {
   return request<{ bundle: ThreadBundle }>(`/api/threads/${threadId}/bundle`);
 }
 
-export function getThreadChanges(threadId: string, baseline?: Baseline) {
-  return request<ChangesDto>(
-    `/api/threads/${threadId}/changes${baselineQuery(baseline)}`,
-  );
-}
-
 export function getFileDiff(threadId: string, path: string, baseline?: Baseline) {
   const params = new URLSearchParams({ path });
   if (baseline?.kind) params.set("kind", baseline.kind);
   if (baseline?.commit) params.set("commit", baseline.commit);
   return request<FileDiffDto>(
     `/api/threads/${threadId}/changes/file?${params.toString()}`,
-  );
-}
-
-export function getThreadEvents(threadId: string, afterSeq = 0) {
-  return request<EventsPageDto>(
-    `/api/threads/${threadId}/events?after_seq=${afterSeq}&limit=1000`,
   );
 }
 
@@ -149,33 +127,10 @@ export function sendDraft(threadId: string, delivery?: DeliveryMode) {
   );
 }
 
-export function markThreadRead(threadId: string) {
-  return jsonRequest<OkResponse>(`/api/threads/${threadId}/read`, "POST");
-}
-
-export function markThreadUnread(threadId: string) {
-  return jsonRequest<OkResponse>(`/api/threads/${threadId}/unread`, "POST");
-}
-
-export function cancelThread(threadId: string) {
-  return jsonRequest<OkResponse>(`/api/threads/${threadId}/cancel`, "POST");
-}
-
-export function restartAgent(threadId: string) {
-  return jsonRequest<OkResponse>(`/api/threads/${threadId}/restart`, "POST");
-}
-
 export function dropQueueItem(threadId: string, itemId: string) {
   return jsonRequest<OkResponse>(
     `/api/threads/${threadId}/queue/${itemId}`,
     "DELETE",
-  );
-}
-
-export function retryQueueItem(threadId: string, itemId: string) {
-  return jsonRequest<OkResponse>(
-    `/api/threads/${threadId}/queue/${itemId}/retry`,
-    "POST",
   );
 }
 
