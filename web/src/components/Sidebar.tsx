@@ -147,7 +147,7 @@ export function Sidebar({
           {pinned.length ? (
             <div className="section">
               <Group className="section-head" justify="space-between">
-                <Text size="sm" c="dimmed">
+                <Text size="sm" className="section-label">
                   Pinned
                 </Text>
               </Group>
@@ -170,7 +170,7 @@ export function Sidebar({
 
           <div className="section">
             <Group className="section-head" justify="space-between">
-              <Text size="sm" c="dimmed">
+              <Text size="sm" className="section-label">
                 Projects
               </Text>
             </Group>

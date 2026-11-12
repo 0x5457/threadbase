@@ -318,7 +318,7 @@ export function ProjectNode({
               This removes the project from Threadbase together with its
               threads, their worktrees and their branches.
             </Text>
-            <Text size="sm" c="dimmed">
+            <Text size="sm" className="section-label">
               The repository folder itself stays where it is:{" "}
               <Text component="span" ff="monospace" size="xs">
                 {project.path}
