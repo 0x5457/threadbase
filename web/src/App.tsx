@@ -203,7 +203,12 @@ function Workspace() {
     staleTime: 60_000,
   });
   const me = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 60_000 });
-  const terminalEnabled = Boolean(stateQuery.data?.terminal) && Boolean(me.data?.user.isAdmin);
+  const terminalEnabled =
+    Boolean(stateQuery.data?.terminal) &&
+    Boolean(
+      me.data &&
+        (me.data.user.isAdmin || me.data.user.access === "member"),
+    );
   // A shell that outlived the drawer: the status bar keeps it discoverable.
   const terminalSessions = useQuery({
     queryKey: ["terminal-sessions", terminalThreadId],

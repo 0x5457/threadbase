@@ -16,6 +16,7 @@ Environment:
                                GitHub OAuth app client secret
   THREADBASE_GITHUB_ALLOW      Comma-separated GitHub logins allowed to sign in
   THREADBASE_ADMINS            Comma-separated GitHub logins that are always admins
+  THREADBASE_TERMINAL_DRIVERS  GitHub logins allowed to drive the browser terminal
   THREADBASE_SESSION_DAYS      Session lifetime in days (default 30)
   THREADBASE_COOKIE_SECURE     Force the Secure cookie flag on or off
   THREADBASE_DEV_IDENTITY      Identity accepted from direct local connections

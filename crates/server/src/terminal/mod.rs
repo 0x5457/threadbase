@@ -40,10 +40,18 @@ const MAX_ROWS: u16 = 200;
 pub enum Access {
     /// Read-only accounts and pending invitations never reach a shell.
     Denied,
-    /// Members may watch, but only administrators drive.
+    /// Members may watch, but only administrators and allowed drivers type.
     Watch,
-    /// Administrators own the keyboard.
+    /// Administrators and `THREADBASE_TERMINAL_DRIVERS` own the keyboard.
     Drive,
+}
+
+/// Case-insensitive match against `THREADBASE_TERMINAL_DRIVERS` (GitHub logins).
+#[must_use]
+pub fn is_driver(logins: &[String], username: &str) -> bool {
+    logins
+        .iter()
+        .any(|login| login.eq_ignore_ascii_case(username))
 }
 
 #[must_use]
@@ -679,6 +687,15 @@ mod tests {
         assert_eq!(access_for(UserAccess::Member, false), Access::Watch);
         assert_eq!(access_for(UserAccess::ReadOnly, false), Access::Denied);
         assert_eq!(access_for(UserAccess::Pending, false), Access::Denied);
+    }
+
+    #[test]
+    fn terminal_driver_logins_match_case_insensitively() {
+        let drivers = vec!["0x5459".to_owned(), "Alice".to_owned()];
+        assert!(is_driver(&drivers, "0x5459"));
+        assert!(is_driver(&drivers, "alice"));
+        assert!(!is_driver(&drivers, "0x5457"));
+        assert!(!is_driver(&[], "0x5459"));
     }
 
     #[test]

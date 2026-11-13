@@ -99,7 +99,7 @@ unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例�
 
 ### 网页终端（默认关闭）
 
-`THREADBASE_TERMINAL=1` 才挂载终端路由，且**只有管理员能驱动**：其他 `member` 账号打开同一个终端只能看（tmux 只读客户端，服务端不接收其按键），`read_only` 账号连入口都没有。关掉这个功能时相关路由返回 404，不暴露存在性。
+`THREADBASE_TERMINAL=1` 才挂载终端路由，且默认**只有管理员能驱动**：其他 `member` 账号打开同一个终端只能看（tmux 只读客户端，服务端不接收其按键），`read_only` 账号连入口都没有。`THREADBASE_TERMINAL_DRIVERS=0x5459,alice` 可以给指定 GitHub 登录（逗号分隔，大小写不敏感）驱动权限，不必把整个账号提成管理员。关掉这个功能时相关路由返回 404，不暴露存在性。
 
 ```bash
 THREADBASE_TERMINAL=1 cargo run -p threadbase

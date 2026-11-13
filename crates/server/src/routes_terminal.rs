@@ -61,13 +61,15 @@ struct SocketQuery {
 }
 
 /// Gate every terminal endpoint: the feature is opt-in, read-only accounts and
-/// pending invitations never get a shell.
+/// pending invitations never get a shell. Administrators and logins listed in
+/// `THREADBASE_TERMINAL_DRIVERS` drive; other members watch.
 fn gate(state: &AppState, user: &CurrentUser) -> Result<Access, ServerError> {
     if !state.config.terminal {
         // 404 rather than 403: a disabled feature should not advertise itself.
         return Err(ServerError(ApiError::not_found("unknown endpoint")));
     }
-    match terminal::access_for(user.user.access, user.is_admin()) {
+    let is_driver = terminal::is_driver(&state.config.terminal_drivers, &user.user.username);
+    match terminal::access_for(user.user.access, user.is_admin() || is_driver) {
         Access::Denied => Err(ServerError(ApiError::forbidden(
             "the terminal is not available for this account",
         ))),
