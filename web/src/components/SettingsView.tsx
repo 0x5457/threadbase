@@ -111,7 +111,8 @@ export function SettingsView() {
                 <Stack gap={0}>
                   <Text size="sm">Theme</Text>
                   <Text size="xs" c="dimmed">
-                    Stored on this device and in your workspace settings.
+                    Zed&apos;s One Light / One Dark palette, stored in your
+                    workspace settings.
                   </Text>
                 </Stack>
                 <SegmentedControl
@@ -122,8 +123,8 @@ export function SettingsView() {
                     patch("theme", value);
                   }}
                   data={[
-                    { label: "Light", value: "light" },
-                    { label: "Dark", value: "dark" },
+                    { label: "One Light", value: "light" },
+                    { label: "One Dark", value: "dark" },
                   ]}
                 />
               </Group>
