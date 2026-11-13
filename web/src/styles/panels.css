@@ -24,6 +24,12 @@
   background: var(--paper);
 }
 
+/* Both aside tabs stay mounted; the inactive one is hidden. */
+.aside-panel {
+  height: 100%;
+  min-height: 0;
+}
+
 .changes {
   display: flex;
   height: 100%;

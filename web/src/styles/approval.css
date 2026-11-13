@@ -303,13 +303,56 @@
 }
 
 .change-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: calc(100% - 8px);
   height: 27px;
+  margin: 1px 4px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.change-row:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.change-row[data-active="true"] {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.change-row .change-icon,
+.change-row .change-stats {
+  flex: none;
+  color: var(--ink-muted);
+}
+
+.change-row .change-stats {
+  display: flex;
+  gap: 5px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.change-row .change-status {
+  min-width: 8px;
+  color: var(--ink-dimmed, var(--ink-faint));
+  font-family: ui-monospace, monospace;
+  text-align: center;
 }
 
 .change-row .change-path {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  max-width: 220px;
+  max-width: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

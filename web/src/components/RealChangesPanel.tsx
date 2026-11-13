@@ -4,7 +4,6 @@ import {
   Button,
   Group,
   Loader,
-  NavLink,
   ScrollArea,
   Text,
 } from "@mantine/core";
@@ -19,7 +18,7 @@ import {
   IconTextWrapDisabled,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   getFileDiff,
   getThreadBundle,
@@ -75,36 +74,31 @@ function FileRow({
   active: boolean;
   onClick: () => void;
 }) {
+  // A plain button keeps a 139-file change list cheap to mount; Mantine's
+  // NavLink renders a full component tree per row and made switching the
+  // Changes panel visibly stall.
   return (
-    <NavLink
-      component="button"
-      className="side-nav change-row"
-      active={active}
+    <button
+      type="button"
+      className="change-row"
+      data-active={active ? "true" : undefined}
       onClick={onClick}
-      leftSection={<IconFile size={13} stroke={1.5} />}
-      label={
-        <Group gap={6} wrap="nowrap" justify="space-between">
-          <Text size="sm" className="change-path">
-            {file.path}
-          </Text>
-          <Group gap={5} wrap="nowrap">
-            <Text size="xs" className="stat-add">
-              +{file.additions}
-            </Text>
-            <Text size="xs" className="stat-del">
-              −{file.deletions}
-            </Text>
-            <Text size="xs" c="dimmed" ff="monospace">
-              {statusLetter[file.status] ?? "?"}
-            </Text>
-          </Group>
-        </Group>
-      }
-    />
+      title={file.path}
+    >
+      <IconFile size={13} stroke={1.5} className="change-icon" />
+      <span className="change-path">{file.path}</span>
+      <span className="change-stats">
+        <span className="stat-add">+{file.additions}</span>
+        <span className="stat-del">−{file.deletions}</span>
+        <span className="change-status">
+          {statusLetter[file.status] ?? "?"}
+        </span>
+      </span>
+    </button>
   );
 }
 
-export function RealChangesPanel({
+export const RealChangesPanel = memo(function RealChangesPanel({
   threadId,
   onClose,
   onShowFiles,
@@ -279,4 +273,4 @@ export function RealChangesPanel({
       </ScrollArea>
     </div>
   );
-}
+});

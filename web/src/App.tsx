@@ -19,7 +19,7 @@ import {
   IconSun,
   IconTerminal2,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BrowserRouter,
   Navigate,
@@ -308,7 +308,7 @@ function Workspace() {
     };
   }, []);
 
-  const setAsideOpen = (open: boolean) => {
+  const setAsideOpen = useCallback((open: boolean) => {
     setAsideCollapsed(!open);
     try {
       window.localStorage.setItem(
@@ -318,10 +318,18 @@ function Workspace() {
     } catch {
       // Private mode: the preference simply does not persist.
     }
-  };
+  }, []);
 
-  const collapseAside = () => setAsideOpen(false);
-  const toggleAside = () => setAsideOpen(asideCollapsed);
+  const collapseAside = useCallback(
+    () => setAsideOpen(false),
+    [setAsideOpen],
+  );
+  const toggleAside = useCallback(
+    () => setAsideOpen(asideCollapsed),
+    [asideCollapsed, setAsideOpen],
+  );
+  const showFiles = useCallback(() => setAsideTab("files"), []);
+  const showChanges = useCallback(() => setAsideTab("changes"), []);
 
   const openChanges = () => {
     if (!hasWorktree) return;
@@ -806,21 +814,37 @@ function Workspace() {
         {wide ? (
           <AppShell.Aside p={0} className="aside">
             {selectedThread && hasWorktree ? (
-              asideTab === "changes" ? (
-                <RealChangesPanel
-                  key={selectedThread.id}
-                  threadId={selectedThread.id}
-                  onShowFiles={() => setAsideTab("files")}
-                  onClose={collapseAside}
-                />
-              ) : (
-                <FilesPanel
-                  key={selectedThread.id}
-                  threadId={selectedThread.id}
-                  onShowChanges={() => setAsideTab("changes")}
-                  onClose={collapseAside}
-                />
-              )
+              <>
+                {/* Both tabs stay mounted: switching back to Changes reuses
+                    the parsed diff instead of re-tokenizing it on the main
+                    thread. */}
+                <div
+                  className="aside-panel"
+                  style={{
+                    display: asideTab === "changes" ? undefined : "none",
+                  }}
+                >
+                  <RealChangesPanel
+                    key={selectedThread.id}
+                    threadId={selectedThread.id}
+                    onShowFiles={showFiles}
+                    onClose={collapseAside}
+                  />
+                </div>
+                <div
+                  className="aside-panel"
+                  style={{
+                    display: asideTab === "files" ? undefined : "none",
+                  }}
+                >
+                  <FilesPanel
+                    key={selectedThread.id}
+                    threadId={selectedThread.id}
+                    onShowChanges={showChanges}
+                    onClose={collapseAside}
+                  />
+                </div>
+              </>
             ) : null}
           </AppShell.Aside>
         ) : null}
@@ -878,21 +902,34 @@ function Workspace() {
           <div className="sheet-stack">
             {phone ? <SheetGrabber onClose={changes.close} /> : null}
             {selectedThread ? (
-              asideTab === "changes" ? (
-                <RealChangesPanel
-                  key={selectedThread.id}
-                  threadId={selectedThread.id}
-                  onClose={changes.close}
-                  onShowFiles={() => setAsideTab("files")}
-                />
-              ) : (
-                <FilesPanel
-                  key={selectedThread.id}
-                  threadId={selectedThread.id}
-                  onClose={changes.close}
-                  onShowChanges={() => setAsideTab("changes")}
-                />
-              )
+              <>
+                <div
+                  className="aside-panel"
+                  style={{
+                    display: asideTab === "changes" ? undefined : "none",
+                  }}
+                >
+                  <RealChangesPanel
+                    key={selectedThread.id}
+                    threadId={selectedThread.id}
+                    onClose={changes.close}
+                    onShowFiles={showFiles}
+                  />
+                </div>
+                <div
+                  className="aside-panel"
+                  style={{
+                    display: asideTab === "files" ? undefined : "none",
+                  }}
+                >
+                  <FilesPanel
+                    key={selectedThread.id}
+                    threadId={selectedThread.id}
+                    onClose={changes.close}
+                    onShowChanges={showChanges}
+                  />
+                </div>
+              </>
             ) : null}
           </div>
         </Drawer>

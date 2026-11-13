@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { FilesBrowser } from "./files/FilesBrowser";
 
-export function FilesPanel({
+export const FilesPanel = memo(function FilesPanel({
   threadId,
   onClose,
   onShowChanges,
@@ -19,4 +20,4 @@ export function FilesPanel({
       onShowChanges={onShowChanges}
     />
   );
-}
+});

@@ -58,7 +58,7 @@ import { ActionSheet } from "./ActionSheet";
 import { AgentLog } from "./AgentLog";
 import { Composer } from "./Composer";
 import { ApprovalCard } from "./thread/ApprovalCard";
-import { CommentCard, CommentEditor } from "./thread/CommentCard";
+import { CommentCard, CommentDraft } from "./thread/CommentCard";
 import { CommentThread } from "./thread/CommentThread";
 import { ElicitationCard } from "./thread/ElicitationCard";
 import { EmptyThread } from "./thread/EmptyThread";
@@ -77,6 +77,8 @@ type ToolItem = Extract<ViewItem, { kind: "tool" }>;
 
 /** Tools rendered inline before a run collapses the rest behind a toggle. */
 const PREVIEW_TOOLS = 3;
+/** Stable empty list: a fresh `[]` per row would break memoized rows. */
+const NO_COMMENTS: Comment[] = [];
 type TimelineRowItem =
   | ViewItem
   | { kind: "tools"; id: string; tools: ToolItem[] }
@@ -89,7 +91,7 @@ type TimelineRowItem =
 
 /// One transcript row. Rendering is a pure function of the reducer item so
 /// Virtuoso can mount and unmount rows freely while scrolling.
-function TimelineRow({
+function TimelineRowImpl({
   item,
   active,
   comments,
@@ -281,6 +283,51 @@ function TimelineRow({
   }
 }
 
+/**
+ * Memoized per row: a token batch replaces only the streaming block's item,
+ * so every other mounted row can skip the render. All callbacks passed from
+ * the view are stable for the same reason.
+ */
+const TimelineRow = memo(
+  TimelineRowImpl,
+  (prev, next) => {
+    // Group rows are rebuilt on every batch (their wrapper objects are new),
+    // but their tool calls keep identity until one of them actually updates.
+    const prevItem = prev.item;
+    const nextItem = next.item;
+    const sameTools = (a: ToolItem[], b: ToolItem[]) =>
+      a.length === b.length &&
+      a.every(
+        (tool, index) =>
+          tool.call === b[index].call && tool.ts === b[index].ts,
+      );
+    const sameItem =
+      prevItem === nextItem ||
+      (prevItem.kind === "tools" && nextItem.kind === "tools"
+        ? sameTools(prevItem.tools, nextItem.tools)
+        : prevItem.kind === "run" && nextItem.kind === "run"
+          ? prevItem.thinking === nextItem.thinking &&
+            sameTools(prevItem.tools, nextItem.tools)
+          : false);
+    return (
+      sameItem &&
+      prev.active === next.active &&
+      prev.expanded === next.expanded &&
+      prev.onToggleExpanded === next.onToggleExpanded &&
+      prev.comments === next.comments &&
+      prev.commentsForTool === next.commentsForTool &&
+      prev.threadKey === next.threadKey &&
+      prev.openComments === next.openComments &&
+      prev.onToggleComments === next.onToggleComments &&
+      prev.renderComment === next.renderComment &&
+      prev.editing === next.editing &&
+      prev.editor === next.editor &&
+      prev.onComment === next.onComment &&
+      prev.onMessageLongPress === next.onMessageLongPress
+    );
+  },
+);
+
 const TimelineList = forwardRef<HTMLDivElement, { style?: React.CSSProperties; children?: React.ReactNode }>(
   ({ style, children }, ref) => (
     <div ref={ref} style={style} className="doc timeline-doc">
@@ -312,12 +359,10 @@ export const RealThreadView = memo(function RealThreadView({
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [commentBusy, setCommentBusy] = useState<string | null>(null);
   const [commentFor, setCommentFor] = useState<string | null>(null);
-  const [commentBody, setCommentBody] = useState("");
   const [messageSheet, setMessageSheet] = useState<Extract<
     ViewItem,
     { kind: "message" }
   > | null>(null);
-  const [commentSaving, setCommentSaving] = useState(false);
   // A long session can hold thousands of blocks; Virtuoso mounts only what is
   // visible, so a 10k-event transcript costs the same as a short one.
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -335,13 +380,14 @@ export const RealThreadView = memo(function RealThreadView({
     });
   }, []);
   const [openComments, setOpenComments] = useState<Set<string>>(new Set());
-  const toggleComments = (key: string) =>
+  const toggleComments = useCallback((key: string) => {
     setOpenComments((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
+  }, []);
   const notifiedApprovals = useRef<Set<string>>(new Set());
 
   const bundleQuery = useQuery({
@@ -387,17 +433,23 @@ export const RealThreadView = memo(function RealThreadView({
   );
 
   const { items, diagnostics, usage } = live.view;
-  const terminalUsers = live.presence.focuses
-    .filter(
-      (focus) =>
-        focus.threadId === threadId && !focus.hidden && focus.panel === "terminal",
-    )
-    .map((focus) => {
-      const participant = bundle?.thread.participants.find(
-        (entry) => entry.user.id === focus.userId,
-      );
-      return participant?.user.displayName ?? focus.userId;
-    });
+  const terminalUsers = useMemo(
+    () =>
+      live.presence.focuses
+        .filter(
+          (focus) =>
+            focus.threadId === threadId &&
+            !focus.hidden &&
+            focus.panel === "terminal",
+        )
+        .map((focus) => {
+          const participant = bundle?.thread.participants.find(
+            (entry) => entry.user.id === focus.userId,
+          );
+          return participant?.user.displayName ?? focus.userId;
+        }),
+    [bundle?.thread.participants, live.presence.focuses, threadId],
+  );
   const pending = (bundle?.approvals ?? []).filter(
     (approval) => approval.status === "pending",
   );
@@ -428,8 +480,16 @@ export const RealThreadView = memo(function RealThreadView({
     return map;
   }, [comments]);
 
-  const commentsFor = (kind: "message" | "tool_call", id: string) =>
-    commentsByAnchor.get(`${kind === "message" ? "m" : "t"}:${id}`) ?? [];
+  const commentsFor = useCallback(
+    (kind: "message" | "tool_call", id: string) =>
+      commentsByAnchor.get(`${kind === "message" ? "m" : "t"}:${id}`) ??
+      NO_COMMENTS,
+    [commentsByAnchor],
+  );
+  const commentsForTool = useCallback(
+    (id: string) => commentsFor("tool_call", id),
+    [commentsFor],
+  );
 
   // Rows handed to Virtuoso: every reducer block except a pending tool card,
   // which the approval card rendered in the footer replaces.
@@ -513,30 +573,30 @@ export const RealThreadView = memo(function RealThreadView({
     }
   }, [pending, stateQuery.data?.settings.browserNotifications]);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
-  };
+  }, [queryClient, threadId]);
 
-  const reportFailure = (cause: unknown, fallback: string) => {
+  const reportFailure = useCallback((cause: unknown, fallback: string) => {
     notifications.show({
       message: cause instanceof Error ? cause.message : fallback,
       color: "red",
     });
-  };
+  }, []);
 
-  const applyConfig = (
-    patch: { model?: string; effort?: string },
-    failure: string,
-  ) => {
-    void updateThread(threadId, patch)
-      .then(() => {
-        refresh();
-        void queryClient.invalidateQueries({
-          queryKey: ["agent-config", threadId],
-        });
-      })
-      .catch((cause: unknown) => reportFailure(cause, failure));
-  };
+  const applyConfig = useCallback(
+    (patch: { model?: string; effort?: string }, failure: string) => {
+      void updateThread(threadId, patch)
+        .then(() => {
+          refresh();
+          void queryClient.invalidateQueries({
+            queryKey: ["agent-config", threadId],
+          });
+        })
+        .catch((cause: unknown) => reportFailure(cause, failure));
+    },
+    [queryClient, refresh, reportFailure, threadId],
+  );
 
   const decide = async (
     approval: Approval,
@@ -587,42 +647,52 @@ export const RealThreadView = memo(function RealThreadView({
     }
   };
 
-  const restore = async (itemId: string) => {
-    try {
-      await restoreQueueItem(threadId, itemId);
-      refresh();
-    } catch (cause) {
-      reportFailure(cause, "Could not restore message");
-    }
-  };
+  const restore = useCallback(
+    async (itemId: string) => {
+      try {
+        await restoreQueueItem(threadId, itemId);
+        refresh();
+      } catch (cause) {
+        reportFailure(cause, "Could not restore message");
+      }
+    },
+    [refresh, reportFailure, threadId],
+  );
 
-  const steer = async (itemId: string) => {
-    setQueueBusy(`steer:${itemId}`);
-    try {
-      await steerQueueItem(threadId, itemId);
-    } catch (cause) {
-      reportFailure(cause, "Could not send the message now");
-    } finally {
-      setQueueBusy(null);
-      refresh();
-    }
-  };
+  const steer = useCallback(
+    async (itemId: string) => {
+      setQueueBusy(`steer:${itemId}`);
+      try {
+        await steerQueueItem(threadId, itemId);
+      } catch (cause) {
+        reportFailure(cause, "Could not send the message now");
+      } finally {
+        setQueueBusy(null);
+        refresh();
+      }
+    },
+    [refresh, reportFailure, threadId],
+  );
 
-  const edit = async (itemId: string, text: string) => {
-    setQueueBusy(`edit:${itemId}`);
-    try {
-      await updateQueueItem(threadId, itemId, text);
-      refresh();
-      return true;
-    } catch (cause) {
-      reportFailure(cause, "Could not edit the message");
-      return false;
-    } finally {
-      setQueueBusy(null);
-    }
-  };
+  const edit = useCallback(
+    async (itemId: string, text: string) => {
+      setQueueBusy(`edit:${itemId}`);
+      try {
+        await updateQueueItem(threadId, itemId, text);
+        refresh();
+        return true;
+      } catch (cause) {
+        reportFailure(cause, "Could not edit the message");
+        return false;
+      } finally {
+        setQueueBusy(null);
+      }
+    },
+    [refresh, reportFailure, threadId],
+  );
 
-  const drop = async (itemId: string) => {
+  const drop = useCallback(
+    async (itemId: string) => {
     setQueueBusy(`drop:${itemId}`);
     try {
       await dropQueueItem(threadId, itemId);
@@ -653,73 +723,81 @@ export const RealThreadView = memo(function RealThreadView({
     } finally {
       setQueueBusy(null);
     }
-  };
+  }, [refresh, reportFailure, restore, threadId]);
 
-  const reorder = async (ids: string[]) => {
-    try {
-      await reorderQueue(threadId, ids);
-      refresh();
-    } catch (cause) {
-      reportFailure(cause, "Could not reorder queue");
-      refresh();
-    }
-  };
-
-  const saveComment = async (anchor: CommentAnchor) => {
-    if (!commentBody.trim()) return;
-    setCommentSaving(true);
-    try {
-      await createComment(threadId, commentBody.trim(), anchor, false);
-      notifications.show({
-        message: "Comment saved for the next turn",
-        color: "teal",
-      });
-      setCommentFor(null);
-      setCommentBody("");
-      refresh();
-    } catch (cause) {
-      reportFailure(cause, "Could not save comment");
-    } finally {
-      setCommentSaving(false);
-    }
-  };
-
-  const actOnComment = async (
-    comment: Comment,
-    action: "resolve" | "send" | "delete",
-  ) => {
-    setCommentBusy(comment.id);
-    try {
-      if (action === "resolve") {
-        await updateComment(comment.id, { status: "resolved" });
-      } else if (action === "send") {
-        await sendComment(comment.id);
-      } else {
-        await deleteComment(comment.id);
+  const reorder = useCallback(
+    async (ids: string[]) => {
+      try {
+        await reorderQueue(threadId, ids);
+        refresh();
+      } catch (cause) {
+        reportFailure(cause, "Could not reorder queue");
+        refresh();
       }
-      refresh();
-    } catch (cause) {
-      reportFailure(cause, "Could not update comment");
-    } finally {
-      setCommentBusy(null);
-    }
-  };
+    },
+    [refresh, reportFailure, threadId],
+  );
 
-  const commentCard = (comment: Comment) => (
-    <CommentCard
-      key={comment.id}
-      comment={comment}
-      busy={commentBusy === comment.id}
-      onResolve={() => void actOnComment(comment, "resolve")}
-      onSend={() => void actOnComment(comment, "send")}
-      onDelete={() => void actOnComment(comment, "delete")}
-    />
+  const saveComment = useCallback(
+    async (anchor: CommentAnchor, body: string): Promise<boolean> => {
+      if (!body.trim()) return false;
+      try {
+        await createComment(threadId, body.trim(), anchor, false);
+        notifications.show({
+          message: "Comment saved for the next turn",
+          color: "teal",
+        });
+        setCommentFor(null);
+        refresh();
+        return true;
+      } catch (cause) {
+        reportFailure(cause, "Could not save comment");
+        return false;
+      }
+    },
+    [refresh, reportFailure, threadId],
+  );
+
+  const actOnComment = useCallback(
+    async (comment: Comment, action: "resolve" | "send" | "delete") => {
+      setCommentBusy(comment.id);
+      try {
+        if (action === "resolve") {
+          await updateComment(comment.id, { status: "resolved" });
+        } else if (action === "send") {
+          await sendComment(comment.id);
+        } else {
+          await deleteComment(comment.id);
+        }
+        refresh();
+      } catch (cause) {
+        reportFailure(cause, "Could not update comment");
+      } finally {
+        setCommentBusy(null);
+      }
+    },
+    [refresh, reportFailure],
+  );
+
+  const commentCard = useCallback(
+    (comment: Comment) => (
+      <CommentCard
+        key={comment.id}
+        comment={comment}
+        busy={commentBusy === comment.id}
+        onResolve={() => void actOnComment(comment, "resolve")}
+        onSend={() => void actOnComment(comment, "send")}
+        onDelete={() => void actOnComment(comment, "delete")}
+      />
+    ),
+    [actOnComment, commentBusy],
   );
 
   const openComment = useCallback((key: string) => {
     setCommentFor(key);
-    setCommentBody("");
   }, []);
+
+  const closeComment = useCallback(() => setCommentFor(null), []);
 
   const commentOnMessage = useCallback(
     (messageId: string) => openComment(`m:${messageId}`),
@@ -731,17 +809,34 @@ export const RealThreadView = memo(function RealThreadView({
     [],
   );
 
-  const commentEditor = (anchor: CommentAnchor) => (
-    <CommentEditor
-      value={commentBody}
-      onChange={setCommentBody}
-      saving={commentSaving}
-      onCancel={() => {
-        setCommentFor(null);
-        setCommentBody("");
-      }}
-      onSubmit={() => void saveComment(anchor)}
-    />
+  const handleModelChange = useCallback(
+    (model: string) => applyConfig({ model }, "Could not update model"),
+    [applyConfig],
+  );
+  const handleEffortChange = useCallback(
+    (effort: string) => applyConfig({ effort }, "Could not update effort"),
+    [applyConfig],
+  );
+  const openThreadComment = useCallback(
+    () => openComment("thread"),
+    [openComment],
+  );
+  const watching = useMemo(
+    () =>
+      live.presence.focuses.filter(
+        (focus) => focus.threadId === threadId && !focus.hidden,
+      ).length,
+    [live.presence.focuses, threadId],
+  );
+
+  const commentEditor = useCallback(
+    (anchor: CommentAnchor) => (
+      <CommentDraft
+        onSave={(body) => saveComment(anchor, body)}
+        onCancel={closeComment}
+      />
+    ),
+    [closeComment, saveComment],
   );
 
   const footerContent = (
@@ -750,9 +845,12 @@ export const RealThreadView = memo(function RealThreadView({
         .filter((comment) => comment.anchor.kind === "thread")
         .map(commentCard)}
 
-      {commentFor === "thread"
-        ? commentEditor({ kind: "thread" })
-        : null}
+      {commentFor === "thread" ? (
+        <CommentDraft
+          onSave={(body) => saveComment({ kind: "thread" }, body)}
+          onCancel={closeComment}
+        />
+      ) : null}
 
       {pending.map((approval) => (
         <ApprovalCard
@@ -841,7 +939,7 @@ export const RealThreadView = memo(function RealThreadView({
             <TimelineRow
               item={item}
               active={bundle?.thread.status === "running"}
-              commentsForTool={(id) => commentsFor("tool_call", id)}
+              commentsForTool={commentsForTool}
               comments={commentsFor(
                 item.kind === "message" ? "message" : "tool_call",
                 item.kind === "message"
@@ -934,10 +1032,10 @@ export const RealThreadView = memo(function RealThreadView({
           busy={queueBusy}
           canWrite={canWrite}
           canSteer={running}
-          onDrop={(id) => void drop(id)}
-          onSteer={(id) => void steer(id)}
+          onDrop={drop}
+          onSteer={steer}
           onEdit={edit}
-          onReorder={(ids) => void reorder(ids)}
+          onReorder={reorder}
         />
         <Composer
           threadId={threadId}
@@ -947,21 +1045,13 @@ export const RealThreadView = memo(function RealThreadView({
           modelName={bundle?.thread.model}
           effort={bundle?.thread.effort}
           sendWithModifier={stateQuery.data?.settings.sendWithModifier ?? true}
-          onModelChange={(model) =>
-            applyConfig({ model }, "Could not update model")
-          }
-          onEffortChange={(effort) =>
-            applyConfig({ effort }, "Could not update effort")
-          }
+          onModelChange={handleModelChange}
+          onEffortChange={handleEffortChange}
           onSent={refresh}
           usage={usage}
-          watching={
-            live.presence.focuses.filter(
-              (focus) => focus.threadId === threadId && !focus.hidden,
-            ).length
-          }
+          watching={watching}
           terminalUsers={terminalUsers}
-          onThreadComment={() => openComment("thread")}
+          onThreadComment={openThreadComment}
         />
       </div>
     </>

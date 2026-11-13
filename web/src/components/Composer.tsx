@@ -1,5 +1,6 @@
 import { ActionIcon, Loader } from "@mantine/core";
 import { IconX } from "@tabler/icons-react";
+import { memo } from "react";
 import type { Usage } from "../api/types/Usage";
 import { PickerAgentContext } from "../lib/model-prefs";
 import { ComposerInput } from "./composer/ComposerInput";
@@ -38,7 +39,7 @@ interface ComposerProps {
   sendWithModifier?: boolean;
 }
 
-export function Composer({
+export const Composer = memo(function Composer({
   threadId,
   projectId,
   agentName,
@@ -207,4 +208,4 @@ export function Composer({
       </section>
     </PickerAgentContext>
   );
-}
+});

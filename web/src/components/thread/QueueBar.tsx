@@ -7,6 +7,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -17,7 +18,7 @@ import type { QueueItem } from "../../api";
 const SWIPE_DROP = 64;
 const SWIPE_MAX = 120;
 
-function QueueRow({
+const QueueRow = memo(function QueueRow({
   item,
   busy,
   canWrite,
@@ -207,9 +208,9 @@ function QueueRow({
       </div>
     </div>
   );
-}
+});
 
-export function QueueBar({
+export const QueueBar = memo(function QueueBar({
   items,
   busy,
   canWrite,
@@ -329,4 +330,4 @@ export function QueueBar({
       ))}
     </div>
   );
-}
+});

@@ -15,8 +15,43 @@ import {
   IconSend,
   IconTrash,
 } from "@tabler/icons-react";
+import { useState } from "react";
 import type { Comment } from "../../api";
 import { initials, timeOf } from "./format";
+
+/**
+ * Inline comment composer. The draft lives here (not in the thread view) so
+ * typing does not re-render the transcript and the composer on every key.
+ */
+export function CommentDraft({
+  onSave,
+  onCancel,
+}: {
+  onSave: (body: string) => Promise<boolean>;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = () => {
+    if (saving || !value.trim()) return;
+    setSaving(true);
+    void onSave(value.trim()).then((saved) => {
+      setSaving(false);
+      if (saved) setValue("");
+    });
+  };
+
+  return (
+    <CommentEditor
+      value={value}
+      onChange={setValue}
+      saving={saving}
+      onCancel={onCancel}
+      onSubmit={submit}
+    />
+  );
+}
 
 export function CommentCard({
   comment,
