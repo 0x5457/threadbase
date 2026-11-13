@@ -29,12 +29,17 @@
 
 @media (min-width: 75em) {
   body {
-    padding: 10px;
     background: var(--chrome);
   }
 
-  .shell {
+  /* The window margin lives on the shell, not as body padding: the modal /
+     drawer scroll lock rewrites body padding and would otherwise flatten the
+     frame while a dialog is open. */
+  .shell.shell {
+    /* `.shell.shell` outranks Mantine's AppShell root (`height: 100%`): with
+       the window margin on the shell, 100% would overflow the viewport. */
     height: calc(100dvh - 20px);
+    margin: 10px;
     border: 1px solid var(--line);
     border-radius: 10px;
     box-shadow:
