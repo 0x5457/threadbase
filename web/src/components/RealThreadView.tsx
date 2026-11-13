@@ -466,7 +466,6 @@ export const RealThreadView = memo(function RealThreadView({
   const queue = bundle?.queue ?? [];
   const subagents = bundle?.subagents ?? [];
   const canWrite = bundle?.role === "owner" || bundle?.role === "editor";
-  const running = bundle?.thread.status === "running";
 
   // One pass over comments instead of a filter per timeline row.
   const commentsByAnchor = useMemo(() => {
@@ -1176,7 +1175,6 @@ export const RealThreadView = memo(function RealThreadView({
           items={queue}
           busy={queueBusy}
           canWrite={canWrite}
-          canSteer={running}
           onDrop={drop}
           onSteer={steer}
           onEdit={edit}

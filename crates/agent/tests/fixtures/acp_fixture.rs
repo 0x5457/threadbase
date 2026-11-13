@@ -102,6 +102,13 @@ fn config_options(current_model: &str) -> Value {
     ])
 }
 
+/// `FAKE_AGENT_STEERING=0` models adapters that refuse mid-turn input.
+fn steering_supported() -> bool {
+    std::env::var("FAKE_AGENT_STEERING")
+        .map(|value| value != "0")
+        .unwrap_or(true)
+}
+
 fn steering_result(text: &str) -> (&'static str, Option<&'static str>) {
     match text.trim() {
         "steer:startedNewTurn" => ("startedNewTurn", None),
@@ -251,7 +258,7 @@ impl Fixture {
                         },
                         "authMethods": [],
                         "agentInfo": {"name": "fake-agent", "version": "0.0.1"},
-                        "_meta": {"steering": {"supported": true}},
+                        "_meta": {"steering": {"supported": steering_supported()}},
                     }),
                 )
             }

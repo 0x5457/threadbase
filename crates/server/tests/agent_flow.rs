@@ -1471,3 +1471,133 @@ async fn explicit_restart_is_not_a_crash() {
         ThreadStatus::Idle
     );
 }
+
+#[tokio::test]
+async fn queued_input_runs_when_the_thread_is_idle() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+
+    // Nothing is running and no adapter has been started: the queue worker
+    // must start both on its own.
+    let response = fixture
+        .state
+        .agents
+        .send(
+            thread_id,
+            &fixture.user,
+            "queued hello",
+            Some(threadbase_shared::api::DeliveryMode::Queue),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.delivery, threadbase_shared::Delivery::Queued);
+
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnStarted { prompt, .. } if prompt == "queued hello")
+    })
+    .await;
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn send_now_interrupts_a_non_steering_agent() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    // Model an adapter that refuses mid-turn input.
+    std::env::set_var("FAKE_AGENT_STEERING", "0");
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    fixture
+        .state
+        .agents
+        .ensure_started(thread_id)
+        .await
+        .unwrap();
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "slow", None)
+        .await
+        .unwrap();
+    wait_for_after(
+        &fixture.state.pool,
+        thread_id,
+        before,
+        |event| matches!(event, ThreadEvent::MessageDelta { text, .. } if text.contains("working")),
+    )
+    .await;
+
+    let queued = fixture
+        .state
+        .agents
+        .send(
+            thread_id,
+            &fixture.user,
+            "queued hello",
+            Some(threadbase_shared::api::DeliveryMode::Queue),
+        )
+        .await
+        .unwrap();
+    assert_eq!(queued.delivery, threadbase_shared::Delivery::Queued);
+    let item_id: String = sqlx::query_scalar(
+        "SELECT id FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
+    )
+    .bind(thread_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, 1).await;
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{thread_id}/queue/{item_id}/steer"))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("cookie", format!("threadbase_session={session}"))
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // The running turn is interrupted and the queued message takes over.
+    let started = wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnStarted { prompt, .. } if prompt == "queued hello")
+    })
+    .await;
+    let ThreadEvent::TurnStarted { message_id, .. } = started else {
+        unreachable!();
+    };
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+    let status: String = sqlx::query_scalar("SELECT status FROM queued_inputs WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "sent");
+    assert!(!message_id.0.is_empty());
+}

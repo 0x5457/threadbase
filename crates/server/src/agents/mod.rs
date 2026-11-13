@@ -627,6 +627,9 @@ impl AgentManager {
         )
         .await?;
         let _ = queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
+        // A thread that is idle must not wait for a turn end that will never
+        // come; the worker no-ops while a turn is running.
+        self.kick_queue(thread_id);
         Ok(SendMessageResponse {
             delivery: Delivery::Queued,
             queue_position: Some(position),
@@ -710,6 +713,35 @@ impl AgentManager {
         )
         .await;
         Ok(())
+    }
+
+    /// Stop the running turn without superseding queued input, so the next
+    /// queued message still runs once the turn ends. Returns whether a turn
+    /// had to be cancelled.
+    pub async fn interrupt(&self, thread_id: &str) -> Result<bool, ServerError> {
+        let Some(session) = self.inner.session(thread_id).await else {
+            return Ok(false);
+        };
+        let turn = session.take_turn_for_cancel().await;
+        if let Some(turn) = &turn {
+            session
+                .harness
+                .lock()
+                .await
+                .cancel(turn)
+                .await
+                .map_err(mapping::agent_error)?;
+        }
+        cancel_pending_approvals(&self.inner, thread_id).await;
+        cancel_pending_elicitations(&self.inner, thread_id).await;
+        let _ = threads::transition(
+            &self.inner.pool,
+            &self.inner.projection,
+            thread_id,
+            ThreadAction::Cancel,
+        )
+        .await;
+        Ok(turn.is_some())
     }
 
     pub async fn decide(

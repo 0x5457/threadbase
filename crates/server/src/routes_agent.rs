@@ -288,6 +288,29 @@ async fn steer_queue_item(
             let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
             Ok(Json(OkResponse { ok: true }))
         }
+        Err(error) if error.0.code == threadbase_shared::ErrorCode::Conflict => {
+            // This adapter cannot take input mid-turn (or no turn is running):
+            // make the message the next turn and stop the current one. The
+            // queue is deliberately not superseded, so the message survives.
+            if let Err(release) =
+                crate::queue::release(&state.pool, &state.projection, &thread_id, &item_id).await
+            {
+                tracing::warn!(%release, thread_id, item_id, "could not requeue the queued message");
+            }
+            crate::queue::reorder(
+                &state.pool,
+                &state.projection,
+                &thread_id,
+                std::slice::from_ref(&item_id),
+            )
+            .await?;
+            let cancelled = state.agents.interrupt(&thread_id).await?;
+            if !cancelled {
+                state.agents.kick_queue(&thread_id);
+            }
+            let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
+            Ok(Json(OkResponse { ok: true }))
+        }
         Err(error) => {
             if let Err(release) =
                 crate::queue::release(&state.pool, &state.projection, &thread_id, &item_id).await

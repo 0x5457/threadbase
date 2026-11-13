@@ -25,7 +25,6 @@ const QueueRow = memo(function QueueRow({
   item,
   busy,
   canWrite,
-  canSteer,
   showAuthor,
   dragging,
   onDrop,
@@ -38,7 +37,6 @@ const QueueRow = memo(function QueueRow({
   item: QueueItem;
   busy: string | null;
   canWrite: boolean;
-  canSteer: boolean;
   /** False when the previous row was written by the same author. */
   showAuthor: boolean;
   dragging: boolean;
@@ -173,13 +171,9 @@ const QueueRow = memo(function QueueRow({
               variant="subtle"
               color="gray"
               aria-label="Send queued message now"
-              title={
-                canSteer
-                  ? "Send now — steer into the running turn"
-                  : "Steering needs a running turn"
-              }
+              title="Send now — stop the current turn and run this message"
               loading={busy === `steer:${item.id}`}
-              disabled={editing || !canSteer}
+              disabled={editing}
               onClick={() => onSteer(item.id)}
             >
               <IconSend size={11} stroke={1.5} />
@@ -217,7 +211,6 @@ export const QueueBar = memo(function QueueBar({
   items,
   busy,
   canWrite,
-  canSteer,
   onDrop,
   onSteer,
   onEdit,
@@ -226,7 +219,6 @@ export const QueueBar = memo(function QueueBar({
   items: QueueItem[];
   busy: string | null;
   canWrite: boolean;
-  canSteer: boolean;
   onDrop: (id: string) => void;
   onSteer: (id: string) => void;
   onEdit: (id: string, text: string) => Promise<boolean>;
@@ -356,7 +348,6 @@ export const QueueBar = memo(function QueueBar({
           item={item}
           busy={busy}
           canWrite={canWrite}
-          canSteer={canSteer}
           showAuthor={index === 0 || visible[index - 1].author.id !== item.author.id}
           dragging={draggingId === item.id}
           onDrop={onDrop}
