@@ -481,3 +481,23 @@ impl Pump {
         .map(|_| ())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::push_delta;
+
+    #[test]
+    fn folded_text_handles_incremental_and_cumulative_chunks() {
+        let mut buffer = String::new();
+        for chunk in [".", " Using", " the histogram"] {
+            push_delta(&mut buffer, chunk);
+        }
+        assert_eq!(buffer, ". Using the histogram");
+
+        let mut cumulative = String::new();
+        for chunk in ["Hello", "Hello world", "Hello world again"] {
+            push_delta(&mut cumulative, chunk);
+        }
+        assert_eq!(cumulative, "Hello world again");
+    }
+}
