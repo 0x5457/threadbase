@@ -1088,7 +1088,7 @@ impl Default for SettingsDto {
             theme: "dark".to_owned(),
             text_width: "default".to_owned(),
             subthreads_per_thread: 10,
-            send_with_modifier: true,
+            send_with_modifier: false,
             default_agent: "codex".to_owned(),
             default_model: None,
             default_baseline: BaselineKind::BaseBranch,
