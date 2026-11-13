@@ -46,7 +46,7 @@ export type ViewItem =
       count: number;
       tools: number;
     }
-  | { kind: "tool"; call: ToolCallData; ts: number }
+  | { kind: "tool"; call: ToolCallData; ts: number; startedAt: number }
   | { kind: "notice"; level: "info" | "error"; text: string; ts: number }
   | { kind: "turn"; label: string; ts: number };
 
@@ -192,7 +192,7 @@ export function extendThreadView(
           ? chunk
           : row.text + chunk,
       streaming,
-      ts,
+      ts: row.ts,
       attachments: attachments.length ? attachments : row.attachments,
     };
     if (streaming) streamingRows.add(id);
@@ -329,7 +329,7 @@ export function extendThreadView(
             };
           }
           toolRows.set(call.id, items.length);
-          items.push({ kind: "tool", call, ts: event.ts });
+          items.push({ kind: "tool", call, ts: event.ts, startedAt: event.ts });
         } else {
           const row = items[existing];
           if (row.kind === "tool") {

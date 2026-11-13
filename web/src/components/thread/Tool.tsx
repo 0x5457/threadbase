@@ -206,6 +206,17 @@ export const Tool = memo(function Tool({
   // Shell tools stream stdout/stderr into `output`; show its opening lines
   // under the command so a run is readable without opening the full output.
   const rawOutput = call.output ?? "";
+  const duration = Math.max(0, item.ts - item.startedAt);
+  const outputLineCount = rawOutput.trim() === "" ? 0 : rawOutput.split("\n").length;
+  const metrics: string[] = [];
+  if (call.diff && (call.diff.additions || call.diff.deletions)) {
+    metrics.push(`+${call.diff.additions} −${call.diff.deletions}`);
+  }
+  if (outputLineCount > 0) {
+    metrics.push(
+      outputLineCount === 1 ? "1 line" : `${outputLineCount} lines`,
+    );
+  }
   const outputLines =
     call.kind === "execute" && output === null && rawOutput.trim() !== ""
       ? rawOutput.split("\n")
@@ -231,9 +242,14 @@ export const Tool = memo(function Tool({
             ) : null}
           </Text>
           <StatusDot status={call.status} />
-          {call.status !== "pending" && call.updatedAt > call.createdAt ? (
+          {call.status !== "pending" && duration > 0 ? (
             <Text size="xs" className="tool-duration">
-              {formatDuration(call.updatedAt - call.createdAt)}
+              {formatDuration(duration)}
+            </Text>
+          ) : null}
+          {metrics.length ? (
+            <Text size="xs" className="tool-metric" title={metrics.join(" · ")}>
+              {metrics.join(" · ")}
             </Text>
           ) : null}
         </Group>

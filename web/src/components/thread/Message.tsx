@@ -109,6 +109,9 @@ export const Message = memo(function Message({
         >
           {agent ? "AI" : initials(item.name)}
         </Avatar>
+        <span className="msg-time" title={new Date(item.ts).toLocaleString()}>
+          {timeOf(item.ts)}
+        </span>
       </div>
       <div className="block-body">
         <ActionIcon

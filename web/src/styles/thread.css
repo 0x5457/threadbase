@@ -704,3 +704,25 @@
 .image-lightbox-close:hover {
   background: rgb(255 255 255 / 26%);
 }
+
+/* Per-message send/start time under the avatar. */
+.msg-time {
+  margin-top: 3px;
+  padding-left: 1px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* Tool call duration and result metrics (lines, diff stats). */
+.tool-duration,
+.tool-metric {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
