@@ -30,10 +30,14 @@ pub struct EventMeta {
 }
 
 /// Turns a cold page reaches back, newest first.
-const HISTORY_TURNS: u32 = 20;
+const HISTORY_TURNS: u32 = 12;
 /// Hard row cap for one cold page: a runaway turn must not turn a refresh into
 /// a multi-megabyte transfer.
 const HISTORY_ROWS: u32 = 20_000;
+/// Wire budget for one cold page after delta folding. Tool outputs can be
+/// megabytes on their own, so the row cap is not enough; older whole turns
+/// are dropped and the client fetches them back through "load earlier".
+const HISTORY_BYTES: usize = 2 * 1024 * 1024;
 /// Scrolling back fetches smaller windows than a cold load: each request should
 /// land fast even on a slow link, and the reader rarely needs 20 turns at once.
 const OLDER_TURNS: u32 = 8;
@@ -168,11 +172,15 @@ impl EventStore {
                 .map(EventRow::into_envelope)
                 .collect::<Result<Vec<_>, _>>()?
         };
+        // A cold page may have dropped its oldest turns to fit the wire
+        // budget, so its first seq (not the thread's oldest) is the cursor the
+        // client needs for "load earlier".
+        let oldest_seq = events.first().map(|event| event.seq).unwrap_or(oldest);
         Ok(EventsPageDto {
             thread_id: thread_id.clone(),
             events,
             last_seq: last,
-            oldest_seq: oldest,
+            oldest_seq,
             resync,
         })
     }
@@ -206,7 +214,7 @@ impl EventStore {
             .into_iter()
             .map(EventRow::into_envelope)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(compact_history(events))
+        Ok(trim_history(compact_history(events)))
     }
 
     /// One slice of events older than `before_seq`, compacted the same way as a
@@ -442,6 +450,39 @@ fn compact_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
         out.push(event);
     }
     out
+}
+
+/// Keep the newest whole turns until a cold page fits the transfer budget.
+/// Folding deltas already shrinks the log, but a single tool output can be
+/// megabytes; without this cap a refresh of a long, tool-heavy thread ships
+/// several megabytes and stalls the client on parse and fold. The client pulls
+/// the dropped turns back through "load earlier". A page never drops its last
+/// turn, even when that turn alone exceeds the budget.
+fn trim_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
+    fn wire_len(event: &EventEnvelope) -> usize {
+        // The envelope adds ids, actor and metadata around the payload.
+        serde_json::to_string(&event.payload).map_or(0, |json| json.len() + 256)
+    }
+
+    let mut events = events;
+    let mut lengths: Vec<usize> = events.iter().map(wire_len).collect();
+    let mut total: usize = lengths.iter().sum();
+    while total > HISTORY_BYTES {
+        // Cut before the second `turn_started`: everything older than the
+        // newest turn goes first, keeping the transcript start-aligned.
+        let Some(cut) = events
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, event)| matches!(event.payload, ThreadEvent::TurnStarted { .. }))
+            .map(|(index, _)| index)
+        else {
+            break;
+        };
+        total -= lengths.drain(..cut).sum::<usize>();
+        events.drain(..cut);
+    }
+    events
 }
 
 fn origin_str(origin: Origin) -> &'static str {

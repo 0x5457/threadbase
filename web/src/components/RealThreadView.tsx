@@ -467,6 +467,15 @@ export const RealThreadView = memo(function RealThreadView({
   const subagents = bundle?.subagents ?? [];
   const canWrite = bundle?.role === "owner" || bundle?.role === "editor";
 
+  // The bundle refetches every 4 s. A fresh JSON object must not hand every
+  // visible row a new comment lookup: that invalidates TimelineRow's memo and
+  // re-runs markdown for the whole viewport on each poll. Rebuild the index
+  // only when a comment actually changed.
+  const commentsSignature = useMemo(
+    () => comments.map((comment) => JSON.stringify(comment)).join("\n"),
+    [comments],
+  );
+
   // One pass over comments instead of a filter per timeline row.
   const commentsByAnchor = useMemo(() => {
     const map = new Map<string, Comment[]>();
@@ -483,7 +492,10 @@ export const RealThreadView = memo(function RealThreadView({
       else map.set(key, [comment]);
     }
     return map;
-  }, [comments]);
+    // `commentsSignature` covers every field the map reads; keying the memo on
+    // `comments` itself would rebuild it on every bundle poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commentsSignature]);
 
   const commentsFor = useCallback(
     (kind: "message" | "tool_call", id: string) =>
