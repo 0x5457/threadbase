@@ -8,7 +8,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ViewItem } from "../../lib/thread-events";
 import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
@@ -76,6 +76,20 @@ export const Message = memo(function Message({
   // is wasted work too: only completed messages get rehype-highlight.
   const liveText = useStreamedText(text, item.streaming && agent);
   const streamingText = item.streaming && agent ? liveText : text;
+  // ReactMarkdown re-runs its parse on every render, even when the text is
+  // identical. Keep the element so a parent render between throttled chunks
+  // (or a bundle poll) does not re-parse the whole message.
+  const markdown = useMemo(
+    () => (
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={item.streaming ? undefined : REHYPE_PLUGINS}
+      >
+        {streamingText}
+      </ReactMarkdown>
+    ),
+    [streamingText, item.streaming],
+  );
 
   return (
     <div
@@ -123,16 +137,7 @@ export const Message = memo(function Message({
           </div>
         ) : null}
         <div className={streaming ? "prose streaming" : "prose"}>
-          {agent ? (
-            <ReactMarkdown
-              remarkPlugins={REMARK_PLUGINS}
-              rehypePlugins={item.streaming ? undefined : REHYPE_PLUGINS}
-            >
-              {streamingText}
-            </ReactMarkdown>
-          ) : (
-            <p>{text}</p>
-          )}
+          {agent ? markdown : <p>{text}</p>}
         </div>
       </div>
     </div>

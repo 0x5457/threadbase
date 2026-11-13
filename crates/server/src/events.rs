@@ -39,7 +39,8 @@ const HISTORY_ROWS: u32 = 20_000;
 /// are dropped and the client fetches them back through "load earlier".
 const HISTORY_BYTES: usize = 2 * 1024 * 1024;
 /// Scrolling back fetches smaller windows than a cold load: each request should
-/// land fast even on a slow link, and the reader rarely needs 20 turns at once.
+/// land fast even on a slow link, and the reader rarely needs a deep window at
+/// once.
 const OLDER_TURNS: u32 = 8;
 const OLDER_ROWS: u32 = 4_000;
 
@@ -474,7 +475,7 @@ fn trim_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
             .iter()
             .enumerate()
             .skip(1)
-            .find(|(_, event)| matches!(event.payload, ThreadEvent::TurnStarted { .. }))
+            .find(|(_, event)| matches!(&event.payload, ThreadEvent::TurnStarted { .. }))
             .map(|(index, _)| index)
         else {
             break;
@@ -707,7 +708,7 @@ mod tests {
     }
 
     use threadbase_shared::{
-        MessageDto, MessageId, MessageRole, ToolCallData, ToolKind, ToolStatus, UserBrief,
+        MessageDto, MessageId, MessageRole, ToolCallData, ToolKind, ToolStatus, TurnId, UserBrief,
     };
 
     fn brief() -> UserBrief {
@@ -846,5 +847,67 @@ mod tests {
             panic!("expected the last tool update");
         };
         assert_eq!(call.status, ToolStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn cold_page_drops_old_turns_to_fit_the_wire_budget() {
+        let (store, thread) = store().await;
+        // Four turns carrying ~900 KB each: the cold page keeps the newest
+        // whole turns that fit HISTORY_BYTES instead of shipping ~4 MB.
+        let mut first_kept = 0;
+        for turn in 0..4 {
+            let started = store
+                .append(
+                    &thread,
+                    Actor::user(&brief()),
+                    ThreadEvent::TurnStarted {
+                        turn_id: TurnId::new(),
+                        message_id: MessageId::new(),
+                        author: brief(),
+                        authors: Vec::new(),
+                        prompt: format!("turn {turn}"),
+                        attachments: Vec::new(),
+                    },
+                    EventMeta::default(),
+                )
+                .await
+                .unwrap();
+            if turn == 2 {
+                first_kept = started.seq;
+            }
+            store
+                .append(
+                    &thread,
+                    Actor::agent("Agent"),
+                    ThreadEvent::MessageCompleted {
+                        message: MessageDto {
+                            id: MessageId::new(),
+                            thread_id: thread.clone(),
+                            turn_id: None,
+                            role: MessageRole::Agent,
+                            author: None,
+                            authors: Vec::new(),
+                            text: "x".repeat(900 * 1024),
+                            model: None,
+                            streaming: false,
+                            created_at: now_ms(),
+                            attachments: Vec::new(),
+                        },
+                    },
+                    EventMeta::default(),
+                )
+                .await
+                .unwrap();
+        }
+
+        let page = store.page(&thread, 0, 500).await.unwrap();
+        let first = page
+            .events
+            .first()
+            .expect("a cold page always keeps its newest turn");
+        assert!(matches!(&first.payload, ThreadEvent::TurnStarted { .. }));
+        assert_eq!(first.seq, first_kept);
+        assert_eq!(page.oldest_seq, first_kept);
+        assert!(page.oldest_seq > 1);
     }
 }
