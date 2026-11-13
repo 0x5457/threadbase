@@ -22,6 +22,7 @@ pub mod events;
 pub mod inbox;
 pub mod install;
 pub mod locks;
+pub mod maintenance;
 pub mod middleware;
 pub mod notify;
 pub mod presence;

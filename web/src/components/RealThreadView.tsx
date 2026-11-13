@@ -396,9 +396,12 @@ export const RealThreadView = memo(function RealThreadView({
   }, []);
   const notifiedApprovals = useRef<Set<string>>(new Set());
 
+  // Metadata-only bundle: this view never renders `changes`, so asking for
+  // it would run a git diff on every 4 s poll. The Changes panel keeps the
+  // full `["thread", id]` query.
   const bundleQuery = useQuery({
-    queryKey: ["thread", threadId],
-    queryFn: () => getThreadBundle(threadId),
+    queryKey: ["thread", threadId, "meta"],
+    queryFn: () => getThreadBundle(threadId, { changes: false }),
     staleTime: 2_000,
     refetchInterval: 4_000,
     refetchIntervalInBackground: false,

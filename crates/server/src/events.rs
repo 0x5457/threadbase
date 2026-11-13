@@ -277,6 +277,26 @@ impl EventStore {
         })
     }
 
+    /// Whole-thread fold with the same rules as a cold page, used by
+    /// maintenance to rewrite the stored log. Unlike [`Self::page`] this is not
+    /// a window: every turn is included.
+    pub async fn compact_thread_log(
+        &self,
+        thread_id: &str,
+    ) -> Result<Vec<EventEnvelope>, EventStoreError> {
+        let rows = sqlx::query_as::<_, EventRow>(
+            "SELECT * FROM events WHERE thread_id = ? ORDER BY seq ASC",
+        )
+        .bind(thread_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let events = rows
+            .into_iter()
+            .map(EventRow::into_envelope)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(compact_history(events))
+    }
+
     pub async fn last_seq(&self, thread_id: &ThreadId) -> Result<u64, EventStoreError> {
         let last: i64 =
             sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM events WHERE thread_id = ?")
