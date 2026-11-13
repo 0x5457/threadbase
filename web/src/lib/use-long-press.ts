@@ -19,7 +19,9 @@ export function useLongPress(onLongPress: () => void, delay = 480) {
   const held = useRef(false);
   const fired = useRef(false);
   const callback = useRef(onLongPress);
-  callback.current = onLongPress;
+  useEffect(() => {
+    callback.current = onLongPress;
+  }, [onLongPress]);
 
   const clear = () => {
     if (timer.current !== null) {

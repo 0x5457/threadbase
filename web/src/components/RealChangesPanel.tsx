@@ -145,15 +145,15 @@ export const RealChangesPanel = memo(function RealChangesPanel({
   );
 
   useEffect(() => {
-    setSelected(null);
-  }, [threadId]);
-
-  useEffect(() => {
     const first = changes?.files[0]?.path ?? null;
     if (selected !== null && !selectedIsCurrent) {
       setSelected(first);
     } else if (selected === null && first !== null) {
-      setSelected(first);
+      // Let the thread paint and become interactive before pulling and
+      // highlighting the first diff; opening a thread should not wait on the
+      // changes panel.
+      const timer = window.setTimeout(() => setSelected(first), 700);
+      return () => window.clearTimeout(timer);
     }
   }, [changes, selected, selectedIsCurrent]);
 

@@ -68,6 +68,7 @@ export const Message = memo(function Message({
                   href={url}
                   target="_blank"
                   rel="noreferrer"
+                  aria-label={`Image attachment (${attachment.mimeType})`}
                 >
                   <img src={url} alt="" loading="lazy" />
                 </a>

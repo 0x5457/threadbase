@@ -11,7 +11,10 @@
     "preview": "vite preview",
     "smoke:console": "node audit/console-smoke.mjs",
     "capture:matrix": "node audit/capture-matrix.mjs",
-    "smoke:behavior": "node audit/behavior-smoke.mjs"
+    "smoke:behavior": "node audit/behavior-smoke.mjs",
+    "doctor": "react-doctor . --no-telemetry --no-color",
+    "doctor:ci": "react-doctor . --no-telemetry --no-color --blocking error",
+    "lint": "pnpm doctor"
   },
   "dependencies": {
     "@floating-ui/dom": "^1.8.0",

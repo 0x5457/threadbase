@@ -18,12 +18,18 @@ let handlingPop = false;
 
 export function useOverlayBack(open: boolean, close: () => void) {
   const closeRef = useRef(close);
-  closeRef.current = close;
+  useEffect(() => {
+    closeRef.current = close;
+  }, [close]);
 
+  // Both timers (the deferred history push and the pop handler release) are
+  // owned by this effect and cleared in its cleanup below.
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
     if (!open) return;
     const id = ++overlaySequence;
     let pushed = false;
+    let releaseTimer = 0;
     const timer = window.setTimeout(() => {
       window.history.pushState(
         { ...(window.history.state ?? {}), __tbOverlay: id },
@@ -37,7 +43,7 @@ export function useOverlayBack(open: boolean, close: () => void) {
       if (performance.now() < ignorePopUntil || handlingPop) return;
       if (overlayStack[overlayStack.length - 1] !== id) return;
       handlingPop = true;
-      window.setTimeout(() => {
+      releaseTimer = window.setTimeout(() => {
         handlingPop = false;
       }, 0);
       closeRef.current();
@@ -46,6 +52,7 @@ export function useOverlayBack(open: boolean, close: () => void) {
 
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(releaseTimer);
       window.removeEventListener("popstate", onPop);
       const index = overlayStack.indexOf(id);
       if (index >= 0) overlayStack.splice(index, 1);

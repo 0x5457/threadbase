@@ -163,7 +163,7 @@ server 按职责分模块：
 | `diff` | 基线与审阅；线程列表不再触发任何 git 子进程 |
 | `routes_*` | HTTP 路由，只做鉴权、解析和调用领域模块 |
 
-前端入口按域拆分：`web/src/api/` 是 fetch 层，`components/thread/` 是时间线行组件，`components/composer/` 是 Composer 的命令与建议面板。
+前端入口按域拆分：`web/src/api/` 是 fetch 层，`components/thread/` 是时间线行组件，`components/composer/` 是 Composer 的命令与建议面板。线程、变更面板、设置与终端各自按需拆成 chunk；事件流按增量折叠并以 20fps 批量提交，长对话在流式输出时不会阻塞交互。
 
 ## 已定的事
 
@@ -187,10 +187,12 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 MBX_BLAZE=false cargo nextest run --workspace
 pnpm --dir web typecheck
+pnpm --dir web doctor      # React Doctor 全量报告
+pnpm --dir web doctor:ci   # CI 门：只有 correctness error 会失败
 pnpm --dir web build
 ```
 
-前端没有单独的 lint 目标：v2 前端工具栏只剩 `tsc --noEmit` 与 `vite build`，`web/audit/*.mjs` 是需要浏览器的手工审计脚本。
+前端质量门是 `tsc --noEmit`、`vite build` 与 React Doctor（配置见 `web/doctor.config.ts`）。`web/audit/*.mjs` 是需要浏览器的手工审计脚本。
 
 真实 Codex 契约 smoke（需要登录）：
 

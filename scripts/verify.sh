@@ -2,10 +2,10 @@
 # Run the repository quality gates in parallel and print a one-line summary.
 # Usage: scripts/verify.sh
 #
-# The frontend gate is `tsc --noEmit && vite build` (`pnpm build` already runs
-# both). eslint and the Playwright suite were dropped with the v2 frontend, so
-# there is no lint or e2e target to call here; the audit scripts under web/audit
-# stay manual.
+# The frontend gates are `tsc --noEmit && vite build` (`pnpm build` already
+# runs both) plus React Doctor (`pnpm doctor:ci`, correctness errors only).
+# eslint and the Playwright suite were dropped with the v2 frontend; the audit
+# scripts under web/audit stay manual.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,6 +27,7 @@ run fmt cargo fmt --all --check
 run clippy env MBX_BLAZE=false cargo clippy --workspace --all-targets -- -D warnings
 run nextest env MBX_BLAZE=false cargo nextest run --workspace
 run typecheck pnpm --dir web typecheck
+run doctor pnpm --dir web doctor:ci
 run build pnpm --dir web build
 
 for index in "${!pids[@]}"; do

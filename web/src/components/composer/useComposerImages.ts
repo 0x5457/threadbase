@@ -76,6 +76,7 @@ export function useComposerImages(
   const accept = useCallback(
     async (files: File[]) => {
       if (!threadId || !writable) return;
+      const accepted: File[] = [];
       for (const file of files) {
         if (!file.type.startsWith("image/")) continue;
         if (file.size > MAX_COMPOSER_IMAGE_BYTES) {
@@ -85,44 +86,63 @@ export function useComposerImages(
           });
           continue;
         }
-        if (imagesRef.current.length >= MAX_COMPOSER_IMAGES) {
-          notifications.show({
-            message: `Up to ${MAX_COMPOSER_IMAGES} images per message`,
-            color: "yellow",
-          });
-          break;
-        }
-        const key = crypto.randomUUID();
-        const url = URL.createObjectURL(file);
-        objectUrls.current.add(url);
-        commit((current) => [
-          ...current,
-          { key, url, attachmentId: null, status: "uploading" },
-        ]);
-        try {
-          const attachment = await uploadAttachment(threadId, file);
-          revoke(url);
-          commit((current) =>
-            current.map((image) =>
-              image.key === key
-                ? {
-                    ...image,
-                    url: `/api/attachments/${attachment.id}`,
-                    attachmentId: attachment.id,
-                    status: "ready",
-                  }
-                : image,
-            ),
-          );
-        } catch (cause) {
-          remove(key);
-          notifications.show({
-            message:
-              cause instanceof Error ? cause.message : "Could not upload image",
-            color: "red",
-          });
-        }
+        accepted.push(file);
       }
+      const slots = Math.max(0, MAX_COMPOSER_IMAGES - imagesRef.current.length);
+      if (slots === 0 && accepted.length > 0) {
+        notifications.show({
+          message: `Up to ${MAX_COMPOSER_IMAGES} images per message`,
+          color: "yellow",
+        });
+        return;
+      }
+      if (accepted.length > slots) {
+        notifications.show({
+          message: `Up to ${MAX_COMPOSER_IMAGES} images per message`,
+          color: "yellow",
+        });
+      }
+      // Uploads are independent; running them together keeps a four-image
+      // paste from paying the round trip four times over.
+      await Promise.all(
+        accepted.slice(0, slots).map(async (file) => {
+          const key = crypto.randomUUID();
+          // Tracked in objectUrls and revoked on success, removal, clear and
+          // unmount.
+          // react-doctor-disable-next-line react-doctor/no-create-object-url-without-revoke
+          const url = URL.createObjectURL(file);
+          objectUrls.current.add(url);
+          commit((current) => [
+            ...current,
+            { key, url, attachmentId: null, status: "uploading" },
+          ]);
+          try {
+            const attachment = await uploadAttachment(threadId, file);
+            revoke(url);
+            commit((current) =>
+              current.map((image) =>
+                image.key === key
+                  ? {
+                      ...image,
+                      url: `/api/attachments/${attachment.id}`,
+                      attachmentId: attachment.id,
+                      status: "ready",
+                    }
+                  : image,
+              ),
+            );
+          } catch (cause) {
+            remove(key);
+            notifications.show({
+              message:
+                cause instanceof Error
+                  ? cause.message
+                  : "Could not upload image",
+              color: "red",
+            });
+          }
+        }),
+      );
     },
     [commit, remove, revoke, threadId, writable],
   );

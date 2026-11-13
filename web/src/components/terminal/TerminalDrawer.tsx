@@ -124,7 +124,8 @@ export function TerminalDrawer({
   const [height, setHeight] = useState(storedHeight);
   const [phase, setPhase] = useState<Phase>("connecting");
   const [role, setRole] = useState<"controller" | "watcher">("controller");
-  const [session, setSession] = useState<TerminalSession | null>(null);
+  // Only read from handlers (kill), so keep it out of the render state.
+  const sessionRef = useRef<TerminalSession | null>(null);
   const [controller, setController] = useState<string | null>(null);
   const [viewers, setViewers] = useState(0);
   const [cwd, setCwd] = useState("");
@@ -167,7 +168,7 @@ export function TerminalDrawer({
       try {
         const created = await openSession(threadId, size(), watchOnly);
         if (cancelled) return;
-        setSession(created.session);
+        sessionRef.current = created.session;
         setCwd(created.session.cwd);
 
         const socket = new WebSocket(
@@ -242,6 +243,7 @@ export function TerminalDrawer({
     event.preventDefault();
     const startY = event.clientY;
     const startHeight = height;
+    let latest = startHeight;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
     const move = (moveEvent: PointerEvent) => {
@@ -252,22 +254,20 @@ export function TerminalDrawer({
           startHeight - (moveEvent.clientY - startY),
         ),
       );
+      latest = next;
       setHeight(next);
     };
     const up = () => {
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
-      setHeight((current) => {
-        try {
-          window.localStorage.setItem(
-            "threadbase.terminal-height",
-            String(current),
-          );
-        } catch {
-          // Private mode: keep the in-memory height.
-        }
-        return current;
-      });
+      try {
+        window.localStorage.setItem(
+          "threadbase.terminal-height",
+          String(latest),
+        );
+      } catch {
+        // Private mode: keep the in-memory height.
+      }
     };
     target.addEventListener("pointermove", move);
     target.addEventListener("pointerup", up);
@@ -283,6 +283,7 @@ export function TerminalDrawer({
   };
 
   const kill = async () => {
+    const session = sessionRef.current;
     if (!session) {
       onClose();
       return;
@@ -314,10 +315,21 @@ export function TerminalDrawer({
         <div
           className="terminal-resize"
           role="separator"
+          tabIndex={0}
           aria-orientation="horizontal"
           aria-label="Resize terminal"
           onPointerDown={startResize}
           onDoubleClick={() => setHeight(300)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+              return;
+            }
+            event.preventDefault();
+            const delta = event.key === "ArrowUp" ? 16 : -16;
+            setHeight((current) =>
+              Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, current + delta)),
+            );
+          }}
         />
       )}
       <div className="terminal-head">
@@ -418,6 +430,8 @@ export function TerminalDrawer({
 
       <div
         className="terminal-body"
+        role="group"
+        aria-label="Terminal session"
         ref={containerRef}
         onMouseDown={() => {
           if (canDrive) focus();

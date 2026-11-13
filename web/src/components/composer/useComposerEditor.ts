@@ -123,13 +123,14 @@ export function useComposerEditor({
   );
 
   useEffect(() => {
-    editor?.setEditable(writable);
+    if (!editor || editor.isDestroyed) return;
+    editor.setEditable(writable);
   }, [editor, writable]);
 
   // The document can already carry text (reload, peer edits) before the first
   // keypress; keep the send button honest until an update arrives.
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     setHasText(editor.getText().trim().length > 0);
   }, [editor]);
 

@@ -225,7 +225,10 @@ export const Tool = memo(function Tool({
           <div className="tool-lines">
             {preview.lines.map((line, index) => (
               <div
-                key={index}
+                // Output lines are a fixed snapshot for this render and never
+                // reorder, so position is the stable identity here.
+                // react-doctor-disable-next-line react-doctor/no-array-index-as-key
+                key={`${index}:${line.text}`}
                 className={line.tone ? `tool-line ${line.tone}` : "tool-line"}
               >
                 {line.text}
@@ -243,7 +246,9 @@ export const Tool = memo(function Tool({
                 const src = `data:${image.mimeType};base64,${image.data}`;
                 return (
                   <a
-                    key={index}
+                    // Tool output images are a fixed, non-reorderable snapshot.
+                    // react-doctor-disable-next-line react-doctor/no-array-index-as-key
+                    key={`${image.mimeType}:${index}`}
                     className="tool-image"
                     href={src}
                     target="_blank"

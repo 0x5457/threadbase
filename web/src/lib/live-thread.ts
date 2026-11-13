@@ -324,6 +324,9 @@ export function useLiveThread(
       sendPresenceNow();
     };
 
+    // Partysocket's WebSocket frame handler, not window.postMessage: the
+    // server authenticated this session before it subscribed.
+    // react-doctor-disable-next-line react-doctor/postmessage-origin-risk
     next.onmessage = (message: MessageEvent) => {
       if (typeof message.data === "string") handleServerMessage(message.data);
     };

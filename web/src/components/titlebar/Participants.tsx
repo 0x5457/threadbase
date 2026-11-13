@@ -10,6 +10,7 @@ export function Participants({
   onlineUserIds?: string[];
 }) {
   if (!participants.length) return null;
+  const online = new Set(onlineUserIds ?? []);
 
   return (
     <Avatar.Group spacing={-4} visibleFrom="xs">
@@ -21,9 +22,7 @@ export function Participants({
           offset={1}
           position="bottom-end"
           disabled={
-            onlineUserIds
-              ? !onlineUserIds.includes(participant.user.id)
-              : !participant.online
+            onlineUserIds ? !online.has(participant.user.id) : !participant.online
           }
           withBorder={false}
         >

@@ -207,6 +207,8 @@ export function ModelPicker({
   }, [opened, needle, visible.length]);
 
   // Recents only change through this picker, so one read per open is enough.
+  // Reading localStorage is intentionally tied to the open transition.
+  // react-doctor-disable-next-line react-doctor/no-event-handler
   useEffect(() => {
     if (opened) setRecent(readRecent(agent, name));
   }, [agent, name, opened]);

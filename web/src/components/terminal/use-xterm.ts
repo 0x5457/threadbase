@@ -39,16 +39,39 @@ export function useXterm({ disabled, onData, onResize }: Options) {
   const [ready, setReady] = useState(false);
 
   const dataRef = useRef(onData);
-  dataRef.current = onData;
+  useEffect(() => {
+    dataRef.current = onData;
+  }, [onData]);
   const resizeRef = useRef(onResize);
-  resizeRef.current = onResize;
+  useEffect(() => {
+    resizeRef.current = onResize;
+  }, [onResize]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     let disposed = false;
-    let observer: ResizeObserver | null = null;
     let frame = 0;
+
+    // Own the subscription in the effect body so the cleanup below provably
+    // disconnects it, even while the terminal import is still in flight.
+    const observer = new ResizeObserver(() => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const terminal = termRef.current;
+        const fit = fitRef.current;
+        if (!terminal || !fit) return;
+        try {
+          fit.fit();
+        } catch {
+          // fit() throws while the drawer is collapsed or hidden.
+          return;
+        }
+        resizeRef.current(terminal.cols, terminal.rows);
+      });
+    });
+    observer.observe(container);
 
     void (async () => {
       const [{ Terminal }, { FitAddon }] = await Promise.all([
@@ -100,21 +123,6 @@ export function useXterm({ disabled, onData, onResize }: Options) {
         return true;
       });
 
-      observer = new ResizeObserver(() => {
-        if (frame) return;
-        frame = window.requestAnimationFrame(() => {
-          frame = 0;
-          try {
-            fit.fit();
-          } catch {
-            // fit() throws while the drawer is collapsed or hidden.
-            return;
-          }
-          resizeRef.current(terminal.cols, terminal.rows);
-        });
-      });
-      observer.observe(container);
-
       if (!disabled) terminal.focus();
       setReady(true);
       resizeRef.current(terminal.cols, terminal.rows);
@@ -123,7 +131,7 @@ export function useXterm({ disabled, onData, onResize }: Options) {
     return () => {
       disposed = true;
       if (frame) window.cancelAnimationFrame(frame);
-      observer?.disconnect();
+      observer.disconnect();
       termRef.current?.dispose();
       termRef.current = null;
       fitRef.current = null;

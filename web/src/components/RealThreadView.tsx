@@ -531,15 +531,14 @@ export const RealThreadView = memo(function RealThreadView({
     return out;
   }, [items, pending.length]);
 
-  useEffect(() => {
-    setStickToBottom(true);
-    setExpandedRows(new Set());
-  }, [threadId]);
-
   // History arrives after mount, so `initialTopMostItemIndex` cannot land on
   // the last row; jump there once the first batch renders. A second pass after
   // the tail rows are measured corrects the estimate.
-  const scrolledFor = useRef<string | null>(null);
+  const rowsLengthRef = useRef(0);
+  useEffect(() => {
+    rowsLengthRef.current = rows.length;
+  }, [rows.length]);
+
   // `scrollToIndex(LAST, align: "end")` stops at the last row, leaving the
   // footer below the fold. Scrolling the element itself lands on the true end.
   const scrollToLatest = useCallback((behavior: "auto" | "smooth" = "auto") => {
@@ -547,16 +546,37 @@ export const RealThreadView = memo(function RealThreadView({
     if (!scroller) return;
     scroller.scrollTo({ top: scroller.scrollHeight, behavior });
   }, []);
+  // Runs once per mounted thread (the view is keyed by thread id). Timers are
+  // owned by this effect; the corrective passes are not tied to row changes,
+  // otherwise the first measurement flush would cancel them.
   useEffect(() => {
-    if (rows.length === 0) return;
-    if (scrolledFor.current === threadId) return;
-    scrolledFor.current = threadId;
-    // No cleanup on row changes: the corrective pass must survive the first
-    // measurement flush, otherwise the footer is left below the fold.
-    scrollToLatest();
-    window.setTimeout(() => scrollToLatest(), 300);
-    window.setTimeout(() => scrollToLatest(), 900);
-  }, [rows.length, threadId, scrollToLatest]);
+    let cancelled = false;
+    const timers: number[] = [];
+    let tries = 0;
+    const scrollLater = (delay: number) => {
+      timers.push(
+        window.setTimeout(() => {
+          if (!cancelled) scrollToLatest();
+        }, delay),
+      );
+    };
+    const step = () => {
+      if (cancelled) return;
+      if (rowsLengthRef.current === 0 && tries < 100) {
+        tries += 1;
+        timers.push(window.setTimeout(step, 100));
+        return;
+      }
+      scrollToLatest();
+      scrollLater(300);
+      scrollLater(900);
+    };
+    timers.push(window.setTimeout(step, 0));
+    return () => {
+      cancelled = true;
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [scrollToLatest]);
 
 
   useEffect(() => {

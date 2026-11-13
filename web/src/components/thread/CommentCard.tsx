@@ -36,10 +36,12 @@ export function CommentDraft({
   const submit = () => {
     if (saving || !value.trim()) return;
     setSaving(true);
-    void onSave(value.trim()).then((saved) => {
-      setSaving(false);
-      if (saved) setValue("");
-    });
+    void onSave(value.trim())
+      .then((saved) => {
+        setSaving(false);
+        if (saved) setValue("");
+      })
+      .catch(() => setSaving(false));
   };
 
   return (

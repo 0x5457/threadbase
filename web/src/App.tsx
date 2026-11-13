@@ -1,6 +1,8 @@
 import {
   AppShell,
+  Center,
   Drawer,
+  Loader,
   useMantineColorScheme,
 } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
@@ -19,7 +21,16 @@ import {
   IconSun,
   IconTerminal2,
 } from "@tabler/icons-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  startTransition,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   BrowserRouter,
   Navigate,
@@ -44,15 +55,10 @@ import {
   type ThreadSummary,
 } from "./api";
 import type { InboxPageDto } from "./api/types/InboxPageDto";
-import { FilesPanel } from "./components/FilesPanel";
 import { DrawerResizeHandle } from "./components/DrawerResizeHandle";
 import { InboxView } from "./components/InboxView";
 import { MobileTabBar } from "./components/MobileTabBar";
-import { RealChangesPanel } from "./components/RealChangesPanel";
-import { RealThreadView } from "./components/RealThreadView";
 import { ReviewDialog } from "./components/ReviewDialog";
-import { SettingsView } from "./components/SettingsView";
-import { TerminalDrawer } from "./components/terminal/TerminalDrawer";
 import { SheetGrabber } from "./components/SheetGrabber";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -67,7 +73,45 @@ import { WorkspaceEmpty } from "./components/WorkspaceEmpty";
 import { useOverlayBack } from "./lib/overlay-back";
 import { pathFor, useRoute } from "./lib/router";
 
+// The thread, settings and diff surfaces pull in the editor, CRDT, terminal
+// and highlighter stacks. Keeping them out of the shell chunk is what makes
+// the first paint after sign-in cheap.
+const RealThreadView = lazy(() =>
+  import("./components/RealThreadView").then((module) => ({
+    default: module.RealThreadView,
+  })),
+);
+const RealChangesPanel = lazy(() =>
+  import("./components/RealChangesPanel").then((module) => ({
+    default: module.RealChangesPanel,
+  })),
+);
+const FilesPanel = lazy(() =>
+  import("./components/FilesPanel").then((module) => ({
+    default: module.FilesPanel,
+  })),
+);
+const SettingsView = lazy(() =>
+  import("./components/SettingsView").then((module) => ({
+    default: module.SettingsView,
+  })),
+);
+const TerminalDrawer = lazy(() =>
+  import("./components/terminal/TerminalDrawer").then((module) => ({
+    default: module.TerminalDrawer,
+  })),
+);
+
 type View = "inbox" | "thread" | "settings" | "project";
+
+/** Placeholder for a code-split surface that is still downloading. */
+function ChunkLoading() {
+  return (
+    <Center h="100%" py="xl">
+      <Loader size="sm" />
+    </Center>
+  );
+}
 
 function blurActiveInput() {
   const active = document.activeElement;
@@ -119,8 +163,6 @@ function Workspace() {
   const [selectedThread, setSelectedThread] = useState<ThreadSummary | null>(
     null,
   );
-  const selectedThreadId = useRef<string | null>(null);
-  selectedThreadId.current = selectedThread?.id ?? null;
   const pendingInboxReads = useRef<Set<string>>(new Set());
   const [navOpened, nav] = useDisclosure(false);
   const [changesOpened, changes] = useDisclosure(false);
@@ -145,6 +187,9 @@ function Workspace() {
     }
   });
   const [asideTab, setAsideTab] = useState<"changes" | "files">("changes");
+  // The file browser is mounted on first use only; until then it costs a
+  // directory request and DOM that a thread open does not need.
+  const [filesOpened, setFilesOpened] = useState(false);
   // The terminal drawer is workspace state, not thread state: switching thread
   // remounts it against that thread's shell.
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -197,6 +242,29 @@ function Workspace() {
   const [paletteOpened, setPaletteOpened] = useState(false);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
+
+  // Warm the thread chunk after the shell has painted. Opening a thread is the
+  // main next step from Inbox, and the editor/highlighter stack is heavy.
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (!cancelled) void import("./components/RealThreadView");
+    }, 1_200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  // The diff stack is only reachable on the wide layout's aside; load it after
+  // the transcript so opening a thread never waits for the highlighter.
+  useEffect(() => {
+    if (!wide) return;
+    const timer = window.setTimeout(() => {
+      void import("./components/RealChangesPanel");
+    }, 2_500);
+    return () => window.clearTimeout(timer);
+  }, [wide]);
 
   const allThreads = useQuery({
     queryKey: ["threads-all"],
@@ -328,7 +396,10 @@ function Workspace() {
     () => setAsideOpen(asideCollapsed),
     [asideCollapsed, setAsideOpen],
   );
-  const showFiles = useCallback(() => setAsideTab("files"), []);
+  const showFiles = useCallback(() => {
+    setFilesOpened(true);
+    setAsideTab("files");
+  }, []);
   const showChanges = useCallback(() => setAsideTab("changes"), []);
 
   const openChanges = () => {
@@ -377,18 +448,16 @@ function Workspace() {
   };
 
   const toggleNavCollapsed = () => {
-    setNavCollapsed((current) => {
-      const next = !current;
-      try {
-        window.localStorage.setItem(
-          "threadbase.nav-collapsed",
-          next ? "1" : "0",
-        );
-      } catch {
-        // Private mode: the preference simply does not persist.
-      }
-      return next;
-    });
+    const next = !navCollapsed;
+    setNavCollapsed(next);
+    try {
+      window.localStorage.setItem(
+        "threadbase.nav-collapsed",
+        next ? "1" : "0",
+      );
+    } catch {
+      // Private mode: the preference simply does not persist.
+    }
   };
 
 
@@ -396,10 +465,10 @@ function Workspace() {
   // directly so a deep link works before any list has loaded.
   useEffect(() => {
     if (routeThreadId === null) {
-      if (selectedThreadId.current !== null) setSelectedThread(null);
+      if (selectedThread !== null) setSelectedThread(null);
       return;
     }
-    if (selectedThreadId.current === routeThreadId) return;
+    if (selectedThread?.id === routeThreadId) return;
     const known = allThreads.data?.threads.find(
       (thread) => thread.id === routeThreadId,
     );
@@ -429,7 +498,7 @@ function Workspace() {
     return () => {
       cancelled = true;
     };
-  }, [routeThreadId, allThreads.data]);
+  }, [routeThreadId, allThreads.data, selectedThread]);
 
   const showAside = view === "thread" && selectedThread !== null;
   const hasWorktree = Boolean(selectedThread?.worktreePath);
@@ -442,21 +511,11 @@ function Workspace() {
       if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
       if (event.key.toLowerCase() !== "b") return;
       event.preventDefault();
-      setAsideCollapsed((current) => {
-        try {
-          window.localStorage.setItem(
-            "threadbase.aside-collapsed",
-            current ? "0" : "1",
-          );
-        } catch {
-          // Private mode: the preference simply does not persist.
-        }
-        return !current;
-      });
+      setAsideOpen(!asideCollapsed);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showAside]);
+  }, [asideCollapsed, setAsideOpen, showAside]);
   const title =
     view === "inbox"
       ? "Inbox"
@@ -475,25 +534,34 @@ function Workspace() {
   };
 
   const openProject = (projectId: string) => {
-    setSelectedThread(null);
-    setOnlineUserIds([]);
-    changes.close();
-    go(pathFor({ kind: "project", projectId }));
+    startTransition(() => {
+      setSelectedThread(null);
+      setOnlineUserIds([]);
+      changes.close();
+      go(pathFor({ kind: "project", projectId }));
+    });
   };
 
   const openInbox = () => {
-    setSelectedThread(null);
-    setOnlineUserIds([]);
-    changes.close();
-    nav.close();
-    go(pathFor({ kind: "inbox" }));
+    startTransition(() => {
+      setSelectedThread(null);
+      setOnlineUserIds([]);
+      changes.close();
+      nav.close();
+      go(pathFor({ kind: "inbox" }));
+    });
   };
 
   const openSettings = () => {
-    setSelectedThread(null);
-    changes.close();
-    nav.close();
-    go(pathFor({ kind: "settings" }));
+    // Tearing down a long transcript and the diff panel is the most expensive
+    // navigation in the app; let React render Settings concurrently instead of
+    // blocking the click on the teardown.
+    startTransition(() => {
+      setSelectedThread(null);
+      changes.close();
+      nav.close();
+      go(pathFor({ kind: "settings" }));
+    });
   };
 
   // Read bookkeeping runs in the background: the row leaves the unread cache
@@ -531,7 +599,7 @@ function Workspace() {
   // double-click cannot stack the same thread URL. The route effect above
   // resolves the thread from cache or fetches it; the loader covers the gap.
   const openInboxItem = (item: InboxItem) => {
-    if (selectedThreadId.current !== item.threadId) {
+    if (selectedThread?.id !== item.threadId) {
       setSelectedThread(
         allThreads.data?.threads.find(
           (thread) => thread.id === item.threadId,
@@ -785,36 +853,42 @@ function Workspace() {
           {view === "inbox" ? (
             <InboxView onOpenThread={openInboxItem} />
           ) : view === "settings" ? (
-            <SettingsView />
+            <Suspense fallback={<ChunkLoading />}>
+              <SettingsView />
+            </Suspense>
           ) : selectedThread ? (
-            <RealThreadView
-              key={selectedThread.id}
-              threadId={selectedThread.id}
-              onPresence={setOnlineUserIds}
-              presencePanel={terminalOpen ? "terminal" : "transcript"}
-            />
+            <Suspense fallback={<EmptyState loading title="Opening thread" />}>
+              <RealThreadView
+                key={selectedThread.id}
+                threadId={selectedThread.id}
+                onPresence={setOnlineUserIds}
+                presencePanel={terminalOpen ? "terminal" : "transcript"}
+              />
+            </Suspense>
           ) : route.kind === "thread" ? (
             <EmptyState loading title="Opening thread" />
           ) : (
             <WorkspaceEmpty />
           )}
           {terminalOpen ? (
-            <TerminalDrawer
-              key={terminalThreadId ?? "home"}
-              threadId={terminalThreadId}
-              fullscreen={terminalFull}
-              onFullscreen={setTerminalFull}
-              onClose={() => {
-                setTerminalOpen(false);
-                setTerminalFull(false);
-              }}
-            />
+            <Suspense fallback={null}>
+              <TerminalDrawer
+                key={terminalThreadId ?? "home"}
+                threadId={terminalThreadId}
+                fullscreen={terminalFull}
+                onFullscreen={setTerminalFull}
+                onClose={() => {
+                  setTerminalOpen(false);
+                  setTerminalFull(false);
+                }}
+              />
+            </Suspense>
           ) : null}
         </AppShell.Main>
         {wide ? (
           <AppShell.Aside p={0} className="aside">
             {selectedThread && hasWorktree ? (
-              <>
+              <Suspense fallback={<ChunkLoading />}>
                 {/* Both tabs stay mounted: switching back to Changes reuses
                     the parsed diff instead of re-tokenizing it on the main
                     thread. */}
@@ -831,20 +905,22 @@ function Workspace() {
                     onClose={collapseAside}
                   />
                 </div>
-                <div
-                  className="aside-panel"
-                  style={{
-                    display: asideTab === "files" ? undefined : "none",
-                  }}
-                >
-                  <FilesPanel
-                    key={selectedThread.id}
-                    threadId={selectedThread.id}
-                    onShowChanges={showChanges}
-                    onClose={collapseAside}
-                  />
-                </div>
-              </>
+                {filesOpened ? (
+                  <div
+                    className="aside-panel"
+                    style={{
+                      display: asideTab === "files" ? undefined : "none",
+                    }}
+                  >
+                    <FilesPanel
+                      key={selectedThread.id}
+                      threadId={selectedThread.id}
+                      onShowChanges={showChanges}
+                      onClose={collapseAside}
+                    />
+                  </div>
+                ) : null}
+              </Suspense>
             ) : null}
           </AppShell.Aside>
         ) : null}
@@ -902,7 +978,7 @@ function Workspace() {
           <div className="sheet-stack">
             {phone ? <SheetGrabber onClose={changes.close} /> : null}
             {selectedThread ? (
-              <>
+              <Suspense fallback={<ChunkLoading />}>
                 <div
                   className="aside-panel"
                   style={{
@@ -916,20 +992,22 @@ function Workspace() {
                     onShowFiles={showFiles}
                   />
                 </div>
-                <div
-                  className="aside-panel"
-                  style={{
-                    display: asideTab === "files" ? undefined : "none",
-                  }}
-                >
-                  <FilesPanel
-                    key={selectedThread.id}
-                    threadId={selectedThread.id}
-                    onClose={changes.close}
-                    onShowChanges={showChanges}
-                  />
-                </div>
-              </>
+                {filesOpened ? (
+                  <div
+                    className="aside-panel"
+                    style={{
+                      display: asideTab === "files" ? undefined : "none",
+                    }}
+                  >
+                    <FilesPanel
+                      key={selectedThread.id}
+                      threadId={selectedThread.id}
+                      onClose={changes.close}
+                      onShowChanges={showChanges}
+                    />
+                  </div>
+                ) : null}
+              </Suspense>
             ) : null}
           </div>
         </Drawer>

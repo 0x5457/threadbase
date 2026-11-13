@@ -8,7 +8,9 @@ import {
 } from "@tabler/icons-react";
 import {
   memo,
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -247,17 +249,21 @@ export const QueueBar = memo(function QueueBar({
     setOrder(next);
   }, [items]);
 
-  const byId = new Map(items.map((item) => [item.id, item]));
-  const visible: QueueItem[] = [];
-  for (const id of order) {
-    const item = byId.get(id);
-    if (item) visible.push(item);
-  }
-  for (const item of items) {
-    if (!order.includes(item.id)) visible.push(item);
-  }
+  const visible = useMemo(() => {
+    const byId = new Map(items.map((item) => [item.id, item]));
+    const orderedIds = new Set(order);
+    const rows: QueueItem[] = [];
+    for (const id of order) {
+      const item = byId.get(id);
+      if (item) rows.push(item);
+    }
+    for (const item of items) {
+      if (!orderedIds.has(item.id)) rows.push(item);
+    }
+    return rows;
+  }, [items, order]);
 
-  const startDrag = (event: ReactPointerEvent, id: string) => {
+  const startDrag = useCallback((event: ReactPointerEvent, id: string) => {
     event.preventDefault();
     event.stopPropagation();
     const index = visible.findIndex((item) => item.id === id);
@@ -273,9 +279,9 @@ export const QueueBar = memo(function QueueBar({
       moved: false,
     };
     setDraggingId(id);
-  };
+  }, [visible]);
 
-  const moveDrag = (event: ReactPointerEvent) => {
+  const moveDrag = useCallback((event: ReactPointerEvent) => {
     const current = drag.current;
     if (!current || event.pointerId === undefined) return;
     const step = Math.round((event.clientY - current.startY) / current.rowHeight);
@@ -292,14 +298,14 @@ export const QueueBar = memo(function QueueBar({
     current.index = target;
     current.startY = event.clientY;
     current.moved = true;
-  };
+  }, [visible]);
 
-  const endDrag = () => {
+  const endDrag = useCallback(() => {
     const current = drag.current;
     drag.current = null;
     setDraggingId(null);
     if (current?.moved) onReorder(orderRef.current);
-  };
+  }, [onReorder]);
 
   if (!items.length) return null;
 

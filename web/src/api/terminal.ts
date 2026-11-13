@@ -30,6 +30,9 @@ export function attachTerminalSession(sessionId: string, watchOnly = false) {
 }
 
 export async function killTerminalSession(sessionId: string) {
+  // The error body is only read on a non-2xx response; the rule cannot see
+  // through the early return.
+  // react-doctor-disable-next-line react-doctor/no-fetch-response-used-without-status-check
   const response = await fetch(
     `/api/terminal/sessions/${encodeURIComponent(sessionId)}`,
     {

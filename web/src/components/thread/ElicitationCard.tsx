@@ -38,8 +38,9 @@ export function ElicitationCard({
     required?: string[];
   };
   const properties = Object.entries(schema.properties ?? {});
-  const required = schema.required ?? [];
-  const missing = required.some((key) => !values[key]);
+  const requiredKeys = schema.required ?? [];
+  const required = new Set(requiredKeys);
+  const missing = requiredKeys.some((key) => !values[key]);
 
   return (
     <div className="block">
@@ -77,7 +78,7 @@ export function ElicitationCard({
                           [key]: value ?? "",
                         }))
                       }
-                      required={required.includes(key)}
+                      required={required.has(key)}
                     />
                   ) : (
                     <TextInput
@@ -92,7 +93,7 @@ export function ElicitationCard({
                           [key]: event.currentTarget.value,
                         }))
                       }
-                      required={required.includes(key)}
+                      required={required.has(key)}
                     />
                   ),
                 )}

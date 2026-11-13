@@ -42,7 +42,7 @@ jobs:
         working-directory: web
         run: |
           pnpm typecheck
-          pnpm lint
+          pnpm doctor:ci
           pnpm build
 
       - name: Format
