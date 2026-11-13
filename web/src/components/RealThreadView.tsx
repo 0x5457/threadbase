@@ -1083,7 +1083,7 @@ export const RealThreadView = memo(function RealThreadView({
           agentName={bundle?.thread.agent}
           modelName={bundle?.thread.model}
           effort={bundle?.thread.effort}
-          sendWithModifier={stateQuery.data?.settings.sendWithModifier ?? true}
+          sendWithModifier={stateQuery.data?.settings.sendWithModifier ?? false}
           onModelChange={(model) =>
             applyConfig({ model }, "Could not update model")
           }

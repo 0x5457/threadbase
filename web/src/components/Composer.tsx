@@ -51,7 +51,7 @@ export function Composer({
   usage,
   watching,
   terminalUsers,
-  sendWithModifier = true,
+  sendWithModifier = false,
   userId,
   userName,
   userColor,
