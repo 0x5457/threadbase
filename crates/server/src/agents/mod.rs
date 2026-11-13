@@ -51,6 +51,9 @@ pub(crate) struct Inner {
     pub(crate) sessions: Mutex<HashMap<String, Arc<Session>>>,
     pub(crate) starts: crate::locks::KeyedLocks,
     pub(crate) queue_tx: mpsc::UnboundedSender<String>,
+    /// Timestamps of automatic adapter restarts per thread, so a crashing
+    /// adapter cannot spin forever.
+    pub(crate) restarts: Mutex<HashMap<String, Vec<i64>>>,
 }
 
 /// Everything needed to start one turn, whichever input path produced it.
@@ -74,17 +77,111 @@ impl AgentManager {
             sessions: Mutex::new(HashMap::new()),
             starts: crate::locks::KeyedLocks::new(),
             queue_tx: queue_tx.clone(),
+            restarts: Mutex::new(HashMap::new()),
         });
-        queue_worker::spawn(inner.clone(), queue_rx);
-        Self { inner }
+        let manager = Self { inner };
+        queue_worker::spawn(manager.clone(), queue_rx);
+        manager
+    }
+
+    /// Clean up after a restart. Threads whose agent processes died with the
+    /// old process are reset to idle, prompts that can no longer be answered
+    /// are cancelled, input queued behind the interrupted turn is handed back
+    /// to the queue worker, and turns that were cut off are continued so a
+    /// restart does not silently stop the agent.
+    pub async fn recover_after_restart(&self) -> Result<(), ServerError> {
+        let reconciled = threads::reconcile_after_restart(
+            &self.inner.pool,
+            &self.inner.events,
+            &self.inner.projection,
+        )
+        .await?;
+        let mut drain: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (thread_id, turn_id) in &reconciled {
+            cancel_pending_approvals(&self.inner, thread_id).await;
+            cancel_pending_elicitations(&self.inner, thread_id).await;
+            // Newer input already waiting takes precedence over the turn that
+            // was cut off; it was meant to run after that turn anyway.
+            if turn_id.is_some() && !has_queued_input(&self.inner.pool, thread_id).await {
+                self.queue_resume(thread_id).await?;
+            }
+            drain.insert(thread_id.clone());
+        }
+        // Queued input is durable work: drain it even for threads that were
+        // idle at shutdown, otherwise a restart strands the queue forever.
+        let queued: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT thread_id FROM queued_inputs WHERE status = 'queued'",
+        )
+        .fetch_all(&self.inner.pool)
+        .await?;
+        drain.extend(queued);
+        for thread_id in drain {
+            if has_queued_input(&self.inner.pool, &thread_id).await {
+                self.kick_queue(&thread_id);
+            }
+        }
+        Ok(())
+    }
+
+    /// A restart must not silently stop work. When a turn was cut off and no
+    /// newer input is queued, append a continuation prompt attributed to
+    /// Threadbase; the resumed ACP session already has the full context, so the
+    /// agent can pick up from the working tree as it is.
+    async fn queue_resume(&self, thread_id: &str) -> Result<(), ServerError> {
+        const PROMPT: &str = "The server restarted during the previous turn. \
+            Continue where you left off; re-check the working tree before changing \
+            files so you do not redo work that is already done.";
+        let author_id: Option<String> =
+            sqlx::query_scalar("SELECT created_by FROM threads WHERE id = ?")
+                .bind(thread_id)
+                .fetch_optional(&self.inner.pool)
+                .await?;
+        let Some(author_id) = author_id else {
+            return Ok(());
+        };
+        let system = UserBrief {
+            id: threadbase_shared::UserId::from("threadbase"),
+            username: "threadbase".to_owned(),
+            display_name: "Threadbase".to_owned(),
+            avatar_url: None,
+            color: threadbase_shared::user_color("threadbase").to_owned(),
+        };
+        let authors_json = serde_json::to_string(&[system]).ok();
+        queue::enqueue(
+            &self.inner.pool,
+            queue::NewQueuedInput {
+                thread_id,
+                author_id: &author_id,
+                text: PROMPT,
+                authors_json: authors_json.as_deref(),
+                attachments_json: None,
+                created_at: now_ms(),
+            },
+        )
+        .await?;
+        let _ = queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
+        Ok(())
     }
 
     pub async fn restart(&self, thread_id: &str) -> Result<(), ServerError> {
+        self.shutdown_session(thread_id).await;
+        self.start_fresh(thread_id).await
+    }
+
+    /// Stop the current adapter on purpose. The closing flag keeps the exit
+    /// monitor from treating this as a crash and reviving the session.
+    async fn shutdown_session(&self, thread_id: &str) {
         let session = self.inner.sessions.lock().await.remove(thread_id);
         if let Some(session) = session {
+            session.mark_stopped();
             let mut harness = session.harness.lock().await;
             let _ = harness.shutdown().await;
         }
+    }
+
+    /// Transition through `preparing` into a fresh adapter and drain input
+    /// that was waiting for one.
+    async fn start_fresh(&self, thread_id: &str) -> Result<(), ServerError> {
         threads::transition(
             &self.inner.pool,
             &self.inner.projection,
@@ -92,7 +189,76 @@ impl AgentManager {
             ThreadAction::Restart,
         )
         .await?;
-        self.ensure_started(thread_id).await
+        // The interrupted turn is gone with the old adapter; a stale id would
+        // make steering and the projection think a turn is still active.
+        sqlx::query("UPDATE threads SET current_turn_id = NULL WHERE id = ?")
+            .bind(thread_id)
+            .execute(&self.inner.pool)
+            .await?;
+        self.ensure_started(thread_id).await?;
+        if has_queued_input(&self.inner.pool, thread_id).await {
+            self.kick_queue(thread_id);
+        }
+        Ok(())
+    }
+
+    /// Bring a thread back after its adapter exited without being asked to.
+    /// The dead session has already been dropped, so `ensure_started` builds a
+    /// new one; a turn that was cut off is continued by Threadbase itself.
+    pub(crate) async fn recover_from_exit(&self, thread_id: &str, had_turn: bool) {
+        if !self.allow_adapter_restart(thread_id).await {
+            let _ = self
+                .inner
+                .events
+                .append(
+                    &ThreadId::from(thread_id.to_owned()),
+                    Actor::system(),
+                    ThreadEvent::SystemNotice {
+                        level: "error".to_owned(),
+                        message: "The agent process keeps exiting; Threadbase stopped restarting \
+                                  it. Restart the thread to try again."
+                            .to_owned(),
+                    },
+                    EventMeta::default(),
+                )
+                .await;
+            let _ = threads::transition(
+                &self.inner.pool,
+                &self.inner.projection,
+                thread_id,
+                ThreadAction::AgentFailed,
+            )
+            .await;
+            return;
+        }
+        if let Err(error) = self.start_fresh(thread_id).await {
+            tracing::warn!(thread_id, %error, "could not restart agent after an unexpected exit");
+            return;
+        }
+        // Newer queued input takes precedence; it was meant to run after the
+        // interrupted turn. Otherwise the turn itself is continued.
+        if had_turn && !has_queued_input(&self.inner.pool, thread_id).await {
+            if let Err(error) = self.queue_resume(thread_id).await {
+                tracing::warn!(thread_id, %error, "could not resume the interrupted turn");
+            }
+            self.kick_queue(thread_id);
+        }
+    }
+
+    /// Bound automatic restarts so a crashing adapter cannot burn turns in a
+    /// loop; a successful turn clears the window again.
+    async fn allow_adapter_restart(&self, thread_id: &str) -> bool {
+        const LIMIT: usize = 3;
+        const WINDOW_MS: i64 = 5 * 60 * 1000;
+        let now = now_ms();
+        let mut restarts = self.inner.restarts.lock().await;
+        let attempts = restarts.entry(thread_id.to_owned()).or_default();
+        attempts.retain(|at| now - *at < WINDOW_MS);
+        if attempts.len() >= LIMIT {
+            return false;
+        }
+        attempts.push(now);
+        true
     }
 
     pub fn kick_queue(&self, thread_id: &str) {
@@ -102,12 +268,20 @@ impl AgentManager {
     /// Start the harness once. Concurrent callers for the same thread wait on
     /// a per-thread start lock instead of holding the session map.
     pub async fn ensure_started(&self, thread_id: &str) -> Result<(), ServerError> {
-        if self.inner.session(thread_id).await.is_some() {
-            return Ok(());
+        if let Some(session) = self.inner.session(thread_id).await {
+            if !session.is_stopped() {
+                return Ok(());
+            }
+            // The adapter is gone; a session inserted after the exit must not
+            // keep the thread pinned to a dead process.
+            self.inner.remove_session(thread_id, &session).await;
         }
         let _start = self.inner.starts.lock(thread_id).await;
-        if self.inner.session(thread_id).await.is_some() {
-            return Ok(());
+        if let Some(session) = self.inner.session(thread_id).await {
+            if !session.is_stopped() {
+                return Ok(());
+            }
+            self.inner.remove_session(thread_id, &session).await;
         }
         self.start_session(thread_id).await
     }
@@ -186,11 +360,12 @@ impl AgentManager {
         let run = Arc::new(Mutex::new(RunState::default()));
         let session = Arc::new(Session::new(harness, capabilities, run.clone()));
         pump::spawn(
-            self.inner.clone(),
+            self.clone(),
             thread_id.to_owned(),
             binding.agent.clone(),
             run,
             events,
+            Arc::downgrade(&session),
         );
         self.inner
             .sessions
@@ -377,7 +552,7 @@ impl AgentManager {
         }
         if !session.capabilities.steering {
             return Err(ServerError(ApiError::conflict(
-                "this agent cannot take steering input; the message stays queued",
+                "this agent can't accept input mid-turn; the message will be sent when the current turn ends",
             )));
         }
         if !attachments.is_empty() && !session.capabilities.images {
@@ -636,6 +811,18 @@ impl Inner {
         self.sessions.lock().await.get(thread_id).cloned()
     }
 
+    /// Drop a session only when it is still the current one; a restart may
+    /// have installed a replacement already.
+    pub(crate) async fn remove_session(&self, thread_id: &str, session: &Arc<Session>) {
+        let mut sessions = self.sessions.lock().await;
+        if sessions
+            .get(thread_id)
+            .is_some_and(|current| Arc::ptr_eq(current, session))
+        {
+            sessions.remove(thread_id);
+        }
+    }
+
     /// Clear the in-memory turn handle so a concurrent `send` observes an idle
     /// session before the completion events are published.
     pub(crate) async fn clear_turn(&self, thread_id: &str) {
@@ -836,6 +1023,17 @@ async fn new_session(
         .await
         .map(Some)
         .map_err(|error| ServerError::internal(format!("agent session failed: {error}")))
+}
+
+async fn has_queued_input(pool: &SqlitePool, thread_id: &str) -> bool {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
+    )
+    .bind(thread_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or_default();
+    count > 0
 }
 
 async fn cancel_pending_approvals(inner: &Inner, thread_id: &str) {

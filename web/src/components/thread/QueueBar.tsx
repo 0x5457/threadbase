@@ -1,5 +1,6 @@
 import { ActionIcon, Group, Text } from "@mantine/core";
 import {
+  IconChevronDown,
   IconGripVertical,
   IconPencil,
   IconSend,
@@ -231,6 +232,25 @@ export const QueueBar = memo(function QueueBar({
   onEdit: (id: string, text: string) => Promise<boolean>;
   onReorder: (ids: string[]) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem("threadbase.queue-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      window.localStorage.setItem(
+        "threadbase.queue-collapsed",
+        next ? "1" : "0",
+      );
+    } catch {
+      // Private mode: the preference simply does not persist.
+    }
+  };
   const [order, setOrder] = useState<string[]>([]);
   const orderRef = useRef<string[]>([]);
   const drag = useRef<{
@@ -310,14 +330,27 @@ export const QueueBar = memo(function QueueBar({
   if (!items.length) return null;
 
   return (
-    <div className="queue-bar">
+    <div className="queue-bar" data-collapsed={collapsed ? "true" : undefined}>
       <Group gap={4} className="queue-head">
-        <IconStack2 size={11} stroke={1.5} />
-        <Text size="xs" c="dimmed">
-          {items.length} queued
-        </Text>
+        <button
+          type="button"
+          className="queue-head-toggle"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Show queued messages" : "Hide queued messages"}
+          onClick={toggleCollapsed}
+        >
+          <IconStack2 size={11} stroke={1.5} />
+          <Text size="xs" c="dimmed">
+            {items.length} queued
+          </Text>
+          <IconChevronDown
+            size={12}
+            stroke={1.5}
+            className={collapsed ? "chevron collapsed" : "chevron"}
+          />
+        </button>
       </Group>
-      {visible.map((item, index) => (
+      {collapsed ? null : visible.map((item, index) => (
         <QueueRow
           key={item.id}
           item={item}

@@ -14,6 +14,7 @@ import { notifications } from "@mantine/notifications";
 import { IconAlertCircle, IconMessage } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { readPick } from "../lib/model-prefs";
 import {
   createThread,
   getState,
@@ -81,8 +82,13 @@ export function NewThreadModal({
         title: title.trim() || undefined,
         agent,
         // The model picker lives in the thread composer now, where it can show
-        // what the agent actually advertises. Only the saved default applies here.
-        model: stateQuery.data?.settings.defaultModel?.trim() || null,
+        // what the agent actually advertises. Seed it with the last explicit
+        // pick for this agent, falling back to the workspace default.
+        model:
+          readPick(agent, "model") ??
+          stateQuery.data?.settings.defaultModel?.trim() ??
+          null,
+        effort: readPick(agent, "effort"),
         baseBranch: project.defaultBranch,
         worktree,
       });

@@ -145,10 +145,20 @@
   padding: 3px 8px;
   border-top: 1px solid var(--line-soft);
   background: var(--chrome);
+  /* A phone is narrower than the key set; scroll the bar instead of wrapping it
+     into a second row or clipping the last key. */
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.terminal-keys::-webkit-scrollbar {
+  display: none;
 }
 
 .terminal-key {
   height: 20px;
+  flex: none;
   padding: 0 6px;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -175,8 +185,26 @@
   border-color: color-mix(in srgb, var(--del) 30%, var(--line));
 }
 
-/* Phones get a read-only, full-screen terminal: the drawer would leave no room
-   for the soft keyboard, and the ticket is watcher-only anyway. */
+/* Mobile browsers only open the soft keyboard for an editable field that sits
+   inside the viewport with a real, if tiny, box. xterm parks the helper
+   textarea at `left: -9999em` with a zero-sized box, which is exactly what
+   makes the keyboard refuse to appear. `font-size: 16px` also stops iOS from
+   zooming the page on focus. */
+@media (pointer: coarse), (max-width: 47.99em) {
+  .terminal-body .xterm-helper-textarea {
+    left: 0 !important;
+    top: 0 !important;
+    width: 1px !important;
+    height: 1px !important;
+    opacity: 0 !important;
+    z-index: 1 !important;
+    font-size: 16px !important;
+  }
+}
+
+/* Phones get a full-screen terminal: the drawer would leave no room for the
+   soft keyboard, so the layout goes edge to edge and the key bar stays pinned
+   above the keyboard. */
 @media (max-width: 47.99em) {
   .terminal-drawer {
     position: fixed;
@@ -192,6 +220,21 @@
   .terminal-cwd {
     max-width: 16ch;
   }
+}
+
+/* Header toggle: the terminal is a panel, so its switch lives in the app chrome
+   next to the other panel/global controls, not in the account footer. */
+.header-terminal {
+  color: var(--ink-muted);
+}
+
+.header-terminal[data-active="true"] {
+  background: var(--selected);
+  color: var(--ink);
+}
+
+.header-terminal[data-active="true"]:hover {
+  background: var(--selected);
 }
 
 /* Status bar chip: a shell is alive but its drawer is closed. */

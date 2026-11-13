@@ -779,6 +779,9 @@ function Workspace() {
           navCollapsed={navCollapsed}
           onToggleNav={toggleNav}
           onToggleNavCollapsed={toggleNavCollapsed}
+          canTerminal={terminalEnabled}
+          terminalOpen={terminalOpen}
+          onToggleTerminal={() => setTerminalOpen((open) => !open)}
           onOpenPalette={() => spotlight.open()}
           onOpenInbox={openInbox}
           onOpenChanges={openChanges}
@@ -837,8 +840,7 @@ function Workspace() {
           onNavigate={nav.close}
           onOpenInbox={openInbox}
           onOpenSettings={openSettings}
-          onOpenTerminal={() => setTerminalOpen((open) => !open)}
-          canTerminal={terminalEnabled}
+
           activeView={view}
           selectedThreadId={selectedThread?.id ?? null}
           activeProjectId={
@@ -880,6 +882,11 @@ function Workspace() {
                 onClose={() => {
                   setTerminalOpen(false);
                   setTerminalFull(false);
+                  // The shell outlives the drawer; refresh the status-bar chip
+                  // instead of waiting for the next poll.
+                  void queryClient.invalidateQueries({
+                    queryKey: ["terminal-sessions"],
+                  });
                 }}
               />
             </Suspense>

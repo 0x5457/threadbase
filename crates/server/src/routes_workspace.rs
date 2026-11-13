@@ -18,7 +18,7 @@ use threadbase_shared::api::{
 };
 use threadbase_shared::{
     ApiError, BaselineDto, BaselineKind, FileDiffDto, MergeBackResponse, OkResponse,
-    ProjectResponse, ProjectsResponse, ThreadResponse, ThreadsResponse,
+    OlderEventsDto, ProjectResponse, ProjectsResponse, ThreadId, ThreadResponse, ThreadsResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -26,6 +26,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/threads", get(list_all_threads))
         .route("/api/threads/{thread_id}/bundle", get(thread_bundle))
         .route("/api/threads/{thread_id}/state", get(thread_state))
+        .route(
+            "/api/threads/{thread_id}/events/older",
+            get(thread_events_older),
+        )
         .route("/api/projects", get(list_projects).post(create_project))
         .route(
             "/api/projects/{project_id}",
@@ -60,6 +64,26 @@ async fn thread_state(
     Ok(Json(state.projection.snapshot(&thread_id).await?))
 }
 
+#[derive(Debug, Deserialize)]
+struct OlderEventsQuery {
+    before: u64,
+}
+
+/// The window just before `before`, for transcripts longer than the cold page.
+async fn thread_events_older(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Query(query): Query<OlderEventsQuery>,
+) -> Result<Json<OlderEventsDto>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let page = state
+        .events
+        .older_page(&ThreadId::from(thread_id), query.before)
+        .await?;
+    Ok(Json(page))
+}
+
 async fn list_projects(
     State(state): State<AppState>,
     _user: CurrentUser,
@@ -74,9 +98,13 @@ async fn create_project(
     user: CurrentUser,
     Json(request): Json<CreateProjectRequest>,
 ) -> Result<Json<ProjectResponse>, ServerError> {
-    Ok(Json(ProjectResponse {
-        project: projects::create(&state.pool, &user, &request).await?,
-    }))
+    let project = if request.create {
+        let roots = crate::routes_fs::allowed_roots(&state).await?;
+        projects::create_repository(&state.pool, &user, &request, &roots).await?
+    } else {
+        projects::create(&state.pool, &user, &request).await?
+    };
+    Ok(Json(ProjectResponse { project }))
 }
 
 async fn get_project(

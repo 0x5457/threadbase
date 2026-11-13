@@ -113,7 +113,8 @@ THREADBASE_TERMINAL=1 cargo run -p threadbase
 - **不记日志**：终端内容不写入磁盘、也不进事件日志；需要复盘时只能靠 tmux 里还活着的 scrollback。想彻底停掉就 `tmux -L threadbase kill-server`。
 - **退出即提示**：shell 退出时客户端收到 EOF，抽屉显示 `The shell exited (code)` 和 `New session`，不会留下一个死掉的 pane。
 - **在场感**：开着终端的人会在其他人的 composer 工具栏里显示一个终端图标（`Panel::Terminal` 走现有 presence 通道）；关掉抽屉但 shell 还活着时，状态栏留一个 `terminal` 小按钮。两者点击都能回到终端。
-- **前端**：xterm.js 懒加载；按键条补上浏览器吞掉的键（Ctrl+C/D/L/Z/R、Esc、Tab、方向键）；`Ctrl+Shift+C/V` 复制粘贴，多行粘贴先确认。**手机端只读**：抽屉是全屏，ticket 本身是 watcher-only，服务端不会给这台设备键盘（软键盘压着一个 pty 是另一个产品）。
+- **前端**：xterm.js 懒加载；按键条补上浏览器吞掉的键（Ctrl+C/D/L/Z/R、Esc、Tab、方向键）；`Ctrl+Shift+C/V` 复制粘贴，多行粘贴先确认。
+- **手机**：抽屉是全屏，点终端即聚焦并唤起软键盘（helper textarea 被放到视口内 1×1、16px 字号，否则 iOS 不给键盘还会连带缩放页面）；键盘弹出时 `interactive-widget=resizes-content` 会让布局收缩，ResizeObserver 重新 fit 并把新尺寸同步给 tmux。ticket 仍支持 `watchOnly`（服务端拒绝 drive），只是界面不再强制手机只读。
 
 ### 本机开发
 

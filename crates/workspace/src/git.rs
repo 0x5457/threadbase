@@ -8,6 +8,8 @@ use tokio::process::Command;
 pub enum GitError {
     #[error("not a git repository: {0}")]
     NotARepository(String),
+    #[error("repository has no commits yet: {0}")]
+    NoCommits(String),
     #[error("invalid branch name: {0}")]
     InvalidBranch(String),
     #[error("git command failed: {command}\n{stderr}")]
@@ -92,7 +94,12 @@ pub async fn inspect(path: &Path) -> Result<GitInfo, GitError> {
     let branch = git_allow_failure(&root, &["branch", "--show-current"])
         .await?
         .filter(|value| !value.is_empty());
-    let head_sha = git(&root, &["rev-parse", "HEAD"]).await?;
+    // A freshly `git init`-ed directory is a repository, but its HEAD is unborn.
+    // Diffs and worktrees need a commit to point at, so report that separately
+    // instead of mislabelling the directory as "not a git repository".
+    let head_sha = git_allow_failure(&root, &["rev-parse", "--verify", "--quiet", "HEAD"])
+        .await?
+        .ok_or_else(|| GitError::NoCommits(root.display().to_string()))?;
     let status = git(&root, &["status", "--porcelain"]).await?;
     Ok(GitInfo {
         root,
@@ -174,6 +181,28 @@ async fn add_all(root: &Path) -> Result<(), GitError> {
     git(root, &["add", "-A"]).await.map(|_| ())
 }
 
+/// Commit, falling back to a Threadbase author only when git has no identity
+/// configured. Repositories owned by the user keep their own author.
+async fn commit(root: &Path, message: &str) -> Result<(), GitError> {
+    let mut args: Vec<&str> = Vec::new();
+    let email = git_allow_failure(root, &["config", "user.email"]).await?;
+    if email.is_none_or(|value| value.is_empty()) {
+        args.extend([
+            "-c",
+            "user.name=Threadbase",
+            "-c",
+            "user.email=threadbase@localhost",
+        ]);
+    }
+    args.extend(["commit", "-m", message]);
+    git(root, &args).await.map(|_| ())
+}
+
+/// Initialize a repository with `main` as its default branch.
+pub async fn init_repository(root: &Path) -> Result<(), GitError> {
+    git(root, &["init", "-b", "main"]).await.map(|_| ())
+}
+
 pub async fn reset_index(root: &Path) -> Result<(), GitError> {
     git(root, &["reset"]).await.map(|_| ())
 }
@@ -209,13 +238,13 @@ pub async fn snapshot_worktree(root: &Path, message: &str) -> Result<String, Git
     if status.success() {
         return head_sha(root).await;
     }
-    git(root, &["commit", "-m", message]).await?;
+    commit(root, message).await?;
     head_sha(root).await
 }
 
 pub async fn commit_all(root: &Path, message: &str) -> Result<String, GitError> {
     add_all(root).await?;
-    git(root, &["commit", "-m", message]).await?;
+    commit(root, message).await?;
     head_sha(root).await
 }
 
@@ -274,6 +303,14 @@ mod tests {
         assert_eq!(info.branch.as_deref(), Some("main"));
         assert!(info.clean);
         assert!(!info.head_sha.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reports_repository_without_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-b", "main"]).await.unwrap();
+        let error = inspect(dir.path()).await.unwrap_err();
+        assert!(matches!(&error, GitError::NoCommits(_)), "{error:?}");
     }
 
     #[tokio::test]

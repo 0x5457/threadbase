@@ -6,7 +6,7 @@ use std::process::Command;
 use tempfile::TempDir;
 use threadbase_server::auth::CurrentUser;
 use threadbase_server::events::EventStore;
-use threadbase_server::{auth, comments, db, diff, projects, threads};
+use threadbase_server::{auth, comments, db, diff, projects, queue, threads};
 use threadbase_shared::api::{
     CreateCommentRequest, CreateProjectRequest, CreateThreadRequest, ForkThreadRequest,
     UpdateThreadRequest,
@@ -100,6 +100,7 @@ async fn create_project(fixture: &Fixture) -> threadbase_shared::ProjectDto {
         &CreateProjectRequest {
             path: fixture.repo.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await
@@ -125,6 +126,226 @@ async fn create_thread(fixture: &Fixture, project_id: &str) -> threadbase_shared
     )
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn restart_recovery_resets_interrupted_threads() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+
+    // Simulate a server that died in the middle of a turn, with input queued
+    // behind that turn.
+    let turn_id = "turn_interrupted";
+    sqlx::query("UPDATE threads SET status = 'running', current_turn_id = ? WHERE id = ?")
+        .bind(turn_id)
+        .bind(thread.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_bindings SET status = 'running' WHERE thread_id = ?")
+        .bind(thread.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    queue::enqueue(
+        &fixture.pool,
+        queue::NewQueuedInput {
+            thread_id: thread.id.as_str(),
+            author_id: fixture.current.user.id.as_str(),
+            text: "after the restart",
+            authors_json: None,
+            attachments_json: None,
+            created_at: threadbase_shared::now_ms(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let events = EventStore::new(fixture.pool.clone());
+    let projection = test_projection(&fixture.pool);
+    let reconciled = threads::reconcile_after_restart(&fixture.pool, &events, &projection)
+        .await
+        .unwrap();
+    assert_eq!(
+        reconciled,
+        vec![(thread.id.to_string(), Some(turn_id.to_owned()))]
+    );
+
+    let reloaded = threads::get(&fixture.pool, thread.id.as_str(), &fixture.current)
+        .await
+        .unwrap();
+    assert_eq!(reloaded.status, ThreadStatus::Idle);
+    let current_turn: Option<String> =
+        sqlx::query_scalar("SELECT current_turn_id FROM threads WHERE id = ?")
+            .bind(thread.id.as_str())
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert!(current_turn.is_none());
+
+    let (kind, payload): (String, String) = sqlx::query_as(
+        "SELECT kind, payload_json FROM events WHERE thread_id = ? ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(thread.id.as_str())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(kind, "turn_error");
+    assert!(payload.contains(turn_id), "{payload}");
+
+    let binding: String =
+        sqlx::query_scalar("SELECT status FROM agent_bindings WHERE thread_id = ?")
+            .bind(thread.id.as_str())
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(binding, "idle");
+
+    // Queued input survives the reset; a second boot has nothing left to do.
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
+    )
+    .bind(thread.id.as_str())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(queued, 1);
+    let again = threads::reconcile_after_restart(&fixture.pool, &events, &projection)
+        .await
+        .unwrap();
+    assert!(again.is_empty());
+}
+
+#[tokio::test]
+async fn creates_a_project_directory_and_repository() {
+    let fixture = fixture().await;
+    let parent = TempDir::new().unwrap();
+    let roots = vec![parent.path().to_path_buf()];
+    let target = parent.path().join("fresh-project");
+    let project = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: target.to_string_lossy().to_string(),
+            name: None,
+            create: true,
+        },
+        &roots,
+    )
+    .await
+    .unwrap();
+    assert_eq!(project.name, "fresh-project");
+    assert_eq!(project.default_branch, "main");
+    assert_eq!(
+        project.path,
+        target.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert!(target.join("README.md").is_file());
+    assert_eq!(
+        git_output(&target, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
+    assert_eq!(
+        git_output(&target, &["branch", "--show-current"]).trim(),
+        "main"
+    );
+}
+
+#[tokio::test]
+async fn initializes_an_existing_empty_repository() {
+    let fixture = fixture().await;
+    let parent = TempDir::new().unwrap();
+    let target = parent.path().join("empty-repo");
+    std::fs::create_dir(&target).unwrap();
+    git(&target, &["init", "-b", "main"]);
+
+    let project = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: target.to_string_lossy().to_string(),
+            name: Some("Empty Repo".into()),
+            create: true,
+        },
+        &[parent.path().to_path_buf()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(project.name, "Empty Repo");
+    assert!(target.join("README.md").is_file());
+    assert_eq!(
+        git_output(&target, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
+}
+
+#[tokio::test]
+async fn refuses_to_create_over_foreign_content() {
+    let fixture = fixture().await;
+    let parent = TempDir::new().unwrap();
+    let roots = vec![parent.path().to_path_buf()];
+
+    // Outside every root the picker can reach.
+    let outside = TempDir::new().unwrap();
+    let outside_target = outside.path().join("nope");
+    let err = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: outside_target.to_string_lossy().to_string(),
+            name: None,
+            create: true,
+        },
+        &roots,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Validation);
+    assert!(!outside_target.exists());
+
+    // A directory that already holds the user's files.
+    let busy = parent.path().join("busy");
+    std::fs::create_dir(&busy).unwrap();
+    std::fs::write(busy.join("notes.txt"), "mine").unwrap();
+    let err = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: busy.to_string_lossy().to_string(),
+            name: None,
+            create: true,
+        },
+        &roots,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Validation);
+    assert!(!busy.join(".git").exists());
+    assert!(!busy.join("README.md").exists());
+    assert!(busy.join("notes.txt").is_file());
+
+    // An existing repository with history is added, not re-initialized.
+    let existing = parent.path().join("existing");
+    std::fs::create_dir(&existing).unwrap();
+    init_repo(&existing).await;
+    let err = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: existing.to_string_lossy().to_string(),
+            name: None,
+            create: true,
+        },
+        &roots,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Validation);
+    assert_eq!(
+        git_output(&existing, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
 }
 
 #[tokio::test]
@@ -189,11 +410,34 @@ async fn project_validation_and_thread_lifecycle() {
         &CreateProjectRequest {
             path: non_git.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await
     .unwrap_err();
     assert_eq!(err.0.code, ErrorCode::Validation);
+
+    // A repository without commits is still a repository; say so instead of
+    // claiming the directory is not one.
+    let empty = TempDir::new().unwrap();
+    git(empty.path(), &["init", "-b", "main"]);
+    let err = projects::create(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: empty.path().to_string_lossy().to_string(),
+            name: None,
+            create: false,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Validation);
+    assert!(
+        err.0.message.contains("no commits"),
+        "unexpected message: {}",
+        err.0.message
+    );
 
     let err = projects::create(
         &fixture.pool,
@@ -201,6 +445,7 @@ async fn project_validation_and_thread_lifecycle() {
         &CreateProjectRequest {
             path: "relative/repo".into(),
             name: None,
+            create: false,
         },
     )
     .await
@@ -215,6 +460,7 @@ async fn project_validation_and_thread_lifecycle() {
         &CreateProjectRequest {
             path: fixture.repo.path().to_string_lossy().to_string(),
             name: None,
+            create: false,
         },
     )
     .await

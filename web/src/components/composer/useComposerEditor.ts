@@ -71,7 +71,7 @@ export function useComposerEditor({
           ? [
               CollaborationCaret.configure({
                 provider,
-                user: { name: userName, color: accent ?? "#94a3b8" },
+                user: { name: userName, color: accent ?? "#74ade8" },
               }),
             ]
           : []),

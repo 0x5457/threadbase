@@ -70,14 +70,12 @@ const MAX_HEIGHT = 720;
 async function openSession(
   threadId: string | null,
   size: { cols: number; rows: number },
-  watchOnly: boolean,
 ) {
   try {
     return await createTerminalSession({
       threadId,
       cols: size.cols,
       rows: size.rows,
-      watchOnly,
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
@@ -97,7 +95,7 @@ async function openSession(
           : "Only an administrator can start a terminal on this machine.",
       );
     }
-    return attachTerminalSession(existing.id, watchOnly);
+    return attachTerminalSession(existing.id);
   }
 }
 
@@ -133,10 +131,9 @@ export function TerminalDrawer({
   const [error, setError] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState(true);
   const [attempt, setAttempt] = useState(0);
-  // Typing on a phone means fighting the soft keyboard over a pty, so phones
-  // watch: the ticket itself is watcher-only, enforced on the server.
+  // Phones lay the drawer out full-screen; they drive the shell like any other
+  // screen, which means the soft keyboard has to reach xterm's textarea.
   const phone = useMediaQuery("(max-width: 47.99em)");
-  const watchOnly = Boolean(phone);
 
   const socketRef = useRef<WebSocket | null>(null);
   const sendRef = useRef<(message: unknown) => void>(() => {});
@@ -166,7 +163,7 @@ export function TerminalDrawer({
 
     const connect = async () => {
       try {
-        const created = await openSession(threadId, size(), watchOnly);
+        const created = await openSession(threadId, size());
         if (cancelled) return;
         sessionRef.current = created.session;
         setCwd(created.session.cwd);
@@ -235,7 +232,7 @@ export function TerminalDrawer({
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [ready, threadId, attempt, size, write, watchOnly]);
+  }, [ready, threadId, attempt, size, write]);
 
   // Drag the top edge to trade transcript space for terminal height.
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -299,9 +296,7 @@ export function TerminalDrawer({
   const canDrive = role === "controller" && phase === "live";
   const watchNote =
     controller === null
-      ? watchOnly
-        ? "Watching. Typing is off on this screen."
-        : "Watching: nobody is driving. Only an administrator can type in this shell."
+      ? "Watching: nobody is driving. Only an administrator can type in this shell."
       : `Watching: ${controller} is driving. The keyboard is off for you.`;
 
   return (
@@ -433,7 +428,10 @@ export function TerminalDrawer({
         role="group"
         aria-label="Terminal session"
         ref={containerRef}
-        onMouseDown={() => {
+        onPointerDown={() => {
+          if (canDrive) focus();
+        }}
+        onTouchStart={() => {
           if (canDrive) focus();
         }}
       />

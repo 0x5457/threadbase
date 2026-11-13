@@ -41,6 +41,10 @@ pub struct AuthStatusResponse {
 pub struct CreateProjectRequest {
     pub path: String,
     pub name: Option<String>,
+    /// Let the server create the directory and initialize a repository when it
+    /// is missing, empty, or a repository without commits.
+    #[serde(default)]
+    pub create: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -200,6 +204,17 @@ pub struct SettingsPatch {
     pub hidden_presence: Option<bool>,
     pub webhook_url: Option<String>,
     pub browser_notifications: Option<bool>,
+}
+
+/// One earlier slice of the thread log, used when the transcript scrolls past
+/// the window a cold load returned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OlderEventsDto {
+    pub events: Vec<EventEnvelope>,
+    pub oldest_seq: u64,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

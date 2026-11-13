@@ -3,8 +3,8 @@
 use sqlx::{FromRow, SqlitePool};
 use threadbase_core::state::{delivery_str, parse_delivery};
 use threadbase_shared::{
-    now_ms, Actor, ActorKind, ApiError, Delivery, EventEnvelope, EventsPageDto, Origin,
-    ThreadEvent, ThreadId,
+    now_ms, Actor, ActorKind, ApiError, Delivery, EventEnvelope, EventsPageDto, OlderEventsDto,
+    Origin, ThreadEvent, ThreadId,
 };
 use tokio::sync::broadcast;
 
@@ -34,6 +34,10 @@ const HISTORY_TURNS: u32 = 20;
 /// Hard row cap for one cold page: a runaway turn must not turn a refresh into
 /// a multi-megabyte transfer.
 const HISTORY_ROWS: u32 = 20_000;
+/// Scrolling back fetches smaller windows than a cold load: each request should
+/// land fast even on a slow link, and the reader rarely needs 20 turns at once.
+const OLDER_TURNS: u32 = 8;
+const OLDER_ROWS: u32 = 4_000;
 
 #[derive(Clone)]
 pub struct EventStore {
@@ -203,6 +207,65 @@ impl EventStore {
             .map(EventRow::into_envelope)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(compact_history(events))
+    }
+
+    /// One slice of events older than `before_seq`, compacted the same way as a
+    /// cold page. Returns the slice's first seq so the client can walk back.
+    pub async fn older_page(
+        &self,
+        thread_id: &ThreadId,
+        before_seq: u64,
+    ) -> Result<OlderEventsDto, EventStoreError> {
+        if before_seq <= 1 {
+            return Ok(OlderEventsDto {
+                events: Vec::new(),
+                oldest_seq: 0,
+                has_more: false,
+            });
+        }
+        let before = i64::try_from(before_seq).unwrap_or(i64::MAX);
+        let from: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(seq) FROM (
+                 SELECT seq FROM events
+                 WHERE thread_id = ? AND kind = 'turn_started' AND seq < ?
+                 ORDER BY seq DESC LIMIT ?
+             )",
+        )
+        .bind(thread_id.as_str())
+        .bind(before)
+        .bind(i64::from(OLDER_TURNS))
+        .fetch_one(&self.pool)
+        .await?;
+        let rows = sqlx::query_as::<_, EventRow>(
+            "SELECT * FROM (
+                 SELECT * FROM events
+                 WHERE thread_id = ? AND seq >= ? AND seq < ?
+                 ORDER BY seq DESC LIMIT ?
+             ) ORDER BY seq ASC",
+        )
+        .bind(thread_id.as_str())
+        .bind(from.unwrap_or(0))
+        .bind(before)
+        .bind(i64::from(OLDER_ROWS))
+        .fetch_all(&self.pool)
+        .await?;
+        let events = rows
+            .into_iter()
+            .map(EventRow::into_envelope)
+            .collect::<Result<Vec<_>, _>>()?;
+        let oldest_seq = events.first().map(|event| event.seq).unwrap_or(0);
+        let has_more: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM events WHERE thread_id = ? AND seq < ?)",
+        )
+        .bind(thread_id.as_str())
+        .bind(i64::try_from(oldest_seq).unwrap_or(0))
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(OlderEventsDto {
+            events: compact_history(events),
+            oldest_seq,
+            has_more,
+        })
     }
 
     pub async fn last_seq(&self, thread_id: &ThreadId) -> Result<u64, EventStoreError> {

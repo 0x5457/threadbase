@@ -9,6 +9,7 @@ import type { FileDiffDto } from "./types/FileDiffDto";
 import type { ForkThreadRequest } from "./types/ForkThreadRequest";
 import type { MergeBackResponse } from "./types/MergeBackResponse";
 import type { OkResponse } from "./types/OkResponse";
+import type { OlderEventsDto } from "./types/OlderEventsDto";
 import type { SendMessageResponse } from "./types/SendMessageResponse";
 import type { ThreadBundleDto } from "./types/ThreadBundleDto";
 import type { ThreadDto } from "./types/ThreadDto";
@@ -55,6 +56,12 @@ export function listAllThreads() {
 
 export function listThreads(projectId: string) {
   return request<ThreadsResponse>(`/api/projects/${projectId}/threads`);
+}
+
+export function getOlderEvents(threadId: string, beforeSeq: number) {
+  return request<OlderEventsDto>(
+    `/api/threads/${threadId}/events/older?before=${beforeSeq}`,
+  );
 }
 
 export function getThread(threadId: string) {

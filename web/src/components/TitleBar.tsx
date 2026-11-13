@@ -18,6 +18,7 @@ import {
   IconMoon,
   IconSearch,
   IconSun,
+  IconTerminal2,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { getMe, type ThreadSummary } from "../api";
@@ -45,6 +46,10 @@ interface TitleBarProps {
   navOpened: boolean;
   navCollapsed: boolean;
   onToggleNav: () => void;
+  /** The browser terminal exists on this server and this account may drive it. */
+  canTerminal?: boolean;
+  terminalOpen?: boolean;
+  onToggleTerminal?: () => void;
   onToggleNavCollapsed: () => void;
   onOpenPalette: () => void;
   onOpenInbox: () => void;
@@ -76,6 +81,9 @@ export function TitleBar({
   navCollapsed,
   onToggleNav,
   onToggleNavCollapsed,
+  canTerminal = false,
+  terminalOpen = false,
+  onToggleTerminal,
   onOpenPalette,
   onOpenInbox,
   onOpenChanges,
@@ -255,6 +263,19 @@ export function TitleBar({
               onArchive={onArchive}
             />
           </Box>
+        ) : null}
+        {canTerminal && onToggleTerminal ? (
+          <Tooltip label="Terminal (Ctrl+`)">
+            <ActionIcon
+              aria-label="Terminal"
+              aria-pressed={terminalOpen}
+              className="header-terminal"
+              data-active={terminalOpen ? "true" : undefined}
+              onClick={onToggleTerminal}
+            >
+              <IconTerminal2 size={15} stroke={1.5} />
+            </ActionIcon>
+          </Tooltip>
         ) : null}
         <Tooltip label={dark ? "Light mode" : "Dark mode"}>
           <ActionIcon aria-label="Toggle theme" onClick={toggleColorScheme}>

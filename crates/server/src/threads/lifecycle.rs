@@ -5,14 +5,19 @@ use crate::auth::{audit, CurrentUser};
 use crate::authz;
 use crate::bindings;
 use crate::error::ServerError;
+use crate::events::{EventMeta, EventStore};
 use crate::projection::{self, Projection};
 use crate::projects;
 use crate::queue;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
-use threadbase_core::state::{ThreadAction, ThreadMachine};
+use threadbase_core::state::{
+    subagent_status_str, ThreadAction, ThreadMachine, INITIAL_BINDING_STATUS,
+};
 use threadbase_shared::api::{CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest};
-use threadbase_shared::{now_ms, ApiError, ThreadDto, ThreadStatus};
+use threadbase_shared::{
+    now_ms, Actor, ApiError, SubagentStatus, ThreadDto, ThreadEvent, ThreadId, ThreadStatus, TurnId,
+};
 use threadbase_workspace::git;
 use ulid::Ulid;
 
@@ -59,6 +64,80 @@ pub async fn transition(
     Ok(next)
 }
 
+/// Reset threads that were mid-turn when the previous server process stopped.
+/// Their agent processes died with the old process, so the persisted status
+/// would otherwise claim work nobody is doing: the UI spins forever and queued
+/// input is never picked up. The dangling turn is closed in the timeline with a
+/// `TurnError`, and the thread drops back to `idle`.
+///
+/// Returns the reconciled threads together with the turn that was cut off
+/// (`None` when the adapter was still starting and no turn had begun). The
+/// caller cancels approvals, closes elicitations and resumes the work.
+pub async fn reconcile_after_restart(
+    pool: &SqlitePool,
+    events: &EventStore,
+    projection: &Projection,
+) -> Result<Vec<(String, Option<String>)>, ServerError> {
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT id, current_turn_id FROM threads
+          WHERE status IN ('preparing', 'running') AND archived_at IS NULL
+          ORDER BY updated_at",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut reconciled = Vec::with_capacity(rows.len());
+    for (thread_id, turn_id) in rows {
+        let message = "Threadbase restarted before this turn finished.".to_owned();
+        let payload = match turn_id.as_deref() {
+            Some(turn_id) => ThreadEvent::TurnError {
+                turn_id: Some(TurnId::from(turn_id)),
+                message,
+            },
+            None => ThreadEvent::SystemNotice {
+                level: "warning".to_owned(),
+                message,
+            },
+        };
+        // Best effort: recording the notice must never keep a thread stuck.
+        if let Err(error) = events
+            .append(
+                &ThreadId::from(thread_id.clone()),
+                Actor::system(),
+                payload,
+                EventMeta::default(),
+            )
+            .await
+        {
+            tracing::warn!(thread_id, %error, "could not record the restart notice");
+        }
+        sqlx::query(
+            "UPDATE threads SET status = ?, current_turn_id = NULL, updated_at = ? WHERE id = ?",
+        )
+        .bind(threadbase_core::state::thread_status_str(
+            ThreadStatus::Idle,
+        ))
+        .bind(now_ms())
+        .bind(&thread_id)
+        .execute(pool)
+        .await?;
+        let _ = bindings::set_status(pool, &thread_id, INITIAL_BINDING_STATUS, None).await;
+        let _ = sqlx::query(
+            "UPDATE subagents SET status = ?, updated_at = ?
+              WHERE thread_id = ? AND status IN (?, ?)",
+        )
+        .bind(subagent_status_str(SubagentStatus::Error))
+        .bind(now_ms())
+        .bind(&thread_id)
+        .bind(subagent_status_str(SubagentStatus::Running))
+        .bind(subagent_status_str(SubagentStatus::RequiresAction))
+        .execute(pool)
+        .await;
+        projection.publish(&thread_id).await;
+        reconciled.push((thread_id, turn_id));
+    }
+    Ok(reconciled)
+}
+
 async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, ServerError> {
     let status = ThreadMachine::transition(ThreadStatus::Idle, &ThreadAction::Create)
         .map_err(|error| ServerError::internal(error.to_string()))?;
@@ -99,9 +178,9 @@ pub async fn create(
 ) -> Result<ThreadDto, ServerError> {
     let project = projects::row(pool, project_id).await?;
     let project_root = PathBuf::from(&project.path);
-    if git::inspect(&project_root).await.is_err() {
+    if let Err(error) = git::inspect(&project_root).await {
         return Err(ServerError(ApiError::validation(
-            "project path is no longer a git repository",
+            projects::inspect_message(&error),
         )));
     }
     let base_branch = request

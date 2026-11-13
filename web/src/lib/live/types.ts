@@ -48,6 +48,12 @@ export interface LiveThreadState {
   connected: boolean;
   error: string | null;
   presence: LivePresence;
+  /** The cold page did not reach the start of the log. */
+  hasEarlier: boolean;
+  /** Fetch the next older window; true when something was appended. */
+  loadEarlier: () => Promise<boolean>;
+  /** True until the first events page lands; the transcript skeleton keys on it. */
+  loading: boolean;
   sendPresence: (focus: Partial<PresencePayload>) => void;
 }
 
@@ -70,6 +76,8 @@ export interface LiveEventsPage {
   threadId: string;
   events: ThreadEvent[];
   lastSeq: number;
+  /** seq of the page's first event, for walking further back. */
+  oldestSeq: number;
   resync: boolean;
 }
 

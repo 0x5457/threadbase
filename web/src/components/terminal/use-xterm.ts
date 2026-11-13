@@ -18,11 +18,29 @@ function readTheme() {
   const read = (name: string, fallback: string) =>
     style.getPropertyValue(name).trim() || fallback;
   return {
-    background: read("--paper", "#faf8f3"),
-    foreground: read("--ink", "#33363d"),
-    cursor: read("--brand", "#c2492c"),
-    cursorAccent: read("--paper", "#faf8f3"),
-    selectionBackground: read("--selected", "#e7e2d8"),
+    background: read("--paper", "#282c33"),
+    foreground: read("--ink", "#dce0e5"),
+    cursor: read("--brand", "#74ade8"),
+    cursorAccent: read("--paper", "#282c33"),
+    selectionBackground: read("--selected", "#454a56"),
+    // Zed's `terminal.ansi.*` palette, exposed as CSS variables so the drawer
+    // follows the active colour scheme.
+    black: read("--ansi-black", "#282c34"),
+    red: read("--ansi-red", "#e06c75"),
+    green: read("--ansi-green", "#98c379"),
+    yellow: read("--ansi-yellow", "#e5c07b"),
+    blue: read("--ansi-blue", "#61afef"),
+    magenta: read("--ansi-magenta", "#c678dd"),
+    cyan: read("--ansi-cyan", "#56b6c2"),
+    white: read("--ansi-white", "#abb2bf"),
+    brightBlack: read("--ansi-bright-black", "#636d83"),
+    brightRed: read("--ansi-bright-red", "#ea858b"),
+    brightGreen: read("--ansi-bright-green", "#aad581"),
+    brightYellow: read("--ansi-bright-yellow", "#ffd885"),
+    brightBlue: read("--ansi-bright-blue", "#85c1ff"),
+    brightMagenta: read("--ansi-bright-magenta", "#d398eb"),
+    brightCyan: read("--ansi-bright-cyan", "#6ed5de"),
+    brightWhite: read("--ansi-bright-white", "#fafafa"),
   };
 }
 
@@ -96,6 +114,20 @@ export function useXterm({ disabled, onData, onResize }: Options) {
       fit.fit();
       termRef.current = terminal;
       fitRef.current = fit;
+
+      // The soft keyboard types into this textarea. Mobile browsers only open it
+      // for an editable field with sane autocorrect/spellcheck settings, and
+      // `enterkeyhint` makes the return key say what it does.
+      const textarea = terminal.textarea;
+      if (textarea) {
+        textarea.setAttribute("autocapitalize", "off");
+        textarea.setAttribute("autocorrect", "off");
+        textarea.setAttribute("autocomplete", "off");
+        textarea.setAttribute("spellcheck", "false");
+        textarea.setAttribute("inputmode", "text");
+        textarea.setAttribute("enterkeyhint", "enter");
+        textarea.setAttribute("aria-label", "Terminal input");
+      }
 
       terminal.onData((data) => dataRef.current(data));
       terminal.attachCustomKeyEventHandler((event) => {
