@@ -21,9 +21,7 @@ struct DirectoryQuery {
 
 /// Directories the server may browse and create projects in: the user's home
 /// directory plus every registered project root.
-pub async fn allowed_roots(
-    state: &crate::app::AppState,
-) -> Result<Vec<PathBuf>, ServerError> {
+pub async fn allowed_roots(state: &crate::app::AppState) -> Result<Vec<PathBuf>, ServerError> {
     let home_root = std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())

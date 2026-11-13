@@ -218,6 +218,137 @@ async fn restart_recovery_resets_interrupted_threads() {
 }
 
 #[tokio::test]
+async fn creates_a_project_directory_and_repository() {
+    let fixture = fixture().await;
+    let parent = TempDir::new().unwrap();
+    let roots = vec![parent.path().to_path_buf()];
+    let target = parent.path().join("fresh-project");
+    let project = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: target.to_string_lossy().to_string(),
+            name: None,
+            create: true,
+        },
+        &roots,
+    )
+    .await
+    .unwrap();
+    assert_eq!(project.name, "fresh-project");
+    assert_eq!(project.default_branch, "main");
+    assert_eq!(
+        project.path,
+        target.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert!(target.join("README.md").is_file());
+    assert_eq!(
+        git_output(&target, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
+    assert_eq!(
+        git_output(&target, &["branch", "--show-current"]).trim(),
+        "main"
+    );
+}
+
+#[tokio::test]
+async fn initializes_an_existing_empty_repository() {
+    let fixture = fixture().await;
+    let parent = TempDir::new().unwrap();
+    let target = parent.path().join("empty-repo");
+    std::fs::create_dir(&target).unwrap();
+    git(&target, &["init", "-b", "main"]);
+
+    let project = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: target.to_string_lossy().to_string(),
+            name: Some("Empty Repo".into()),
+            create: true,
+        },
+        &[parent.path().to_path_buf()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(project.name, "Empty Repo");
+    assert!(target.join("README.md").is_file());
+    assert_eq!(
+        git_output(&target, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
+}
+
+#[tokio::test]
+async fn refuses_to_create_over_foreign_content() {
+    let fixture = fixture().await;
+    let parent = TempDir::new().unwrap();
+    let roots = vec![parent.path().to_path_buf()];
+
+    // Outside every root the picker can reach.
+    let outside = TempDir::new().unwrap();
+    let outside_target = outside.path().join("nope");
+    let err = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: outside_target.to_string_lossy().to_string(),
+            name: None,
+            create: true,
+        },
+        &roots,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Validation);
+    assert!(!outside_target.exists());
+
+    // A directory that already holds the user's files.
+    let busy = parent.path().join("busy");
+    std::fs::create_dir(&busy).unwrap();
+    std::fs::write(busy.join("notes.txt"), "mine").unwrap();
+    let err = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: busy.to_string_lossy().to_string(),
+            name: None,
+            create: true,
+        },
+        &roots,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Validation);
+    assert!(!busy.join(".git").exists());
+    assert!(!busy.join("README.md").exists());
+    assert!(busy.join("notes.txt").is_file());
+
+    // An existing repository with history is added, not re-initialized.
+    let existing = parent.path().join("existing");
+    std::fs::create_dir(&existing).unwrap();
+    init_repo(&existing).await;
+    let err = projects::create_repository(
+        &fixture.pool,
+        &fixture.current,
+        &CreateProjectRequest {
+            path: existing.to_string_lossy().to_string(),
+            name: None,
+            create: true,
+        },
+        &roots,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Validation);
+    assert_eq!(
+        git_output(&existing, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
+}
+
+#[tokio::test]
 async fn thread_without_worktree_runs_in_the_project_directory() {
     let fixture = fixture().await;
     let project = create_project(&fixture).await;

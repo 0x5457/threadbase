@@ -9,6 +9,7 @@ import {
   Modal,
   NavLink,
   ScrollArea,
+  SegmentedControl,
   Text,
   TextInput,
   Tooltip,
@@ -23,6 +24,7 @@ import {
   IconFolder,
   IconRefresh,
 } from "@tabler/icons-react";
+import { join } from "pathe";
 import { useCallback, useEffect, useState } from "react";
 import {
   browseDirectories,
@@ -37,6 +39,19 @@ interface AddProjectModalProps {
   onAdded?: (project: Project) => void;
 }
 
+type Mode = "existing" | "new";
+
+/** A folder name, not a path: the parent comes from the picker. */
+function validProjectName(name: string) {
+  return (
+    name.length > 0 &&
+    name !== "." &&
+    name !== ".." &&
+    !name.startsWith(".") &&
+    !/[/\\\0]/.test(name)
+  );
+}
+
 export function AddProjectModal({
   opened,
   onClose,
@@ -47,6 +62,8 @@ export function AddProjectModal({
   const [pathInput, setPathInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [mode, setMode] = useState<Mode>("existing");
+  const [newName, setNewName] = useState("");
   const [error, setError] = useState<{ title: string; message: string } | null>(
     null,
   );
@@ -73,6 +90,8 @@ export function AddProjectModal({
     if (!opened) return;
     setListing(null);
     setError(null);
+    setMode("existing");
+    setNewName("");
     void load();
   }, [opened, load]);
 
@@ -98,6 +117,40 @@ export function AddProjectModal({
     }
   };
 
+  const createNew = async () => {
+    const parent = listing?.path;
+    const name = newName.trim();
+    if (!parent || !validProjectName(name)) {
+      setError({
+        title: "Cannot create project",
+        message: "Enter a folder name without slashes or a leading dot.",
+      });
+      return;
+    }
+    setAdding(true);
+    setError(null);
+    try {
+      const { project } = await createProject(join(parent, name), {
+        name,
+        create: true,
+      });
+      notifications.show({
+        message: `${project.name} created`,
+        color: "teal",
+      });
+      onAdded?.(project);
+      onClose();
+    } catch (cause) {
+      setError({
+        title: "Cannot create project",
+        message:
+          cause instanceof Error ? cause.message : "Cannot create project",
+      });
+    } finally {
+      setAdding(false);
+    }
+  };
+
   return (
     <Modal
       opened={opened}
@@ -107,6 +160,21 @@ export function AddProjectModal({
       centered
       fullScreen={phone}
     >
+      <SegmentedControl
+        fullWidth
+        size="xs"
+        mb="sm"
+        value={mode}
+        onChange={(value) => {
+          setMode(value as Mode);
+          setError(null);
+        }}
+        data={[
+          { label: "Existing repository", value: "existing" },
+          { label: "New project", value: "new" },
+        ]}
+      />
+
       <Group gap="xs" wrap="nowrap" mb="xs">
         <TextInput
           flex={1}
@@ -128,7 +196,7 @@ export function AddProjectModal({
               </ActionIcon>
             </Tooltip>
           }
-          aria-label="Directory path"
+          aria-label={mode === "new" ? "Parent directory" : "Directory path"}
         />
         {listing?.parent ? (
           <Tooltip label="Parent directory">
@@ -186,7 +254,10 @@ export function AddProjectModal({
             <Loader size="sm" />
           </Group>
         ) : (
-          <ScrollArea h={phone ? "calc(100dvh - 300px)" : 280} type="hover">
+          <ScrollArea
+            h={phone ? "calc(100dvh - 340px)" : mode === "new" ? 220 : 280}
+            type="hover"
+          >
             {listing?.parent ? (
               <NavLink
                 component="button"
@@ -223,9 +294,32 @@ export function AddProjectModal({
         )}
       </Box>
 
+      {mode === "new" ? (
+        <Box mt="sm">
+          <TextInput
+            label="Project name"
+            placeholder="my-project"
+            value={newName}
+            onChange={(event) => setNewName(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void createNew();
+            }}
+            data-autofocus
+            aria-label="Project name"
+          />
+          <Text size="xs" c="dimmed" mt={4} className="picker-path">
+            {listing
+              ? join(listing.path, newName.trim() || "…")
+              : "Choose a parent directory"}
+          </Text>
+        </Box>
+      ) : null}
+
       <Group justify="space-between" mt="md" wrap="nowrap">
         <Text size="xs" c="dimmed">
-          Projects must be git repositories.
+          {mode === "new"
+            ? "Creates the folder, runs git init and commits a README."
+            : "Projects must be git repositories."}
         </Text>
         <Group gap="xs" wrap="nowrap">
           <Button variant="default" onClick={onClose}>
@@ -233,11 +327,16 @@ export function AddProjectModal({
           </Button>
           <Button
             color="dark"
-            onClick={() => void add()}
+            onClick={() => void (mode === "new" ? createNew() : add())}
             loading={adding}
-            disabled={!listing?.isGit || loading}
+            disabled={
+              loading ||
+              (mode === "new"
+                ? !listing || !validProjectName(newName.trim())
+                : !listing?.isGit)
+            }
           >
-            Use this directory
+            {mode === "new" ? "Create project" : "Use this directory"}
           </Button>
         </Group>
       </Group>
