@@ -342,25 +342,33 @@
   color: var(--ink-faint);
 }
 
-/* Subagent delegation tree under a thread row (Delta-style nested rows). */
-.side-thread-children {
-  display: inline-flex;
+/* Delta-style nested subagents: a labelled toggle under the thread row,
+   then the indented delegation tree. */
+.side-subagent-toggle {
+  display: flex;
+  width: calc(100% - 24px);
+  height: 25px;
+  margin: 1px 6px 2px 18px;
+  padding: 0 8px 0 4px;
   align-items: center;
-  gap: 1px;
-  height: 18px;
-  padding: 0 3px;
+  gap: 5px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   color: var(--ink-faint);
   font: inherit;
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
 }
 
-.side-thread-children:hover {
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
+.side-subagent-toggle:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
   color: var(--ink);
+}
+
+.side-subagent-toggle[aria-expanded="true"] {
+  color: var(--ink-muted);
 }
 
 .side-subagents {

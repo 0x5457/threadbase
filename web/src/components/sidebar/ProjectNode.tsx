@@ -125,37 +125,28 @@ function ThreadRow({
               {thread.status === "running" ? (
                 <span className="dot running" />
               ) : null}
-              {subagents.length ? (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="side-thread-children"
-                  aria-label={open ? "Hide subagents" : "Show subagents"}
-                  aria-expanded={open}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setOpen((value) => !value);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setOpen((value) => !value);
-                  }}
-                >
-                  {open ? (
-                    <IconChevronDown size={11} stroke={1.5} />
-                  ) : (
-                    <IconChevronRight size={11} stroke={1.5} />
-                  )}
-                  <span>{subagents.length}</span>
-                </span>
-              ) : null}
             </Group>
           ) : null
         }
         {...press}
       />
+      {subagents.length ? (
+        <button
+          type="button"
+          className="side-subagent-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? (
+            <IconChevronDown size={11} stroke={1.5} />
+          ) : (
+            <IconChevronRight size={11} stroke={1.5} />
+          )}
+          <span>
+            {subagents.length} subagent{subagents.length === 1 ? "" : "s"}
+          </span>
+        </button>
+      ) : null}
       {open && rows.length ? (
         <div className="side-subagents">
           {rows.map(({ subagent, depth }) => (
