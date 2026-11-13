@@ -36,12 +36,20 @@ async fn process(manager: &AgentManager, thread_id: &str) -> Result<(), ServerEr
     else {
         return Ok(());
     };
-    let author = author_brief(inner, &author_id).await;
-    let authors = authors_json
+    let parsed_authors = authors_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<Vec<UserBrief>>(json).ok())
-        .filter(|authors| !authors.is_empty())
-        .unwrap_or_else(|| vec![author.clone()]);
+        .filter(|authors| !authors.is_empty());
+    // The restart continuation is authored by Threadbase, not by the thread
+    // creator whose id had to satisfy the author foreign key.
+    let (author, authors) = match queue::restart_author(authors_json.as_deref()) {
+        Some(system) => (system.clone(), vec![system]),
+        None => {
+            let author = author_brief(inner, &author_id).await;
+            let authors = parsed_authors.unwrap_or_else(|| vec![author.clone()]);
+            (author, authors)
+        }
+    };
     let attachments = attachments_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<Vec<threadbase_shared::AttachmentDto>>(json).ok())

@@ -96,6 +96,15 @@ impl AgentManager {
             &self.inner.projection,
         )
         .await?;
+        // A row the old process left mid-dispatch must not strand input: on an
+        // interrupted thread the continuation prompt covers it, elsewhere the
+        // worker should run it again.
+        let interrupted: std::collections::HashSet<String> = reconciled
+            .iter()
+            .filter(|(_, turn_id)| turn_id.is_some())
+            .map(|(thread_id, _)| thread_id.clone())
+            .collect();
+        queue::recover_sending(&self.inner.pool, &self.inner.projection, &interrupted).await?;
         let mut drain: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (thread_id, turn_id) in &reconciled {
             cancel_pending_approvals(&self.inner, thread_id).await;

@@ -4,6 +4,7 @@ use crate::error::ServerError;
 use crate::events::EventStore;
 use crate::projection::Projection;
 use sqlx::{FromRow, SqlitePool};
+use std::collections::HashSet;
 use threadbase_core::state::{parse_queue_status, queue_status_str, QueueAction, QueueMachine};
 use threadbase_shared::{
     now_ms, user_color, Actor, ApiError, QueueItemDto, QueueStatus, ThreadEvent, ThreadId,
@@ -20,6 +21,7 @@ struct QueueRow {
     status: String,
     position: i64,
     superseded: i64,
+    authors_json: Option<String>,
     created_at: i64,
     username: String,
     display_name: String,
@@ -28,8 +30,18 @@ struct QueueRow {
 
 const SELECT: &str =
     "SELECT q.id, q.thread_id, q.author_id, q.text, q.status, q.position, q.superseded,
-            q.created_at, u.username, u.display_name, u.avatar_url
+            q.authors_json, q.created_at, u.username, u.display_name, u.avatar_url
      FROM queued_inputs q JOIN users u ON u.id = q.author_id";
+
+/// The synthetic author of the continuation prompt a restart queues. Its row
+/// exists so the work is durable, not to be read or acted on by a person.
+pub(crate) fn restart_author(authors_json: Option<&str>) -> Option<UserBrief> {
+    let authors: Vec<UserBrief> = serde_json::from_str(authors_json?).ok()?;
+    match authors.as_slice() {
+        [author] if author.id.as_str() == "threadbase" => Some(author.clone()),
+        _ => None,
+    }
+}
 
 pub async fn list_for_thread(
     pool: &SqlitePool,
@@ -45,7 +57,13 @@ pub async fn list_for_thread(
     .bind(queue_status_str(QueueStatus::Superseded))
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(to_dto).collect())
+    // The restart continuation is internal plumbing: showing it in the queue
+    // bar invites a user to steer or drop a prompt that is already being sent.
+    Ok(rows
+        .into_iter()
+        .filter(|row| restart_author(row.authors_json.as_deref()).is_none())
+        .map(to_dto)
+        .collect())
 }
 
 pub struct NewQueuedInput<'a> {
@@ -375,6 +393,44 @@ pub async fn reorder(
     }
     tx.commit().await?;
     projection.publish(thread_id).await;
+    Ok(())
+}
+
+/// Recover rows left `sending` when the previous process died mid-dispatch.
+///
+/// A row on a thread whose turn was cut off was already delivered (or is
+/// covered by the continuation prompt), so it becomes `sent`; replaying it
+/// would repeat side effects. Any other row never reached a turn, so it goes
+/// back to `queued` and the worker runs it.
+pub async fn recover_sending(
+    pool: &SqlitePool,
+    projection: &Projection,
+    interrupted: &HashSet<String>,
+) -> Result<(), ServerError> {
+    let threads: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT thread_id FROM queued_inputs WHERE status = ?")
+            .bind(queue_status_str(QueueStatus::Sending))
+            .fetch_all(pool)
+            .await?;
+    let now = now_ms();
+    for thread_id in threads {
+        let status = if interrupted.contains(&thread_id) {
+            QueueStatus::Sent
+        } else {
+            QueueStatus::Queued
+        };
+        sqlx::query(
+            "UPDATE queued_inputs SET status = ?, updated_at = ?
+              WHERE thread_id = ? AND status = ?",
+        )
+        .bind(queue_status_str(status))
+        .bind(now)
+        .bind(&thread_id)
+        .bind(queue_status_str(QueueStatus::Sending))
+        .execute(pool)
+        .await?;
+        projection.publish(&thread_id).await;
+    }
     Ok(())
 }
 
@@ -735,5 +791,102 @@ mod tests {
         );
         let head_item = head(&pool, thread.as_str()).await.unwrap().unwrap();
         assert_eq!(head_item.0, "q1");
+    }
+
+    #[tokio::test]
+    async fn restart_recovers_rows_left_sending() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, project, thread) = seed_thread(&pool).await;
+        let other = ThreadId::new();
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO threads(id, project_id, title, status, agent, branch, base_branch,
+                created_by, created_at, updated_at)
+             VALUES(?,?,?,?,?,?,?,?,?,?)",
+        )
+        .bind(other.as_str())
+        .bind(project.as_str())
+        .bind("Other thread")
+        .bind("idle")
+        .bind("codex")
+        .bind("thread/other")
+        .bind("main")
+        .bind(user.as_str())
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Sending,
+            1,
+        )
+        .await;
+        seed_item(
+            &pool,
+            other.as_str(),
+            user.as_str(),
+            "q2",
+            QueueStatus::Sending,
+            1,
+        )
+        .await;
+        let projection = projection(&pool);
+        let mut interrupted = HashSet::new();
+        interrupted.insert(thread.as_str().to_owned());
+        recover_sending(&pool, &projection, &interrupted)
+            .await
+            .unwrap();
+        // The row belonged to the cut-off turn: covered by the continuation.
+        assert_eq!(status_of(&pool, "q1").await.unwrap(), QueueStatus::Sent);
+        // No turn was recorded for this one: run it again.
+        assert_eq!(status_of(&pool, "q2").await.unwrap(), QueueStatus::Queued);
+    }
+
+    #[tokio::test]
+    async fn restart_continuation_is_hidden_from_the_queue() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        let system = UserBrief {
+            id: "threadbase".into(),
+            username: "threadbase".into(),
+            display_name: "Threadbase".into(),
+            avatar_url: None,
+            color: "#000".into(),
+        };
+        let authors_json = serde_json::to_string(&[system]).unwrap();
+        enqueue(
+            &pool,
+            NewQueuedInput {
+                thread_id: thread.as_str(),
+                author_id: user.as_str(),
+                text: "The server restarted during the previous turn.",
+                authors_json: Some(&authors_json),
+                attachments_json: None,
+                created_at: now_ms(),
+            },
+        )
+        .await
+        .unwrap();
+        enqueue(
+            &pool,
+            NewQueuedInput {
+                thread_id: thread.as_str(),
+                author_id: user.as_str(),
+                text: "from a person",
+                authors_json: None,
+                attachments_json: None,
+                created_at: now_ms(),
+            },
+        )
+        .await
+        .unwrap();
+        let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text, "from a person");
     }
 }
