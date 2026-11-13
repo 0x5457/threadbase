@@ -167,7 +167,10 @@ async fn restart_recovery_resets_interrupted_threads() {
     let reconciled = threads::reconcile_after_restart(&fixture.pool, &events, &projection)
         .await
         .unwrap();
-    assert_eq!(reconciled, vec![thread.id.to_string()]);
+    assert_eq!(
+        reconciled,
+        vec![(thread.id.to_string(), Some(turn_id.to_owned()))]
+    );
 
     let reloaded = threads::get(&fixture.pool, thread.id.as_str(), &fixture.current)
         .await

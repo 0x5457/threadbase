@@ -82,8 +82,9 @@ impl AgentManager {
 
     /// Clean up after a restart. Threads whose agent processes died with the
     /// old process are reset to idle, prompts that can no longer be answered
-    /// are cancelled, and input queued behind the interrupted turn is handed
-    /// back to the queue worker so it resumes on a fresh adapter.
+    /// are cancelled, input queued behind the interrupted turn is handed back
+    /// to the queue worker, and turns that were cut off are continued so a
+    /// restart does not silently stop the agent.
     pub async fn recover_after_restart(&self) -> Result<(), ServerError> {
         let reconciled = threads::reconcile_after_restart(
             &self.inner.pool,
@@ -91,13 +92,19 @@ impl AgentManager {
             &self.inner.projection,
         )
         .await?;
-        for thread_id in &reconciled {
+        let mut drain: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (thread_id, turn_id) in &reconciled {
             cancel_pending_approvals(&self.inner, thread_id).await;
             cancel_pending_elicitations(&self.inner, thread_id).await;
+            // Newer input already waiting takes precedence over the turn that
+            // was cut off; it was meant to run after that turn anyway.
+            if turn_id.is_some() && !has_queued_input(&self.inner.pool, thread_id).await {
+                self.queue_resume(thread_id).await?;
+            }
+            drain.insert(thread_id.clone());
         }
         // Queued input is durable work: drain it even for threads that were
         // idle at shutdown, otherwise a restart strands the queue forever.
-        let mut drain: std::collections::HashSet<String> = reconciled.into_iter().collect();
         let queued: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT thread_id FROM queued_inputs WHERE status = 'queued'",
         )
@@ -109,6 +116,46 @@ impl AgentManager {
                 self.kick_queue(&thread_id);
             }
         }
+        Ok(())
+    }
+
+    /// A restart must not silently stop work. When a turn was cut off and no
+    /// newer input is queued, append a continuation prompt attributed to
+    /// Threadbase; the resumed ACP session already has the full context, so the
+    /// agent can pick up from the working tree as it is.
+    async fn queue_resume(&self, thread_id: &str) -> Result<(), ServerError> {
+        const PROMPT: &str = "The server restarted during the previous turn. \
+            Continue where you left off; re-check the working tree before changing \
+            files so you do not redo work that is already done.";
+        let author_id: Option<String> =
+            sqlx::query_scalar("SELECT created_by FROM threads WHERE id = ?")
+                .bind(thread_id)
+                .fetch_optional(&self.inner.pool)
+                .await?;
+        let Some(author_id) = author_id else {
+            return Ok(());
+        };
+        let system = UserBrief {
+            id: threadbase_shared::UserId::from("threadbase"),
+            username: "threadbase".to_owned(),
+            display_name: "Threadbase".to_owned(),
+            avatar_url: None,
+            color: threadbase_shared::user_color("threadbase").to_owned(),
+        };
+        let authors_json = serde_json::to_string(&[system]).ok();
+        queue::enqueue(
+            &self.inner.pool,
+            queue::NewQueuedInput {
+                thread_id,
+                author_id: &author_id,
+                text: PROMPT,
+                authors_json: authors_json.as_deref(),
+                attachments_json: None,
+                created_at: now_ms(),
+            },
+        )
+        .await?;
+        let _ = queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
         Ok(())
     }
 

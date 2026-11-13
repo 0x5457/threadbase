@@ -70,13 +70,14 @@ pub async fn transition(
 /// input is never picked up. The dangling turn is closed in the timeline with a
 /// `TurnError`, and the thread drops back to `idle`.
 ///
-/// Returns the reconciled thread ids; the caller cancels approvals, closes
-/// elicitations and hands queued input back to the agent manager.
+/// Returns the reconciled threads together with the turn that was cut off
+/// (`None` when the adapter was still starting and no turn had begun). The
+/// caller cancels approvals, closes elicitations and resumes the work.
 pub async fn reconcile_after_restart(
     pool: &SqlitePool,
     events: &EventStore,
     projection: &Projection,
-) -> Result<Vec<String>, ServerError> {
+) -> Result<Vec<(String, Option<String>)>, ServerError> {
     let rows: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT id, current_turn_id FROM threads
           WHERE status IN ('preparing', 'running') AND archived_at IS NULL
@@ -87,7 +88,7 @@ pub async fn reconcile_after_restart(
     let mut reconciled = Vec::with_capacity(rows.len());
     for (thread_id, turn_id) in rows {
         let message = "Threadbase restarted before this turn finished.".to_owned();
-        let payload = match turn_id {
+        let payload = match turn_id.as_deref() {
             Some(turn_id) => ThreadEvent::TurnError {
                 turn_id: Some(TurnId::from(turn_id)),
                 message,
@@ -132,7 +133,7 @@ pub async fn reconcile_after_restart(
         .execute(pool)
         .await;
         projection.publish(&thread_id).await;
-        reconciled.push(thread_id);
+        reconciled.push((thread_id, turn_id));
     }
     Ok(reconciled)
 }

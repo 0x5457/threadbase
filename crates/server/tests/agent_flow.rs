@@ -1340,3 +1340,43 @@ async fn pasted_images_upload_serve_and_reach_the_agent() {
     };
     assert_eq!(text, "images:1");
 }
+
+#[tokio::test]
+async fn restart_resumes_the_interrupted_turn() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    // The previous server process died in the middle of a turn.
+    sqlx::query(
+        "UPDATE threads SET status = 'running', current_turn_id = 'turn-crashed' WHERE id = ?",
+    )
+    .bind(thread_id)
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+
+    fixture.state.agents.recover_after_restart().await.unwrap();
+
+    // The cut-off turn is reported ...
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnError { .. })
+    })
+    .await;
+    // ... and the agent picks the work back up without a human message.
+    let started = wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnStarted { authors, .. }
+            if authors.iter().any(|author| author.username == "threadbase"))
+    })
+    .await;
+    let ThreadEvent::TurnStarted { prompt, .. } = &started else {
+        unreachable!();
+    };
+    assert!(prompt.contains("restarted"), "{prompt}");
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+}
