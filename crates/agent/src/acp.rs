@@ -1247,6 +1247,12 @@ fn apply_tool_update(previous: Option<ToolCallEvent>, update: &ToolCallUpdate) -
     if let Some(output) = &fields.raw_output {
         event.output = Some(output.to_string());
     }
+    // pi-acp streams a terminal-backed command's stdout/stderr as `_meta`
+    // deltas instead of `raw_output`; fold them into the tool output the UI
+    // renders (equivalent to Zed's embedded terminal view).
+    if let Some(meta) = &update.meta {
+        apply_terminal_meta(&mut event, meta);
+    }
     if let Some(locations) = &fields.locations {
         event.locations = map_locations(locations);
     }
@@ -1258,6 +1264,32 @@ fn apply_tool_update(previous: Option<ToolCallEvent>, update: &ToolCallUpdate) -
     }
     event.raw = to_value(update);
     event
+}
+
+fn apply_terminal_meta(event: &mut ToolCallEvent, meta: &Map<String, Value>) {
+    if let Some(delta) = meta
+        .get("terminal_output")
+        .and_then(|value| value.get("data"))
+        .and_then(Value::as_str)
+    {
+        let mut output = event.output.take().unwrap_or_default();
+        output.push_str(delta);
+        event.output = Some(output);
+    }
+    if let Some(exit_code) = meta
+        .get("terminal_exit")
+        .and_then(|value| value.get("exit_code"))
+        .and_then(Value::as_i64)
+    {
+        if exit_code != 0 {
+            let mut output = event.output.take().unwrap_or_default();
+            if !output.ends_with('\n') && !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&format!("exit code: {exit_code}"));
+            event.output = Some(output);
+        }
+    }
 }
 
 fn map_tool_kind(kind: AcpToolKind) -> ToolKind {
@@ -1813,5 +1845,58 @@ mod tests {
         assert!(confine_path(&root, Path::new("linked-dir/secret.txt")).is_err());
         assert!(confine_path(&root, Path::new("linked-file")).is_err());
         assert!(confine_path(&root, Path::new("dangling-link")).is_err());
+    }
+
+    fn terminal_update(
+        id: &agent_client_protocol::v1::schema::ToolCallId,
+        text: Option<&str>,
+        exit_code: Option<i64>,
+        status: ToolCallStatus,
+    ) -> ToolCallUpdate {
+        let mut meta = Map::new();
+        if let Some(text) = text {
+            meta.insert(
+                "terminal_output".to_owned(),
+                serde_json::json!({ "terminal_id": id.0.as_ref(), "data": text }),
+            );
+        }
+        if let Some(exit_code) = exit_code {
+            meta.insert(
+                "terminal_exit".to_owned(),
+                serde_json::json!({
+                    "terminal_id": id.0.as_ref(),
+                    "exit_code": exit_code,
+                    "signal": null
+                }),
+            );
+        }
+        ToolCallUpdate::new(
+            id.clone(),
+            agent_client_protocol::v1::schema::ToolCallUpdateFields::new().status(status),
+        )
+        .meta(meta)
+    }
+
+    #[test]
+    fn terminal_meta_deltas_become_the_command_output() {
+        let id = agent_client_protocol::v1::schema::ToolCallId::new("bash-1");
+        let mut event = None;
+        for (text, status) in [
+            (Some("hel"), ToolCallStatus::InProgress),
+            (Some("lo\n"), ToolCallStatus::InProgress),
+        ] {
+            event = Some(apply_tool_update(
+                event,
+                &terminal_update(&id, text, None, status),
+            ));
+        }
+        event = Some(apply_tool_update(
+            event,
+            &terminal_update(&id, None, Some(2), ToolCallStatus::Failed),
+        ));
+        assert_eq!(
+            event.unwrap().output.as_deref(),
+            Some("hello\nexit code: 2")
+        );
     }
 }

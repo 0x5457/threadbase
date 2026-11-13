@@ -102,7 +102,13 @@ export function parseEventsPage(value: unknown): LiveEventsPage | null {
     const event = parseThreadEvent(raw);
     if (event !== null) events.push(event);
   }
-  return { threadId, events, lastSeq, resync: record.resync === true };
+  return {
+    threadId,
+    events,
+    lastSeq,
+    oldestSeq: events[0]?.seq ?? 0,
+    resync: record.resync === true,
+  };
 }
 
 export function parsePresence(message: Record<string, unknown>): LivePresence | null {

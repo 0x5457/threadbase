@@ -10,7 +10,7 @@ body,
 }
 
 *:focus-visible {
-  outline-color: var(--ink) !important;
+  outline-color: var(--focus) !important;
   outline-offset: 1px !important;
   outline-width: 1px !important;
 }
@@ -35,57 +35,157 @@ body {
 /* Mantine scopes these on `:root[data-mantine-color-scheme=...]`, so the
    override needs the same specificity to win: `dimmed` is the colour behind
    every secondary label in the app, and `placeholder` behind empty inputs. */
+/* `Text c="dimmed"` is used for every secondary label in the app; Zed's
+   `text.muted` is the right tone for it. Placeholders stay quieter. */
 :root[data-mantine-color-scheme="light"],
 :root[data-mantine-color-scheme="dark"] {
-  --mantine-color-dimmed: var(--ink-faint);
+  --mantine-color-dimmed: var(--ink-muted);
   --mantine-color-placeholder: var(--ink-faint);
 }
 
 :root {
-  /* Warm paper neutrals in the Delta register: the surfaces read as paper
-     rather than gray, and every secondary tone is graded against them.
-     Measured on paper / chrome / raised: ink 11.4/10.5/11.8,
-     muted 6.1/5.7/6.3, faint 5.1/4.7/5.3. */
-  --paper: #faf8f3;
-  --chrome: #f2efe8;
-  --raised: #fdfcf9;
-  --line: #e2ddd3;
-  --line-soft: #ebe7de;
-  --ink: #33363d;
-  --ink-muted: #5b5e66;
-  --ink-faint: #676a72;
-  --hover: #efece4;
-  --selected: #e7e2d8;
-  --code: #f5f2ec;
-  --brand: #c2492c;
-  --comment: #b58de3;
-  --add: #2f7a3a;
-  --add-bg: #dfeadb;
-  --del: #b4453a;
-  --del-bg: #fbdfd9;
+  /* Zed "One Light" (assets/themes/one/one.json). Every surface, state and
+     syntax tone below comes from that theme; the app keeps its own layout,
+     Zed supplies the colour semantics: editor surfaces for paper/code,
+     element.* for interaction, text.* for type, version_control.* for diffs,
+     and the semantic success/warning/error/hint families for status. */
+  --paper: #fafafa; /* editor.background */
+  --chrome: #dcdcdd; /* background */
+  --raised: #ebebec; /* surface.background */
+  --line: #c9c9ca; /* border */
+  --line-soft: #dfdfe0; /* border.variant */
+  --ink: #242529; /* text */
+  --ink-muted: #58585a; /* text.muted */
+  --ink-faint: #7e8086; /* text.placeholder */
+  --hover: #dfdfe0; /* element.hover */
+  --selected: #cacaca; /* element.selected */
+  --code: #ebebec; /* surface.background */
+  --brand: #5c78e2; /* text.accent */
+  --focus: #7d82e8; /* border.focused */
+  --comment: #a449ab; /* syntax.keyword, used for comment anchors */
+  --add: #27a657; /* version_control.added */
+  --add-bg: #dfeadb; /* created.background */
+  --del: #e06c76; /* version_control.deleted */
+  --del-bg: #fbdfd9; /* deleted.background */
+  --modified: #d3b020; /* version_control.modified */
+  --modified-bg: #faf2e6;
+  --conflict: #a48819; /* conflict */
+  --conflict-bg: #faf2e6;
+  --renamed: #5c78e2; /* renamed */
+  --renamed-bg: #e2e2fa;
+  --created: #669f59; /* created */
+  --ignored: #7e8086; /* ignored */
+  --success: #669f59; /* success */
+  --success-bg: #dfeadb;
+  --warning: #a48819; /* warning */
+  --warning-bg: #faf2e6;
+  --error: #d36151; /* error */
+  --error-bg: #fbdfd9;
+  --info: #5c78e2; /* info */
+  --info-bg: #e2e2fa;
+  --hint: #7274a7; /* hint */
+  /* syntax.* — rendered Markdown, inline code and tool output. */
+  --syntax-comment: #a2a3a7;
+  --syntax-keyword: #a449ab;
+  --syntax-string: #649f57;
+  --syntax-literal: #649f57;
+  --syntax-number: #ad6e25;
+  --syntax-function: #5b79e3;
+  --syntax-type: #3882b7;
+  --syntax-constant: #c18401;
+  --syntax-property: #d3604f;
+  --syntax-operator: #3882b7;
+  --syntax-punctuation: #4d4f52;
+  --syntax-title: #d3604f;
+  --syntax-diff-plus: #50a14f;
+  --syntax-diff-minus: #e45649;
+  /* terminal.ansi.* */
+  --ansi-black: #000000;
+  --ansi-red: #de3e35;
+  --ansi-green: #3f953a;
+  --ansi-yellow: #d2b67c;
+  --ansi-blue: #2f5af3;
+  --ansi-magenta: #950095;
+  --ansi-cyan: #0997b3;
+  --ansi-white: #bbbbbb;
+  --ansi-bright-black: #000000;
+  --ansi-bright-red: #de3e35;
+  --ansi-bright-green: #3f953a;
+  --ansi-bright-yellow: #d2b67c;
+  --ansi-bright-blue: #2f5af3;
+  --ansi-bright-magenta: #a00095;
+  --ansi-bright-cyan: #0bbcd6;
+  --ansi-bright-white: #ffffff;
   --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
 }
 
 [data-mantine-color-scheme="dark"] {
-  /* Warm dark, same paper family as the light theme rather than the old cool
-     gray. Measured on paper/chrome/raised: ink 11.0/10.1/9.7,
-     muted 6.6/6.1/5.9, faint 4.9/4.5/4.3. */
-  --paper: #1b1814;
-  --chrome: #211d18;
-  --raised: #242019;
-  --line: #3a342c;
-  --line-soft: #2c2721;
-  --ink: #e9e3d9;
-  --ink-muted: #b3aca1;
-  --ink-faint: #928b80;
-  --hover: #2a251d;
-  --selected: #332d24;
-  --code: #1f1b16;
-  --brand: #e0714f;
-  --add: #a7c98a;
-  --add-bg: #26301f;
-  --del: #d97a63;
-  --del-bg: #362321;
+  /* Zed "One Dark", same key mapping as the light block above. */
+  --paper: #282c33;
+  --chrome: #3b414d;
+  --raised: #2f343e;
+  --line: #464b57;
+  --line-soft: #363c46;
+  --ink: #dce0e5;
+  --ink-muted: #a9afbc;
+  --ink-faint: #878a98;
+  --hover: #363c46;
+  --selected: #454a56;
+  --code: #2f343e;
+  --brand: #74ade8;
+  --focus: #47679e;
+  --comment: #b477cf;
+  --add: #27a657;
+  --add-bg: #a1c1811a;
+  --del: #e06c76;
+  --del-bg: #d072771a;
+  --modified: #d3b020;
+  --modified-bg: #dec1841a;
+  --conflict: #dec184;
+  --conflict-bg: #dec1841a;
+  --renamed: #74ade8;
+  --renamed-bg: #74ade81a;
+  --created: #a1c181;
+  --ignored: #878a98;
+  --success: #a1c181;
+  --success-bg: #a1c1811a;
+  --warning: #dec184;
+  --warning-bg: #dec1841a;
+  --error: #d07277;
+  --error-bg: #d072771a;
+  --info: #74ade8;
+  --info-bg: #74ade81a;
+  --hint: #788ca6;
+  --syntax-comment: #5d636f;
+  --syntax-keyword: #b477cf;
+  --syntax-string: #a1c181;
+  --syntax-literal: #a1c181;
+  --syntax-number: #bf956a;
+  --syntax-function: #73ade9;
+  --syntax-type: #6eb4bf;
+  --syntax-constant: #dfc184;
+  --syntax-property: #d07277;
+  --syntax-operator: #6eb4bf;
+  --syntax-punctuation: #b2b9c6;
+  --syntax-title: #d07277;
+  --syntax-diff-plus: #98c379;
+  --syntax-diff-minus: #e06c75;
+  --ansi-black: #282c34;
+  --ansi-red: #e06c75;
+  --ansi-green: #98c379;
+  --ansi-yellow: #e5c07b;
+  --ansi-blue: #61afef;
+  --ansi-magenta: #c678dd;
+  --ansi-cyan: #56b6c2;
+  --ansi-white: #abb2bf;
+  --ansi-bright-black: #636d83;
+  --ansi-bright-red: #ea858b;
+  --ansi-bright-green: #aad581;
+  --ansi-bright-yellow: #ffd885;
+  --ansi-bright-blue: #85c1ff;
+  --ansi-bright-magenta: #d398eb;
+  --ansi-bright-cyan: #6ed5de;
+  --ansi-bright-white: #fafafa;
 }
 
 /* ── shell ─────────────────────────────────────────────────── */
@@ -111,6 +211,10 @@ body {
   background: var(--paper);
 }
 
+
+::selection {
+  background: color-mix(in srgb, var(--brand) 28%, transparent);
+}
 
 /* ── scrollbars ────────────────────────────────────────────── */
 /* macOS-style bars: thin, rounded, translucent thumb on an invisible track.

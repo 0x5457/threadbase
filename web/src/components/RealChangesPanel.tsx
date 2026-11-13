@@ -19,7 +19,7 @@ import {
   IconTextWrapDisabled,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   getFileDiff,
   getThreadBundle,
@@ -94,7 +94,11 @@ function FileRow({
             <Text size="xs" className="stat-del">
               −{file.deletions}
             </Text>
-            <Text size="xs" c="dimmed" ff="monospace">
+            <Text
+              size="xs"
+              ff="monospace"
+              className={`file-status ${file.status}`}
+            >
               {statusLetter[file.status] ?? "?"}
             </Text>
           </Group>
@@ -217,59 +221,56 @@ export function RealChangesPanel({
           <>
             <div className="changes-files">
               {changes.files.map((file) => (
-                <FileRow
-                  key={file.path}
-                  file={file}
-                  active={selected === file.path}
-                  onClick={() =>
-                    setSelected((current) =>
-                      current === file.path ? null : file.path,
-                    )
-                  }
-                />
+                <Fragment key={file.path}>
+                  <FileRow
+                    file={file}
+                    active={selected === file.path}
+                    onClick={() =>
+                      setSelected((current) =>
+                        current === file.path ? null : file.path,
+                      )
+                    }
+                  />
+                  {selected === file.path ? (
+                    <div className="change-diff inline">
+                      <div className="change-diff-tools">
+                        <button
+                          type="button"
+                          className="diff-wrap-toggle"
+                          aria-pressed={wrap}
+                          onClick={() => toggleDiffWrap(narrow)}
+                        >
+                          {wrap ? (
+                            <IconTextWrap size={13} stroke={1.5} />
+                          ) : (
+                            <IconTextWrapDisabled size={13} stroke={1.5} />
+                          )}
+                          {wrap ? "Wrap" : "Scroll"}
+                        </button>
+                      </div>
+                      {diff.isPending ? (
+                        <Group justify="center" py="lg">
+                          <Loader size="xs" />
+                        </Group>
+                      ) : diff.isError ? (
+                        <Text size="sm" c="red" p="sm">
+                          {diff.error instanceof Error
+                            ? diff.error.message
+                            : "Cannot load diff"}
+                        </Text>
+                      ) : diff.data && diff.data.hunks.length === 0 ? (
+                        <Text size="sm" c="dimmed" ta="center" py="xl">
+                          No textual changes to show (binary file or
+                          metadata-only rename).
+                        </Text>
+                      ) : patch ? (
+                        <DiffView patch={patch} />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </Fragment>
               ))}
             </div>
-            {selected ? (
-              <div className="change-diff">
-                <div className="change-diff-tools">
-                  <button
-                    type="button"
-                    className="diff-wrap-toggle"
-                    aria-pressed={wrap}
-                    onClick={() => toggleDiffWrap(narrow)}
-                  >
-                    {wrap ? (
-                      <IconTextWrap size={13} stroke={1.5} />
-                    ) : (
-                      <IconTextWrapDisabled size={13} stroke={1.5} />
-                    )}
-                    {wrap ? "Wrap" : "Scroll"}
-                  </button>
-                </div>
-                {diff.isPending ? (
-                  <Group justify="center" py="lg">
-                    <Loader size="xs" />
-                  </Group>
-                ) : diff.isError ? (
-                  <Text size="sm" c="red" p="sm">
-                    {diff.error instanceof Error
-                      ? diff.error.message
-                      : "Cannot load diff"}
-                  </Text>
-                ) : diff.data && diff.data.hunks.length === 0 ? (
-                  <Text size="sm" c="dimmed" ta="center" py="xl">
-                    No textual changes to show (binary file or metadata-only
-                    rename).
-                  </Text>
-                ) : patch ? (
-                  <DiffView patch={patch} />
-                ) : null}
-              </div>
-            ) : (
-              <Text size="sm" c="dimmed" ta="center" py="xl">
-                Pick a file to review its diff
-              </Text>
-            )}
           </>
         ) : (
           <Text size="sm" c="dimmed" ta="center" py="xl">

@@ -1,7 +1,7 @@
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ensureAgentConfig,
   getAgentConfig,
@@ -12,6 +12,18 @@ import {
 import { useDraftSession } from "../../lib/draft";
 
 export type ComposerDelivery = "auto" | "queue";
+
+function readDelivery(threadId: string | undefined): ComposerDelivery {
+  if (!threadId) return "auto";
+  try {
+    return window.localStorage.getItem(`threadbase.delivery.${threadId}`) ===
+      "queue"
+      ? "queue"
+      : "auto";
+  } catch {
+    return "auto";
+  }
+}
 
 interface UseComposerSessionOptions {
   threadId?: string;
@@ -43,11 +55,32 @@ export function useComposerSession({
 }: UseComposerSessionOptions) {
   const queryClient = useQueryClient();
   const [sending, setSending] = useState(false);
-  const [delivery, setDelivery] = useState<ComposerDelivery>("auto");
+  const [delivery, setDeliveryState] = useState<ComposerDelivery>(() =>
+    readDelivery(threadId),
+  );
   const agent = agentName ?? "agent";
   const modelLabel = [agent, modelName, effort].filter(Boolean).join(" · ");
 
   // AuthGate already fetched this; the query is a cache read for the composer.
+  // Delivery is a per-thread preference: switching threads (or reloading)
+  // restores what this thread used last instead of snapping back to auto.
+  useEffect(() => {
+    setDeliveryState(readDelivery(threadId));
+  }, [threadId]);
+
+  const setDelivery = useCallback(
+    (next: ComposerDelivery) => {
+      setDeliveryState(next);
+      if (!threadId) return;
+      try {
+        window.localStorage.setItem(`threadbase.delivery.${threadId}`, next);
+      } catch {
+        // Private mode: the preference simply does not persist.
+      }
+    },
+    [threadId],
+  );
+
   const me = useQuery({
     queryKey: ["me"],
     queryFn: getMe,

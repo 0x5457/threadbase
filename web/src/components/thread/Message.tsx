@@ -5,6 +5,7 @@ import {
   IconMessagePlus,
 } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { memo } from "react";
@@ -13,6 +14,7 @@ import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+const REHYPE_PLUGINS = [rehypeHighlight];
 
 export const Message = memo(function Message({
   item,
@@ -30,6 +32,9 @@ export const Message = memo(function Message({
   // Waiting for the first chunk owns no text yet: a caret then would hang
   // under the previous block instead of tracking the agent's output.
   const streaming = item.streaming && active && item.text.trim().length > 0;
+  // A trailing blank line from the composer would otherwise paint as a second
+  // line inside the bubble; the prompt itself is already trimmed server-side.
+  const text = agent ? item.text : item.text.replace(/^\n+|\n+$/g, "");
 
   return (
     <div
@@ -37,7 +42,7 @@ export const Message = memo(function Message({
     >
       <div className="block-gutter" {...press}>
         <Avatar
-          size={16}
+          size={32}
           radius={agent ? 4 : "xl"}
           color="gray"
           variant="light"
@@ -77,11 +82,11 @@ export const Message = memo(function Message({
         ) : null}
         <div className={streaming ? "prose streaming" : "prose"}>
           {agent ? (
-            <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>
-              {item.text}
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+              {text}
             </ReactMarkdown>
           ) : (
-            <p>{item.text}</p>
+            <p>{text}</p>
           )}
         </div>
       </div>

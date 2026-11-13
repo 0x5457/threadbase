@@ -11,10 +11,14 @@ export function listProjects() {
   return request<ProjectsResponse>("/api/projects");
 }
 
-export function createProject(path: string) {
+export function createProject(
+  path: string,
+  options: { name?: string | null; create?: boolean } = {},
+) {
   return jsonRequest<ProjectResponse>("/api/projects", "POST", {
     path,
-    name: null,
+    name: options.name ?? null,
+    create: options.create ?? false,
   });
 }
 

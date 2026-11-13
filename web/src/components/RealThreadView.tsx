@@ -1,9 +1,8 @@
 import {
   Alert,
   Button,
-  Center,
   Group,
-  Loader,
+  Skeleton,
   Text,
   UnstyledButton,
 } from "@mantine/core";
@@ -16,6 +15,7 @@ import {
   IconMessagePlus,
 } from "@tabler/icons-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { readPick, rememberPick } from "../lib/model-prefs";
 import {
   Fragment,
   forwardRef,
@@ -323,6 +323,12 @@ export const RealThreadView = memo(function RealThreadView({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+  const stickRef = useRef(true);
+  // Virtuoso's firstItemIndex keeps the viewport anchored when older rows are
+  // prepended; the absolute indices only ever grow downwards.
+  const [firstItemIndex, setFirstItemIndex] = useState(1_000_000);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const pendingEarlier = useRef<{ before: number } | null>(null);
   // Expansion lives in React state: Virtuoso unmounts off-screen rows, and DOM
   // `<details>` state would collapse with them, shifting the scroll height.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
@@ -474,12 +480,38 @@ export const RealThreadView = memo(function RealThreadView({
       }
       out.push({ kind: "tools", id: item.call.id, tools: [item] });
     }
+    // An assistant message narrates the work around it, but its row is created
+    // at the first streamed chunk — often before the tool calls it introduces.
+    // Keep the prose under those tools so the reading order is
+    // tools → answer, bounded by the next user message / turn marker.
+    for (let index = out.length - 2; index >= 0; index -= 1) {
+      const row = out[index];
+      if (!(row.kind === "message" && row.role === "agent")) continue;
+      let end = index + 1;
+      while (end < out.length) {
+        const next = out[end];
+        const movable =
+          next.kind === "tool" ||
+          next.kind === "tools" ||
+          next.kind === "run" ||
+          next.kind === "thinking";
+        if (!movable) break;
+        end += 1;
+      }
+      if (end > index + 1) {
+        out.splice(index, 1);
+        out.splice(end - 1, 0, row);
+      }
+    }
     return out;
   }, [items, pending.length]);
 
   useEffect(() => {
     setStickToBottom(true);
     setExpandedRows(new Set());
+    setFirstItemIndex(1_000_000);
+    setLoadingEarlier(false);
+    pendingEarlier.current = null;
   }, [threadId]);
 
   // History arrives after mount, so `initialTopMostItemIndex` cannot land on
@@ -488,11 +520,16 @@ export const RealThreadView = memo(function RealThreadView({
   const scrolledFor = useRef<string | null>(null);
   // `scrollToIndex(LAST, align: "end")` stops at the last row, leaving the
   // footer below the fold. Scrolling the element itself lands on the true end.
-  const scrollToLatest = useCallback((behavior: "auto" | "smooth" = "auto") => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    scroller.scrollTo({ top: scroller.scrollHeight, behavior });
-  }, []);
+  const scrollToLatest = useCallback(
+    (behavior: "auto" | "smooth" = "auto", force = false) => {
+      // The post-load correction must not yank a reader who already scrolled up.
+      if (!force && !stickRef.current) return;
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+    },
+    [],
+  );
   useEffect(() => {
     if (rows.length === 0) return;
     if (scrolledFor.current === threadId) return;
@@ -503,6 +540,26 @@ export const RealThreadView = memo(function RealThreadView({
     window.setTimeout(() => scrollToLatest(), 300);
     window.setTimeout(() => scrollToLatest(), 900);
   }, [rows.length, threadId, scrollToLatest]);
+
+  const loadEarlier = async () => {
+    if (loadingEarlier || !live.hasEarlier) return;
+    const before = rows.length;
+    setLoadingEarlier(true);
+    const added = await live.loadEarlier();
+    setLoadingEarlier(false);
+    if (!added) return;
+    pendingEarlier.current = { before };
+  };
+
+  // The rows are derived from the event store, so the prepend lands one commit
+  // after `loadEarlier` resolves; adjust the anchor once that render is in.
+  useEffect(() => {
+    const pending = pendingEarlier.current;
+    if (!pending) return;
+    pendingEarlier.current = null;
+    const delta = rows.length - pending.before;
+    if (delta > 0) setFirstItemIndex((index) => Math.max(0, index - delta));
+  }, [rows.length]);
 
 
   useEffect(() => {
@@ -534,6 +591,12 @@ export const RealThreadView = memo(function RealThreadView({
     patch: { model?: string; effort?: string },
     failure: string,
   ) => {
+    // Remember the pick for new threads and for threads that never chose one.
+    const agent = bundle?.thread.agent;
+    if (agent) {
+      if (patch.model) rememberPick(agent, "model", patch.model);
+      if (patch.effort) rememberPick(agent, "effort", patch.effort);
+    }
     void updateThread(threadId, patch)
       .then(() => {
         refresh();
@@ -543,6 +606,27 @@ export const RealThreadView = memo(function RealThreadView({
       })
       .catch((cause: unknown) => reportFailure(cause, failure));
   };
+
+  // New threads start with the agent's defaults; apply the last explicit pick
+  // once per thread so the picker does not silently reset on every visit.
+  const restoredDefaults = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const thread = bundle?.thread;
+    if (!thread || restoredDefaults.current.has(thread.id)) return;
+    if (thread.model !== null && thread.effort !== null) return;
+    const patch: { model?: string; effort?: string } = {};
+    if (thread.model === null) {
+      const model = readPick(thread.agent, "model");
+      if (model) patch.model = model;
+    }
+    if (thread.effort === null) {
+      const effort = readPick(thread.agent, "effort");
+      if (effort) patch.effort = effort;
+    }
+    if (Object.keys(patch).length === 0) return;
+    restoredDefaults.current.add(thread.id);
+    applyConfig(patch, "Could not restore your last model choice");
+  }, [bundle?.thread]);
 
   const decide = async (
     approval: Approval,
@@ -791,11 +875,35 @@ export const RealThreadView = memo(function RealThreadView({
     </>
   );
 
-  if (bundleQuery.isPending && live.events.length === 0) {
+  if (
+    !live.error &&
+    live.events.length === 0 &&
+    (bundleQuery.isPending || live.loading)
+  ) {
+    // Slow links should see the shape of a transcript instead of a bare spinner.
     return (
-      <Center h="100%">
-        <Loader size="sm" />
-      </Center>
+      <div
+        className="doc timeline-doc thread-skeleton"
+        aria-busy="true"
+        aria-label="Loading thread"
+      >
+        {[0, 1, 2, 3].map((row) => (
+          <div key={row} className="block">
+            <div className="block-gutter">
+              <Skeleton height={32} width={32} circle />
+            </div>
+            <div className="block-body">
+              <Skeleton height={10} width={`${28 + row * 6}%`} mb={8} />
+              <Skeleton height={12} width={`${94 - row * 5}%`} mb={6} />
+              <Skeleton
+                height={12}
+                width={`${72 + (row % 2) * 12}%`}
+                mb={row === 3 ? 0 : 14}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
     );
   }
 
@@ -813,9 +921,15 @@ export const RealThreadView = memo(function RealThreadView({
           }}
           className="thread-scroll"
           data={rows}
-          initialTopMostItemIndex={Math.max(0, rows.length - 1)}
+          firstItemIndex={firstItemIndex}
+          initialTopMostItemIndex={
+            firstItemIndex + Math.max(0, rows.length - 1)
+          }
           followOutput={(atBottom) => (atBottom ? "smooth" : false)}
-          atBottomStateChange={setStickToBottom}
+          atBottomStateChange={(atBottom) => {
+            stickRef.current = atBottom;
+            setStickToBottom(atBottom);
+          }}
           increaseViewportBy={{ top: 600, bottom: 800 }}
           computeItemKey={(index, item) =>
             item.kind === "message"
@@ -828,7 +942,23 @@ export const RealThreadView = memo(function RealThreadView({
           }
           components={{
             List: TimelineList,
-            Header: () => <div className="timeline-top-gap" />,
+            Header: () => (
+              <div className="timeline-header">
+                <div className="timeline-top-gap" />
+                {live.hasEarlier ? (
+                  <div className="load-earlier-row">
+                    <Button
+                      variant="default"
+                      size="compact-xs"
+                      loading={loadingEarlier}
+                      onClick={() => void loadEarlier()}
+                    >
+                      Load earlier messages
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ),
             Footer: () => <div className="timeline-footer">{footerContent}</div>,
             EmptyPlaceholder: () =>
               live.error ? (
@@ -882,8 +1012,9 @@ export const RealThreadView = memo(function RealThreadView({
             // The tail may still be unmeasured and rows above may have just
             // changed height; correct the landing once more after the smooth
             // scroll settles.
-            scrollToLatest("smooth");
-            window.setTimeout(() => scrollToLatest(), 400);
+            stickRef.current = true;
+            scrollToLatest("smooth", true);
+            window.setTimeout(() => scrollToLatest("auto", true), 400);
             setStickToBottom(true);
           }}
         >

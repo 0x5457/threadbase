@@ -43,7 +43,7 @@
 .prose blockquote {
   margin: 0 0 8px;
   padding-left: 12px;
-  border-left: 2px solid var(--line);
+  border-left: 2px solid var(--syntax-comment);
   color: var(--ink-muted);
 }
 

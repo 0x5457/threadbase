@@ -60,8 +60,8 @@
   --diffs-bg-context-gutter-override: color-mix(in srgb, var(--ink) 3%, var(--code));
   --diffs-bg-separator: var(--line-soft);
   --diffs-bg-hover-override: color-mix(in srgb, var(--ink) 4%, transparent);
-  --diffs-addition-color: var(--add);
-  --diffs-deletion-color: var(--del);
+  --diffs-addition-color: var(--syntax-diff-plus);
+  --diffs-deletion-color: var(--syntax-diff-minus);
 }
 
 /* Dark reading: the code surface is already dark, so the tint comes from the

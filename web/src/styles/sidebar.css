@@ -131,7 +131,10 @@
 }
 
 .approval-count {
-  color: #b8860b;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: var(--warning);
+  background: var(--warning-bg);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -220,31 +223,32 @@
 }
 
 .dot.waiting {
-  background: #d19e04;
+  background: var(--conflict);
+  box-shadow: 0 0 0 2px var(--conflict-bg);
 }
 
 .dot.completed {
-  background: #3f8f4f;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #3f8f4f 16%, transparent);
+  background: var(--success);
+  box-shadow: 0 0 0 2px var(--success-bg);
 }
 
 /* The running indicator breathes so a live turn is readable at a glance,
    without a spinner competing with the streaming text. */
 .dot.running {
-  background: #3f8f4f;
+  background: var(--success);
   animation: dot-breathe 1.8s ease-in-out infinite;
 }
 
 @keyframes dot-breathe {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, #3f8f4f 55%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent);
     opacity: 1;
     transform: scale(1);
   }
 
   50% {
-    box-shadow: 0 0 0 4px color-mix(in srgb, #3f8f4f 0%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 0%, transparent);
     opacity: 0.7;
     transform: scale(0.86);
   }
@@ -253,25 +257,27 @@
 @media (prefers-reduced-motion: reduce) {
   .dot.running {
     animation: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, #3f8f4f 20%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 20%, transparent);
   }
 }
 
 .dot.failed {
-  background: var(--del);
+  background: var(--error);
+  box-shadow: 0 0 0 2px var(--error-bg);
 }
 
 .dot.idle {
-  background: var(--ink-faint);
+  background: var(--ignored);
   box-shadow: none;
 }
 
 .dot.in_progress {
-  background: #3b82f6;
+  background: var(--info);
+  box-shadow: 0 0 0 2px var(--info-bg);
 }
 
 .dot.pending {
-  background: #d19e04;
+  background: var(--warning);
 }
 
 .status-inline {
@@ -294,11 +300,11 @@
 }
 
 .live-dot.online {
-  background: #3f8f4f;
+  background: var(--success);
 }
 
 .live-dot.syncing {
-  background: #d19e04;
+  background: var(--warning);
 }
 
 .mantine-Badge-root {

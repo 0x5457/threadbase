@@ -174,6 +174,30 @@
   background: var(--paper);
 }
 
+.queue-head-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.queue-head-toggle .chevron {
+  transition: transform 120ms ease;
+}
+
+.queue-head-toggle .chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.queue-bar[data-collapsed] {
+  max-height: none;
+  overflow: hidden;
+}
+
 /* The bar scrolls instead of squeezing rows: flex children default to shrink,
    which used to clip every row as soon as the queue outgrew the bar. Rows are
    tall enough for a readable line and the three actions. */
@@ -253,7 +277,7 @@
   max-width: 560px;
   flex-direction: column;
   gap: 0;
-  margin: 8px 0 8px 42px;
+  margin: 8px 0 8px 62px;
 }
 
 .subagents-title {
@@ -318,6 +342,21 @@
   padding: 4px 0 8px;
 }
 
+/* The selected file's diff opens under its row instead of at the bottom of the
+   list, so the click stays visually connected to the result. */
+.change-diff.inline {
+  margin: 0 6px 8px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: var(--paper);
+}
+
+.change-diff.inline .change-diff-tools {
+  border-radius: 4px 4px 0 0;
+}
+
 .change-diff .diff-wrap {
   margin: 0;
   border: 0;
@@ -328,7 +367,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 2px 0 14px 42px;
+  margin: 2px 0 14px 62px;
   color: var(--ink-faint);
   font-family: var(--mono);
   font-size: 11px;

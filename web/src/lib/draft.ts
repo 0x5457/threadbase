@@ -76,15 +76,17 @@ const IDLE_STATE: DraftSessionState = {
 
 /** Mirrors `user_color` in crates/shared/src/lib.rs: the same eight-color
  *  palette and 64-bit FNV-1a hash, so a user has one color everywhere. */
+// Zed's collaborator `players` palette (One Dark), shared with
+// `user_color` in crates/shared/src/lib.rs.
 const USER_COLORS = [
-  "#f97316",
-  "#ec4899",
-  "#84cc16",
-  "#a855f7",
-  "#eab308",
-  "#fb7185",
-  "#3b82f6",
-  "#94a3b8",
+  "#74ade8",
+  "#be5046",
+  "#bf956a",
+  "#b477cf",
+  "#6eb4bf",
+  "#d07277",
+  "#dec184",
+  "#a1c181",
 ] as const;
 
 const textEncoder = new TextEncoder();

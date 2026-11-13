@@ -18,11 +18,29 @@ function readTheme() {
   const read = (name: string, fallback: string) =>
     style.getPropertyValue(name).trim() || fallback;
   return {
-    background: read("--paper", "#faf8f3"),
-    foreground: read("--ink", "#33363d"),
-    cursor: read("--brand", "#c2492c"),
-    cursorAccent: read("--paper", "#faf8f3"),
-    selectionBackground: read("--selected", "#e7e2d8"),
+    background: read("--paper", "#282c33"),
+    foreground: read("--ink", "#dce0e5"),
+    cursor: read("--brand", "#74ade8"),
+    cursorAccent: read("--paper", "#282c33"),
+    selectionBackground: read("--selected", "#454a56"),
+    // Zed's `terminal.ansi.*` palette, exposed as CSS variables so the drawer
+    // follows the active colour scheme.
+    black: read("--ansi-black", "#282c34"),
+    red: read("--ansi-red", "#e06c75"),
+    green: read("--ansi-green", "#98c379"),
+    yellow: read("--ansi-yellow", "#e5c07b"),
+    blue: read("--ansi-blue", "#61afef"),
+    magenta: read("--ansi-magenta", "#c678dd"),
+    cyan: read("--ansi-cyan", "#56b6c2"),
+    white: read("--ansi-white", "#abb2bf"),
+    brightBlack: read("--ansi-bright-black", "#636d83"),
+    brightRed: read("--ansi-bright-red", "#ea858b"),
+    brightGreen: read("--ansi-bright-green", "#aad581"),
+    brightYellow: read("--ansi-bright-yellow", "#ffd885"),
+    brightBlue: read("--ansi-bright-blue", "#85c1ff"),
+    brightMagenta: read("--ansi-bright-magenta", "#d398eb"),
+    brightCyan: read("--ansi-bright-cyan", "#6ed5de"),
+    brightWhite: read("--ansi-bright-white", "#fafafa"),
   };
 }
 

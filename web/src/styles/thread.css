@@ -194,9 +194,19 @@
   padding: 28px 24px 48px;
 }
 
+.thread-skeleton .block {
+  margin-bottom: 18px;
+}
+
+.load-earlier-row {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 16px;
+}
+
 .block {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: 60px minmax(0, 1fr);
   column-gap: 2px;
 }
 
@@ -263,6 +273,10 @@
   padding-left: 18px;
 }
 
+.prose :is(ul, ol) > li::marker {
+  color: var(--syntax-property);
+}
+
 .prose :is(h1, h2, h3, h4) {
   margin: 16px 0 6px;
 }
@@ -276,12 +290,69 @@
   border: 1px solid var(--line-soft);
   border-radius: 3px;
   background: var(--code);
+  color: var(--syntax-literal);
   font-family: var(--mono);
   font-size: 12.5px;
 }
 
 /* Fenced blocks are their own surface; the inline chip styling must not leak
    into them. */
+/* Fenced code is highlighted by rehype-highlight; the theme classes map onto
+   Zed's syntax palette so the code colours switch with the scheme. */
+.prose .hljs {
+  color: var(--syntax-punctuation);
+  background: transparent;
+}
+
+.prose :is(.hljs-keyword, .hljs-selector-tag, .hljs-doctag) {
+  color: var(--syntax-keyword);
+}
+
+.prose :is(.hljs-string, .hljs-regexp, .hljs-char.escape_) {
+  color: var(--syntax-string);
+}
+
+.prose :is(.hljs-number, .hljs-literal) {
+  color: var(--syntax-number);
+}
+
+.prose :is(.hljs-title, .hljs-title.function_, .hljs-function) {
+  color: var(--syntax-function);
+}
+
+.prose :is(.hljs-type, .hljs-class) {
+  color: var(--syntax-type);
+}
+
+.prose :is(.hljs-built_in, .hljs-symbol, .hljs-bullet, .hljs-meta) {
+  color: var(--syntax-constant);
+}
+
+.prose :is(.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-params) {
+  color: var(--syntax-property);
+}
+
+.prose :is(.hljs-operator, .hljs-punctuation) {
+  color: var(--syntax-operator);
+}
+
+.prose :is(.hljs-comment, .hljs-quote) {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+
+.prose :is(.hljs-section, .hljs-title.class_) {
+  color: var(--syntax-title);
+}
+
+.prose .hljs-addition {
+  color: var(--syntax-diff-plus);
+}
+
+.prose .hljs-deletion {
+  color: var(--syntax-diff-minus);
+}
+
 .prose pre {
   overflow-x: auto;
   margin: 0 0 10px;
@@ -581,6 +652,6 @@
 
 .block-gutter .avatar-agent {
   color: var(--ink-muted);
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 0.02em;
 }
