@@ -3,6 +3,7 @@
 use crate::error::ServerError;
 use crate::projection::Projection;
 use sqlx::{FromRow, SqlitePool};
+use std::collections::HashMap;
 use threadbase_core::state::{
     parse_subagent_status, subagent_status_str, SubagentAction, SubagentMachine,
 };
@@ -34,6 +35,37 @@ pub async fn list(pool: &SqlitePool, thread_id: &str) -> Result<Vec<SubagentDto>
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(to_dto).collect())
+}
+
+/// Subagents for several threads in one round trip, keyed by thread id.
+pub async fn list_for_threads(
+    pool: &SqlitePool,
+    thread_ids: &[&str],
+) -> Result<HashMap<String, Vec<SubagentDto>>, ServerError> {
+    if thread_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut query = sqlx::QueryBuilder::new(
+        "SELECT id, thread_id, parent_id, title, description, status, cwd, can_cancel,
+                usage_json, last_seq, created_at, updated_at
+         FROM subagents WHERE thread_id IN (",
+    );
+    let mut separated = query.separated(", ");
+    for id in thread_ids {
+        separated.push_bind(*id);
+    }
+    separated.push_unseparated(") ORDER BY created_at ASC");
+    let rows = query
+        .build_query_as::<SubagentRow>()
+        .fetch_all(pool)
+        .await?;
+    let mut out: HashMap<String, Vec<SubagentDto>> = HashMap::new();
+    for row in rows {
+        out.entry(row.thread_id.clone())
+            .or_default()
+            .push(to_dto(row));
+    }
+    Ok(out)
 }
 
 pub async fn status_of(

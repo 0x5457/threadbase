@@ -724,6 +724,10 @@ pub struct ThreadDto {
     pub pinned: bool,
     pub participants: Vec<Participant>,
     pub pending_approvals: u32,
+    /// Subagents this thread delegated to. Empty for adapters that do not
+    /// report them and for threads that never spawned any.
+    #[serde(default)]
+    pub subagents: Vec<SubagentDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

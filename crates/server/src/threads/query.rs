@@ -4,6 +4,7 @@ use crate::auth::CurrentUser;
 use crate::authz;
 use crate::error::ServerError;
 use crate::projects;
+use crate::subagents;
 use sqlx::{FromRow, QueryBuilder, SqlitePool};
 use std::collections::HashMap;
 use threadbase_shared::{ApiError, Participant, Role, ThreadDto, ThreadStatus, UserBrief};
@@ -102,17 +103,20 @@ pub async fn dto(pool: &SqlitePool, row: &ThreadRow) -> Result<ThreadDto, Server
         .await
         .map(|creator| vec![creator])
         .unwrap_or_default();
+    let subagents = subagents::list(pool, &row.id).await?;
     Ok(to_dto(
         row,
         row.id.clone(),
         aggregates.get(&row.id).cloned().unwrap_or_default(),
         participants,
+        subagents,
     ))
 }
 
 async fn dtos(pool: &SqlitePool, rows: Vec<ThreadRow>) -> Result<Vec<ThreadDto>, ServerError> {
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
     let aggregates = aggregates(pool, &ids).await?;
+    let mut subagents = subagents::list_for_threads(pool, &ids).await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let aggregate = aggregates.get(&row.id).cloned().unwrap_or_default();
@@ -120,7 +124,13 @@ async fn dtos(pool: &SqlitePool, rows: Vec<ThreadRow>) -> Result<Vec<ThreadDto>,
             .await
             .map(|creator| vec![creator])
             .unwrap_or_default();
-        out.push(to_dto(&row, row.id.clone(), aggregate, participants));
+        out.push(to_dto(
+            &row,
+            row.id.clone(),
+            aggregate,
+            participants,
+            subagents.remove(&row.id).unwrap_or_default(),
+        ));
     }
     Ok(out)
 }
@@ -130,6 +140,7 @@ fn to_dto(
     id: String,
     aggregate: Aggregate,
     participants: Vec<Participant>,
+    subagents: Vec<threadbase_shared::SubagentDto>,
 ) -> ThreadDto {
     ThreadDto {
         id: id.into(),
@@ -152,6 +163,7 @@ fn to_dto(
         pinned: row.pinned != 0,
         participants,
         pending_approvals: u32::try_from(aggregate.pending_approvals).unwrap_or(0),
+        subagents,
     }
 }
 

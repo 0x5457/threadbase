@@ -13,6 +13,8 @@ import { useMediaQuery } from "@mantine/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconArrowUpRight,
+  IconChevronDown,
+  IconChevronRight,
   IconCopy,
   IconDots,
   IconFolder,
@@ -25,19 +27,55 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useNavigate } from "react-router";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   listThreads,
   updateThread,
   type Project,
+  type Subagent,
   type ThreadSummary,
 } from "../../api";
+import { statusTone } from "../thread/StatusDot";
 import { deleteProject } from "../../api/projects";
 import { pathFor } from "../../lib/router";
 import { useLongPress } from "../../lib/use-long-press";
 import { useOverlayBack } from "../../lib/overlay-back";
 import { ActionSheet } from "../ActionSheet";
 
+
+/** Depth-first order for the delegation tree; roots are subagents whose
+ * parent is not part of the list (workflow containers are not stored). */
+function orderedSubagents(
+  subagents: Subagent[],
+): Array<{ subagent: Subagent; depth: number }> {
+  const ids = new Set(subagents.map((subagent) => String(subagent.id)));
+  const children = new Map<string, Subagent[]>();
+  const roots: Subagent[] = [];
+  for (const subagent of subagents) {
+    const parent = subagent.parentId ? String(subagent.parentId) : null;
+    if (parent && ids.has(parent)) {
+      const list = children.get(parent) ?? [];
+      list.push(subagent);
+      children.set(parent, list);
+    } else {
+      roots.push(subagent);
+    }
+  }
+  const ordered: Array<{ subagent: Subagent; depth: number }> = [];
+  const seen = new Set<string>();
+  const walk = (items: Subagent[], depth: number) => {
+    for (const subagent of items) {
+      const id = String(subagent.id);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ordered.push({ subagent, depth });
+      const nested = children.get(id);
+      if (nested?.length) walk(nested, depth + 1);
+    }
+  };
+  walk(roots, 0);
+  return ordered;
+}
 
 function ThreadRow({
   thread,
@@ -51,42 +89,89 @@ function ThreadRow({
   onLongPress: (thread: ThreadSummary) => void;
 }) {
   const press = useLongPress(() => onLongPress(thread));
+  const [open, setOpen] = useState(false);
+  const subagents = thread.subagents ?? [];
+  const rows = orderedSubagents(subagents);
 
   return (
-    <NavLink
-      component="button"
-      className="side-nav"
-      label={thread.title}
-      active={selected}
-      onClick={() => onOpen(thread)}
-      leftSection={<IconMessage size={12} stroke={1.5} />}
-      rightSection={
-        thread.pendingApprovals ||
-        thread.status === "running" ||
-        thread.worktreePath ? (
-          <Group gap={5} wrap="nowrap">
-            {thread.worktreePath ? (
-              <span
-                className="thread-worktree-mark"
-                title="Isolated worktree"
-                aria-label="Isolated worktree"
-              >
-                <IconGitBranch size={11} stroke={1.5} />
-              </span>
-            ) : null}
-            {thread.pendingApprovals ? (
-              <Text size="xs" className="approval-count">
-                {thread.pendingApprovals}
-              </Text>
-            ) : null}
-            {thread.status === "running" ? (
-              <span className="dot running" />
-            ) : null}
-          </Group>
-        ) : null
-      }
-      {...press}
-    />
+    <Fragment>
+      <NavLink
+        component="button"
+        className="side-nav"
+        label={thread.title}
+        active={selected}
+        onClick={() => onOpen(thread)}
+        leftSection={<IconMessage size={12} stroke={1.5} />}
+        rightSection={
+          thread.pendingApprovals ||
+          thread.status === "running" ||
+          thread.worktreePath ||
+          subagents.length ? (
+            <Group gap={5} wrap="nowrap">
+              {thread.worktreePath ? (
+                <span
+                  className="thread-worktree-mark"
+                  title="Isolated worktree"
+                  aria-label="Isolated worktree"
+                >
+                  <IconGitBranch size={11} stroke={1.5} />
+                </span>
+              ) : null}
+              {thread.pendingApprovals ? (
+                <Text size="xs" className="approval-count">
+                  {thread.pendingApprovals}
+                </Text>
+              ) : null}
+              {thread.status === "running" ? (
+                <span className="dot running" />
+              ) : null}
+              {subagents.length ? (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="side-thread-children"
+                  aria-label={open ? "Hide subagents" : "Show subagents"}
+                  aria-expanded={open}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpen((value) => !value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setOpen((value) => !value);
+                  }}
+                >
+                  {open ? (
+                    <IconChevronDown size={11} stroke={1.5} />
+                  ) : (
+                    <IconChevronRight size={11} stroke={1.5} />
+                  )}
+                  <span>{subagents.length}</span>
+                </span>
+              ) : null}
+            </Group>
+          ) : null
+        }
+        {...press}
+      />
+      {open && rows.length ? (
+        <div className="side-subagents">
+          {rows.map(({ subagent, depth }) => (
+            <div
+              key={String(subagent.id)}
+              className="side-subagent"
+              style={{ paddingLeft: 12 + depth * 12 }}
+              title={subagent.description ?? subagent.title}
+            >
+              <span className={`dot ${statusTone(subagent.status)}`} />
+              <span className="side-subagent-title">{subagent.title}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </Fragment>
   );
 }
 

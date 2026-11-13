@@ -152,6 +152,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     if let Err(error) = state.agents.recover_after_restart().await {
         tracing::warn!(%error, "startup recovery failed");
     }
+    if let Err(error) = state.agents.backfill_derived_subagents().await {
+        tracing::warn!(%error, "subagent backfill failed");
+    }
     let app = routes::router(state);
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await

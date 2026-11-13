@@ -341,3 +341,58 @@
   display: inline-flex;
   color: var(--ink-faint);
 }
+
+/* Subagent delegation tree under a thread row (Delta-style nested rows). */
+.side-thread-children {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 18px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.side-thread-children:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
+.side-subagents {
+  margin: 0 6px 4px 27px;
+  padding-left: 5px;
+  border-left: 1px solid var(--line);
+}
+
+.side-subagent {
+  display: flex;
+  min-width: 0;
+  height: 24px;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  border-radius: 6px;
+  color: var(--ink-muted);
+}
+
+.side-subagent:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.side-subagent .dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+}
+
+.side-subagent-title {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

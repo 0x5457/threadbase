@@ -7,6 +7,7 @@
 //! - [`lifecycle`] and [`mapping`] hold the remaining side effects and
 //!   conversions.
 
+mod derived;
 mod lifecycle;
 mod mapping;
 mod pump;
@@ -161,6 +162,11 @@ impl AgentManager {
         .await?;
         let _ = queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
         Ok(())
+    }
+
+    /// Rebuild subagent rows from historical delegation tool calls.
+    pub async fn backfill_derived_subagents(&self) -> Result<(), ServerError> {
+        derived::backfill(&self.inner.pool, &self.inner.projection).await
     }
 
     pub async fn restart(&self, thread_id: &str) -> Result<(), ServerError> {

@@ -93,10 +93,12 @@ impl Pump {
             }
             RawAgentEvent::ToolCall { call } => {
                 let call = tool_data(&self.thread_id, call);
+                self.tool_subagent(&call).await?;
                 self.append(ThreadEvent::ToolCall { call }).await
             }
             RawAgentEvent::ToolCallUpdate { call } => {
                 let call = tool_data(&self.thread_id, call);
+                self.tool_subagent(&call).await?;
                 self.append(ThreadEvent::ToolCallUpdate { call }).await
             }
             RawAgentEvent::Plan { entries } => {
@@ -242,6 +244,29 @@ impl Pump {
         .await?;
         self.transition(ThreadAction::ApprovalPending).await?;
         self.try_auto_rule(&approval).await
+    }
+
+    /// pi reports its delegations as `subagent` / `subagent_launch` tool calls
+    /// instead of ACP subagent events; mirror them into the subagent table.
+    async fn tool_subagent(
+        &self,
+        call: &threadbase_shared::ToolCallData,
+    ) -> Result<(), ServerError> {
+        let Some(node) = super::derived::derive(call) else {
+            return Ok(());
+        };
+        let Some(dto) = super::derived::apply(
+            &self.inner.pool,
+            &self.inner.projection,
+            &self.thread_id,
+            &node,
+        )
+        .await?
+        else {
+            return Ok(());
+        };
+        self.append(ThreadEvent::SubagentUpdated { subagent: dto })
+            .await
     }
 
     async fn subagent(&self, event: threadbase_agent::SubagentEvent) -> Result<(), ServerError> {

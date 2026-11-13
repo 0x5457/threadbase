@@ -29,7 +29,6 @@ import {
 import type { ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import {
-  cancelSubagent,
   createComment,
   decideApproval,
   deleteComment,
@@ -49,7 +48,6 @@ import {
   type Comment,
   type CommentAnchor,
   type Elicitation,
-  type Subagent,
 } from "../api";
 import { useLiveThread } from "../lib/live-thread";
 import type { LivePanel } from "../lib/live/types";
@@ -65,7 +63,6 @@ import { EmptyThread } from "./thread/EmptyThread";
 import { Message, Notice, Thinking } from "./thread/Message";
 import { formatDuration, timeOf } from "./thread/format";
 import { QueueBar } from "./thread/QueueBar";
-import { SubagentList } from "./thread/SubagentList";
 import { Tool } from "./thread/Tool";
 
 /// Virtuoso renders the transcript inside this wrapper so the document column,
@@ -356,7 +353,6 @@ export const RealThreadView = memo(function RealThreadView({
   const [deciding, setDeciding] = useState<string | null>(null);
   const [responding, setResponding] = useState<string | null>(null);
   const [queueBusy, setQueueBusy] = useState<string | null>(null);
-  const [cancelling, setCancelling] = useState<string | null>(null);
   const [commentBusy, setCommentBusy] = useState<string | null>(null);
   const [commentFor, setCommentFor] = useState<string | null>(null);
   const [messageSheet, setMessageSheet] = useState<Extract<
@@ -464,7 +460,6 @@ export const RealThreadView = memo(function RealThreadView({
   );
   const comments = bundle?.comments ?? [];
   const queue = bundle?.queue ?? [];
-  const subagents = bundle?.subagents ?? [];
   const canWrite = bundle?.role === "owner" || bundle?.role === "editor";
 
   // One pass over comments instead of a filter per timeline row.
@@ -732,18 +727,6 @@ export const RealThreadView = memo(function RealThreadView({
     }
   };
 
-  const cancel = async (subagent: Subagent) => {
-    setCancelling(subagent.id);
-    try {
-      await cancelSubagent(threadId, subagent.id);
-      refresh();
-    } catch (cause) {
-      reportFailure(cause, "Could not cancel subagent");
-    } finally {
-      setCancelling(null);
-    }
-  };
-
   const restore = useCallback(
     async (itemId: string) => {
       try {
@@ -970,13 +953,6 @@ export const RealThreadView = memo(function RealThreadView({
           }
         />
       ))}
-
-      <SubagentList
-        subagents={subagents}
-        limit={stateQuery.data?.settings.subthreadsPerThread ?? 10}
-        cancelling={cancelling}
-        onCancel={(subagent) => void cancel(subagent)}
-      />
     </>
   );
 
