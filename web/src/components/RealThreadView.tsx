@@ -53,7 +53,7 @@ import {
 } from "../api";
 import { useLiveThread } from "../lib/live-thread";
 import type { LivePanel } from "../lib/live/types";
-import { reduceEvents, type ViewItem } from "../lib/thread-events";
+import { type ViewItem } from "../lib/thread-events";
 import { ActionSheet } from "./ActionSheet";
 import { AgentLog } from "./AgentLog";
 import { Composer } from "./Composer";
@@ -366,6 +366,7 @@ export const RealThreadView = memo(function RealThreadView({
   const readOnlyAccount = me.data?.user.access === "read_only";
   const live = useLiveThread(threadId, {
     projectId: bundle?.project.id,
+    agentName: bundle?.thread.agent,
     hidden: stateQuery.data?.settings.hiddenPresence ?? false,
     onInboxCount: () => {
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
@@ -385,14 +386,7 @@ export const RealThreadView = memo(function RealThreadView({
     [onPresence],
   );
 
-  const { items, diagnostics, usage } = useMemo(
-    () =>
-      reduceEvents(
-        live.events.filter((event) => !event.subagentId),
-        bundle?.thread.agent ?? "Agent",
-      ),
-    [live.events, bundle?.thread.agent],
-  );
+  const { items, diagnostics, usage } = live.view;
   const terminalUsers = live.presence.focuses
     .filter(
       (focus) =>

@@ -1,4 +1,5 @@
 import type { ThreadEvent } from "../../api";
+import type { ThreadViewState } from "../thread-events";
 
 export type LivePanel =
   | "transcript"
@@ -35,11 +36,15 @@ export interface LiveThreadOptions {
   projectId?: string;
   /** Hide this user's focus from other members. */
   hidden?: boolean;
+  /** Fallback name used while the thread's agent metadata is still loading. */
+  agentName?: string;
   onInboxCount?: (unread: number) => void;
 }
 
 export interface LiveThreadState {
   events: ThreadEvent[];
+  /** Incrementally folded transcript; recomputed once per event batch. */
+  view: ThreadViewState;
   connected: boolean;
   error: string | null;
   presence: LivePresence;

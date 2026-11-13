@@ -58,6 +58,47 @@ function displayName(
 }
 
 /**
+ * Folding state for one thread's event log.
+ *
+ * The log is append-only, so the view is kept as an accumulator and each new
+ * batch only folds the events after `consumed`. Rebuilding from event zero on
+ * every token chunk is what made long, actively streaming threads peg the
+ * main thread: an 80k-event thought log was re-string-concatenated dozens of
+ * times per second.
+ */
+export interface ThreadViewState {
+  items: ViewItem[];
+  diagnostics: DiagnosticLine[];
+  usage: Usage | null;
+  /** Fallback display name for agent messages; part of the fold identity. */
+  agentName: string;
+  /** Number of events folded so far. */
+  consumed: number;
+  /** Last folded event, used to verify the array is still a prefix. */
+  lastEvent: ThreadEvent | null;
+  messageRows: Map<string, number>;
+  toolRows: Map<string, number>;
+  thinkingRows: Map<string, number>;
+  /** Message ids currently streaming, so turn_ended avoids a full scan. */
+  streamingRows: Set<string>;
+}
+
+export function createThreadView(agentName = "Agent"): ThreadViewState {
+  return {
+    items: [],
+    diagnostics: [],
+    usage: null,
+    agentName,
+    consumed: 0,
+    lastEvent: null,
+    messageRows: new Map(),
+    toolRows: new Map(),
+    thinkingRows: new Map(),
+    streamingRows: new Set(),
+  };
+}
+
+/**
  * Folds the append-only event log into the thread's document blocks. Deltas
  * are merged in place so streaming output updates the same message row.
  *
@@ -68,12 +109,50 @@ export function reduceEvents(
   events: ThreadEvent[],
   agentName = "Agent",
 ): { items: ViewItem[]; diagnostics: DiagnosticLine[]; usage: Usage | null } {
-  const items: ViewItem[] = [];
-  const diagnostics: DiagnosticLine[] = [];
-  let usage: Usage | null = null;
-  const messageRows = new Map<string, number>();
-  const toolRows = new Map<string, number>();
-  const thinkingRows = new Map<string, number>();
+  const view = extendThreadView(createThreadView(agentName), events, agentName);
+  return {
+    items: view.items,
+    diagnostics: view.diagnostics,
+    usage: view.usage,
+  };
+}
+
+/**
+ * Folds only the events after the previous state's cursor.
+ *
+ * The previous `items` array is copied once per batch (the block count is
+ * small even when the event count is huge), while unchanged block objects keep
+ * their identity so memoized rows can skip re-rendering. When the incoming
+ * array is not an extension of the folded prefix (thread switch, resync) the
+ * view is rebuilt from scratch.
+ */
+export function extendThreadView(
+  state: ThreadViewState,
+  events: ThreadEvent[],
+  agentName = state.agentName,
+): ThreadViewState {
+  const sameAgent = state.agentName === agentName;
+  const last = events[events.length - 1] ?? null;
+
+  if (sameAgent && state.consumed === events.length && state.lastEvent === last) {
+    return state;
+  }
+
+  const canExtend =
+    sameAgent &&
+    state.consumed > 0 &&
+    events.length >= state.consumed &&
+    state.lastEvent !== null &&
+    events[state.consumed - 1] === state.lastEvent;
+
+  const start = canExtend ? state.consumed : 0;
+  let items = start === 0 ? [] : state.items.slice();
+  let diagnostics = start === 0 ? [] : state.diagnostics;
+  let usage = start === 0 ? null : state.usage;
+  const messageRows = start === 0 ? new Map<string, number>() : state.messageRows;
+  const toolRows = start === 0 ? new Map<string, number>() : state.toolRows;
+  const thinkingRows = start === 0 ? new Map<string, number>() : state.thinkingRows;
+  const streamingRows = start === 0 ? new Set<string>() : state.streamingRows;
 
   const upsertMessage = (
     id: string,
@@ -101,6 +180,7 @@ export function reduceEvents(
         streaming,
         attachments,
       });
+      if (streaming) streamingRows.add(id);
       return;
     }
     const row = items[existing];
@@ -115,17 +195,29 @@ export function reduceEvents(
       ts,
       attachments: attachments.length ? attachments : row.attachments,
     };
+    if (streaming) streamingRows.add(id);
+    else streamingRows.delete(id);
   };
 
-  for (const event of events) {
+  for (let index = start; index < events.length; index += 1) {
+    const event = events[index];
+    // Subagent activity is rendered next to the thread, not inside its
+    // transcript; skipping it here also means no filtered copy of the log.
+    if (event.subagentId) continue;
     const payload = event.payload as ThreadEvent["payload"] | AgentLogPayload;
     if (payload.type === "agent_log") {
-      diagnostics.push({
-        id: event.seq,
-        level: payload.level === "error" ? "error" : "info",
-        text: String(payload.text ?? ""),
-        ts: event.ts,
-      });
+      diagnostics = [
+        ...diagnostics,
+        {
+          id: event.seq,
+          level: payload.level === "error" ? "error" : "info",
+          text: String(payload.text ?? ""),
+          ts: event.ts,
+        },
+      ];
+      if (diagnostics.length > DIAGNOSTIC_LIMIT) {
+        diagnostics = diagnostics.slice(diagnostics.length - DIAGNOSTIC_LIMIT);
+      }
       continue;
     }
     switch (payload.type) {
@@ -229,9 +321,12 @@ export function reduceEvents(
         const call = payload.call as ToolCallData;
         const existing = toolRows.get(call.id);
         if (existing === undefined) {
-          const last = items[items.length - 1];
-          if (last?.kind === "thinking") {
-            items[items.length - 1] = { ...last, tools: last.tools + 1 };
+          const lastItem = items[items.length - 1];
+          if (lastItem?.kind === "thinking") {
+            items[items.length - 1] = {
+              ...lastItem,
+              tools: lastItem.tools + 1,
+            };
           }
           toolRows.set(call.id, items.length);
           items.push({ kind: "tool", call, ts: event.ts });
@@ -285,12 +380,15 @@ export function reduceEvents(
         break;
       }
       case "turn_ended": {
-        for (let index = 0; index < items.length; index += 1) {
-          const row = items[index];
-          if (row.kind === "message" && row.streaming) {
-            items[index] = { ...row, streaming: false };
+        for (const id of streamingRows) {
+          const streamingIndex = messageRows.get(id);
+          if (streamingIndex === undefined) continue;
+          const row = items[streamingIndex];
+          if (row?.kind === "message" && row.streaming) {
+            items[streamingIndex] = { ...row, streaming: false };
           }
         }
+        streamingRows.clear();
         const reason = String(payload.stopReason ?? "");
         if (reason && reason !== "end_turn") {
           items.push({
@@ -306,9 +404,16 @@ export function reduceEvents(
     }
   }
 
-  if (diagnostics.length > DIAGNOSTIC_LIMIT) {
-    diagnostics.splice(0, diagnostics.length - DIAGNOSTIC_LIMIT);
-  }
-
-  return { items, diagnostics, usage };
+  return {
+    items,
+    diagnostics,
+    usage,
+    agentName,
+    consumed: events.length,
+    lastEvent: last,
+    messageRows,
+    toolRows,
+    thinkingRows,
+    streamingRows,
+  };
 }

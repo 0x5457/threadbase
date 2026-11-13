@@ -4,6 +4,11 @@ import type { ThreadEvent } from "../api";
 import { emptyStore, mergeEvents, replaceEvents } from "./live/store";
 import type { EventStore, LivePresence, PresencePayload } from "./live/types";
 import {
+  createThreadView,
+  extendThreadView,
+  type ThreadViewState,
+} from "./thread-events";
+import {
   DEFAULT_PANEL,
   EMPTY_EVENTS,
   EMPTY_PRESENCE,
@@ -27,6 +32,12 @@ import {
 
 const EVENTS_PAGE_LIMIT = 500;
 const MAX_CATCH_UP_ROUNDS = 20;
+/**
+ * Coalesce token deltas instead of rendering every animation frame. Streaming
+ * text reads the same at 20 fps, and the main thread stays free for clicks,
+ * scrolling and the changes panel between batches.
+ */
+const EVENT_FLUSH_MS = 50;
 
 export type {
   LiveFocus,
@@ -41,14 +52,19 @@ export function useLiveThread(
   threadId: string | null,
   options: LiveThreadOptions = {},
 ): LiveThreadState {
-  const { projectId, hidden = false, onInboxCount } = options;
+  const { projectId, hidden = false, onInboxCount, agentName = "Agent" } = options;
 
   const [events, setEvents] = useState<ThreadEvent[]>([]);
+  const [initialView] = useState(() => createThreadView(agentName));
+  const [view, setView] = useState<ThreadViewState>(initialView);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [presence, setPresence] = useState<LivePresence>(EMPTY_PRESENCE);
 
-  const storeRef = useRef<EventStore>(emptyStore());
+  const [initialStore] = useState(emptyStore);
+  const storeRef = useRef<EventStore>(initialStore);
+  const viewRef = useRef<ThreadViewState>(initialView);
+  const agentNameRef = useRef(agentName);
   /** Which thread `storeRef` belongs to; render never shows another thread's log. */
   const storeThreadRef = useRef<string | null>(null);
   const socketRef = useRef<ReconnectingWebSocket | null>(null);
@@ -65,6 +81,20 @@ export function useLiveThread(
   useEffect(() => {
     onInboxCountRef.current = onInboxCount;
   }, [onInboxCount]);
+
+  // The agent name arrives with the thread bundle, after the first events may
+  // already have been folded. Rebuild once so fallback names catch up.
+  useEffect(() => {
+    if (agentNameRef.current === agentName) return;
+    agentNameRef.current = agentName;
+    const rebuilt = extendThreadView(
+      createThreadView(agentName),
+      storeRef.current.ordered,
+      agentName,
+    );
+    viewRef.current = rebuilt;
+    setView(rebuilt);
+  }, [agentName]);
 
   const sendPresenceNow = useCallback(() => {
     const payload = payloadRef.current;
@@ -87,8 +117,14 @@ export function useLiveThread(
 
   useEffect(() => {
     storeThreadRef.current = threadId;
+    const resetView = () => {
+      const next = createThreadView(agentNameRef.current);
+      viewRef.current = next;
+      setView(next);
+    };
     if (threadId === null) {
       storeRef.current = emptyStore();
+      resetView();
       setEvents([]);
       setConnected(false);
       setError(null);
@@ -96,6 +132,7 @@ export function useLiveThread(
     }
 
     storeRef.current = emptyStore();
+    resetView();
     setEvents([]);
     setConnected(false);
     setError(null);
@@ -117,14 +154,24 @@ export function useLiveThread(
       if (next === storeRef.current) return;
       storeRef.current = next;
       setEvents(next.ordered);
+      const nextView = extendThreadView(
+        viewRef.current,
+        next.ordered,
+        agentNameRef.current,
+      );
+      if (nextView === viewRef.current) return;
+      viewRef.current = nextView;
+      setView(nextView);
     };
 
-    // Token deltas arrive many times per frame. Buffering them keeps the
-    // event-store merge and React render to at most once per animation frame.
+    // Token deltas can arrive hundreds of times per second. Coalescing them
+    // into batches keeps the incremental fold and React render bounded.
     let pendingEvents: ThreadEvent[] = [];
-    let flushFrame: number | null = null;
+    let flushTimer: number | null = null;
+    let lastFlushAt = 0;
     const flush = () => {
-      flushFrame = null;
+      flushTimer = null;
+      lastFlushAt = performance.now();
       if (pendingEvents.length === 0) return;
       const batch = pendingEvents;
       pendingEvents = [];
@@ -132,12 +179,12 @@ export function useLiveThread(
     };
     const queueEvent = (event: ThreadEvent) => {
       pendingEvents.push(event);
-      if (flushFrame !== null) return;
-      if (typeof window.requestAnimationFrame === "function") {
-        flushFrame = window.requestAnimationFrame(flush);
-      } else {
-        flush();
-      }
+      if (flushTimer !== null) return;
+      const delay = Math.max(
+        0,
+        EVENT_FLUSH_MS - (performance.now() - lastFlushAt),
+      );
+      flushTimer = window.setTimeout(flush, delay);
     };
 
     const sendSubscribe = () => {
@@ -223,9 +270,9 @@ export function useLiveThread(
     };
 
     const clearFlush = () => {
-      if (flushFrame !== null) {
-        window.cancelAnimationFrame(flushFrame);
-        flushFrame = null;
+      if (flushTimer !== null) {
+        window.clearTimeout(flushTimer);
+        flushTimer = null;
       }
       pendingEvents = [];
     };
@@ -330,6 +377,7 @@ export function useLiveThread(
       threadId !== null && storeThreadRef.current === threadId
         ? events
         : EMPTY_EVENTS,
+    view,
     connected,
     error,
     presence,
