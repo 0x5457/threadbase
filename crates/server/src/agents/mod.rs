@@ -51,6 +51,9 @@ pub(crate) struct Inner {
     pub(crate) sessions: Mutex<HashMap<String, Arc<Session>>>,
     pub(crate) starts: crate::locks::KeyedLocks,
     pub(crate) queue_tx: mpsc::UnboundedSender<String>,
+    /// Timestamps of automatic adapter restarts per thread, so a crashing
+    /// adapter cannot spin forever.
+    pub(crate) restarts: Mutex<HashMap<String, Vec<i64>>>,
 }
 
 /// Everything needed to start one turn, whichever input path produced it.
@@ -74,6 +77,7 @@ impl AgentManager {
             sessions: Mutex::new(HashMap::new()),
             starts: crate::locks::KeyedLocks::new(),
             queue_tx: queue_tx.clone(),
+            restarts: Mutex::new(HashMap::new()),
         });
         let manager = Self { inner };
         queue_worker::spawn(manager.clone(), queue_rx);
@@ -160,11 +164,24 @@ impl AgentManager {
     }
 
     pub async fn restart(&self, thread_id: &str) -> Result<(), ServerError> {
+        self.shutdown_session(thread_id).await;
+        self.start_fresh(thread_id).await
+    }
+
+    /// Stop the current adapter on purpose. The closing flag keeps the exit
+    /// monitor from treating this as a crash and reviving the session.
+    async fn shutdown_session(&self, thread_id: &str) {
         let session = self.inner.sessions.lock().await.remove(thread_id);
         if let Some(session) = session {
+            session.mark_stopped();
             let mut harness = session.harness.lock().await;
             let _ = harness.shutdown().await;
         }
+    }
+
+    /// Transition through `preparing` into a fresh adapter and drain input
+    /// that was waiting for one.
+    async fn start_fresh(&self, thread_id: &str) -> Result<(), ServerError> {
         threads::transition(
             &self.inner.pool,
             &self.inner.projection,
@@ -178,7 +195,70 @@ impl AgentManager {
             .bind(thread_id)
             .execute(&self.inner.pool)
             .await?;
-        self.ensure_started(thread_id).await
+        self.ensure_started(thread_id).await?;
+        if has_queued_input(&self.inner.pool, thread_id).await {
+            self.kick_queue(thread_id);
+        }
+        Ok(())
+    }
+
+    /// Bring a thread back after its adapter exited without being asked to.
+    /// The dead session has already been dropped, so `ensure_started` builds a
+    /// new one; a turn that was cut off is continued by Threadbase itself.
+    pub(crate) async fn recover_from_exit(&self, thread_id: &str, had_turn: bool) {
+        if !self.allow_adapter_restart(thread_id).await {
+            let _ = self
+                .inner
+                .events
+                .append(
+                    &ThreadId::from(thread_id.to_owned()),
+                    Actor::system(),
+                    ThreadEvent::SystemNotice {
+                        level: "error".to_owned(),
+                        message: "The agent process keeps exiting; Threadbase stopped restarting \
+                                  it. Restart the thread to try again."
+                            .to_owned(),
+                    },
+                    EventMeta::default(),
+                )
+                .await;
+            let _ = threads::transition(
+                &self.inner.pool,
+                &self.inner.projection,
+                thread_id,
+                ThreadAction::AgentFailed,
+            )
+            .await;
+            return;
+        }
+        if let Err(error) = self.start_fresh(thread_id).await {
+            tracing::warn!(thread_id, %error, "could not restart agent after an unexpected exit");
+            return;
+        }
+        // Newer queued input takes precedence; it was meant to run after the
+        // interrupted turn. Otherwise the turn itself is continued.
+        if had_turn && !has_queued_input(&self.inner.pool, thread_id).await {
+            if let Err(error) = self.queue_resume(thread_id).await {
+                tracing::warn!(thread_id, %error, "could not resume the interrupted turn");
+            }
+            self.kick_queue(thread_id);
+        }
+    }
+
+    /// Bound automatic restarts so a crashing adapter cannot burn turns in a
+    /// loop; a successful turn clears the window again.
+    async fn allow_adapter_restart(&self, thread_id: &str) -> bool {
+        const LIMIT: usize = 3;
+        const WINDOW_MS: i64 = 5 * 60 * 1000;
+        let now = now_ms();
+        let mut restarts = self.inner.restarts.lock().await;
+        let attempts = restarts.entry(thread_id.to_owned()).or_default();
+        attempts.retain(|at| now - *at < WINDOW_MS);
+        if attempts.len() >= LIMIT {
+            return false;
+        }
+        attempts.push(now);
+        true
     }
 
     pub fn kick_queue(&self, thread_id: &str) {
@@ -188,12 +268,20 @@ impl AgentManager {
     /// Start the harness once. Concurrent callers for the same thread wait on
     /// a per-thread start lock instead of holding the session map.
     pub async fn ensure_started(&self, thread_id: &str) -> Result<(), ServerError> {
-        if self.inner.session(thread_id).await.is_some() {
-            return Ok(());
+        if let Some(session) = self.inner.session(thread_id).await {
+            if !session.is_stopped() {
+                return Ok(());
+            }
+            // The adapter is gone; a session inserted after the exit must not
+            // keep the thread pinned to a dead process.
+            self.inner.remove_session(thread_id, &session).await;
         }
         let _start = self.inner.starts.lock(thread_id).await;
-        if self.inner.session(thread_id).await.is_some() {
-            return Ok(());
+        if let Some(session) = self.inner.session(thread_id).await {
+            if !session.is_stopped() {
+                return Ok(());
+            }
+            self.inner.remove_session(thread_id, &session).await;
         }
         self.start_session(thread_id).await
     }
@@ -272,11 +360,12 @@ impl AgentManager {
         let run = Arc::new(Mutex::new(RunState::default()));
         let session = Arc::new(Session::new(harness, capabilities, run.clone()));
         pump::spawn(
-            self.inner.clone(),
+            self.clone(),
             thread_id.to_owned(),
             binding.agent.clone(),
             run,
             events,
+            Arc::downgrade(&session),
         );
         self.inner
             .sessions
@@ -720,6 +809,18 @@ impl AgentManager {
 impl Inner {
     pub(crate) async fn session(&self, thread_id: &str) -> Option<Arc<Session>> {
         self.sessions.lock().await.get(thread_id).cloned()
+    }
+
+    /// Drop a session only when it is still the current one; a restart may
+    /// have installed a replacement already.
+    pub(crate) async fn remove_session(&self, thread_id: &str, session: &Arc<Session>) {
+        let mut sessions = self.sessions.lock().await;
+        if sessions
+            .get(thread_id)
+            .is_some_and(|current| Arc::ptr_eq(current, session))
+        {
+            sessions.remove(thread_id);
+        }
     }
 
     /// Clear the in-memory turn handle so a concurrent `send` observes an idle

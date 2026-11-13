@@ -5,30 +5,33 @@ use super::mapping::{
     self, approval_kind, approval_option, elicitation_dto, message_dto, subagent_dto, tool_data,
     tool_kind,
 };
-use super::{Inner, RunState};
+use super::{AgentManager, Inner, RunState, Session};
 use crate::error::ServerError;
 use crate::events::EventMeta;
 use crate::{approvals, elicitations, subagents, threads};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use threadbase_agent::RawAgentEvent;
 use threadbase_core::state::ThreadAction;
 use threadbase_shared::{
-    now_ms, Actor, ApprovalDecision, MessageId, MessageRole, ThreadEvent, ThreadId,
+    now_ms, Actor, ApprovalDecision, MessageId, MessageRole, ThreadEvent, ThreadId, ThreadStatus,
 };
 use tokio::sync::{broadcast, Mutex};
 
 pub(crate) fn spawn(
-    inner: Arc<Inner>,
+    manager: AgentManager,
     thread_id: String,
     agent: String,
     run: Arc<Mutex<RunState>>,
     mut events: broadcast::Receiver<RawAgentEvent>,
+    session: Weak<Session>,
 ) {
     let pump = Pump {
-        inner,
+        inner: manager.inner.clone(),
+        manager,
         thread_id,
         agent,
         run,
+        session,
     };
     tokio::spawn(async move {
         loop {
@@ -49,9 +52,11 @@ pub(crate) fn spawn(
 
 struct Pump {
     inner: Arc<Inner>,
+    manager: AgentManager,
     thread_id: String,
     agent: String,
     run: Arc<Mutex<RunState>>,
+    session: Weak<Session>,
 }
 
 impl Pump {
@@ -138,6 +143,16 @@ impl Pump {
                 self.abort_turn(ThreadAction::TurnError, message).await
             }
             RawAgentEvent::ProcessExited { code, signal } => {
+                // An adapter that was told to stop is not a crash. When the
+                // session is already gone, a restart is in progress too.
+                let Some(session) = self.session.upgrade() else {
+                    return Ok(());
+                };
+                if session.is_stopped() {
+                    return Ok(());
+                }
+                session.mark_stopped();
+                let had_turn = self.inner.current_turn(&self.thread_id).await.is_some();
                 self.inner.clear_turn(&self.thread_id).await;
                 self.run.lock().await.turn_id = None;
                 sqlx::query(
@@ -153,7 +168,32 @@ impl Pump {
                     message: "agent process exited".into(),
                 })
                 .await?;
-                self.transition(ThreadAction::ProcessExited).await
+                let archived = threads::status(&self.inner.pool, &self.thread_id)
+                    .await
+                    .ok()
+                    == Some(ThreadStatus::Archived);
+                // The adapter is dead: drop it so a replacement can start,
+                // even for an archived thread that is not revived.
+                self.manager
+                    .inner
+                    .remove_session(&self.thread_id, &session)
+                    .await;
+                if archived {
+                    return Ok(());
+                }
+                // `preparing` rejects this transition; a crash during startup
+                // must still leave the thread revivable.
+                if let Err(error) = self.transition(ThreadAction::ProcessExited).await {
+                    tracing::warn!(
+                        thread_id = %self.thread_id,
+                        %error,
+                        "could not mark the exited agent"
+                    );
+                }
+                self.manager
+                    .recover_from_exit(&self.thread_id, had_turn)
+                    .await;
+                Ok(())
             }
             RawAgentEvent::Notice { message } => {
                 self.append(ThreadEvent::SystemNotice {
@@ -270,6 +310,8 @@ impl Pump {
             .execute(&self.inner.pool)
             .await?;
         self.transition(ThreadAction::TurnEnded).await?;
+        // A finished turn proves the adapter is healthy; forget earlier crashes.
+        self.inner.restarts.lock().await.remove(&self.thread_id);
         let _ = self.inner.queue_tx.send(self.thread_id.clone());
         Ok(())
     }

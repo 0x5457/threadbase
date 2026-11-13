@@ -11,6 +11,7 @@
 //! prompt preparation. Other senders observe the claim as busy and queue
 //! instead, which preserves the single-turn invariant.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use threadbase_agent::{Capabilities, Harness, TurnHandle};
 use threadbase_shared::{MessageId, TurnId};
@@ -21,6 +22,9 @@ pub(crate) struct Session {
     pub(crate) harness: Mutex<Box<dyn Harness>>,
     turn: Mutex<TurnSlot>,
     pub(crate) run: Arc<Mutex<RunState>>,
+    /// Set once the adapter is gone or being torn down, so a process exit is
+    /// not mistaken for a crash and a dead session is never reused.
+    stopped: AtomicBool,
 }
 
 impl Session {
@@ -34,7 +38,18 @@ impl Session {
             harness: Mutex::new(harness),
             turn: Mutex::new(TurnSlot::default()),
             run,
+            stopped: AtomicBool::new(false),
         }
+    }
+
+    /// Mark the session before the harness is stopped, or when its process
+    /// exited unexpectedly, so it is never handed out again.
+    pub(crate) fn mark_stopped(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
     }
 
     /// Claim the right to prepare the next turn. The returned token must be

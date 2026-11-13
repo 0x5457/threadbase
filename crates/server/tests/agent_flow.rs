@@ -9,7 +9,7 @@ use threadbase_server::auth::CurrentUser;
 use threadbase_server::events::EventStore;
 use threadbase_server::{agents, auth, db, projects, threads};
 use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest};
-use threadbase_shared::{ApprovalDecision, ElicitationAction, ThreadEvent};
+use threadbase_shared::{ApprovalDecision, ElicitationAction, ThreadEvent, ThreadStatus};
 use tokio::time::{sleep, Duration};
 
 struct Fixture {
@@ -1379,4 +1379,95 @@ async fn restart_resumes_the_interrupted_turn() {
         matches!(event, ThreadEvent::TurnEnded { .. })
     })
     .await;
+}
+
+#[tokio::test]
+async fn recovers_after_the_agent_process_crashes() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    fixture
+        .state
+        .agents
+        .ensure_started(thread_id)
+        .await
+        .unwrap();
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+
+    // The fake adapter exits in the middle of the turn.
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "crash", None)
+        .await
+        .unwrap();
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::ProcessExited { .. })
+    })
+    .await;
+
+    // The adapter is replaced and the cut-off turn continues by itself.
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnStarted { authors, .. }
+            if authors.iter().any(|author| author.username == "threadbase"))
+    })
+    .await;
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+
+    // The thread is healthy again for ordinary input.
+    let after = max_seq(&fixture.state.pool, thread_id).await;
+    let response = fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "hello", None)
+        .await
+        .unwrap();
+    assert!(response.message_id.is_some());
+    wait_for_after(&fixture.state.pool, thread_id, after, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn explicit_restart_is_not_a_crash() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    fixture
+        .state
+        .agents
+        .ensure_started(thread_id)
+        .await
+        .unwrap();
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+
+    fixture.state.agents.restart(thread_id).await.unwrap();
+
+    // Give a misclassified exit time to surface.
+    sleep(Duration::from_millis(400)).await;
+    let kinds: Vec<String> =
+        sqlx::query_scalar("SELECT kind FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq")
+            .bind(thread_id)
+            .bind(before)
+            .fetch_all(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert!(
+        !kinds.iter().any(|kind| kind == "process_exited"),
+        "{kinds:?}"
+    );
+    assert_eq!(
+        threads::status(&fixture.state.pool, thread_id)
+            .await
+            .unwrap(),
+        ThreadStatus::Idle
+    );
 }
