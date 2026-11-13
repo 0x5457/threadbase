@@ -21,6 +21,9 @@ pub(crate) struct DerivedSubagent {
     pub(crate) title: String,
     pub(crate) description: Option<String>,
     pub(crate) status: SubagentStatus,
+    /// `pi-subagent:<workflow run id>` for launches, so the log route can find
+    /// the child's session file.
+    pub(crate) marker: Option<String>,
 }
 
 /// Map one delegation tool call onto a subagent row. Workflow containers
@@ -44,6 +47,10 @@ pub(crate) fn derive(call: &ToolCallData) -> Option<DerivedSubagent> {
                 .and_then(serde_json::Value::as_str)
                 .or_else(|| input.get("agent").and_then(serde_json::Value::as_str))?;
             let task = input.get("task").and_then(serde_json::Value::as_str);
+            let run_id = input
+                .get("workflowRunId")
+                .and_then(serde_json::Value::as_str)
+                .map(|run| format!("pi-subagent:{run}"));
             Some(DerivedSubagent {
                 id: call.id.0.clone(),
                 parent_id: call
@@ -54,6 +61,7 @@ pub(crate) fn derive(call: &ToolCallData) -> Option<DerivedSubagent> {
                 title: title.to_owned(),
                 description: task.map(first_line),
                 status,
+                marker: run_id,
             })
         }
         "subagent" => {
@@ -70,6 +78,7 @@ pub(crate) fn derive(call: &ToolCallData) -> Option<DerivedSubagent> {
                 title: agent.to_owned(),
                 description: Some(first_line(task)),
                 status,
+                marker: None,
             })
         }
         _ => None,
@@ -105,7 +114,7 @@ pub(crate) async fn apply(
             parent_id: node.parent_id.as_deref(),
             title: &node.title,
             description: node.description.as_deref(),
-            cwd: None,
+            cwd: node.marker.as_deref(),
             can_cancel: false,
             usage_json: None,
             action: mapping::subagent_action(node.status),
@@ -127,7 +136,7 @@ pub(crate) async fn apply(
         title: node.title.clone(),
         description: node.description.clone(),
         status,
-        cwd: None,
+        cwd: node.marker.clone(),
         can_cancel: false,
         usage: None,
         last_seq: 0,

@@ -41,6 +41,7 @@ import { pathFor } from "../../lib/router";
 import { useLongPress } from "../../lib/use-long-press";
 import { useOverlayBack } from "../../lib/overlay-back";
 import { ActionSheet } from "../ActionSheet";
+import { SubagentLogDrawer } from "./SubagentLogDrawer";
 
 
 /** Depth-first order for the delegation tree; roots are subagents whose
@@ -90,6 +91,7 @@ function ThreadRow({
 }) {
   const press = useLongPress(() => onLongPress(thread));
   const [open, setOpen] = useState(false);
+  const [logFor, setLogFor] = useState<Subagent | null>(null);
   const subagents = thread.subagents ?? [];
   const rows = orderedSubagents(subagents);
 
@@ -150,18 +152,25 @@ function ThreadRow({
       {open && rows.length ? (
         <div className="side-subagents">
           {rows.map(({ subagent, depth }) => (
-            <div
+            <button
+              type="button"
               key={String(subagent.id)}
               className="side-subagent"
               style={{ paddingLeft: 12 + depth * 12 }}
               title={subagent.description ?? subagent.title}
+              onClick={() => setLogFor(subagent)}
             >
               <span className={`dot ${statusTone(subagent.status)}`} />
               <span className="side-subagent-title">{subagent.title}</span>
-            </div>
+            </button>
           ))}
         </div>
       ) : null}
+      <SubagentLogDrawer
+        threadId={thread.id}
+        subagent={logFor}
+        onClose={() => setLogFor(null)}
+      />
     </Fragment>
   );
 }

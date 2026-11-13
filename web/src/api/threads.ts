@@ -208,3 +208,10 @@ export function cancelSubagent(threadId: string, subagentId: string) {
     "POST",
   );
 }
+
+/** One subagent's own transcript, when the adapter leaves it on disk. */
+export function getSubagentLog(threadId: string, subagentId: string) {
+  return request<import("./types/SubagentLogResponse").SubagentLogResponse>(
+    `/api/threads/${threadId}/subagents/${encodeURIComponent(subagentId)}/log`,
+  );
+}

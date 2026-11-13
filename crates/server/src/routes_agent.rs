@@ -13,7 +13,7 @@ use axum::Json;
 use axum::Router;
 use serde::Deserialize;
 use threadbase_shared::api::SendMessageRequest;
-use threadbase_shared::{ApiError, OkResponse, SendMessageResponse, ThreadId};
+use threadbase_shared::{ApiError, OkResponse, SendMessageResponse, SubagentLogResponse, ThreadId};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -24,6 +24,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/threads/{thread_id}/subagents/{subagent_id}/cancel",
             post(cancel_subagent),
+        )
+        .route(
+            "/api/threads/{thread_id}/subagents/{subagent_id}/log",
+            get(subagent_log),
         )
         .route("/api/threads/{thread_id}/queue/order", post(reorder_queue))
         .route(
@@ -187,6 +191,17 @@ async fn cancel(
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
     state.agents.cancel(&thread_id).await?;
     Ok(Json(OkResponse { ok: true }))
+}
+
+async fn subagent_log(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, subagent_id)): Path<(String, String)>,
+) -> Result<Json<SubagentLogResponse>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    Ok(Json(SubagentLogResponse {
+        entries: crate::subagents::transcript(&state.pool, &thread_id, &subagent_id).await?,
+    }))
 }
 
 async fn cancel_subagent(

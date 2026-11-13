@@ -50,6 +50,22 @@ pub struct CreateProjectRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct SubagentLogEntryDto {
+    /// "task", "agent" or "tool".
+    pub role: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SubagentLogResponse {
+    pub entries: Vec<SubagentLogEntryDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct UpdateProjectRequest {
     pub name: Option<String>,
     pub remote_url: Option<String>,
