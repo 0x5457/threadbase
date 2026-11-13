@@ -1371,9 +1371,11 @@ async fn restart_resumes_the_interrupted_turn() {
             if authors.iter().any(|author| author.username == "threadbase"))
     })
     .await;
-    let ThreadEvent::TurnStarted { prompt, .. } = &started else {
+    let ThreadEvent::TurnStarted { author, prompt, .. } = &started else {
         unreachable!();
     };
+    // The continuation is Threadbase's, not a message the creator sent.
+    assert_eq!(author.username, "threadbase");
     assert!(prompt.contains("restarted"), "{prompt}");
     wait_for_after(&fixture.state.pool, thread_id, before, |event| {
         matches!(event, ThreadEvent::TurnEnded { .. })

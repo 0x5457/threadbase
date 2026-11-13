@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 use threadbase_server::app::AppState;
 use threadbase_server::config::Config;
-use threadbase_server::{db, doctor, install, routes, service, upgrade};
+use threadbase_server::{db, doctor, install, maintenance, routes, service, upgrade};
 use tracing_subscriber::EnvFilter;
 
 const ENV_HELP: &str = "\
@@ -62,6 +62,19 @@ enum Command {
     Service {
         #[command(subcommand)]
         command: ServiceCommand,
+    },
+    /// Fold superseded stream rows in the event log and reclaim disk
+    ///
+    /// Rewrites the stored log with the same fold a cold page uses, so replays
+    /// show the same transcript with far fewer rows. Safe while the server is
+    /// running; pass --vacuum with the service stopped to rebuild the file.
+    Compact {
+        /// Print what would be removed without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Rebuild the database file to reclaim the removed rows
+        #[arg(long)]
+        vacuum: bool,
     },
     /// Print the version
     #[command(hide = true)]
@@ -131,6 +144,26 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             install::run(options).await?;
             return Ok(());
         }
+        Some(Command::Compact { dry_run, vacuum }) => {
+            let config = Config::load().context("invalid configuration")?;
+            let report = maintenance::compact(&config, dry_run, vacuum).await?;
+            println!(
+                "{}events: {} rows -> {} ({} removed, {} folded)",
+                if dry_run { "dry run: " } else { "" },
+                report.rows_before,
+                report.rows_before.saturating_sub(report.rows_removed),
+                report.rows_removed,
+                report.rows_folded,
+            );
+            println!(
+                "threads: {}; database: {} -> {}{}",
+                report.threads,
+                format_bytes(report.bytes_before),
+                format_bytes(report.bytes_after),
+                if report.vacuumed { " (vacuumed)" } else { "" },
+            );
+            return Ok(());
+        }
         Some(Command::Service { command }) => {
             let ServiceCommand::Install { print } = command;
             service::install(print)?;
@@ -197,6 +230,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await
     .context("server error")
+}
+
+fn format_bytes(bytes: u64) -> String {
+    let mib = bytes as f64 / (1024.0 * 1024.0);
+    format!("{mib:.1} MiB")
 }
 
 fn init_tracing(json: bool) {

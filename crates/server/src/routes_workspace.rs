@@ -202,12 +202,26 @@ async fn list_all_threads(
     }))
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct BundleQuery {
+    /// `false` skips the git diff. The transcript poll only needs the thread
+    /// read model; the Changes panel requests the full bundle.
+    changes: Option<bool>,
+}
+
 async fn thread_bundle(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(thread_id): Path<String>,
+    Query(query): Query<BundleQuery>,
 ) -> Result<Json<threadbase_shared::ThreadBundleResponse>, ServerError> {
-    let mut bundle = threads::bundle(&state.pool, &thread_id, &user).await?;
+    let mut bundle = threads::bundle(
+        &state.pool,
+        &thread_id,
+        &user,
+        query.changes.unwrap_or(true),
+    )
+    .await?;
     let online = state
         .presence
         .online_user_ids(bundle.project.id.as_str())

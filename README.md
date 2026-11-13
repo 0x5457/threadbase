@@ -97,6 +97,18 @@ threadbase install --uninstall              # 停用并删除 unit、关掉 serv
 
 unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例。日志：`journalctl --user -u threadbase -f`。
 
+### 事件日志维护
+
+每个 token chunk 都写一行事件，长期使用后 `events` 表会膨胀（本机实测 181 MB）。`compact` 用和冷加载相同的折叠规则重写日志：流式思考/消息合并成一条，已完成消息只保留 `message_completed`，usage/plan 历史全部保留，重放出来的 transcript 不变。
+
+```bash
+threadbase compact --dry-run   # 只报告每个线程会删除/折叠多少行
+threadbase compact             # 在线可跑；只是普通 WAL 事务
+threadbase compact --vacuum    # 重建数据库文件回收磁盘
+```
+
+`--vacuum` 需要独占锁，服务正在写时会自动跳过并提示；要稳定回收磁盘，先 `systemctl --user stop threadbase`，跑完再启动。折叠可以反复跑，第二次之后就没有可删的行。
+
 ### 网页终端（默认关闭）
 
 `THREADBASE_TERMINAL=1` 才挂载终端路由，且默认**只有管理员能驱动**：其他 `member` 账号打开同一个终端只能看（tmux 只读客户端，服务端不接收其按键），`read_only` 账号连入口都没有。`THREADBASE_TERMINAL_DRIVERS=0x5459,alice` 可以给指定 GitHub 登录（逗号分隔，大小写不敏感）驱动权限，不必把整个账号提成管理员。关掉这个功能时相关路由返回 404，不暴露存在性。

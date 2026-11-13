@@ -30,12 +30,17 @@ pub struct EventMeta {
 }
 
 /// Turns a cold page reaches back, newest first.
-const HISTORY_TURNS: u32 = 20;
+const HISTORY_TURNS: u32 = 12;
 /// Hard row cap for one cold page: a runaway turn must not turn a refresh into
 /// a multi-megabyte transfer.
 const HISTORY_ROWS: u32 = 20_000;
+/// Wire budget for one cold page after delta folding. Tool outputs can be
+/// megabytes on their own, so the row cap is not enough; older whole turns
+/// are dropped and the client fetches them back through "load earlier".
+const HISTORY_BYTES: usize = 2 * 1024 * 1024;
 /// Scrolling back fetches smaller windows than a cold load: each request should
-/// land fast even on a slow link, and the reader rarely needs 20 turns at once.
+/// land fast even on a slow link, and the reader rarely needs a deep window at
+/// once.
 const OLDER_TURNS: u32 = 8;
 const OLDER_ROWS: u32 = 4_000;
 
@@ -168,11 +173,15 @@ impl EventStore {
                 .map(EventRow::into_envelope)
                 .collect::<Result<Vec<_>, _>>()?
         };
+        // A cold page may have dropped its oldest turns to fit the wire
+        // budget, so its first seq (not the thread's oldest) is the cursor the
+        // client needs for "load earlier".
+        let oldest_seq = events.first().map(|event| event.seq).unwrap_or(oldest);
         Ok(EventsPageDto {
             thread_id: thread_id.clone(),
             events,
             last_seq: last,
-            oldest_seq: oldest,
+            oldest_seq,
             resync,
         })
     }
@@ -206,7 +215,7 @@ impl EventStore {
             .into_iter()
             .map(EventRow::into_envelope)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(compact_history(events))
+        Ok(trim_history(compact_history(events)))
     }
 
     /// One slice of events older than `before_seq`, compacted the same way as a
@@ -266,6 +275,26 @@ impl EventStore {
             oldest_seq,
             has_more,
         })
+    }
+
+    /// Whole-thread fold with the same rules as a cold page, used by
+    /// maintenance to rewrite the stored log. Unlike [`Self::page`] this is not
+    /// a window: every turn is included.
+    pub async fn compact_thread_log(
+        &self,
+        thread_id: &str,
+    ) -> Result<Vec<EventEnvelope>, EventStoreError> {
+        let rows = sqlx::query_as::<_, EventRow>(
+            "SELECT * FROM events WHERE thread_id = ? ORDER BY seq ASC",
+        )
+        .bind(thread_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let events = rows
+            .into_iter()
+            .map(EventRow::into_envelope)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(compact_history(events))
     }
 
     pub async fn last_seq(&self, thread_id: &ThreadId) -> Result<u64, EventStoreError> {
@@ -442,6 +471,39 @@ fn compact_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
         out.push(event);
     }
     out
+}
+
+/// Keep the newest whole turns until a cold page fits the transfer budget.
+/// Folding deltas already shrinks the log, but a single tool output can be
+/// megabytes; without this cap a refresh of a long, tool-heavy thread ships
+/// several megabytes and stalls the client on parse and fold. The client pulls
+/// the dropped turns back through "load earlier". A page never drops its last
+/// turn, even when that turn alone exceeds the budget.
+fn trim_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
+    fn wire_len(event: &EventEnvelope) -> usize {
+        // The envelope adds ids, actor and metadata around the payload.
+        serde_json::to_string(&event.payload).map_or(0, |json| json.len() + 256)
+    }
+
+    let mut events = events;
+    let mut lengths: Vec<usize> = events.iter().map(wire_len).collect();
+    let mut total: usize = lengths.iter().sum();
+    while total > HISTORY_BYTES {
+        // Cut before the second `turn_started`: everything older than the
+        // newest turn goes first, keeping the transcript start-aligned.
+        let Some(cut) = events
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, event)| matches!(&event.payload, ThreadEvent::TurnStarted { .. }))
+            .map(|(index, _)| index)
+        else {
+            break;
+        };
+        total -= lengths.drain(..cut).sum::<usize>();
+        events.drain(..cut);
+    }
+    events
 }
 
 fn origin_str(origin: Origin) -> &'static str {
@@ -666,7 +728,7 @@ mod tests {
     }
 
     use threadbase_shared::{
-        MessageDto, MessageId, MessageRole, ToolCallData, ToolKind, ToolStatus, UserBrief,
+        MessageDto, MessageId, MessageRole, ToolCallData, ToolKind, ToolStatus, TurnId, UserBrief,
     };
 
     fn brief() -> UserBrief {
@@ -805,5 +867,67 @@ mod tests {
             panic!("expected the last tool update");
         };
         assert_eq!(call.status, ToolStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn cold_page_drops_old_turns_to_fit_the_wire_budget() {
+        let (store, thread) = store().await;
+        // Four turns carrying ~900 KB each: the cold page keeps the newest
+        // whole turns that fit HISTORY_BYTES instead of shipping ~4 MB.
+        let mut first_kept = 0;
+        for turn in 0..4 {
+            let started = store
+                .append(
+                    &thread,
+                    Actor::user(&brief()),
+                    ThreadEvent::TurnStarted {
+                        turn_id: TurnId::new(),
+                        message_id: MessageId::new(),
+                        author: brief(),
+                        authors: Vec::new(),
+                        prompt: format!("turn {turn}"),
+                        attachments: Vec::new(),
+                    },
+                    EventMeta::default(),
+                )
+                .await
+                .unwrap();
+            if turn == 2 {
+                first_kept = started.seq;
+            }
+            store
+                .append(
+                    &thread,
+                    Actor::agent("Agent"),
+                    ThreadEvent::MessageCompleted {
+                        message: MessageDto {
+                            id: MessageId::new(),
+                            thread_id: thread.clone(),
+                            turn_id: None,
+                            role: MessageRole::Agent,
+                            author: None,
+                            authors: Vec::new(),
+                            text: "x".repeat(900 * 1024),
+                            model: None,
+                            streaming: false,
+                            created_at: now_ms(),
+                            attachments: Vec::new(),
+                        },
+                    },
+                    EventMeta::default(),
+                )
+                .await
+                .unwrap();
+        }
+
+        let page = store.page(&thread, 0, 500).await.unwrap();
+        let first = page
+            .events
+            .first()
+            .expect("a cold page always keeps its newest turn");
+        assert!(matches!(&first.payload, ThreadEvent::TurnStarted { .. }));
+        assert_eq!(first.seq, first_kept);
+        assert_eq!(page.oldest_seq, first_kept);
+        assert!(page.oldest_seq > 1);
     }
 }

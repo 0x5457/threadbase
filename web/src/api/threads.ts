@@ -68,8 +68,15 @@ export function getThread(threadId: string) {
   return request<ThreadResponse>(`/api/threads/${threadId}`);
 }
 
-export function getThreadBundle(threadId: string) {
-  return request<{ bundle: ThreadBundle }>(`/api/threads/${threadId}/bundle`);
+/** The transcript poll passes `changes: false` to skip the server-side git diff. */
+export function getThreadBundle(
+  threadId: string,
+  options: { changes?: boolean } = {},
+) {
+  const suffix = options.changes === false ? "?changes=false" : "";
+  return request<{ bundle: ThreadBundle }>(
+    `/api/threads/${threadId}/bundle${suffix}`,
+  );
 }
 
 export function getFileDiff(threadId: string, path: string, baseline?: Baseline) {

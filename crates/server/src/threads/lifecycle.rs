@@ -78,15 +78,37 @@ pub async fn reconcile_after_restart(
     events: &EventStore,
     projection: &Projection,
 ) -> Result<Vec<(String, Option<String>)>, ServerError> {
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT id, current_turn_id FROM threads
-          WHERE status IN ('preparing', 'running') AND archived_at IS NULL
+    let rows: Vec<(String, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, current_turn_id, status FROM threads
+          WHERE archived_at IS NULL
+            AND (status IN ('preparing', 'running', 'requires_action')
+                 OR current_turn_id IS NOT NULL)
           ORDER BY updated_at",
     )
     .fetch_all(pool)
     .await?;
     let mut reconciled = Vec::with_capacity(rows.len());
-    for (thread_id, turn_id) in rows {
+    for (thread_id, turn_id, status) in rows {
+        let interrupted = matches!(status.as_str(), "preparing" | "running" | "requires_action");
+        if !interrupted {
+            // The turn row committed but the Prompt transition never did, so no
+            // prompt reached the adapter. Drop the unstarted turn instead of
+            // reporting it as lost; the queue re-runs the input that made it.
+            if let Some(turn_id) = turn_id.as_deref() {
+                discard_unstarted_turn(pool, &thread_id, turn_id).await;
+            }
+            sqlx::query(
+                "UPDATE threads SET status = ?, current_turn_id = NULL, updated_at = ? WHERE id = ?",
+            )
+            .bind(threadbase_core::state::thread_status_str(ThreadStatus::Idle))
+            .bind(now_ms())
+            .bind(&thread_id)
+            .execute(pool)
+            .await?;
+            projection.publish(&thread_id).await;
+            reconciled.push((thread_id, None));
+            continue;
+        }
         let message = "Threadbase restarted before this turn finished.".to_owned();
         let payload = match turn_id.as_deref() {
             Some(turn_id) => ThreadEvent::TurnError {
@@ -136,6 +158,38 @@ pub async fn reconcile_after_restart(
         reconciled.push((thread_id, turn_id));
     }
     Ok(reconciled)
+}
+
+/// Remove the `TurnStarted` event of a turn that was recorded but never
+/// prompted. Its prompt never reached the adapter, so keeping the row would
+/// show the message twice once the queue re-runs it.
+async fn discard_unstarted_turn(pool: &SqlitePool, thread_id: &str, turn_id: &str) {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT seq, payload_json FROM events
+          WHERE thread_id = ? AND kind = 'turn_started'
+          ORDER BY seq DESC",
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for (seq, payload) in rows {
+        let Ok(ThreadEvent::TurnStarted {
+            turn_id: started, ..
+        }) = serde_json::from_str::<ThreadEvent>(&payload)
+        else {
+            continue;
+        };
+        if started.as_str() != turn_id {
+            continue;
+        }
+        let _ = sqlx::query("DELETE FROM events WHERE thread_id = ? AND seq = ?")
+            .bind(thread_id)
+            .bind(seq)
+            .execute(pool)
+            .await;
+        break;
+    }
 }
 
 async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, ServerError> {

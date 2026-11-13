@@ -10,6 +10,7 @@ use crate::error::ServerError;
 use crate::events::EventMeta;
 use crate::{approvals, elicitations, subagents, threads};
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 use threadbase_agent::RawAgentEvent;
 use threadbase_core::state::ThreadAction;
 use threadbase_shared::{
@@ -34,20 +35,92 @@ pub(crate) fn spawn(
         session,
     };
     tokio::spawn(async move {
+        // Thinking chunks arrive in bursts (10-20+ per second) and are only
+        // ever rendered as a collapsed "Thought" row and its tooltip, so a row
+        // per chunk buys nothing and turns one turn into thousands of SQLite
+        // transactions. Hold them for a moment and append the folded text as
+        // one event. Every other event flushes first, so transcript order is
+        // preserved.
+        const THOUGHT_FLUSH: Duration = Duration::from_millis(500);
+        let mut thought: Option<(MessageId, String)> = None;
+        // A fixed deadline, not a fresh timeout per chunk: a continuously
+        // streaming thought would otherwise postpone the flush forever and the
+        // "Thought" row would not appear until the agent moved on.
+        let mut deadline: Option<tokio::time::Instant> = None;
         loop {
-            match events.recv().await {
+            let received = match deadline {
+                Some(at) => match tokio::time::timeout_at(at, events.recv()).await {
+                    Ok(received) => received,
+                    Err(_) => {
+                        flush_thought(&pump, &mut thought).await;
+                        deadline = None;
+                        continue;
+                    }
+                },
+                None => events.recv().await,
+            };
+            match received {
+                Ok(RawAgentEvent::AgentThoughtChunk { text }) => {
+                    let message_id = pump.thinking_id().await;
+                    match &mut thought {
+                        Some((id, buffer)) if *id == message_id => push_delta(buffer, &text),
+                        Some(_) => {
+                            flush_thought(&pump, &mut thought).await;
+                            thought = Some((message_id, text));
+                            deadline = Some(tokio::time::Instant::now() + THOUGHT_FLUSH);
+                        }
+                        None => {
+                            thought = Some((message_id, text));
+                            deadline = Some(tokio::time::Instant::now() + THOUGHT_FLUSH);
+                        }
+                    }
+                }
                 Ok(event) => {
+                    flush_thought(&pump, &mut thought).await;
+                    deadline = None;
                     if let Err(error) = pump.handle(event).await {
                         tracing::warn!(%error, thread_id = %pump.thread_id, "agent pump event failed");
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    flush_thought(&pump, &mut thought).await;
+                    deadline = None;
                     tracing::warn!(%skipped, thread_id = %pump.thread_id, "agent pump lagged");
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
+                Err(broadcast::error::RecvError::Closed) => {
+                    flush_thought(&pump, &mut thought).await;
+                    break;
+                }
             }
         }
     });
+}
+
+/// Append a text delta to a buffer that may receive either incremental chunks
+/// or cumulative snapshots, mirroring the rule used by the web reducer and the
+/// cold-page fold.
+fn push_delta(buffer: &mut String, chunk: &str) {
+    if chunk.starts_with(buffer.as_str()) {
+        buffer.clear();
+        buffer.push_str(chunk);
+    } else {
+        buffer.push_str(chunk);
+    }
+}
+
+async fn flush_thought(pump: &Pump, thought: &mut Option<(MessageId, String)>) {
+    let Some((message_id, text)) = thought.take() else {
+        return;
+    };
+    if text.is_empty() {
+        return;
+    }
+    if let Err(error) = pump
+        .append(ThreadEvent::ThinkingDelta { message_id, text })
+        .await
+    {
+        tracing::warn!(%error, thread_id = %pump.thread_id, "agent pump thought flush failed");
+    }
 }
 
 struct Pump {
@@ -60,6 +133,18 @@ struct Pump {
 }
 
 impl Pump {
+    /// One thinking message id per turn: the pump folds every thought chunk of
+    /// a turn into the same row, so buffered chunks stay ordered even when a
+    /// tool call interrupts the stream.
+    async fn thinking_id(&self) -> MessageId {
+        self.run
+            .lock()
+            .await
+            .thinking_id
+            .get_or_insert_with(MessageId::new)
+            .clone()
+    }
+
     async fn handle(&self, event: RawAgentEvent) -> Result<(), ServerError> {
         match event {
             RawAgentEvent::AgentMessageChunk { text } => {
@@ -81,13 +166,7 @@ impl Pump {
                 .await
             }
             RawAgentEvent::AgentThoughtChunk { text } => {
-                let message_id = self
-                    .run
-                    .lock()
-                    .await
-                    .thinking_id
-                    .get_or_insert_with(MessageId::new)
-                    .clone();
+                let message_id = self.thinking_id().await;
                 self.append(ThreadEvent::ThinkingDelta { message_id, text })
                     .await
             }
@@ -425,5 +504,25 @@ impl Pump {
         })
         .await
         .map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::push_delta;
+
+    #[test]
+    fn folded_text_handles_incremental_and_cumulative_chunks() {
+        let mut buffer = String::new();
+        for chunk in [".", " Using", " the histogram"] {
+            push_delta(&mut buffer, chunk);
+        }
+        assert_eq!(buffer, ". Using the histogram");
+
+        let mut cumulative = String::new();
+        for chunk in ["Hello", "Hello world", "Hello world again"] {
+            push_delta(&mut cumulative, chunk);
+        }
+        assert_eq!(cumulative, "Hello world again");
     }
 }

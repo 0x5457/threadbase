@@ -5,13 +5,16 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 use threadbase_server::auth::CurrentUser;
-use threadbase_server::events::EventStore;
+use threadbase_server::events::{EventMeta, EventStore};
 use threadbase_server::{auth, comments, db, diff, projects, queue, threads};
 use threadbase_shared::api::{
     CreateCommentRequest, CreateProjectRequest, CreateThreadRequest, ForkThreadRequest,
     UpdateThreadRequest,
 };
-use threadbase_shared::{BaselineDto, BaselineKind, CommentAnchor, ErrorCode, Role, ThreadStatus};
+use threadbase_shared::{
+    Actor, BaselineDto, BaselineKind, CommentAnchor, ErrorCode, MessageId, Role, ThreadEvent,
+    ThreadStatus, TurnId, UserBrief,
+};
 use tokio::process::Command as TokioCommand;
 
 fn test_projection(pool: &SqlitePool) -> threadbase_server::projection::Projection {
@@ -215,6 +218,106 @@ async fn restart_recovery_resets_interrupted_threads() {
         .await
         .unwrap();
     assert!(again.is_empty());
+}
+
+#[tokio::test]
+async fn restart_recovery_resets_a_thread_waiting_for_approval() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    // The old process died while the agent was waiting for a human.
+    sqlx::query(
+        "UPDATE threads SET status = 'requires_action', current_turn_id = 'turn-waiting' WHERE id = ?",
+    )
+    .bind(thread.id.as_str())
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+
+    let events = EventStore::new(fixture.pool.clone());
+    let projection = test_projection(&fixture.pool);
+    let reconciled = threads::reconcile_after_restart(&fixture.pool, &events, &projection)
+        .await
+        .unwrap();
+    assert_eq!(
+        reconciled,
+        vec![(thread.id.to_string(), Some("turn-waiting".to_owned()))]
+    );
+    let status: String = sqlx::query_scalar("SELECT status FROM threads WHERE id = ?")
+        .bind(thread.id.as_str())
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "idle");
+    let kind: String =
+        sqlx::query_scalar("SELECT kind FROM events WHERE thread_id = ? ORDER BY seq DESC LIMIT 1")
+            .bind(thread.id.as_str())
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(kind, "turn_error");
+}
+
+#[tokio::test]
+async fn restart_recovery_discards_a_turn_that_never_started() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    let events = EventStore::new(fixture.pool.clone());
+    let turn_id = TurnId::new();
+    let brief = UserBrief::from_user(&fixture.current.user);
+    events
+        .append(
+            &thread.id,
+            Actor::user(&brief),
+            ThreadEvent::TurnStarted {
+                turn_id: turn_id.clone(),
+                message_id: MessageId::new(),
+                author: brief.clone(),
+                authors: vec![brief],
+                prompt: "never reached the adapter".into(),
+                attachments: Vec::new(),
+            },
+            EventMeta::default(),
+        )
+        .await
+        .unwrap();
+    // The turn row committed, but the process died before the Prompt
+    // transition, so the adapter never saw it.
+    sqlx::query("UPDATE threads SET status = 'idle', current_turn_id = ? WHERE id = ?")
+        .bind(turn_id.as_str())
+        .bind(thread.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+    let projection = test_projection(&fixture.pool);
+    let reconciled = threads::reconcile_after_restart(&fixture.pool, &events, &projection)
+        .await
+        .unwrap();
+    assert_eq!(reconciled, vec![(thread.id.to_string(), None)]);
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT current_turn_id FROM threads WHERE id = ?")
+            .bind(thread.id.as_str())
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert!(current.is_none());
+    // The unstarted prompt is gone so the queue can re-run it without a
+    // duplicate transcript row.
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE thread_id = ?")
+        .bind(thread.id.as_str())
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    // A second boot has nothing left to reconcile.
+    assert!(
+        threads::reconcile_after_restart(&fixture.pool, &events, &projection)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
