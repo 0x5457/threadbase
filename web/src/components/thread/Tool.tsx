@@ -4,9 +4,10 @@ import type { ToolCallData } from "../../api";
 import type { ToolKind } from "../../api/types/ToolKind";
 import type { ViewItem } from "../../lib/thread-events";
 import { DiffView } from "../DiffView";
+import { ImageLightbox } from "./ImageLightbox";
 import { StatusDot } from "./StatusDot";
 import { describeTitle, formatDuration } from "./format";
-import { memo } from "react";
+import { memo, useState } from "react";
 
 /** Short verb per tool kind: the head names the action, the preview the content. */
 const VERBS: Record<ToolKind, string> = {
@@ -178,6 +179,7 @@ export const Tool = memo(function Tool({
   expanded: boolean;
   onToggleExpanded: () => void;
 }) {
+  const [lightbox, setLightbox] = useState<string | null>(null);
   const call: ToolCallData = item.call;
   const path = call.locations[0]?.path;
   const patch = call.diff?.patch ?? null;
@@ -274,18 +276,17 @@ export const Tool = memo(function Tool({
               {outputImages.map((image, index) => {
                 const src = `data:${image.mimeType};base64,${image.data}`;
                 return (
-                  <a
+                  <button
+                    type="button"
                     // Tool output images are a fixed, non-reorderable snapshot.
                     // react-doctor-disable-next-line react-doctor/no-array-index-as-key
                     key={`${image.mimeType}:${index}`}
                     className="tool-image"
-                    href={src}
-                    target="_blank"
-                    rel="noreferrer"
+                    onClick={() => setLightbox(src)}
                     title={`${image.mimeType} · ${Math.round((image.data.length * 3) / 4 / 1024)} KB`}
                   >
                     <img src={src} alt="" loading="lazy" />
-                  </a>
+                  </button>
                 );
               })}
             </div>
@@ -323,6 +324,9 @@ export const Tool = memo(function Tool({
               </>
             ) : null}
           </details>
+        ) : null}
+        {lightbox ? (
+          <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
         ) : null}
       </div>
     </div>

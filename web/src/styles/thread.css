@@ -655,3 +655,52 @@
   font-size: 9px;
   letter-spacing: 0.02em;
 }
+
+/* Image previews stay in the app: tool output and attachments open a
+   full-screen overlay instead of a browser tab. */
+.tool-image,
+.message-image {
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgb(12 14 16 / 72%);
+  backdrop-filter: blur(2px);
+  cursor: zoom-out;
+}
+
+.image-lightbox img {
+  display: block;
+  max-width: min(94vw, 1600px);
+  max-height: 92vh;
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 24px 90px rgb(0 0 0 / 45%);
+  cursor: default;
+}
+
+.image-lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 18px;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 14%);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.image-lightbox-close:hover {
+  background: rgb(255 255 255 / 26%);
+}

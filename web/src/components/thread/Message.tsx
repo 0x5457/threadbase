@@ -8,10 +8,11 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { ViewItem } from "../../lib/thread-events";
 import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
+import { ImageLightbox } from "./ImageLightbox";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const REHYPE_PLUGINS = [rehypeHighlight];
@@ -35,6 +36,7 @@ export const Message = memo(function Message({
   // A trailing blank line from the composer would otherwise paint as a second
   // line inside the bubble; the prompt itself is already trimmed server-side.
   const text = agent ? item.text : item.text.replace(/^\n+|\n+$/g, "");
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   return (
     <div
@@ -67,16 +69,15 @@ export const Message = memo(function Message({
             {item.attachments.map((attachment) => {
               const url = `/api/attachments/${attachment.id}`;
               return (
-                <a
+                <button
                   key={attachment.id}
+                  type="button"
                   className="message-image"
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`Image attachment (${attachment.mimeType})`}
+                  onClick={() => setLightbox(url)}
+                  aria-label={`Preview image attachment (${attachment.mimeType})`}
                 >
                   <img src={url} alt="" loading="lazy" />
-                </a>
+                </button>
               );
             })}
           </div>
@@ -90,6 +91,9 @@ export const Message = memo(function Message({
             <p>{text}</p>
           )}
         </div>
+        {lightbox ? (
+          <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
+        ) : null}
       </div>
     </div>
   );
