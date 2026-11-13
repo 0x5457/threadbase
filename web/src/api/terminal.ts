@@ -14,10 +14,21 @@ export function listTerminalSessions(threadId?: string | null) {
 }
 
 /** Create (or reuse) the shell for a thread, and mint an attach ticket. */
-export function createTerminalSession(body: CreateTerminalSessionRequest) {
+export function createTerminalSession(body: {
+  threadId: string | null;
+  cols?: number;
+  rows?: number;
+  watchOnly?: boolean;
+}) {
+  const payload: CreateTerminalSessionRequest = {
+    threadId: body.threadId as CreateTerminalSessionRequest["threadId"],
+    cols: body.cols ?? null,
+    rows: body.rows ?? null,
+    watchOnly: body.watchOnly ?? false,
+  };
   return request<TerminalSessionResponse>("/api/terminal/sessions", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 }
 

@@ -74,6 +74,20 @@ export function useXterm({ disabled, onData, onResize }: Options) {
       termRef.current = terminal;
       fitRef.current = fit;
 
+      // The soft keyboard types into this textarea. Mobile browsers only open it
+      // for an editable field with sane autocorrect/spellcheck settings, and
+      // `enterkeyhint` makes the return key say what it does.
+      const textarea = terminal.textarea;
+      if (textarea) {
+        textarea.setAttribute("autocapitalize", "off");
+        textarea.setAttribute("autocorrect", "off");
+        textarea.setAttribute("autocomplete", "off");
+        textarea.setAttribute("spellcheck", "false");
+        textarea.setAttribute("inputmode", "text");
+        textarea.setAttribute("enterkeyhint", "enter");
+        textarea.setAttribute("aria-label", "Terminal input");
+      }
+
       terminal.onData((data) => dataRef.current(data));
       terminal.attachCustomKeyEventHandler((event) => {
         if (event.type !== "keydown") return true;
