@@ -438,6 +438,10 @@
      (where that row's gutter would swallow the tap). */
   .message-block {
     min-height: 78px;
+    /* The extra height is headroom for the gutter comment button. Without
+       `start` the grid stretches the body, so a one-line bubble renders as if
+       the message ended with blank lines. */
+    align-items: start;
   }
 
   .msg-comment-btn {
