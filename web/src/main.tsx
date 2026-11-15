@@ -39,6 +39,7 @@ import "./styles/diff.css";
 import "./styles/motion.css";
 import "./styles/empty.css";
 import "./styles/frame.css";
+import "./styles/goal.css";
 import "./styles/responsive.css";
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {

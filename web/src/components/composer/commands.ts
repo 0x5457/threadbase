@@ -1,6 +1,6 @@
 /** Slash commands advertised per agent. */
 
-export interface Command {
+interface Command {
   command: string;
   description: string;
 }
@@ -63,6 +63,17 @@ export function commandsFor(agent: string): Command[] {
     { command: "quit", description: "Quit the session" },
   ];
   const pi: Command[] = [
+    // pi-goal-x: conversational goal planning with persistent progress.
+    // Only the commands that start a run belong here: pi-acp never settles a
+    // prompt whose extension command answers without running a turn, so
+    // read-only goal commands (status/list/focus/settings) wedge the adapter.
+    // Pause and resume live in the goal bar, which restarts the adapter after.
+    { command: "goal", description: "Draft a goal, then work on it persistently" },
+    { command: "goal-direct", description: "Create a goal immediately from an objective" },
+    { command: "sisyphus", description: "Draft an ordered, step-by-step goal" },
+    { command: "sisyphus-direct", description: "Create an ordered goal immediately" },
+    { command: "goal-tweak", description: "Revise the goal objective or budget" },
+    { command: "goal-resume", description: "Continue a paused goal" },
     { command: "help", description: "Show help" },
     { command: "model", description: "Choose the model" },
     { command: "compact", description: "Summarize the conversation" },

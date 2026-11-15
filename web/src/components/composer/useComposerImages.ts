@@ -3,11 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { uploadAttachment } from "../../api";
 
 /** Images accepted in one message; mirrors the server's cap. */
-export const MAX_COMPOSER_IMAGES = 4;
+const MAX_COMPOSER_IMAGES = 4;
 /** Decoded cap per image; mirrors the server's cap. */
-export const MAX_COMPOSER_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_COMPOSER_IMAGE_BYTES = 8 * 1024 * 1024;
 
-export interface ComposerImage {
+interface ComposerImage {
   key: string;
   /** Object URL while uploading, the served attachment URL once ready. */
   url: string;

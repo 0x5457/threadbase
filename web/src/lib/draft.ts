@@ -39,26 +39,26 @@ type ProviderStatus = "connecting" | "connected" | "disconnected";
  * every caller combined them differently. This is the only place that
  * combination happens.
  */
-export function draftPhase(status: ProviderStatus, synced: boolean): DraftPhase {
+function draftPhase(status: ProviderStatus, synced: boolean): DraftPhase {
   if (status === "connected") return synced ? "live" : "syncing";
   if (status === "connecting") return "connecting";
   return "offline";
 }
 
-export interface DraftAuthor {
+interface DraftAuthor {
   id: string;
   name: string;
 }
 
 /** A peer currently focused on the draft. */
-export interface DraftEditor {
+interface DraftEditor {
   id: string;
   name: string;
   color: string;
   typing: boolean;
 }
 
-export interface DraftSession {
+interface DraftSession {
   /** A document exists for this thread; false in the design-preview composer. */
   active: boolean;
   /** Single lifecycle value: see the `draft` machine. */

@@ -29,7 +29,7 @@ export function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export function asStringArray(value: unknown): string[] | null {
+function asStringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((item): item is string => typeof item === "string");
 }
@@ -68,7 +68,7 @@ export function parseThreadState(value: unknown): ThreadState | null {
   };
 }
 
-export function isPanel(value: string | null): value is LivePanel {
+function isPanel(value: string | null): value is LivePanel {
   return (
     value === "transcript" ||
     value === "changes" ||
@@ -78,13 +78,13 @@ export function isPanel(value: string | null): value is LivePanel {
   );
 }
 
-export function parseAnchor(value: unknown): LiveAnchor | null {
+function parseAnchor(value: unknown): LiveAnchor | null {
   const record = asRecord(value);
   if (record === null || typeof record.kind !== "string") return null;
   return record as LiveAnchor;
 }
 
-export function parseFocus(value: unknown): LiveFocus | null {
+function parseFocus(value: unknown): LiveFocus | null {
   const record = asRecord(value);
   if (record === null) return null;
   const userId = asString(record.userId);

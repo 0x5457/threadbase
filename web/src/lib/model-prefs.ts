@@ -5,19 +5,19 @@ export const OTHER_GROUP = "Other";
 /** Pinned above the provider groups, holding the last few picks. */
 export const RECENT_GROUP = "Recent";
 /** How many picks are remembered per (agent, picker label). */
-export const MAX_RECENT = 5;
+const MAX_RECENT = 5;
 
 /**
  * Recent picks are stored as a JSON array of option values, most recent first,
  * under `threadbase.models.recent.<agent>.<label>` so an agent's model history
  * never shows up in another agent's list or in the effort picker.
  */
-export function recentStorageKey(agent: string, label: string) {
+function recentStorageKey(agent: string, label: string) {
   return `threadbase.models.recent.${agent}.${label}`;
 }
 
 /** Provider an option belongs to: the text before its first "/". */
-export function providerOf(value: string): string {
+function providerOf(value: string): string {
   const slash = value.indexOf("/");
   return slash > 0 ? value.slice(0, slash) : OTHER_GROUP;
 }
@@ -110,7 +110,7 @@ export function usePickerAgent(): string {
 
 /** Last explicitly picked model/effort for an agent, used for new threads and
  *  for threads that never recorded a choice. */
-export function pickStorageKey(agent: string, kind: "model" | "effort") {
+function pickStorageKey(agent: string, kind: "model" | "effort") {
   return `threadbase.pick.${agent}.${kind}`;
 }
 

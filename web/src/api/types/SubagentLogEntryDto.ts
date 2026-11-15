@@ -2,7 +2,7 @@
 
 export type SubagentLogEntryDto = {
   /**
-   * "task", "agent", "tool" or "error".
+   * "task", "parent", "agent", "tool", "notice" or "error".
    */
   role: string;
   text: string;

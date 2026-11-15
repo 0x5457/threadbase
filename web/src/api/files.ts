@@ -5,7 +5,6 @@ import type { FileSearchResponse } from "./types/FileSearchResponse";
 import type { FilesResponseDto } from "./types/FilesResponseDto";
 
 export type FileEntry = FileEntryDto;
-export type FileContent = FileContentResponseDto["file"];
 
 export function listFiles(threadId: string, path = "") {
   const query = path ? `?path=${encodeURIComponent(path)}` : "";

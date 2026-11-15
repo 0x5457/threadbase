@@ -278,6 +278,19 @@ pnpm --dir web build
 
 前端质量门是 `tsc --noEmit`、`vite build` 与 React Doctor（配置见 `web/doctor.config.ts`）。`web/audit/*.mjs` 是需要浏览器的手工审计脚本。
 
+### 代码健康度：测量 → 候选 → 语义审查
+
+```bash
+pnpm --dir web quality          # 三层一起跑，报告写到 .quality/（已 gitignore）
+scripts/quality/measure.sh dup      # jscpd：重复代码，阈值 1%（当前 0.16%）
+scripts/quality/measure.sh dead     # knip：未使用的文件/导出/依赖
+scripts/quality/measure.sh complex  # eslint：圈复杂度 >10、函数 >120 行
+```
+
+这三条不进门禁，只做诊断。第三层（读 `.quality/` 判断哪些候选该删）的规则写在 `scripts/quality/review.md`：生成物不删、`src/api/*` 的对称包装通常是产品缺口而非死代码、删除后必须过 `typecheck` + `doctor:ci` + `build`。
+
+复杂度层用 eslint 但**不**把它加进 `web/package.json`：v2 前端刻意去掉了 eslint，而 `typescript@7` 没有 JS 编译 API。脚本把它装在 `~/.cache/threadbase-quality/`，依赖树不变。
+
 真实 Codex 契约 smoke（需要登录）：
 
 ```bash

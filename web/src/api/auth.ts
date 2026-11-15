@@ -5,7 +5,7 @@ import type { UpdateUserRequest } from "./types/UpdateUserRequest";
 import type { UserDto } from "./types/UserDto";
 import type { UserListResponse } from "./types/UserListResponse";
 
-export type Me = AuthMeDto;
+type Me = AuthMeDto;
 export type User = UserDto;
 export type UserAccess = UserDto["access"];
 

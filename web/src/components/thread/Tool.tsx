@@ -3,12 +3,28 @@ import { IconChevronDown } from "@tabler/icons-react";
 import type { ToolCallData } from "../../api";
 import type { ToolKind } from "../../api/types/ToolKind";
 import type { ViewItem } from "../../lib/thread-events";
-import { DiffView } from "../DiffView";
 import { countLines, exceedsDiffBudget, budgetLabel } from "../../lib/diff-size";
 import { ImageLightbox } from "./ImageLightbox";
 import { StatusDot } from "./StatusDot";
 import { describeTitle, formatDuration } from "./format";
-import { memo, useState } from "react";
+import { Suspense, lazy, memo, useState } from "react";
+
+/**
+ * Pierre's diff renderer drags in the tree-sitter grammar and highlight stack
+ * (about 200 KB gzipped, several hundred milliseconds of parse work on a
+ * phone). It used to be a static import here, so *opening a thread* paid for
+ * it even though most tool rows are shell commands. Loading it on the first
+ * row that actually shows a diff keeps the transcript's first paint cheap; the
+ * plain patch below is already on hand and reads fine until it arrives.
+ */
+const DiffView = lazy(async () => {
+  const module = await import("../DiffView");
+  return { default: module.DiffView };
+});
+
+function DiffFallback({ patch }: { patch: string }) {
+  return <pre className="cmd tool-diff-fallback">{patch}</pre>;
+}
 
 /** Short verb per tool kind: the head names the action, the preview the content. */
 const VERBS: Record<ToolKind, string> = {
@@ -298,7 +314,11 @@ export const Tool = memo(function Tool({
             Diff is too large to show ({budgetLabel()})
           </Text>
         ) : null}
-        {inlineDiff && patch ? <DiffView patch={patch} /> : null}
+        {inlineDiff && patch ? (
+          <Suspense fallback={<DiffFallback patch={patch} />}>
+            <DiffView patch={patch} />
+          </Suspense>
+        ) : null}
         {preview ? (
           <div className="tool-lines">
             {preview.lines.map((line, index) => (
@@ -378,7 +398,11 @@ export const Tool = memo(function Tool({
             </summary>
             {expanded ? (
               <>
-                {patch ? <DiffView patch={patch} /> : null}
+                {patch ? (
+                  <Suspense fallback={<DiffFallback patch={patch} />}>
+                    <DiffView patch={patch} />
+                  </Suspense>
+                ) : null}
                 {!call.diff?.patch && outputText ? (
                   <pre className="cmd">{outputText}</pre>
                 ) : null}

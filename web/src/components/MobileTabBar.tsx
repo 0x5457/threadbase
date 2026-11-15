@@ -6,7 +6,7 @@ import {
   IconSettings,
 } from "@tabler/icons-react";
 
-export type MobileTab = "inbox" | "thread" | "project" | "settings";
+type MobileTab = "inbox" | "thread" | "project" | "settings";
 
 interface MobileTabBarProps {
   view: MobileTab;

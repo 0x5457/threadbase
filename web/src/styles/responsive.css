@@ -299,13 +299,17 @@
     padding: 4px 14px 5px;
   }
 
+  .goal-bar {
+    padding: 4px max(14px, var(--safe-right)) 4px max(14px, var(--safe-left));
+  }
+
   .queue-item .queue-text {
-    font-size: 14px;
+    font-size: var(--text-md);
   }
 
   .queue-item .queue-author {
     max-width: 96px;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
 
   .comment-menu {

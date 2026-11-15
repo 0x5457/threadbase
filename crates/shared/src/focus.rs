@@ -11,7 +11,6 @@ use ts_rs::TS;
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
-#[ts(export)]
 pub enum Anchor {
     Message {
         message_id: String,
@@ -41,7 +40,6 @@ pub enum Anchor {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct Focus {
     pub user_id: UserId,
     pub project_id: ProjectId,

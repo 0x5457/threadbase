@@ -76,6 +76,7 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { WorkspaceEmpty } from "./components/WorkspaceEmpty";
 import { useOverlayBack } from "./lib/overlay-back";
+import { whenIdle } from "./lib/idle";
 import { pathFor, useRoute } from "./lib/router";
 
 // The thread, settings and diff surfaces pull in the editor, CRDT, terminal
@@ -176,6 +177,12 @@ function Workspace() {
   );
   const pendingInboxReads = useRef<Set<string>>(new Set());
   const [navOpened, nav] = useDisclosure(false);
+  // A phone mounts the nav drawer's contents on first open instead of building
+  // the tree behind it on every screen.
+  const [navEverOpened, setNavEverOpened] = useState(false);
+  useEffect(() => {
+    if (navOpened) setNavEverOpened(true);
+  }, [navOpened]);
   const [changesOpened, changes] = useDisclosure(false);
   const [mergeOpened, merge] = useDisclosure(false);
   const [renameOpened, rename] = useDisclosure(false);
@@ -271,27 +278,17 @@ function Workspace() {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
 
-  // Warm the thread chunk after the shell has painted. Opening a thread is the
+  // Warm the thread chunk once the shell is idle. Opening a thread is the
   // main next step from Inbox, and the editor/highlighter stack is heavy.
   useEffect(() => {
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      if (!cancelled) void import("./components/RealThreadView");
-    }, 1_200);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
+    return whenIdle(() => void import("./components/RealThreadView"));
   }, []);
 
   // The diff stack is only reachable on the wide layout's aside; load it after
   // the transcript so opening a thread never waits for the highlighter.
   useEffect(() => {
     if (!wide) return;
-    const timer = window.setTimeout(() => {
-      void import("./components/RealChangesPanel");
-    }, 2_500);
-    return () => window.clearTimeout(timer);
+    return whenIdle(() => void import("./components/RealChangesPanel"));
   }, [wide]);
 
   const allThreads = useQuery({
@@ -1038,25 +1035,30 @@ function Workspace() {
             });
           }}
         />
-        <Sidebar
-          onNavigate={nav.close}
-          onOpenInbox={openInbox}
-          onOpenSettings={openSettings}
-
-          activeView={view}
-          selectedThreadId={selectedThread?.id ?? null}
-          selectedSubagentId={subagentRoute ? route.subagentId : null}
-          activeProjectId={
-            route.kind === "project" ||
-            route.kind === "thread" ||
-            route.kind === "subagent"
-              ? route.projectId
-              : null
-          }
-          onSelectThread={openThread}
-          onSelectSubagent={openSubagent}
-          onSelectProject={openProject}
-        />
+        {/* Mantine keeps a collapsed navbar's children mounted, so on a phone
+            the whole project tree (and one thread query per project) was built
+            behind the closed drawer on every screen. Mount it on first open
+            instead; tablets and desktops always show it. */}
+        {wide || tablet || navOpened || navEverOpened ? (
+          <Sidebar
+            onNavigate={nav.close}
+            onOpenInbox={openInbox}
+            onOpenSettings={openSettings}
+            activeView={view}
+            selectedThreadId={selectedThread?.id ?? null}
+            selectedSubagentId={subagentRoute ? route.subagentId : null}
+            activeProjectId={
+              route.kind === "project" ||
+              route.kind === "thread" ||
+              route.kind === "subagent"
+                ? route.projectId
+                : null
+            }
+            onSelectThread={openThread}
+            onSelectSubagent={openSubagent}
+            onSelectProject={openProject}
+          />
+        ) : null}
         <AppShell.Main className="main">
           {view === "inbox" ? (
             <InboxView onOpenThread={openInboxItem} />

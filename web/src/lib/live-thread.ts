@@ -47,15 +47,6 @@ const MAX_CATCH_UP_ROUNDS = 20;
  */
 const EVENT_FLUSH_MS = 50;
 
-export type {
-  LiveFocus,
-  LivePanel,
-  LivePresence,
-  LiveThreadOptions,
-  LiveThreadState,
-} from "./live/types";
-
-
 export function useLiveThread(
   threadId: string | null,
   options: LiveThreadOptions = {},

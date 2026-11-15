@@ -148,7 +148,7 @@ export function CommentCard({
   );
 }
 
-export function CommentEditor({
+function CommentEditor({
   value,
   onChange,
   onSubmit,

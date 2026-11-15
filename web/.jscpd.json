@@ -1,0 +1,9 @@
+{
+  "minTokens": 60,
+  "minLines": 8,
+  "threshold": 1,
+  "reporters": ["console", "json"],
+  "output": "../.quality/jscpd",
+  "gitignore": true,
+  "ignore": ["**/node_modules/**", "**/dist/**", "audit/**", "src/api/types/**"]
+}

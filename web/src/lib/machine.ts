@@ -12,7 +12,7 @@ import type { MachineSpec } from "../api/types/MachineSpec";
 const MACHINES = catalogue as MachineSpec[];
 const BY_ID = new Map(MACHINES.map((machine) => [machine.id, machine]));
 
-export type MachineId =
+type MachineId =
   | "thread"
   | "setup"
   | "approval"
@@ -42,16 +42,6 @@ export function can(
   if (!state) return false;
   const entry = BY_ID.get(id)?.states.find((candidate) => candidate.id === state);
   return entry?.commands.some((command) => command.id === action) ?? false;
-}
-
-/** State reached by `action`, or null when it is not legal here. */
-export function nextState(
-  id: MachineId,
-  state: string,
-  action: string,
-): string | null {
-  const entry = BY_ID.get(id)?.states.find((candidate) => candidate.id === state);
-  return entry?.commands.find((command) => command.id === action)?.to ?? null;
 }
 
 /** Human label for a state, falling back to the wire value. */

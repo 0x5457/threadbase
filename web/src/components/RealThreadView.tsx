@@ -39,11 +39,14 @@ import {
   getMe,
   getState,
   getThreadBundle,
+  getThreadGoal,
   reorderQueue,
   respondElicitation,
   restoreQueueItem,
   retryThreadSetup,
+  restartThread,
   sendComment,
+  sendMessage,
   steerQueueItem,
   updateComment,
   updateQueueItem,
@@ -66,6 +69,7 @@ import { ElicitationCard } from "./thread/ElicitationCard";
 import { EmptyThread } from "./thread/EmptyThread";
 import { Message, Notice, Thinking } from "./thread/Message";
 import { formatDuration, timeOf } from "./thread/format";
+import { GoalBar } from "./thread/GoalBar";
 import { QueueBar } from "./thread/QueueBar";
 import { Tool } from "./thread/Tool";
 
@@ -683,12 +687,75 @@ export const RealThreadView = memo(function RealThreadView({
     void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
   }, [queryClient, threadId]);
 
+  // Goal progress lives in the adapter's workspace (`<cwd>/.pi/goals`), not in
+  // the transcript. Read it on mount and after each turn, with a slow poll as
+  // a floor for goals that change without a turn of their own.
+  const goalQuery = useQuery({
+    queryKey: ["thread", threadId, "goal"],
+    queryFn: () => getThreadGoal(threadId),
+    staleTime: 2_000,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  });
+  const goal = goalQuery.data?.goal ?? null;
+  const [goalBusy, setGoalBusy] = useState(false);
+  const threadStatus = bundle?.thread.status;
+
+  useEffect(() => {
+    // A turn can create, complete or block a goal; re-read once it settles.
+    if (threadStatus === "running") return;
+    void queryClient.invalidateQueries({ queryKey: ["thread", threadId, "goal"] });
+  }, [threadStatus, queryClient, threadId]);
+
   const reportFailure = useCallback((cause: unknown, fallback: string) => {
     notifications.show({
       message: cause instanceof Error ? cause.message : fallback,
       color: "red",
     });
   }, []);
+
+  /** Poll the goal endpoint until the adapter records `status`, or give up. */
+  const settleGoal = useCallback(
+    async (status: string) => {
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        const current = await getThreadGoal(threadId);
+        if (current.goal?.status === status) return true;
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+      return false;
+    },
+    [threadId],
+  );
+
+  const runGoalCommand = useCallback(
+    async (command: string, interrupt = false) => {
+      setGoalBusy(true);
+      try {
+        // A busy adapter would queue the command behind the running turn, so
+        // pausing stops the turn first: "pause" has to mean "stop now".
+        await sendMessage(
+          threadId,
+          command,
+          interrupt && threadStatus === "running" ? "stop_and_send" : undefined,
+        );
+        if (command === "/goal-pause") {
+          // pi-acp never settles a prompt whose extension command starts no run
+          // (pause only writes the goal file), which leaves the adapter's turn
+          // stuck. Restarting resumes the same pi session on disk and clears it.
+          await settleGoal("paused");
+          await restartThread(threadId);
+        } else if (command === "/goal-resume") {
+          await settleGoal("active");
+        }
+        refresh();
+      } catch (cause) {
+        reportFailure(cause, "Could not run the goal command");
+      } finally {
+        setGoalBusy(false);
+      }
+    },
+    [refresh, reportFailure, settleGoal, threadId, threadStatus],
+  );
 
   const setupStatus = bundle?.thread.setupStatus ?? "none";
   const setupActive = setupStatus === "pending" || setupStatus === "running";
@@ -1249,6 +1316,14 @@ export const RealThreadView = memo(function RealThreadView({
       />
       <div className="composer-stack">
         <AgentLog lines={diagnostics} />
+        {goal ? (
+          <GoalBar
+            goal={goal}
+            canWrite={writable}
+            busy={goalBusy}
+            onCommand={runGoalCommand}
+          />
+        ) : null}
         <QueueBar
           items={queue}
           busy={queueBusy}

@@ -5,7 +5,7 @@ use crate::ids::{CommentId, ProjectId, ThreadId, UserId};
 use crate::model::{
     ApprovalDecision, ApprovalDto, AuthStatusDto, BaselineDto, ChangesDto, CommentAnchor,
     CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto, FileContentDto,
-    FileEntryDto, InboxItemDto, ProjectDto, QueueItemDto, Role, SettingsDto, SubagentDto,
+    FileEntryDto, GoalDto, InboxItemDto, ProjectDto, QueueItemDto, Role, SettingsDto, SubagentDto,
     ThreadDto, ThreadHistoryDto, UserAccess, UserBrief, UserDto,
 };
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,6 @@ pub struct UpdateUserRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct InboxReadRequest {
     pub thread_id: Option<ThreadId>,
     pub all: Option<bool>,
@@ -37,7 +36,6 @@ pub struct AuthStatusResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct CreateProjectRequest {
     pub path: String,
     pub name: Option<String>,
@@ -68,6 +66,13 @@ pub struct SubagentLogResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct ThreadGoalResponse {
+    /// The goal the adapter keeps in this thread's workspace, if any.
+    pub goal: Option<GoalDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateProjectRequest {
     pub name: Option<String>,
     pub remote_url: Option<String>,
@@ -192,7 +197,6 @@ pub enum DeliveryMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct SendMessageRequest {
     pub text: String,
     pub delivery: Option<DeliveryMode>,
@@ -214,14 +218,12 @@ pub struct SendMessageResponse {
 /// Rewrite a message that is still waiting in the thread's input queue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct UpdateQueuedInputRequest {
     pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct DecisionRequest {
     pub decision: ApprovalDecision,
     pub note: Option<String>,
@@ -229,7 +231,6 @@ pub struct DecisionRequest {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct ElicitationResponseRequest {
     pub action: ElicitationAction,
     #[ts(type = "unknown")]
@@ -238,7 +239,6 @@ pub struct ElicitationResponseRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct CreateCommentRequest {
     pub body: String,
     pub anchor: CommentAnchor,
@@ -248,7 +248,6 @@ pub struct CreateCommentRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct UpdateCommentRequest {
     pub body: Option<String>,
     pub status: Option<CommentStatus>,
@@ -256,7 +255,6 @@ pub struct UpdateCommentRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct SeenRequest {
     pub paths: Vec<String>,
     pub seen: bool,
@@ -266,7 +264,6 @@ pub struct SeenRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct MergeBackRequest {
     pub commit_message: Option<String>,
     pub commit: bool,
@@ -316,7 +313,6 @@ pub struct OlderEventsDto {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct EventsPageDto {
     pub thread_id: ThreadId,
     pub events: Vec<EventEnvelope>,
@@ -392,14 +388,6 @@ pub struct FileContentResponseDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct BaselineQuery {
-    pub kind: Option<String>,
-    pub commit: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct OkResponse {
     pub ok: bool,
 }
@@ -410,7 +398,6 @@ pub struct OkResponse {
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
-#[ts(export)]
 pub enum ClientWsMessage {
     Subscribe {
         thread_id: ThreadId,
@@ -437,7 +424,6 @@ pub enum ClientWsMessage {
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
-#[ts(export)]
 pub enum ServerWsMessage {
     Event {
         event: EventEnvelope,
@@ -466,7 +452,6 @@ pub enum ServerWsMessage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct ApiErrorBody {
     pub code: String,
     pub message: String,
@@ -501,7 +486,6 @@ pub struct StateResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct ApprovalRuleDto {
     pub id: String,
     pub project_id: ProjectId,
@@ -516,14 +500,12 @@ pub struct ApprovalRuleDto {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct ApprovalRulesResponse {
     pub rules: Vec<ApprovalRuleDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct HealthResponse {
     pub ok: bool,
     pub version: String,
@@ -547,7 +529,6 @@ pub struct CommentResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct CommentsResponse {
     pub comments: Vec<CommentDto>,
 }
@@ -575,7 +556,6 @@ pub struct ThreadResponse {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct ThreadBundleResponse {
     pub bundle: ThreadBundleDto,
 }
@@ -596,7 +576,6 @@ pub struct ThreadsResponse {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct ErrorResponse {
     pub error: crate::api::ApiErrorBody,
 }
@@ -672,7 +651,6 @@ pub struct CreateTerminalSessionRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct AttachTerminalSessionRequest {
     pub watch_only: Option<bool>,
 }

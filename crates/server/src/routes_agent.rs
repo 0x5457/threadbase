@@ -13,13 +13,16 @@ use axum::Json;
 use axum::Router;
 use serde::Deserialize;
 use threadbase_shared::api::SendMessageRequest;
-use threadbase_shared::{ApiError, OkResponse, SendMessageResponse, SubagentLogResponse, ThreadId};
+use threadbase_shared::{
+    ApiError, OkResponse, SendMessageResponse, SubagentLogResponse, ThreadGoalResponse, ThreadId,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/threads/{thread_id}/messages", post(send_message))
         .route("/api/threads/{thread_id}/cancel", post(cancel))
         .route("/api/threads/{thread_id}/agent-config", get(agent_config))
+        .route("/api/threads/{thread_id}/goal", get(goal))
         .route("/api/threads/{thread_id}/restart", post(restart_agent))
         .route(
             "/api/threads/{thread_id}/subagents/{subagent_id}/cancel",
@@ -171,6 +174,31 @@ async fn agent_config(
         .await
         .unwrap_or_default();
     Ok(Json(threadbase_shared::AgentConfigResponse { options }))
+}
+
+/// Goal progress the adapter keeps in this thread's workspace.
+///
+/// Adapters without goal support answer `{"goal": null}` rather than 404: the
+/// UI asks once per thread and simply renders nothing.
+async fn goal(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<ThreadGoalResponse>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let cwd = match crate::bindings::load(&state.pool, &thread_id).await? {
+        Some(binding) => Some(binding.cwd),
+        None => {
+            crate::threads::load_row(&state.pool, &thread_id)
+                .await?
+                .worktree_path
+        }
+    };
+    let goal = cwd
+        .as_deref()
+        .map(std::path::Path::new)
+        .and_then(crate::goals::read);
+    Ok(Json(ThreadGoalResponse { goal }))
 }
 
 async fn restart_agent(

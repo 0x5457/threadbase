@@ -14,6 +14,7 @@ import type { SendMessageResponse } from "./types/SendMessageResponse";
 import type { ThreadBundleDto } from "./types/ThreadBundleDto";
 import type { ThreadDto } from "./types/ThreadDto";
 import type { ThreadHistoryResponse } from "./types/ThreadHistoryResponse";
+import type { ThreadGoalResponse } from "./types/ThreadGoalResponse";
 import type { CommitSummaryDto } from "./types/CommitSummaryDto";
 import type { ThreadResponse } from "./types/ThreadResponse";
 import type { ThreadsResponse } from "./types/ThreadsResponse";
@@ -23,24 +24,23 @@ import type { UpdateThreadRequest } from "./types/UpdateThreadRequest";
 import type { WatchState } from "./types/WatchState";
 
 export type ThreadSummary = ThreadDto;
-export type ThreadBundle = ThreadBundleDto;
+type ThreadBundle = ThreadBundleDto;
 export type ThreadChanges = ChangesDto;
-export type ThreadHistory = ThreadHistoryResponse["history"];
 export type CommitSummary = CommitSummaryDto;
 export type { MergeBackResponse } from "./types/MergeBackResponse";
 export type FileChange = FileChangeDto;
 export type FileDiff = FileDiffDto;
 export type ThreadEvent = EventEnvelope;
-export type ThreadAttachment = AttachmentDto;
+type ThreadAttachment = AttachmentDto;
 
-export type UpdateThreadPatch = Partial<
+type UpdateThreadPatch = Partial<
   Pick<
     UpdateThreadRequest,
     "title" | "pinned" | "archived" | "model" | "effort"
   >
 >;
 
-export interface CreateThreadInput {
+interface CreateThreadInput {
   /** Optional; the server names the thread from the first message when empty. */
   title?: string;
   agent: string;
@@ -52,7 +52,7 @@ export interface CreateThreadInput {
   worktree?: boolean;
 }
 
-export interface Baseline {
+interface Baseline {
   kind?: ChangesDto["baseline"]["kind"];
   commit?: string | null;
 }
@@ -98,6 +98,14 @@ export function getFileDiff(threadId: string, path: string, baseline?: Baseline)
 /** Checkpoint commits newer than the thread's base, newest first. */
 export function getThreadHistory(threadId: string) {
   return request<ThreadHistoryResponse>(`/api/threads/${threadId}/commits`);
+}
+
+/**
+ * Goal progress the agent keeps in this thread's workspace (`null` for
+ * adapters without goals). Cheap: one small file read on the server.
+ */
+export function getThreadGoal(threadId: string) {
+  return request<ThreadGoalResponse>(`/api/threads/${threadId}/goal`);
 }
 
 /** One commit's own diff: parent to commit. */
@@ -257,13 +265,6 @@ export function reorderQueue(threadId: string, itemIds: string[]) {
     `/api/threads/${threadId}/queue/order`,
     "POST",
     { itemIds },
-  );
-}
-
-export function cancelSubagent(threadId: string, subagentId: string) {
-  return jsonRequest<OkResponse>(
-    `/api/threads/${threadId}/subagents/${subagentId}/cancel`,
-    "POST",
   );
 }
 

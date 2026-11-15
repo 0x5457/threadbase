@@ -25,3 +25,6 @@ skills-lock.json
 # Playwright artifacts
 web/playwright-report/
 web/test-results/
+
+# Quality reports (scripts/quality/measure.sh)
+.quality/

@@ -15,7 +15,7 @@ export function pushSupported() {
   );
 }
 
-export async function registerServiceWorker() {
+async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   return navigator.serviceWorker.register("/sw.js");
 }

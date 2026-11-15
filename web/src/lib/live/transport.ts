@@ -3,9 +3,9 @@ import type { ClientMessage } from "./types";
 const LIVE_SOCKET_PATH = "/ws";
 export const HEARTBEAT_MS = 25_000;
 /** A connection that lived this long resets the reconnect backoff ladder. */
-export const RECONNECT_STABLE_MS = 10_000;
+const RECONNECT_STABLE_MS = 10_000;
 
-export const SOCKET_OPEN = 1;
+const SOCKET_OPEN = 1;
 
 /** Reconnect behavior passed to partysocket's reconnecting WebSocket. */
 export const RECONNECT_OPTIONS = {
@@ -15,7 +15,7 @@ export const RECONNECT_OPTIONS = {
   minUptime: RECONNECT_STABLE_MS,
 } as const;
 
-export interface SendableSocket {
+interface SendableSocket {
   readyState: number;
   send(data: string): unknown;
 }

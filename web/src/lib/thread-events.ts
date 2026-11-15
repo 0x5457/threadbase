@@ -99,25 +99,6 @@ export function createThreadView(agentName = "Agent"): ThreadViewState {
 }
 
 /**
- * Folds the append-only event log into the thread's document blocks. Deltas
- * are merged in place so streaming output updates the same message row.
- *
- * Diagnostics are returned separately: the timeline never renders them, and
- * the agent log only shows the newest {@link DIAGNOSTIC_LIMIT} lines.
- */
-export function reduceEvents(
-  events: ThreadEvent[],
-  agentName = "Agent",
-): { items: ViewItem[]; diagnostics: DiagnosticLine[]; usage: Usage | null } {
-  const view = extendThreadView(createThreadView(agentName), events, agentName);
-  return {
-    items: view.items,
-    diagnostics: view.diagnostics,
-    usage: view.usage,
-  };
-}
-
-/**
  * Folds only the events after the previous state's cursor.
  *
  * The previous `items` array is copied once per batch (the block count is

@@ -19,6 +19,7 @@ pub mod drafts;
 pub mod elicitations;
 pub mod error;
 pub mod events;
+pub mod goals;
 pub mod inbox;
 pub mod install;
 pub mod locks;

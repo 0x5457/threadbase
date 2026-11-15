@@ -1,0 +1,151 @@
+/* ── goal bar ───────────────────────────────────────────────────────────────
+   Ambient goal state above the queue: one line while collapsed, the task plan
+   when expanded. Sits with the composer stack because a goal outlives turns. */
+
+.goal-bar {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+  padding: 4px 20px;
+}
+
+.goal-bar-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.goal-bar-toggle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.goal-bar-toggle:focus-visible {
+  outline: 2px solid var(--focus, var(--brand));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.goal-bar-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+.goal-bar-objective {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-bar-meta {
+  flex: none;
+  align-items: center;
+}
+
+.goal-bar-count {
+  align-items: center;
+}
+
+.goal-bar-chevron {
+  transition: transform 120ms ease;
+}
+
+.goal-bar-chevron.open {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .goal-bar-chevron {
+    transition: none;
+  }
+}
+
+.goal-bar-actions {
+  flex: none;
+  align-items: center;
+}
+
+/* Actions stay quiet until the bar is hovered or focused, like the thread
+   rows: the goal text is the content, the controls are secondary. */
+.goal-bar-actions {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.goal-bar:hover .goal-bar-actions,
+.goal-bar:focus-within .goal-bar-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .goal-bar-actions {
+    opacity: 1;
+  }
+}
+
+.goal-tasks {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 2px 0 8px 12px;
+}
+
+.goal-task-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.goal-task {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.goal-task-mark {
+  width: 12px;
+  flex: none;
+  color: var(--ignored);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  text-align: center;
+}
+
+.goal-task[data-status="complete"] .goal-task-mark {
+  color: var(--success);
+}
+
+.goal-task[data-status="complete"] .goal-task-title {
+  color: var(--ink-faint);
+}
+
+.goal-task[data-status="skipped"] .goal-task-title {
+  text-decoration: line-through;
+  color: var(--ignored);
+}
+
+.goal-task-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.goal-task-title {
+  line-height: 16px;
+}
+
+.goal-task-detail {
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}

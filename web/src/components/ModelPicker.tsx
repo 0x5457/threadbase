@@ -319,6 +319,15 @@ export function ModelPicker({
           }
         }}
       >
+        {/*
+         * The catalogue can hold hundreds of models, and Mantine keeps the
+         * dropdown mounted (hidden) after its first render. Building every
+         * option row while the composer mounts put ~2 900 nodes into a thread
+         * that never opened the picker — by far the largest slice of the
+         * page's DOM. Only an open picker needs the list.
+         */}
+        {opened ? (
+          <>
         <Combobox.Search
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
@@ -378,6 +387,8 @@ export function ModelPicker({
             ↑↓ navigate · ↵ choose · esc close
           </Text>
         </Group>
+          </>
+        ) : null}
       </Combobox.Dropdown>
     </Combobox>
   );

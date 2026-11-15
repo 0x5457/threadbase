@@ -693,7 +693,6 @@ pub enum InboxKind {
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
-#[ts(export)]
 pub enum Panel {
     Transcript,
     Changes,
@@ -832,6 +831,45 @@ pub struct SubagentDto {
     pub last_seq: u64,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// Goal progress reported by an adapter that keeps goals in the workspace.
+///
+/// pi's `pi-goal-x` extension writes one JSON record per goal to
+/// `<cwd>/.pi/goals/active_goal_*.md`; the server reads it so the transcript
+/// does not have to be mined for goals. Adapters without goals simply have no
+/// record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GoalDto {
+    pub id: String,
+    pub objective: String,
+    /// `active`, `paused`, `blocked`, `budget_limited` or `complete`. Kept as a
+    /// string because it is the adapter's vocabulary, not ours.
+    pub status: String,
+    /// Ordered (Sisyphus) goal worked one step at a time.
+    pub sisyphus: bool,
+    pub auto_continue: bool,
+    /// ISO-8601 timestamp from the adapter's record.
+    pub updated_at: Option<String>,
+    pub tokens_used: u64,
+    pub active_seconds: u64,
+    pub tasks: Vec<GoalTaskDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GoalTaskDto {
+    pub id: String,
+    pub title: String,
+    /// `pending`, `complete` or `skipped`.
+    pub status: String,
+    pub evidence: Option<String>,
+    pub verification_contract: Option<String>,
+    #[serde(default)]
+    pub subtasks: Vec<GoalTaskDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1154,7 +1192,6 @@ pub struct DiffSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct AgentInfoDto {
     pub id: String,
     pub label: String,
@@ -1170,7 +1207,6 @@ pub struct AgentInfoDto {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct DoctorReport {
     pub node: Option<String>,
     pub git: Option<String>,
@@ -1300,7 +1336,6 @@ pub struct DirectoryListingDto {
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
-#[ts(export)]
 pub enum TurnState {
     Empty,
     Starting,
@@ -1323,7 +1358,6 @@ pub enum TurnState {
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
-#[ts(export)]
 pub enum AuthSessionState {
     Active,
     Expired,
@@ -1346,7 +1380,6 @@ pub enum AuthSessionState {
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
-#[ts(export)]
 pub enum PushStatus {
     Pending,
     Sent,

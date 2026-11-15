@@ -5,7 +5,7 @@ import { useSyncExternalStore } from "react";
  * tablets and phones); an explicit choice overrides it everywhere and survives
  * reloads. A tiny external store keeps every mounted diff in sync.
  */
-export type DiffWrapPreference = "auto" | "wrap" | "scroll";
+type DiffWrapPreference = "auto" | "wrap" | "scroll";
 
 const KEY = "threadbase.diff-wrap";
 const listeners = new Set<() => void>();
@@ -25,7 +25,7 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
-export function setDiffWrap(next: DiffWrapPreference) {
+function setDiffWrap(next: DiffWrapPreference) {
   preference = next;
   try {
     if (next === "auto") window.localStorage.removeItem(KEY);
@@ -36,7 +36,7 @@ export function setDiffWrap(next: DiffWrapPreference) {
   emit();
 }
 
-export function useDiffWrapPreference() {
+function useDiffWrapPreference() {
   return useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
