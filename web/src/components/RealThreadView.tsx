@@ -107,9 +107,12 @@ function TimelineRowImpl({
   onToggleExpanded,
   onComment,
   onMessageLongPress,
+  continued = false,
 }: {
   item: TimelineRowItem;
   active: boolean;
+  /** Same author as the row above; the avatar gutter collapses. */
+  continued?: boolean;
   /** Group/row keys whose collapsible body is open; survives virtualization. */
   expanded: Set<string>;
   onToggleExpanded: (key: string) => void;
@@ -268,6 +271,7 @@ function TimelineRowImpl({
         <Message
           item={item}
           active={active}
+          continued={continued}
           onComment={onComment}
           onLongPress={onMessageLongPress}
         />
@@ -328,6 +332,7 @@ const TimelineRow = memo(
           : false);
     return (
       sameItem &&
+      prev.continued === next.continued &&
       prev.active === next.active &&
       prev.expanded === next.expanded &&
       prev.onToggleExpanded === next.onToggleExpanded &&
@@ -1140,37 +1145,48 @@ export const RealThreadView = memo(function RealThreadView({
               </>
             ),
           }}
-          itemContent={(_index, item) => (
-            <TimelineRow
-              item={item}
-              active={bundle?.thread.status === "running"}
-              commentsForTool={commentsForTool}
-              comments={commentsFor(
-                item.kind === "message" ? "message" : "tool_call",
-                item.kind === "message"
-                  ? item.id
-                  : item.kind === "tools"
-                    ? item.tools[0].call.id
-                    : "",
-              )}
-              threadKey={
-                item.kind === "message"
-                  ? `m:${item.id}`
-                  : item.kind === "tools" && item.tools.length === 1
-                    ? `t:${item.tools[0].call.id}`
-                    : null
-              }
-              openComments={openComments}
-              onToggleComments={toggleComments}
-              renderComment={commentCard}
-              editing={commentFor}
-              editor={commentEditor}
-              expanded={expandedRows}
-              onToggleExpanded={toggleExpandedRow}
-              onComment={commentOnMessage}
-              onMessageLongPress={openMessageSheet}
+          itemContent={(index, item) => {
+            const previous =
+              index > firstItemIndex
+                ? rows[index - firstItemIndex - 1]
+                : undefined;
+            const continued =
+              item.kind === "message" &&
+              previous?.kind === "message" &&
+              previous.role === item.role;
+            return (
+              <TimelineRow
+                item={item}
+                continued={continued}
+                active={bundle?.thread.status === "running"}
+                commentsForTool={commentsForTool}
+                comments={commentsFor(
+                  item.kind === "message" ? "message" : "tool_call",
+                  item.kind === "message"
+                    ? item.id
+                    : item.kind === "tools"
+                      ? item.tools[0].call.id
+                      : "",
+                )}
+                threadKey={
+                  item.kind === "message"
+                    ? `m:${item.id}`
+                    : item.kind === "tools" && item.tools.length === 1
+                      ? `t:${item.tools[0].call.id}`
+                      : null
+                }
+                openComments={openComments}
+                onToggleComments={toggleComments}
+                renderComment={commentCard}
+                editing={commentFor}
+                editor={commentEditor}
+                expanded={expandedRows}
+                onToggleExpanded={toggleExpandedRow}
+                onComment={commentOnMessage}
+                onMessageLongPress={openMessageSheet}
             />
-          )}
+            );
+          }}
         />
       {!stickToBottom ? (
         <UnstyledButton

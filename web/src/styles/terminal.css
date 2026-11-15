@@ -58,7 +58,7 @@
   max-width: 46ch;
   cursor: copy;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
 }
 
@@ -161,12 +161,12 @@
   flex: none;
   padding: 0 6px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink-muted);
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   line-height: 1;
 }
 
@@ -198,7 +198,7 @@
     height: 1px !important;
     opacity: 0 !important;
     z-index: 1 !important;
-    font-size: 16px !important;
+    font-size: var(--text-read) !important;
   }
 }
 
@@ -244,12 +244,12 @@
   gap: 4px;
   padding: 0 5px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1;
 }
 

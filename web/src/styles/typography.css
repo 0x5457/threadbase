@@ -9,7 +9,7 @@
 
 .prose {
   font-family: var(--read-serif);
-  font-size: 15.5px;
+  font-size: var(--text-read);
   line-height: 1.7;
   letter-spacing: 0;
 }
@@ -48,5 +48,5 @@
 }
 
 /* Alternative (sans) reading style, one edit away if the serif reads worse:
-   .prose { font-family: var(--mantine-font-family); font-size: 15px;
+   .prose { font-family: var(--mantine-font-family); font-size: var(--text-read);
             line-height: 1.65; letter-spacing: 0.005em; } */

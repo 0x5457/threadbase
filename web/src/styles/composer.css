@@ -16,7 +16,7 @@
   min-width: 260px;
   max-width: min(440px, calc(100vw - 16px));
   border-color: var(--line);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--raised);
 }
 
@@ -66,7 +66,7 @@
   overflow: hidden;
   max-width: 100%;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -80,12 +80,12 @@
 
 .suggest-source {
   flex: none;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   opacity: 0.7;
 }
 
 .composer-inner {
-  width: min(760px, 100%);
+  width: min(720px, 100%);
   min-width: 0;
   margin: 0 auto;
   padding: 6px 24px 4px;
@@ -98,7 +98,7 @@
   flex: none;
   align-items: center;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
@@ -141,7 +141,7 @@
   height: 58px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--code);
 }
 
@@ -182,10 +182,10 @@
   top: -1.35em;
   left: -1px;
   padding: 1px 4px;
-  border-radius: 3px 3px 3px 0;
+  border-radius: var(--radius-sm) var(--radius-sm) var(--radius-sm) 0;
   color: #fff;
   font-family: var(--mantine-font-family);
-  font-size: 9px;
+  font-size: var(--text-xs);
   font-weight: 600;
   line-height: 1.4;
   white-space: nowrap;
@@ -193,18 +193,21 @@
 }
 
 .collaboration-carets__selection {
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   opacity: 0.35;
 }
 
 .composer-row {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: 60px minmax(0, 1fr);
   column-gap: 2px;
 }
 
+/* Centre the 18px avatar under the transcript's 32px avatar and start the
+   input on the same x as message text. */
 .composer-row > .mantine-Avatar-root {
   margin-top: 3px;
+  margin-left: 7px;
 }
 
 .composer-input {
@@ -219,7 +222,7 @@
   top: 4px;
   left: 2px;
   color: var(--ink-faint);
-  font-size: 14.5px;
+  font-size: var(--text-md);
   line-height: 1.5;
   pointer-events: none;
 }
@@ -229,7 +232,7 @@
   padding: 2px 2px;
   color: var(--ink);
   font-family: var(--mantine-font-family);
-  font-size: 14.5px;
+  font-size: var(--text-md);
   line-height: 1.5;
   outline: none;
   word-break: break-word;
@@ -244,7 +247,18 @@
   height: 24px;
   align-items: center;
   gap: 1px;
-  padding-left: 42px;
+  padding-left: 62px;
+}
+
+/* The three insert actions are the composer's only chrome; keep them quiet
+   but legible, and give the pointer a clear hover target. */
+.composer-tools .mantine-ActionIcon-root {
+  color: var(--ink-muted);
+}
+
+.composer-tools .mantine-ActionIcon-root:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
 }
 
 .composer-tools .spacer {
@@ -252,7 +266,7 @@
 }
 
 .composer-tools .mantine-Kbd-root {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
 }
 
 /* ── model picker ──────────────────────────────────────────── */
@@ -265,9 +279,11 @@
   min-width: 0;
   align-items: center;
   gap: 2px;
+  height: 22px;
   margin: 0 3px 0 2px;
-  padding: 1px 3px;
-  border-radius: 3px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
   color: var(--ink-muted);
 }
 
@@ -279,7 +295,7 @@
   padding-left: 4px;
   border-left: 1px solid var(--line-soft);
   color: var(--ink-faint);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -329,7 +345,7 @@
      options scrolling underneath it are cut along a visible edge. */
   box-shadow: inset 0 -1px 0 var(--line-soft);
   color: var(--ink-muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   line-height: 1.4;
@@ -345,7 +361,7 @@
   align-items: center;
   gap: 8px;
   padding: 5px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--ink);
   text-align: left;
 }
@@ -358,7 +374,7 @@
 .model-picker-option.custom {
   margin-top: 3px;
   border-top: 1px solid var(--line-soft);
-  border-radius: 0 0 3px 3px;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
 .model-picker-option-body {
@@ -380,7 +396,7 @@
 
 .model-picker-option-value {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
 }
 
 .model-picker-check {
@@ -426,11 +442,11 @@
   height: 20px;
   padding: 0 6px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 

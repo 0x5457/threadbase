@@ -406,7 +406,9 @@ export function InboxView({
         ) : items.length === 0 ? (
           <EmptyState
             icon={<IconInbox size={16} stroke={1.5} />}
-            title={filter === "unread" ? "All clear" : "Nothing here"}
+            title={
+              filter === "unread" ? "You\u2019re all caught up" : "Nothing here"
+            }
             hint={
               filter === "unread"
                 ? "Switch to All to review earlier notifications."
@@ -425,7 +427,7 @@ export function InboxView({
             }
           >
             {filter === "unread"
-              ? "Approvals, questions and mentions waiting on you show up here."
+              ? "Approvals, questions and mentions that need you will land here."
               : "Notifications from every thread show up here."}
           </EmptyState>
         ) : (

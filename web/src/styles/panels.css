@@ -74,6 +74,57 @@
   min-width: 0;
 }
 
+/* The changes panel stacks two rows: title, stats and actions above, the
+   baseline and file count below. One 32px row could not hold both once the
+   aside was narrowed. */
+.changes-head-stacked {
+  height: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 7px 10px 6px;
+}
+
+.changes-head-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.changes-head-main > .mantine-Text-root {
+  flex: none;
+}
+
+.changes-head-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-faint);
+}
+
+.changes-head-meta .mantine-Text-root {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+}
+
+.changes-head-meta .changes-commit-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-meta-sep {
+  flex: none;
+  color: var(--ink-faint);
+}
+
 .changes-head > .mantine-Text-root,
 .changes-head .mantine-Group-root .mantine-Text-root {
   overflow: hidden;
@@ -108,7 +159,7 @@
   border-bottom: 1px solid transparent;
   border-radius: 0;
   color: var(--ink-muted);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
 }
 
 .changes-tabs .mantine-Tabs-tab:hover {
@@ -182,10 +233,12 @@
   margin: 0;
   border: 0;
   border-radius: 0;
+  padding: 4px;
+  background: transparent;
 }
 
 .changes .diff-wrap {
-  --diffs-font-size: 12px;
+  --diffs-font-size: var(--text-sm);
   --diffs-line-height: 20px;
 }
 
@@ -199,7 +252,7 @@
   border-top: 1px solid var(--line);
   background: var(--chrome);
   color: var(--ink-muted);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   user-select: none;
 }
 
@@ -247,7 +300,7 @@
 
 .changes-sheet .mantine-Drawer-content {
   overflow: hidden;
-  border-radius: 14px 14px 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
@@ -280,7 +333,7 @@
 .sheet-grabber::before {
   width: 38px;
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--line);
   content: "";
 }
@@ -303,7 +356,7 @@
   height: auto;
   max-height: 80dvh;
   margin-inline: auto;
-  border-radius: 14px 14px 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   padding-bottom: var(--safe-bottom);
   background: var(--paper);
 }
@@ -352,7 +405,7 @@
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--text-read);
   text-align: left;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
@@ -386,7 +439,7 @@
   background: transparent;
   color: var(--ink-muted);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--text-read);
   touch-action: manipulation;
 }
 
@@ -414,7 +467,7 @@
   width: 6px;
   height: 34px;
   transform: translateY(-50%);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--line-soft);
   content: "";
 }
@@ -453,7 +506,7 @@
 
 .history-count {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
 }
 
 .changes-commit-title {
@@ -516,7 +569,7 @@
 .history-title {
   overflow: hidden;
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -525,7 +578,7 @@
   overflow: hidden;
   color: var(--ink-faint);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -537,7 +590,7 @@
   gap: 5px;
   padding-top: 1px;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -554,7 +607,7 @@
   border-top: 1px solid var(--line-soft);
   color: var(--ink-faint);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
 }
 
 .history-empty {
@@ -569,7 +622,7 @@
 
 .diff-comment-hint {
   margin-right: auto;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   user-select: none;
 }
 

@@ -44,24 +44,24 @@ body {
 }
 
 :root {
-  /* Zed "One Light" (assets/themes/one/one.json). Every surface, state and
-     syntax tone below comes from that theme; the app keeps its own layout,
-     Zed supplies the colour semantics: editor surfaces for paper/code,
-     element.* for interaction, text.* for type, version_control.* for diffs,
-     and the semantic success/warning/error/hint families for status. */
-  --paper: #fafafa; /* editor.background */
-  --chrome: #dcdcdd; /* background */
-  --raised: #ebebec; /* surface.background */
-  --line: #c9c9ca; /* border */
-  --line-soft: #dfdfe0; /* border.variant */
-  --ink: #242529; /* text */
+  /* Zed "One Light" (assets/themes/one/one.json) supplies the ink, syntax and
+     semantic tones. The three surfaces are ours: content is the lightest,
+     the frame (sidebar, title bar, status bar) sits one step below it, and
+     borders stay close to their neighbour so panes separate by value rather
+     than by a drawn grid. */
+  --paper: #ffffff; /* editor.background */
+  --chrome: #f4f4f5; /* background */
+  --raised: #ffffff; /* surface.background */
+  --line: #e4e4e7; /* border */
+  --line-soft: #efeff1; /* border.variant */
+  --ink: #202126; /* text */
   --ink-muted: #58585a; /* text.muted */
   /* Slightly darker than Zed's text.placeholder (#7e8086, 3.8:1 on paper):
-     this tone carries 9.5–11.5px timestamps and metrics, which need ≥4.5:1. */
+     this tone carries 11px timestamps and metrics, which need ≥4.5:1. */
   --ink-faint: #6e7075;
-  --hover: #dfdfe0; /* element.hover */
-  --selected: #cacaca; /* element.selected */
-  --code: #ebebec; /* surface.background */
+  --hover: #ececee; /* element.hover */
+  --selected: #e2e2e5; /* element.selected */
+  --code: #f6f6f7; /* surface.background */
   --brand: #5c78e2; /* text.accent */
   --focus: #7d82e8; /* border.focused */
   --comment: #a449ab; /* syntax.keyword, used for comment anchors */
@@ -119,21 +119,36 @@ body {
   --ansi-bright-cyan: #0bbcd6;
   --ansi-bright-white: #ffffff;
   --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+
+  /* ── scales ─────────────────────────────────────────────────
+     Five text sizes and three radii cover every surface. Component files use
+     these tokens; a raw px value here is a bug, not a preference. */
+  --text-xs: 11px; /* timestamps, metrics, badges */
+  --text-sm: 12.5px; /* controls, labels, tool rows */
+  --text-md: 14px; /* composer, inputs, user bubbles */
+  --text-read: 15.5px; /* prose */
+  --text-lg: 18px; /* page titles */
+
+  --radius-sm: 4px; /* chips, inline code, small controls */
+  --radius-md: 8px; /* cards, images, popovers, window frame */
+  --radius-lg: 12px; /* sheets, bubbles */
+  --radius-pill: 999px;
 }
 
 [data-mantine-color-scheme="dark"] {
-  /* Zed "One Dark", same key mapping as the light block above. */
-  --paper: #282c33;
-  --chrome: #3b414d;
-  --raised: #2f343e;
-  --line: #464b57;
-  --line-soft: #363c46;
+  /* Zed "One Dark", same key mapping as the light block above. The frame is
+     darker than content here, mirroring the light scheme's recessed chrome. */
+  --paper: #24272d;
+  --chrome: #1c1f24;
+  --raised: #2c3037;
+  --line: #373c45;
+  --line-soft: #2c3038;
   --ink: #dce0e5;
   --ink-muted: #a9afbc;
   --ink-faint: #9699a6;
-  --hover: #363c46;
-  --selected: #454a56;
-  --code: #2f343e;
+  --hover: #343943;
+  --selected: #3d434e;
+  --code: #1e2126;
   --brand: #74ade8;
   --focus: #47679e;
   --comment: #b477cf;
@@ -242,7 +257,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background-color: color-mix(in srgb, var(--ink) 20%, transparent);
   background-clip: content-box;
 }
@@ -257,7 +272,7 @@ body {
 }
 
 .mantine-ScrollArea-thumb {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background-color: color-mix(in srgb, var(--ink) 22%, transparent);
 }
 

@@ -58,11 +58,14 @@ export const Message = memo(function Message({
   onComment,
   onLongPress,
   active,
+  continued = false,
 }: {
   item: Extract<ViewItem, { kind: "message" }>;
   onComment: (messageId: string) => void;
   onLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
   active: boolean;
+  /** Same author as the row above: drop the repeated avatar and tighten up. */
+  continued?: boolean;
 }) {
   const agent = item.role === "agent";
   const press = useLongPress(() => onLongPress(item));
@@ -95,23 +98,29 @@ export const Message = memo(function Message({
 
   return (
     <div
-      className={`block message-block ${agent ? "message-agent" : "message-user"}`}
+      className={`block message-block ${
+        agent ? "message-agent" : "message-user"
+      }${continued ? " message-continued" : ""}`}
     >
       <div className="block-gutter" {...press}>
-        <Avatar
-          size={32}
-          radius={agent ? 4 : "xl"}
-          color="gray"
-          variant="light"
-          src={item.avatarUrl ?? undefined}
-          title={`${item.name} · ${timeOf(item.ts)}`}
-          className={agent ? "avatar-agent" : "avatar-user"}
-        >
-          {agent ? "AI" : initials(item.name)}
-        </Avatar>
-        <span className="msg-time" title={new Date(item.ts).toLocaleString()}>
-          {timeOf(item.ts)}
-        </span>
+        {continued ? null : (
+          <>
+            <Avatar
+              size={32}
+              radius={agent ? 4 : "xl"}
+              color="gray"
+              variant="light"
+              src={item.avatarUrl ?? undefined}
+              title={`${item.name} · ${timeOf(item.ts)}`}
+              className={agent ? "avatar-agent" : "avatar-user"}
+            >
+              {agent ? "AI" : initials(item.name)}
+            </Avatar>
+            <span className="msg-time" title={new Date(item.ts).toLocaleString()}>
+              {timeOf(item.ts)}
+            </span>
+          </>
+        )}
       </div>
       <div className="block-body">
         <ActionIcon

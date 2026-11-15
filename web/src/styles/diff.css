@@ -11,7 +11,7 @@
 
 .changes-head .mantine-Group-root .mantine-Text-root {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   letter-spacing: 0.01em;
 }
 
@@ -28,13 +28,17 @@
 .changes-head .mantine-Button-root {
   height: 20px;
   padding: 0 6px;
-  font-size: 11.5px;
+  font-size: var(--text-xs);
 }
 
+/* The diff is a card, not a full-bleed colour block: a hairline frame and a
+   small inset keep the red/green rows off the panel edge. */
 .diff-wrap {
-  border: 0;
-  border-top: 1px solid var(--line-soft);
-  border-radius: 0;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--paper);
 }
 
 /* A patch past the render budget: the counts are the content, so give the
@@ -108,11 +112,11 @@
   gap: 4px;
   padding: 0 6px;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   touch-action: manipulation;
 }
 
@@ -131,6 +135,6 @@
   .diff-wrap-toggle {
     height: 32px;
     padding: 0 10px;
-    font-size: 12.5px;
+    font-size: var(--text-sm);
   }
 }

@@ -166,7 +166,7 @@ export function ComposerToolbar({
           <ActionIcon
             aria-label="Send"
             variant="filled"
-            color="dark"
+            color="brand"
             size={26}
             radius="xl"
             disabled={!hasText || sending || sendBlocked || !writable}

@@ -34,9 +34,9 @@
 .status-readonly {
   padding: 0 5px;
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--ink-muted);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   line-height: 15px;
   text-transform: uppercase;
   letter-spacing: 0.02em;

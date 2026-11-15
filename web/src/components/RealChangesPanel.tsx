@@ -434,89 +434,97 @@ export const RealChangesPanel = memo(function RealChangesPanel({
 
   return (
     <div className="changes">
-      <div className="changes-head">
-        {commit ? (
-          <>
+      <div className="changes-head changes-head-stacked">
+        <div className="changes-head-main">
+          {commit ? (
+            <Group gap={6} wrap="nowrap">
+              <Text size="sm" fw={500}>
+                Commit
+              </Text>
+              <Text size="xs" c="dimmed" className="changes-commit-sha">
+                {commit.shortSha}
+              </Text>
+            </Group>
+          ) : (
             <Text size="sm" fw={500}>
-              Commit
+              Changes
             </Text>
+          )}
+          <Text size="sm" className="stat-add">
+            +{changes?.stats.additions ?? 0}
+          </Text>
+          <Text size="sm" className="stat-del">
+            −{changes?.stats.deletions ?? 0}
+          </Text>
+          <Box className="changes-head-gap" />
+          {commit && onShowCurrent ? (
+            <Button
+              variant="subtle"
+              size="compact-xs"
+              color="gray"
+              leftSection={<IconArrowLeft size={12} stroke={1.5} />}
+              onClick={onShowCurrent}
+            >
+              Current
+            </Button>
+          ) : null}
+          {!commit && onShowHistory ? (
+            <ActionIcon
+              aria-label="Open history"
+              size={22}
+              onClick={onShowHistory}
+            >
+              <IconHistory size={13} stroke={1.5} />
+            </ActionIcon>
+          ) : null}
+          {!commit && onShowFiles ? (
+            <Button
+              variant="subtle"
+              size="compact-xs"
+              color="gray"
+              leftSection={<IconFiles size={12} stroke={1.5} />}
+              onClick={onShowFiles}
+            >
+              Files
+            </Button>
+          ) : null}
+          {onClose ? (
+            <ActionIcon
+              aria-label={commit ? "Close commit" : "Close changes"}
+              data-autofocus
+              size={22}
+              onClick={onClose}
+            >
+              <IconX size={14} stroke={1.5} />
+            </ActionIcon>
+          ) : null}
+        </div>
+        <div className="changes-head-meta">
+          {commit ? (
             <Text
-              size="sm"
+              size="xs"
               c="dimmed"
               className="changes-commit-title"
               title={commit.turnPrompt ?? commit.subject}
             >
               {commit.turnPrompt ?? commit.subject}
             </Text>
-            <Text size="xs" c="dimmed" className="changes-commit-sha">
-              {commit.shortSha}
-            </Text>
-          </>
-        ) : (
-          <>
-            <Text size="sm" fw={500}>
-              Changes
-            </Text>
-            <Group gap={4} wrap="nowrap" className="changes-baseline">
-              <IconGitBranch size={11} stroke={1.5} />
-              <Text size="sm" c="dimmed">
-                Since {changes?.baseLabel ?? "base"}
+          ) : (
+            <>
+              <Group gap={4} wrap="nowrap" className="changes-baseline">
+                <IconGitBranch size={11} stroke={1.5} />
+                <Text size="xs" c="dimmed">
+                  Since {changes?.baseLabel ?? "base"}
+                </Text>
+              </Group>
+              <span className="changes-meta-sep">·</span>
+              <Text size="xs" c="dimmed">
+                {changes?.files.length ?? 0}{" "}
+                {(changes?.files.length ?? 0) === 1 ? "file" : "files"}
               </Text>
-            </Group>
-          </>
-        )}
-        <Text size="sm" className="stat-add">
-          +{changes?.stats.additions ?? 0}
-        </Text>
-        <Text size="sm" className="stat-del">
-          −{changes?.stats.deletions ?? 0}
-        </Text>
-        <Box className="changes-head-gap" />
-        <Text size="xs" c="dimmed">
-          {changes?.files.length ?? 0}{" "}
-          {(changes?.files.length ?? 0) === 1 ? "file" : "files"}
-        </Text>
-        {commit && onShowCurrent ? (
-          <Button
-            variant="subtle"
-            size="compact-xs"
-            color="gray"
-            leftSection={<IconArrowLeft size={12} stroke={1.5} />}
-            onClick={onShowCurrent}
-          >
-            Current
-          </Button>
-        ) : null}
-        {!commit && onShowHistory ? (
-          <ActionIcon
-            aria-label="Open history"
-            size={22}
-            onClick={onShowHistory}
-          >
-            <IconHistory size={13} stroke={1.5} />
-          </ActionIcon>
-        ) : null}
-        {!commit && onShowFiles ? (
-          <Button
-            variant="subtle"
-            size="compact-xs"
-            color="gray"
-            leftSection={<IconFiles size={12} stroke={1.5} />}
-            onClick={onShowFiles}
-          >
-            Files
-          </Button>
-        ) : null}
-        {onClose ? (
-          <ActionIcon
-            aria-label={commit ? "Close commit" : "Close changes"}
-            data-autofocus
-            size={22}
-            onClick={onClose}
-          >
-            <IconX size={14} stroke={1.5} />
-          </ActionIcon>
-        ) : null}
+            </>
+          )}
+        </div>
       </div>
       <ScrollArea className="changes-scroll" type="hover">
         {loading ? (

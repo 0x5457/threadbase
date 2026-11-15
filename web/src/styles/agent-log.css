@@ -4,7 +4,7 @@
   border-top: 1px solid var(--line);
   background: var(--paper);
   color: var(--ink-muted);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
 }
 
 .agent-log-head {
@@ -61,7 +61,7 @@
   border-top: 1px solid var(--line-soft);
   box-sizing: border-box;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
