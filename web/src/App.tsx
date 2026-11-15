@@ -1,5 +1,6 @@
 import {
   AppShell,
+  Button,
   Center,
   Drawer,
   Loader,
@@ -52,12 +53,14 @@ import {
   markInboxRead,
   searchWorkspace,
   updateThread,
+  type CommitSummary,
   type InboxItem,
   type SearchHit,
   type ThreadSummary,
 } from "./api";
 import type { InboxPageDto } from "./api/types/InboxPageDto";
 import { DrawerResizeHandle } from "./components/DrawerResizeHandle";
+import { HistoryPanel } from "./components/HistoryPanel";
 import { InboxView } from "./components/InboxView";
 import { MobileTabBar } from "./components/MobileTabBar";
 import { ReviewDialog } from "./components/ReviewDialog";
@@ -81,6 +84,11 @@ import { pathFor, useRoute } from "./lib/router";
 const RealThreadView = lazy(() =>
   import("./components/RealThreadView").then((module) => ({
     default: module.RealThreadView,
+  })),
+);
+const SubagentThreadView = lazy(() =>
+  import("./components/SubagentThreadView").then((module) => ({
+    default: module.SubagentThreadView,
   })),
 );
 const RealChangesPanel = lazy(() =>
@@ -158,10 +166,11 @@ function Workspace() {
       ? "settings"
       : route.kind === "project"
         ? "project"
-        : route.kind === "thread"
+        : route.kind === "thread" || route.kind === "subagent"
           ? "thread"
           : "inbox";
-  const routeThreadId = route.kind === "thread" ? route.threadId : null;
+  const routeThreadId =
+    route.kind === "thread" || route.kind === "subagent" ? route.threadId : null;
   const [selectedThread, setSelectedThread] = useState<ThreadSummary | null>(
     null,
   );
@@ -190,10 +199,18 @@ function Workspace() {
       return true;
     }
   });
-  const [asideTab, setAsideTab] = useState<"changes" | "files">("changes");
+  const [asideTab, setAsideTab] = useState<"changes" | "files" | "history">(
+    "changes",
+  );
+  // A checkpoint selected from History. When set, the Changes panel shows
+  // that commit's own diff instead of the worktree.
+  const [viewCommit, setViewCommit] = useState<CommitSummary | null>(null);
   // The file browser is mounted on first use only; until then it costs a
   // directory request and DOM that a thread open does not need.
   const [filesOpened, setFilesOpened] = useState(false);
+  // History is likewise mounted on first use, and keeps its scroll when the
+  // user switches back to Changes.
+  const [historyOpened, setHistoryOpened] = useState(false);
   // The terminal drawer is workspace state, not thread state: switching thread
   // remounts it against that thread's shell.
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -420,10 +437,25 @@ function Workspace() {
     setFilesOpened(true);
     setAsideTab("files");
   }, []);
-  const showChanges = useCallback(() => setAsideTab("changes"), []);
+  const showHistory = useCallback(() => {
+    setHistoryOpened(true);
+    setAsideTab("history");
+  }, []);
+  const showChanges = useCallback(() => {
+    setViewCommit(null);
+    setAsideTab("changes");
+  }, []);
+
+  // Opening a different thread must not leave the panel on a commit that
+  // belongs to the previous worktree.
+  useEffect(() => {
+    setViewCommit(null);
+  }, [selectedThread?.id]);
 
   const openChanges = () => {
     if (!hasWorktree) return;
+    setViewCommit(null);
+    setAsideTab("changes");
     blurActiveInput();
     // The desktop panel is persistent, not a drawer: reveal it in place.
     if (wide) {
@@ -432,6 +464,17 @@ function Workspace() {
     }
     changes.open();
   };
+
+  const openHistory = useCallback(() => {
+    if (!selectedThread?.worktreePath) return;
+    blurActiveInput();
+    showHistory();
+    if (wide) {
+      setAsideOpen(true);
+      return;
+    }
+    changes.open();
+  }, [changes.open, selectedThread?.worktreePath, setAsideOpen, showHistory, wide]);
 
   // The phone tab bar opens the sheet from the bottom; when the nav drawer is
   // over the thread, let it finish its close transition first, otherwise the
@@ -520,7 +563,20 @@ function Workspace() {
     };
   }, [routeThreadId, allThreads.data, selectedThread]);
 
-  const showAside = view === "thread" && selectedThread !== null;
+  const subagentRoute = route.kind === "subagent";
+  // Prefer the polling thread list: it carries fresher subagent statuses than
+  // the object the route resolved once.
+  const liveThread =
+    (routeThreadId
+      ? allThreads.data?.threads.find((thread) => thread.id === routeThreadId)
+      : null) ?? selectedThread;
+  const selectedSubagent = subagentRoute
+    ? (liveThread?.subagents.find(
+        (subagent) => String(subagent.id) === route.subagentId,
+      ) ?? null)
+    : null;
+  const showAside =
+    view === "thread" && selectedThread !== null && !subagentRoute;
   const hasWorktree = Boolean(selectedThread?.worktreePath);
   const threadProject = projects.data?.projects.find(
     (project) => project.id === selectedThread?.projectId,
@@ -547,9 +603,31 @@ function Workspace() {
       ? "Inbox"
       : view === "settings"
         ? "Settings"
-        : (selectedThread?.title ?? "Workspace");
+        : selectedSubagent
+          ? [selectedSubagent.title, selectedSubagent.description]
+              .filter(Boolean)
+              .join(" · ")
+          : (selectedThread?.title ?? "Workspace");
   const participants =
     view === "thread" ? (selectedThread?.participants ?? []) : [];
+
+  const openSubagent = useCallback(
+    (thread: ThreadSummary, subagent: ThreadSummary["subagents"][number]) => {
+      setSelectedThread(thread);
+      setAsideTab("changes");
+      setOnlineUserIds([]);
+      changes.close();
+      go(
+        pathFor({
+          kind: "subagent",
+          projectId: thread.projectId,
+          threadId: thread.id,
+          subagentId: String(subagent.id),
+        }),
+      );
+    },
+    [changes.close, go],
+  );
 
   const openThread = useCallback(
     (thread: ThreadSummary) => {
@@ -875,7 +953,9 @@ function Workspace() {
         <TitleBar
           title={title}
           running={
-            route.kind === "thread" && selectedThread?.status === "running"
+            subagentRoute
+              ? selectedSubagent?.status === "running"
+              : route.kind === "thread" && selectedThread?.status === "running"
           }
           participants={participants}
           onlineUserIds={onlineUserIds}
@@ -903,6 +983,7 @@ function Workspace() {
           onOpenPalette={() => spotlight.open()}
           onOpenInbox={openInbox}
           onOpenChanges={openChanges}
+          onOpenHistory={openHistory}
           onReviews={() => {
             if (!selectedThread) {
               notifications.show({
@@ -964,12 +1045,16 @@ function Workspace() {
 
           activeView={view}
           selectedThreadId={selectedThread?.id ?? null}
+          selectedSubagentId={subagentRoute ? route.subagentId : null}
           activeProjectId={
-            route.kind === "project" || route.kind === "thread"
+            route.kind === "project" ||
+            route.kind === "thread" ||
+            route.kind === "subagent"
               ? route.projectId
               : null
           }
           onSelectThread={openThread}
+          onSelectSubagent={openSubagent}
           onSelectProject={openProject}
         />
         <AppShell.Main className="main">
@@ -978,6 +1063,33 @@ function Workspace() {
           ) : view === "settings" ? (
             <Suspense fallback={<ChunkLoading />}>
               <SettingsView />
+            </Suspense>
+          ) : selectedThread && subagentRoute ? (
+            <Suspense fallback={<EmptyState loading title="Opening subagent" />}>
+              {selectedSubagent ? (
+                <SubagentThreadView
+                  key={`${selectedThread.id}:${selectedSubagent.id}`}
+                  threadId={selectedThread.id}
+                  subagent={selectedSubagent}
+                  parentTitle={selectedThread.title}
+                  onBack={() => openThread(selectedThread)}
+                />
+              ) : (
+                <EmptyState
+                  title="Subagent not found"
+                  action={
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      onClick={() => openThread(selectedThread)}
+                    >
+                      Back to thread
+                    </Button>
+                  }
+                >
+                  This thread no longer reports that subagent.
+                </EmptyState>
+              )}
             </Suspense>
           ) : selectedThread ? (
             <Suspense fallback={<EmptyState loading title="Opening thread" />}>
@@ -1015,10 +1127,15 @@ function Workspace() {
         </AppShell.Main>
         {wide ? (
           <AppShell.Aside p={0} className="aside">
-            {selectedThread && hasWorktree ? (
+            {/* A collapsed aside is `display: none`, but Mantine keeps its
+                children mounted. That mounted panel polled the thread, picked
+                its first file and parsed that diff on every thread switch —
+                invisible work that froze the tab outright when the file was
+                large. Mount the panels only while the aside is on screen. */}
+            {selectedThread && hasWorktree && !asideCollapsed ? (
               <Suspense fallback={<ChunkLoading />}>
-                {/* Both tabs stay mounted: switching back to Changes reuses
-                    the parsed diff instead of re-tokenizing it on the main
+                {/* Panels stay mounted: switching back to Changes reuses the
+                    parsed diff instead of re-tokenizing it on the main
                     thread. */}
                 <div
                   className="aside-panel"
@@ -1029,7 +1146,10 @@ function Workspace() {
                   <RealChangesPanel
                     key={selectedThread.id}
                     threadId={selectedThread.id}
+                    commit={viewCommit}
+                    onShowCurrent={showChanges}
                     onShowFiles={showFiles}
+                    onShowHistory={openHistory}
                     onClose={collapseAside}
                   />
                 </div>
@@ -1048,6 +1168,25 @@ function Workspace() {
                     />
                   </div>
                 ) : null}
+                {historyOpened ? (
+                  <div
+                    className="aside-panel"
+                    style={{
+                      display: asideTab === "history" ? undefined : "none",
+                    }}
+                  >
+                    <HistoryPanel
+                      threadId={selectedThread.id}
+                      selectedSha={viewCommit?.sha ?? null}
+                      onSelect={(entry) => {
+                        setViewCommit(entry);
+                        setAsideTab("changes");
+                      }}
+                      onShowChanges={showChanges}
+                      onClose={collapseAside}
+                    />
+                  </div>
+                ) : null}
               </Suspense>
             ) : null}
           </AppShell.Aside>
@@ -1057,7 +1196,9 @@ function Workspace() {
             view={view}
             unreadCount={inboxUnread.data?.unread ?? 0}
             threadsOpened={navOpened}
-            changesEnabled={Boolean(selectedThread) && hasWorktree}
+            changesEnabled={
+              Boolean(selectedThread) && hasWorktree && !subagentRoute
+            }
             onInbox={openInbox}
             onThreads={toggleNav}
             onChanges={openChangesFromTabs}
@@ -1116,8 +1257,11 @@ function Workspace() {
                   <RealChangesPanel
                     key={selectedThread.id}
                     threadId={selectedThread.id}
+                    commit={viewCommit}
+                    onShowCurrent={showChanges}
                     onClose={changes.close}
                     onShowFiles={showFiles}
+                    onShowHistory={openHistory}
                   />
                 </div>
                 {filesOpened ? (
@@ -1132,6 +1276,25 @@ function Workspace() {
                       threadId={selectedThread.id}
                       onClose={changes.close}
                       onShowChanges={showChanges}
+                    />
+                  </div>
+                ) : null}
+                {historyOpened ? (
+                  <div
+                    className="aside-panel"
+                    style={{
+                      display: asideTab === "history" ? undefined : "none",
+                    }}
+                  >
+                    <HistoryPanel
+                      threadId={selectedThread.id}
+                      selectedSha={viewCommit?.sha ?? null}
+                      onSelect={(entry) => {
+                        setViewCommit(entry);
+                        setAsideTab("changes");
+                      }}
+                      onShowChanges={showChanges}
+                      onClose={changes.close}
                     />
                   </div>
                 ) : null}
@@ -1175,6 +1338,7 @@ function Workspace() {
         onClose={review.close}
         onOpenChanges={() => {
           review.close();
+          setViewCommit(null);
           setAsideTab("changes");
           // Let the review's history entry unwind before the drawer pushes its
           // own; otherwise the drawer can be dismissed by the review's back.
@@ -1219,6 +1383,10 @@ export function App() {
         <Route path="/settings" element={<Workspace />} />
         <Route path="/p/:projectId" element={<Workspace />} />
         <Route path="/p/:projectId/t/:threadId" element={<Workspace />} />
+        <Route
+          path="/p/:projectId/t/:threadId/s/:subagentId"
+          element={<Workspace />}
+        />
         <Route path="*" element={<Navigate to="/inbox" replace />} />
       </Routes>
     </BrowserRouter>

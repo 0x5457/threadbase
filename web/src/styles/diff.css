@@ -37,6 +37,15 @@
   border-radius: 0;
 }
 
+/* A patch past the render budget: the counts are the content, so give the
+   two-line notice the panel's padding instead of a full-height diff. */
+.diff-too-large {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+}
+
 .diff-wrap :where(code, pre, .line-number, [class*="line-number"]) {
   font-variant-numeric: tabular-nums;
 }

@@ -1,6 +1,9 @@
 //! Git diff baselines, per-file review, Seen state and merge-back.
 
+mod history;
 mod parse;
+
+pub use history::history;
 
 use parse::{
     file_line_stats, hash_bytes, hash_text, is_binary_bytes, is_binary_file, parse_hunks,
@@ -37,74 +40,7 @@ pub async fn list(
 ) -> Result<ChangesDto, ServerError> {
     let worktree = worktree(row)?;
     let resolved = resolve_baseline(&worktree, row, baseline).await?;
-    let numstat = git_stdout(&worktree, &["diff", "--numstat", &resolved.reference]).await?;
-    let name_status =
-        git_stdout(&worktree, &["diff", "--name-status", &resolved.reference]).await?;
-    let untracked = git_stdout(&worktree, &["ls-files", "--others", "--exclude-standard"])
-        .await
-        .unwrap_or_default();
-    let mut files: BTreeMap<String, FileChangeDto> = BTreeMap::new();
-    for line in name_status.lines() {
-        let mut parts = line.split('\t');
-        let status = parts.next().unwrap_or_default();
-        let first = parts.next().unwrap_or_default().to_owned();
-        let second = parts.next().map(ToOwned::to_owned);
-        let (path, old_path, status) = if status.starts_with('R') {
-            let new_path = second.unwrap_or_default();
-            (new_path, Some(first), FileStatus::Renamed)
-        } else {
-            (first, None, parse_status(status))
-        };
-        files.entry(path.clone()).or_insert(FileChangeDto {
-            path,
-            old_path,
-            status,
-            additions: 0,
-            deletions: 0,
-            binary: false,
-            seen: false,
-        });
-    }
-    for line in numstat.lines() {
-        let mut parts = line.splitn(3, '\t');
-        let added = parts.next().unwrap_or("0");
-        let deleted = parts.next().unwrap_or("0");
-        let path = parts.next().unwrap_or_default().to_owned();
-        if path.is_empty() {
-            continue;
-        }
-        let binary = added == "-" || deleted == "-";
-        let entry = files.entry(path.clone()).or_insert(FileChangeDto {
-            path: path.clone(),
-            old_path: None,
-            status: FileStatus::Modified,
-            additions: 0,
-            deletions: 0,
-            binary: false,
-            seen: false,
-        });
-        entry.additions = added.parse().unwrap_or(0);
-        entry.deletions = deleted.parse().unwrap_or(0);
-        entry.binary = binary;
-    }
-    for path in untracked.lines().filter(|line| !line.trim().is_empty()) {
-        let full = ensure_within(&worktree, Path::new(path)).map_err(|_| {
-            ServerError(ApiError::new(
-                threadbase_shared::ErrorCode::PathOutsideWorkspace,
-                "file path is outside the thread worktree",
-            ))
-        })?;
-        let (binary, additions) = file_line_stats(&full).await;
-        files.entry(path.to_owned()).or_insert(FileChangeDto {
-            path: path.to_owned(),
-            old_path: None,
-            status: FileStatus::Untracked,
-            additions,
-            deletions: 0,
-            binary,
-            seen: false,
-        });
-    }
+    let mut files = collect_files(&worktree, &resolved.reference, None).await?;
     let seen_map = seen_hashes(pool, row, user, &resolved.reference).await?;
     let mut seen_count = 0;
     for file in files.values_mut() {
@@ -150,6 +86,195 @@ pub async fn list(
         stats,
         commit: row.base_sha.clone(),
     })
+}
+
+/// Changed files between two revisions, or from `from` to the working tree
+/// when `to` is `None`. Untracked files only exist on the working-tree side, so
+/// commit ranges never look at `ls-files --others`.
+async fn collect_files(
+    worktree: &Path,
+    from: &str,
+    to: Option<&str>,
+) -> Result<BTreeMap<String, FileChangeDto>, ServerError> {
+    let mut numstat_args = vec!["diff", "--numstat", from];
+    let mut status_args = vec!["diff", "--name-status", from];
+    if let Some(to) = to {
+        numstat_args.push(to);
+        status_args.push(to);
+    }
+    let numstat = git_stdout(worktree, &numstat_args).await?;
+    let name_status = git_stdout(worktree, &status_args).await?;
+    let mut files: BTreeMap<String, FileChangeDto> = BTreeMap::new();
+    for line in name_status.lines() {
+        let mut parts = line.split('\t');
+        let status = parts.next().unwrap_or_default();
+        let first = parts.next().unwrap_or_default().to_owned();
+        let second = parts.next().map(ToOwned::to_owned);
+        let (path, old_path, status) = if status.starts_with('R') {
+            let new_path = second.unwrap_or_default();
+            (new_path, Some(first), FileStatus::Renamed)
+        } else {
+            (first, None, parse_status(status))
+        };
+        files.entry(path.clone()).or_insert(FileChangeDto {
+            path,
+            old_path,
+            status,
+            additions: 0,
+            deletions: 0,
+            binary: false,
+            seen: false,
+        });
+    }
+    for line in numstat.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let added = parts.next().unwrap_or("0");
+        let deleted = parts.next().unwrap_or("0");
+        let path = parts.next().unwrap_or_default().to_owned();
+        if path.is_empty() {
+            continue;
+        }
+        let binary = added == "-" || deleted == "-";
+        let entry = files.entry(path.clone()).or_insert(FileChangeDto {
+            path: path.clone(),
+            old_path: None,
+            status: FileStatus::Modified,
+            additions: 0,
+            deletions: 0,
+            binary: false,
+            seen: false,
+        });
+        entry.additions = added.parse().unwrap_or(0);
+        entry.deletions = deleted.parse().unwrap_or(0);
+        entry.binary = binary;
+    }
+    if to.is_none() {
+        let untracked = git_stdout(worktree, &["ls-files", "--others", "--exclude-standard"])
+            .await
+            .unwrap_or_default();
+        for path in untracked.lines().filter(|line| !line.trim().is_empty()) {
+            let full = ensure_within(worktree, Path::new(path)).map_err(|_| {
+                ServerError(ApiError::new(
+                    threadbase_shared::ErrorCode::PathOutsideWorkspace,
+                    "file path is outside the thread worktree",
+                ))
+            })?;
+            let (binary, additions) = file_line_stats(&full).await;
+            files.entry(path.to_owned()).or_insert(FileChangeDto {
+                path: path.to_owned(),
+                old_path: None,
+                status: FileStatus::Untracked,
+                additions,
+                deletions: 0,
+                binary,
+                seen: false,
+            });
+        }
+    }
+    Ok(files)
+}
+
+fn stats_of(files: &BTreeMap<String, FileChangeDto>) -> ChangeStats {
+    let mut additions = 0;
+    let mut deletions = 0;
+    for file in files.values() {
+        additions += file.additions;
+        deletions += file.deletions;
+    }
+    ChangeStats {
+        files: u32::try_from(files.len()).unwrap_or(0),
+        additions,
+        deletions,
+        seen: 0,
+        total: u32::try_from(files.len()).unwrap_or(0),
+    }
+}
+
+/// A commit's own changes: its first parent to the commit. Root commits diff
+/// against the empty tree so the same code path serves every entry.
+pub async fn commit_changes(row: &ThreadRow, requested: &str) -> Result<ChangesDto, ServerError> {
+    let worktree = worktree(row)?;
+    let sha = resolve_commit(&worktree, requested).await?;
+    let parent = parent_reference(&worktree, &sha).await;
+    let files = collect_files(&worktree, &parent, Some(&sha)).await?;
+    let stats = stats_of(&files);
+    let short: String = sha.chars().take(8).collect();
+    Ok(ChangesDto {
+        baseline: BaselineDto {
+            kind: BaselineKind::Commit,
+            commit: Some(sha.clone()),
+        },
+        base_label: short,
+        files: files.into_values().collect(),
+        stats,
+        commit: Some(sha),
+    })
+}
+
+pub async fn commit_file_diff(
+    row: &ThreadRow,
+    requested: &str,
+    path: &str,
+) -> Result<FileDiffDto, ServerError> {
+    let worktree = worktree(row)?;
+    let sha = resolve_commit(&worktree, requested).await?;
+    let parent = parent_reference(&worktree, &sha).await;
+    let full = ensure_within(&worktree, Path::new(path)).map_err(|_| {
+        ServerError(ApiError::new(
+            threadbase_shared::ErrorCode::PathOutsideWorkspace,
+            "file path is outside the thread worktree",
+        ))
+    })?;
+    let patch = git_stdout(
+        &worktree,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "-U3",
+            &parent,
+            &sha,
+            "--",
+            path,
+        ],
+    )
+    .await?;
+    let binary = patch.contains("Binary files") || is_binary_file(&full).await;
+    let hunks = if binary {
+        Vec::new()
+    } else {
+        parse_hunks(path, &patch)
+    };
+    let status = file_status_between(&worktree, &parent, Some(&sha), path).await;
+    Ok(FileDiffDto {
+        path: path.to_owned(),
+        old_path: None,
+        status,
+        binary,
+        hunks,
+    })
+}
+
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+async fn parent_reference(worktree: &Path, sha: &str) -> String {
+    git_stdout(worktree, &["rev-parse", &format!("{sha}^")])
+        .await
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_else(|_| EMPTY_TREE.to_owned())
+}
+
+/// Commit shas arrive in a URL, so only accept a hex object name before
+/// handing it to git. Full and abbreviated shas both work.
+async fn resolve_commit(worktree: &Path, requested: &str) -> Result<String, ServerError> {
+    let valid =
+        (7..=64).contains(&requested.len()) && requested.chars().all(|ch| ch.is_ascii_hexdigit());
+    if !valid {
+        return Err(ServerError(ApiError::validation("invalid commit id")));
+    }
+    git::rev_parse(worktree, requested)
+        .await
+        .map_err(|_| ServerError(ApiError::validation("commit was not found")))
 }
 
 pub async fn file_diff(
@@ -603,10 +728,24 @@ async fn resolve_baseline(
 }
 
 async fn file_status(worktree: &Path, reference: &str, path: &str) -> FileStatus {
+    file_status_between(worktree, reference, None, path).await
+}
+
+async fn file_status_between(
+    worktree: &Path,
+    from: &str,
+    to: Option<&str>,
+    path: &str,
+) -> FileStatus {
+    let mut args = vec!["diff", "--name-status", from];
+    if let Some(to) = to {
+        args.push(to);
+    }
+    args.extend(["--", path]);
     let output = Command::new("git")
         .arg("-C")
         .arg(worktree)
-        .args(["diff", "--name-status", reference, "--", path])
+        .args(&args)
         .output()
         .await;
     let Ok(output) = output else {

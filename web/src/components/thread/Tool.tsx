@@ -4,6 +4,7 @@ import type { ToolCallData } from "../../api";
 import type { ToolKind } from "../../api/types/ToolKind";
 import type { ViewItem } from "../../lib/thread-events";
 import { DiffView } from "../DiffView";
+import { countLines, exceedsDiffBudget, budgetLabel } from "../../lib/diff-size";
 import { ImageLightbox } from "./ImageLightbox";
 import { StatusDot } from "./StatusDot";
 import { describeTitle, formatDuration } from "./format";
@@ -211,13 +212,24 @@ export const Tool = memo(function Tool({
   const call: ToolCallData = item.call;
   const path = call.locations[0]?.path;
   const patch = call.diff?.patch ?? null;
+  // A tool can write a whole generated file. Splitting that patch to count
+  // lines allocates a half-million-element array on every render, and the
+  // renderer would then mount the entire file as DOM.
+  const patchTooLarge = patch !== null && exceedsDiffBudget(patch);
   // Short edits show the real diff inline, the way the edit tool used to read.
   // Long ones keep a changed-lines preview and a "Full diff" toggle.
-  const inlineDiff = Boolean(patch && call.kind === "edit" && patch.split("\n").length <= 60);
+  const inlineDiff = Boolean(
+    patch &&
+      !patchTooLarge &&
+      call.kind === "edit" &&
+      countLines(patch, 60) <= 60,
+  );
   const preview = inlineDiff
     ? null
     : patch
-      ? diffTextPreview(patch)
+      ? patchTooLarge
+        ? null
+        : diffTextPreview(patch)
       : toolPreview(call);
   const output = parseOutput(call.output);
   const outputImages = output?.filter(
@@ -281,6 +293,11 @@ export const Tool = memo(function Tool({
             </Text>
           ) : null}
         </Group>
+        {patchTooLarge && !expanded ? (
+          <Text size="xs" c="dimmed" className="tool-metric">
+            Diff is too large to show ({budgetLabel()})
+          </Text>
+        ) : null}
         {inlineDiff && patch ? <DiffView patch={patch} /> : null}
         {preview ? (
           <div className="tool-lines">

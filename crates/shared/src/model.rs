@@ -901,6 +901,16 @@ pub struct ElicitationDto {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CommentSide {
+    /// The old file column; a comment on a deleted line.
+    Old,
+    /// The new file column; a comment on an added or context line.
+    New,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(
     tag = "kind",
@@ -927,6 +937,10 @@ pub enum CommentAnchor {
         path: String,
         hunk_id: String,
         line: u32,
+        /// Which column the line number belongs to. Older anchors do not have
+        /// it; the reader falls back to finding the number on either side.
+        #[serde(default)]
+        side: Option<CommentSide>,
         context_hash: Option<String>,
     },
     Thread,
@@ -1076,6 +1090,39 @@ pub struct ChangesDto {
     pub files: Vec<FileChangeDto>,
     pub stats: ChangeStats,
     pub commit: Option<String>,
+}
+
+/// One commit in a thread's worktree history. The subject is git's own, but
+/// `checkpoint` marks the snapshots Threadbase writes before a turn and
+/// `turn_prompt` names the turn whose work the snapshot captured.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CommitSummaryDto {
+    pub sha: String,
+    pub short_sha: String,
+    /// Committer time in Unix milliseconds.
+    pub at: i64,
+    pub author: String,
+    pub subject: String,
+    pub additions: u32,
+    pub deletions: u32,
+    pub files: u32,
+    pub checkpoint: bool,
+    pub turn_id: Option<String>,
+    pub turn_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThreadHistoryDto {
+    pub base_branch: String,
+    pub base_sha: Option<String>,
+    pub head: Option<String>,
+    /// Newest first. An empty list means the worktree has not committed
+    /// anything since the base commit yet.
+    pub entries: Vec<CommitSummaryDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

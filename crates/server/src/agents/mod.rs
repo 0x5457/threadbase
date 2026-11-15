@@ -1147,7 +1147,7 @@ async fn snapshot_worktree(inner: &Inner, thread_id: &str) {
         return;
     };
     let Ok(snapshot) =
-        git::snapshot_worktree(std::path::Path::new(&worktree), "Threadbase turn snapshot").await
+        git::snapshot_worktree(std::path::Path::new(&worktree), git::TURN_SNAPSHOT_MESSAGE).await
     else {
         return;
     };

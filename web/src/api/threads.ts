@@ -13,6 +13,8 @@ import type { OlderEventsDto } from "./types/OlderEventsDto";
 import type { SendMessageResponse } from "./types/SendMessageResponse";
 import type { ThreadBundleDto } from "./types/ThreadBundleDto";
 import type { ThreadDto } from "./types/ThreadDto";
+import type { ThreadHistoryResponse } from "./types/ThreadHistoryResponse";
+import type { CommitSummaryDto } from "./types/CommitSummaryDto";
 import type { ThreadResponse } from "./types/ThreadResponse";
 import type { ThreadsResponse } from "./types/ThreadsResponse";
 import type { ThreadWatchRequest } from "./types/ThreadWatchRequest";
@@ -23,6 +25,8 @@ import type { WatchState } from "./types/WatchState";
 export type ThreadSummary = ThreadDto;
 export type ThreadBundle = ThreadBundleDto;
 export type ThreadChanges = ChangesDto;
+export type ThreadHistory = ThreadHistoryResponse["history"];
+export type CommitSummary = CommitSummaryDto;
 export type { MergeBackResponse } from "./types/MergeBackResponse";
 export type FileChange = FileChangeDto;
 export type FileDiff = FileDiffDto;
@@ -88,6 +92,23 @@ export function getFileDiff(threadId: string, path: string, baseline?: Baseline)
   if (baseline?.commit) params.set("commit", baseline.commit);
   return request<FileDiffDto>(
     `/api/threads/${threadId}/changes/file?${params.toString()}`,
+  );
+}
+
+/** Checkpoint commits newer than the thread's base, newest first. */
+export function getThreadHistory(threadId: string) {
+  return request<ThreadHistoryResponse>(`/api/threads/${threadId}/commits`);
+}
+
+/** One commit's own diff: parent to commit. */
+export function getCommitChanges(threadId: string, sha: string) {
+  return request<ChangesDto>(`/api/threads/${threadId}/commits/${sha}`);
+}
+
+export function getCommitFileDiff(threadId: string, sha: string, path: string) {
+  const params = new URLSearchParams({ path });
+  return request<FileDiffDto>(
+    `/api/threads/${threadId}/commits/${sha}/file?${params.toString()}`,
   );
 }
 

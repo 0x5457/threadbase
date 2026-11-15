@@ -9,7 +9,13 @@ export type Route =
   | { kind: "inbox" }
   | { kind: "settings" }
   | { kind: "project"; projectId: string }
-  | { kind: "thread"; projectId: string; threadId: string };
+  | { kind: "thread"; projectId: string; threadId: string }
+  | {
+      kind: "subagent";
+      projectId: string;
+      threadId: string;
+      subagentId: string;
+    };
 
 /** Canonical pathname for a route. */
 export function pathFor(route: Route): string {
@@ -22,17 +28,25 @@ export function pathFor(route: Route): string {
       return `/p/${route.projectId}`;
     case "thread":
       return `/p/${route.projectId}/t/${route.threadId}`;
+    case "subagent":
+      // Workflow children are stored as `<parent>/<child>`; the slash must be
+      // encoded or the URL would read as another route segment.
+      return `/p/${route.projectId}/t/${route.threadId}/s/${encodeURIComponent(route.subagentId)}`;
   }
 }
 
 /** Current route from the matched URL params. */
 export function useRoute(): Route {
   const { pathname } = useLocation();
-  const { projectId, threadId } = useParams<{
+  const { projectId, threadId, subagentId } = useParams<{
     projectId?: string;
     threadId?: string;
+    subagentId?: string;
   }>();
 
+  if (projectId && threadId && subagentId) {
+    return { kind: "subagent", projectId, threadId, subagentId };
+  }
   if (projectId && threadId) return { kind: "thread", projectId, threadId };
   if (projectId) return { kind: "project", projectId };
   if (pathname.replace(/\/+$/, "") === "/settings") {

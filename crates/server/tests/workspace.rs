@@ -12,8 +12,8 @@ use threadbase_shared::api::{
     UpdateThreadRequest,
 };
 use threadbase_shared::{
-    Actor, BaselineDto, BaselineKind, CommentAnchor, ErrorCode, MessageId, Role, ThreadEvent,
-    ThreadStatus, TurnId, UserBrief,
+    Actor, BaselineDto, BaselineKind, CommentAnchor, CommentSide, ErrorCode, MessageId, Role,
+    ThreadEvent, ThreadStatus, TurnId, UserBrief,
 };
 use tokio::process::Command as TokioCommand;
 
@@ -980,6 +980,7 @@ async fn diff_comment_hunk_ids_are_reresolved_then_degrade() {
                 path: "hunks.txt".into(),
                 hunk_id: hunk.id.clone(),
                 line: 21,
+                side: Some(CommentSide::New),
                 context_hash: Some(original_hash.clone()),
             },
             parent_id: None,
@@ -1019,7 +1020,10 @@ async fn diff_comment_hunk_ids_are_reresolved_then_degrade() {
     let resolved = listed.iter().find(|entry| entry.id == comment.id).unwrap();
     assert!(!resolved.anchor_changed);
     match &resolved.anchor {
-        CommentAnchor::Diff { hunk_id, .. } => assert_eq!(hunk_id, "h3"),
+        CommentAnchor::Diff { hunk_id, side, .. } => {
+            assert_eq!(hunk_id, "h3");
+            assert_eq!(*side, Some(CommentSide::New));
+        }
         other => panic!("anchor should be re-resolved to the diff hunk: {other:?}"),
     }
 
@@ -1076,6 +1080,7 @@ async fn diff_comment_drift_and_revert_to_base() {
                 path: "README.md".into(),
                 hunk_id: hunk.id.clone(),
                 line: 2,
+                side: Some(CommentSide::New),
                 context_hash: Some(hunk.context_hash.clone()),
             },
             parent_id: None,
@@ -1108,6 +1113,83 @@ async fn diff_comment_drift_and_revert_to_base() {
         "one\ntwo\n"
     );
     assert!(!worktree.join("untracked.txt").exists());
+}
+
+#[tokio::test]
+async fn thread_history_lists_checkpoints_and_commit_diffs() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    let worktree = Path::new(thread.worktree_path.as_deref().unwrap());
+    let row = threads::load_row(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+
+    let events = EventStore::new(fixture.pool.clone());
+    events
+        .append(
+            &thread.id,
+            Actor::system(),
+            ThreadEvent::TurnStarted {
+                turn_id: TurnId::new(),
+                message_id: MessageId::new(),
+                author: UserBrief::from_user(&fixture.current.user),
+                authors: Vec::new(),
+                prompt: "change the readme".into(),
+                attachments: Vec::new(),
+            },
+            EventMeta::default(),
+        )
+        .await
+        .unwrap();
+    // Committer timestamps are whole seconds; let the turn event land in an
+    // earlier one so the checkpoint maps back to it.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    tokio::fs::write(worktree.join("README.md"), "one\nTWO\n")
+        .await
+        .unwrap();
+    git(worktree, &["add", "-A"]);
+    git(worktree, &["commit", "-m", "Threadbase turn snapshot"]);
+    events
+        .append(
+            &thread.id,
+            Actor::system(),
+            ThreadEvent::TurnStarted {
+                turn_id: TurnId::new(),
+                message_id: MessageId::new(),
+                author: UserBrief::from_user(&fixture.current.user),
+                authors: Vec::new(),
+                prompt: "follow up".into(),
+                attachments: Vec::new(),
+            },
+            EventMeta::default(),
+        )
+        .await
+        .unwrap();
+
+    let history = diff::history(&fixture.pool, &row).await.unwrap();
+    assert_eq!(history.entries.len(), 1);
+    let entry = &history.entries[0];
+    assert!(entry.checkpoint);
+    assert_eq!(entry.turn_prompt.as_deref(), Some("change the readme"));
+    assert_eq!((entry.additions, entry.deletions, entry.files), (1, 1, 1));
+    assert_eq!(entry.short_sha.len(), 7);
+
+    let commit = diff::commit_changes(&row, &entry.sha).await.unwrap();
+    assert_eq!(commit.files.len(), 1);
+    assert_eq!(commit.files[0].path, "README.md");
+    assert_eq!(commit.stats.additions, 1);
+    assert_eq!(commit.stats.deletions, 1);
+    let file = diff::commit_file_diff(&row, &entry.sha, "README.md")
+        .await
+        .unwrap();
+    assert!(file
+        .hunks
+        .iter()
+        .flat_map(|hunk| &hunk.lines)
+        .any(|line| line.content == "TWO"));
+
+    assert!(diff::commit_changes(&row, "not-a-sha").await.is_err());
 }
 
 #[tokio::test]

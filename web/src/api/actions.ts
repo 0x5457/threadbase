@@ -4,6 +4,7 @@ import type { ApprovalDecision } from "./types/ApprovalDecision";
 import type { ApprovalDto } from "./types/ApprovalDto";
 import type { ApprovalResolvedResponse } from "./types/ApprovalResolvedResponse";
 import type { CommentAnchor } from "./types/CommentAnchor";
+import type { CommentSide } from "./types/CommentSide";
 import type { CommentDto } from "./types/CommentDto";
 import type { CommentResponse } from "./types/CommentResponse";
 import type { CommentStatus } from "./types/CommentStatus";
@@ -20,6 +21,7 @@ export type Comment = CommentDto;
 export type QueueItem = QueueItemDto;
 export type Subagent = SubagentDto;
 export type { CommentAnchor };
+export type { CommentSide };
 export type { ToolCallData };
 
 export function getAgentConfig(threadId: string) {

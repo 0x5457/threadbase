@@ -59,6 +59,7 @@ interface TitleBarProps {
   onOpenPalette: () => void;
   onOpenInbox: () => void;
   onOpenChanges: () => void;
+  onOpenHistory: () => void;
   onReviews: () => void;
   onMerge: () => void;
   canManage: boolean;
@@ -96,6 +97,7 @@ export function TitleBar({
   onOpenPalette,
   onOpenInbox,
   onOpenChanges,
+  onOpenHistory,
   onReviews,
   onMerge,
   canManage,
@@ -237,6 +239,7 @@ export function TitleBar({
           onFork={onFork}
           onRevert={onRevert}
           onArchive={onArchive}
+          onHistory={onOpenHistory}
         />
       </div>
 
@@ -284,6 +287,7 @@ export function TitleBar({
               onFork={onFork}
               onRevert={onRevert}
               onArchive={onArchive}
+              onHistory={onOpenHistory}
             />
           </Box>
         ) : null}

@@ -6,7 +6,7 @@ use crate::model::{
     ApprovalDecision, ApprovalDto, AuthStatusDto, BaselineDto, ChangesDto, CommentAnchor,
     CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto, FileContentDto,
     FileEntryDto, InboxItemDto, ProjectDto, QueueItemDto, Role, SettingsDto, SubagentDto,
-    ThreadDto, UserAccess, UserBrief, UserDto,
+    ThreadDto, ThreadHistoryDto, UserAccess, UserBrief, UserDto,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,9 +51,11 @@ pub struct CreateProjectRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SubagentLogEntryDto {
-    /// "task", "agent" or "tool".
+    /// "task", "agent", "tool" or "error".
     pub role: String,
     pub text: String,
+    /// Milliseconds since the epoch; 0 when the adapter left no timestamp.
+    pub ts: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -576,6 +578,13 @@ pub struct ThreadResponse {
 #[ts(export)]
 pub struct ThreadBundleResponse {
     pub bundle: ThreadBundleDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThreadHistoryResponse {
+    pub history: ThreadHistoryDto,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

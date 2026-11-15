@@ -813,3 +813,148 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ── subagent thread (read-only) ───────────────────────────── */
+
+/* The delegation opens as its own conversation. It keeps the thread's
+   document column, markdown and rhythm, but the composer is replaced by a
+   one-line note: the parent thread owns the run and its input. */
+.subagent-view {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.subagent-bar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 14px 4px 4px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--paper);
+}
+
+.subagent-back {
+  max-width: 38%;
+  flex: none;
+}
+
+.subagent-back .mantine-Button-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-bar-divider {
+  width: 1px;
+  height: 14px;
+  flex: none;
+  background: var(--line);
+}
+
+.subagent-bar-title {
+  flex: none;
+}
+
+.subagent-meta {
+  flex: none;
+}
+
+.subagent-scroll-wrap {
+  height: auto;
+  flex: 1;
+}
+
+.subagent-scroll {
+  overflow-y: auto;
+}
+
+.subagent-doc {
+  padding-top: 18px;
+}
+
+/* Transcripts are replayed, not virtualized: skip layout/paint for the rows
+   outside the viewport so a 300-message run still opens instantly. */
+.subagent-doc .block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
+.subagent-empty {
+  padding: 22px 0;
+}
+
+.subagent-readonly {
+  display: flex;
+  justify-content: center;
+  padding: 9px 20px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.subagent-tool-run {
+  margin: 2px 0 6px;
+}
+
+.subagent-tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 0;
+  border: 0;
+  background: none;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.subagent-tool-toggle:hover {
+  color: var(--ink);
+}
+
+.subagent-tool-toggle .chevron {
+  transition: transform var(--motion-fast) ease-out;
+}
+
+.subagent-tool-toggle .chevron.open {
+  transform: rotate(180deg);
+}
+
+.subagent-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.subagent-tool-output {
+  overflow: auto;
+  max-height: 240px;
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--code);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.subagent-error-text {
+  color: var(--error);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subagent-error-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--error);
+}

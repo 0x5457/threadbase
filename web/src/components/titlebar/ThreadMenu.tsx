@@ -9,6 +9,7 @@ import {
   IconDots,
   IconGitFork,
   IconGitMerge,
+  IconHistory,
   IconListCheck,
   IconPencil,
   IconPin,
@@ -41,6 +42,7 @@ export function ThreadMenu({
   onFork,
   onRevert,
   onArchive,
+  onHistory,
 }: {
   canManage: boolean;
   /** Thread-machine commands legal for the current state. */
@@ -59,6 +61,7 @@ export function ThreadMenu({
   onFork: () => void;
   onRevert: () => void;
   onArchive: (archived: boolean) => void;
+  onHistory: () => void;
 }) {
   const route = useRoute();
   const threadId = route.kind === "thread" ? route.threadId : null;
@@ -164,6 +167,12 @@ export function ThreadMenu({
                 </Menu.Item>
               </>
             )}
+            <Menu.Item
+              leftSection={<IconHistory size={13} />}
+              onClick={onHistory}
+            >
+              History
+            </Menu.Item>
             {threadId && canRunSetup ? (
               <Menu.Item
                 leftSection={<IconRefresh size={13} />}

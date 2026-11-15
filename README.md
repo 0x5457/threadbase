@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片粘贴、presence/跟随、线程关注/静音、全文搜索、Worktree 初始化钩子、PWA/Web Push、CLI 与发布工作流。
+v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片粘贴、presence/跟随、线程关注/静音、全文搜索、线程历史与行级 diff 评论、Worktree 初始化钩子、PWA/Web Push、CLI 与发布工作流。
 
 质量门由 `scripts/verify.sh` 统一执行；界面审计记录保留在 `web/audit/`。
 
@@ -124,6 +124,14 @@ unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例�
 - 索引由 `EventStore::append` 增量维护，thread 重命名、删除和评论删除会同步清理；已有数据库第一次启动时后台回填。
 - 需要强制重建时运行 `threadbase reindex`。
 - 查询按空白分词并全部加引号，只做 AND 匹配，不会把 `-`、`:`、`*` 当成 FTS 运算符。
+
+### 线程历史与行级评论
+
+- 右栏的 `History` 列出 worktree 里自 base 之后的提交。每轮 prompt 前 `snapshot_worktree` 会写一个 `Threadbase turn snapshot`，面板把快照映射回产生它的那次 turn，显示 prompt 摘要、时间和增删行数。点击一行会在 `Changes` 里打开该提交**自身相对父提交**的 diff，`Current` 回到工作区。
+- `GET /api/threads/{id}/commits` 是历史列表；`GET /api/threads/{id}/commits/{sha}` 与 `.../file?path=` 返回提交级 diff。sha 只接受 7–64 位十六进制字符。
+- Changes 面板里可以点击行号写行级评论，锚点保存 path、hunkId、行号、side 和 contextHash。hunk 内容变化时服务端按 contextHash 重新定位；找不到则退化为文件级锚点（`anchorChanged: true`），评论仍显示在文件顶部。
+- 行级评论只在 base-branch 基线上创建和展示，因为服务端锚点校正是相对 base 的；其他基线仍可查看 diff。
+- History 读的是 worktree 的 git 历史：删除 thread 会一并删除它的 worktree 和分支，因此这些提交最终会被 git 清理。需要长期审计时，应把提交信息持久化进数据库，而不是只依赖 worktree。
 
 ### 应用变更前的检查
 

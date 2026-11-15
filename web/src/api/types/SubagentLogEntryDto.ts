@@ -2,8 +2,12 @@
 
 export type SubagentLogEntryDto = {
   /**
-   * "task", "agent" or "tool".
+   * "task", "agent", "tool" or "error".
    */
   role: string;
   text: string;
+  /**
+   * Milliseconds since the epoch; 0 when the adapter left no timestamp.
+   */
+  ts: number;
 };

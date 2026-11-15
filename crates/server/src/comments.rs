@@ -400,6 +400,7 @@ async fn reconcile_anchors(pool: &SqlitePool, thread_id: &str, rows: &mut [Comme
             let Ok(CommentAnchor::Diff {
                 path,
                 line,
+                side,
                 context_hash,
                 ..
             }) = serde_json::from_str::<CommentAnchor>(&row.anchor_json)
@@ -412,6 +413,7 @@ async fn reconcile_anchors(pool: &SqlitePool, thread_id: &str, rows: &mut [Comme
                     path,
                     hunk_id: hunk_id.clone(),
                     line,
+                    side,
                     context_hash,
                 },
                 None => CommentAnchor::File {

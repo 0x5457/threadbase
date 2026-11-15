@@ -448,3 +448,162 @@
 .changes-drawer:not(.changes-sheet) .change-diff-tools {
   padding-left: 14px;
 }
+
+/* ── history panel ─────────────────────────────────────────── */
+
+.history-count {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.changes-commit-title {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-commit-sha {
+  flex: none;
+  font-family: var(--mono);
+}
+
+.history-list {
+  padding: 2px 0 6px;
+}
+
+.history-row {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-row:hover {
+  background: var(--hover);
+}
+
+.history-row[data-active="true"] {
+  background: var(--selected);
+}
+
+.history-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ink-faint);
+}
+
+.history-icon.checkpoint {
+  color: var(--brand);
+}
+
+.history-main {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.history-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-meta {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-stats {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding-top: 1px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-files {
+  color: var(--ink-faint);
+}
+
+.history-base {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 10px 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.history-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 22px 18px;
+  text-align: center;
+}
+
+/* ── diff comments ─────────────────────────────────────────── */
+
+.diff-comment-hint {
+  margin-right: auto;
+  font-size: 10.5px;
+  user-select: none;
+}
+
+.diff-file-comments {
+  padding: 4px 6px 2px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--paper);
+}
+
+.diff-file-comments .comment-row,
+.diff-comment-thread .comment-row {
+  max-width: none;
+  margin: 2px 0 6px;
+}
+
+.diff-comment-thread {
+  padding: 2px 8px 4px;
+  background: var(--paper);
+}
+
+.diff-comment-thread .comment-card {
+  background: var(--paper);
+}
+
+/* The gutter is the affordance; make it look clickable without shouting. */
+.diff-wrap [data-line] .line-number,
+.diff-wrap [class*="line-number"] {
+  cursor: pointer;
+}
+
+/* `.changes-head > *` is `flex: none` so every control keeps its width; the
+   commit title is the one item that may shrink, otherwise it pushes Current
+   and the close button off the panel. */
+.changes-head > .changes-commit-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}

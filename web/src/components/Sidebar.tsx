@@ -40,8 +40,13 @@ interface SidebarProps {
   onOpenSettings: () => void;
   activeView: "inbox" | "thread" | "settings" | "project";
   selectedThreadId: string | null;
+  selectedSubagentId: string | null;
   activeProjectId: string | null;
   onSelectThread: (thread: ThreadSummary) => void;
+  onSelectSubagent: (
+    thread: ThreadSummary,
+    subagent: ThreadSummary["subagents"][number],
+  ) => void;
   onSelectProject: (projectId: string) => void;
 }
 
@@ -51,8 +56,10 @@ export function Sidebar({
   onOpenSettings,
   activeView,
   selectedThreadId,
+  selectedSubagentId,
   activeProjectId,
   onSelectThread,
+  onSelectSubagent,
   onSelectProject,
 }: SidebarProps) {
   const queryClient = useQueryClient();
@@ -179,10 +186,12 @@ export function Sidebar({
                 key={project.id}
                 project={project}
                 selectedThreadId={selectedThreadId}
+                selectedSubagentId={selectedSubagentId}
                 activeProjectId={activeProjectId}
                 onProjectOpen={onSelectProject}
                 onNavigate={onNavigate}
                 onSelectThread={onSelectThread}
+                onSelectSubagent={onSelectSubagent}
                 onNewThread={setNewThreadProject}
                 onSettings={setSettingsProject}
               />

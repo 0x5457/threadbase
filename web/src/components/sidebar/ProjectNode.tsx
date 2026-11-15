@@ -41,8 +41,15 @@ import { pathFor } from "../../lib/router";
 import { useLongPress } from "../../lib/use-long-press";
 import { useOverlayBack } from "../../lib/overlay-back";
 import { ActionSheet } from "../ActionSheet";
-import { SubagentLogDrawer } from "./SubagentLogDrawer";
 
+
+/** One-line label for a delegation. Agents usually open with the repository
+ *  boilerplate (`Repo: /path. ...`), which every sibling repeats; dropping it
+ *  leaves the part that actually tells the subagents apart. */
+function taskLabel(subagent: Subagent): string {
+  const text = (subagent.description ?? subagent.title).trim();
+  return text.replace(/^repo(?: worktree)?\b[^.]*\.\s+/i, "") || text;
+}
 
 /** Depth-first order for the delegation tree; roots are subagents whose
  * parent is not part of the list (workflow containers are not stored). */
@@ -81,19 +88,28 @@ function orderedSubagents(
 function ThreadRow({
   thread,
   selected,
+  selectedSubagentId,
   onOpen,
+  onSelectSubagent,
   onLongPress,
 }: {
   thread: ThreadSummary;
   selected: boolean;
+  selectedSubagentId: string | null;
   onOpen: (thread: ThreadSummary) => void;
+  onSelectSubagent: (thread: ThreadSummary, subagent: Subagent) => void;
   onLongPress: (thread: ThreadSummary) => void;
 }) {
   const press = useLongPress(() => onLongPress(thread));
-  const [open, setOpen] = useState(false);
-  const [logFor, setLogFor] = useState<Subagent | null>(null);
+  // `null` follows the route: selecting a subagent (including a deep link)
+  // opens the tree, while an explicit click can still collapse it.
+  const [open, setOpen] = useState<boolean | null>(null);
   const subagents = thread.subagents ?? [];
   const rows = orderedSubagents(subagents);
+  const hasSelected = rows.some(
+    ({ subagent }) => String(subagent.id) === selectedSubagentId,
+  );
+  const expanded = open ?? hasSelected;
 
   return (
     <Fragment>
@@ -136,10 +152,10 @@ function ThreadRow({
         <button
           type="button"
           className="side-subagent-toggle"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
+          aria-expanded={expanded}
+          onClick={() => setOpen(!expanded)}
         >
-          {open ? (
+          {expanded ? (
             <IconChevronDown size={11} stroke={1.5} />
           ) : (
             <IconChevronRight size={11} stroke={1.5} />
@@ -149,28 +165,29 @@ function ThreadRow({
           </span>
         </button>
       ) : null}
-      {open && rows.length ? (
+      {expanded && rows.length ? (
         <div className="side-subagents">
-          {rows.map(({ subagent, depth }) => (
-            <button
-              type="button"
-              key={String(subagent.id)}
-              className="side-subagent"
-              style={{ paddingLeft: 12 + depth * 12 }}
-              title={subagent.description ?? subagent.title}
-              onClick={() => setLogFor(subagent)}
-            >
-              <span className={`dot ${statusTone(subagent.status)}`} />
-              <span className="side-subagent-title">{subagent.title}</span>
-            </button>
-          ))}
+          {rows.map(({ subagent, depth }) => {
+            const active = String(subagent.id) === selectedSubagentId;
+            const label = taskLabel(subagent);
+            return (
+              <button
+                type="button"
+                key={String(subagent.id)}
+                className={`side-subagent${active ? " selected" : ""}`}
+                style={{ paddingLeft: 10 + depth * 12 }}
+                title={`${subagent.title} · ${label}`}
+                aria-current={active ? "true" : undefined}
+                onClick={() => onSelectSubagent(thread, subagent)}
+              >
+                <IconGitBranch size={11} stroke={1.5} className="side-subagent-icon" />
+                <span className="side-subagent-title">{label}</span>
+                <span className={`dot ${statusTone(subagent.status)}`} />
+              </button>
+            );
+          })}
         </div>
       ) : null}
-      <SubagentLogDrawer
-        threadId={thread.id}
-        subagent={logFor}
-        onClose={() => setLogFor(null)}
-      />
     </Fragment>
   );
 }
@@ -178,19 +195,23 @@ function ThreadRow({
 export function ProjectNode({
   project,
   selectedThreadId,
+  selectedSubagentId,
   activeProjectId,
   onProjectOpen,
   onNavigate,
   onSelectThread,
+  onSelectSubagent,
   onNewThread,
   onSettings,
 }: {
   project: Project;
   selectedThreadId: string | null;
+  selectedSubagentId: string | null;
   activeProjectId: string | null;
   onProjectOpen: (projectId: string) => void;
   onNavigate: () => void;
   onSelectThread: (thread: ThreadSummary) => void;
+  onSelectSubagent: (thread: ThreadSummary, subagent: Subagent) => void;
   onNewThread: (project: Project) => void;
   onSettings: (project: Project) => void;
 }) {
@@ -297,8 +318,13 @@ export function ProjectNode({
               key={thread.id}
               thread={thread}
               selected={thread.id === selectedThreadId}
+              selectedSubagentId={selectedSubagentId}
               onOpen={(next) => {
                 onSelectThread(next);
+                onNavigate();
+              }}
+              onSelectSubagent={(next, subagent) => {
+                onSelectSubagent(next, subagent);
                 onNavigate();
               }}
               onLongPress={setThreadSheet}

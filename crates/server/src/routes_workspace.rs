@@ -17,14 +17,24 @@ use threadbase_shared::api::{
     ThreadState, UpdateProjectRequest, UpdateThreadRequest,
 };
 use threadbase_shared::{
-    ApiError, BaselineDto, BaselineKind, FileDiffDto, MergeBackResponse, OkResponse,
-    OlderEventsDto, ProjectResponse, ProjectsResponse, ThreadId, ThreadResponse, ThreadsResponse,
+    ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse, OkResponse,
+    OlderEventsDto, ProjectResponse, ProjectsResponse, ThreadHistoryResponse, ThreadId,
+    ThreadResponse, ThreadsResponse,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/threads", get(list_all_threads))
         .route("/api/threads/{thread_id}/bundle", get(thread_bundle))
+        .route("/api/threads/{thread_id}/commits", get(thread_commits))
+        .route(
+            "/api/threads/{thread_id}/commits/{sha}",
+            get(thread_commit_changes),
+        )
+        .route(
+            "/api/threads/{thread_id}/commits/{sha}/file",
+            get(thread_commit_file_diff),
+        )
         .route("/api/threads/{thread_id}/state", get(thread_state))
         .route(
             "/api/threads/{thread_id}/events/older",
@@ -257,6 +267,44 @@ async fn get_thread(
     Ok(Json(ThreadResponse {
         thread: threads::get(&state.pool, &thread_id, &user).await?,
     }))
+}
+
+async fn thread_commits(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<ThreadHistoryResponse>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    Ok(Json(ThreadHistoryResponse {
+        history: diff::history(&state.pool, &row).await?,
+    }))
+}
+
+async fn thread_commit_changes(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, sha)): Path<(String, String)>,
+) -> Result<Json<ChangesDto>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    Ok(Json(diff::commit_changes(&row, &sha).await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct CommitFileQuery {
+    path: String,
+}
+
+async fn thread_commit_file_diff(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, sha)): Path<(String, String)>,
+    Query(query): Query<CommitFileQuery>,
+) -> Result<Json<FileDiffDto>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    Ok(Json(diff::commit_file_diff(&row, &sha, &query.path).await?))
 }
 
 async fn update_thread(

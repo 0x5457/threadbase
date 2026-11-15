@@ -29,6 +29,25 @@ pub struct GitInfo {
     pub clean: bool,
 }
 
+/// Subject of the commit `snapshot_worktree` writes before a turn starts.
+/// History and the transcript both key off this exact string.
+pub const TURN_SNAPSHOT_MESSAGE: &str = "Threadbase turn snapshot";
+
+/// One commit as the thread history panel needs it: identity, time and the
+/// stats of the change the commit itself introduced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitSummary {
+    pub sha: String,
+    pub short_sha: String,
+    /// Committer time in Unix seconds.
+    pub at: i64,
+    pub author: String,
+    pub subject: String,
+    pub additions: u32,
+    pub deletions: u32,
+    pub files: u32,
+}
+
 async fn git(cwd: &Path, args: &[&str]) -> Result<String, GitError> {
     let output = Command::new("git")
         .arg("-C")
@@ -121,6 +140,72 @@ pub async fn validate_branch(root: &Path, branch: &str) -> Result<(), GitError> 
 
 pub async fn head_sha(root: &Path) -> Result<String, GitError> {
     git(root, &["rev-parse", "HEAD"]).await
+}
+
+/// Commits in `range`, newest first. `--numstat` is parsed in the same pass so
+/// the history panel can show counts without one subprocess per row.
+pub async fn log(root: &Path, range: &str, limit: u32) -> Result<Vec<CommitSummary>, GitError> {
+    let limit = limit.max(1).to_string();
+    let output = git(
+        root,
+        &[
+            "log",
+            "--no-color",
+            "--format=%x1e%H%x1f%h%x1f%ct%x1f%an%x1f%s",
+            "--numstat",
+            "-n",
+            &limit,
+            range,
+        ],
+    )
+    .await?;
+    Ok(parse_log(&output))
+}
+
+/// Records start with `\x1e`; the following lines until the next record are
+/// `--numstat` rows (`added\tdeleted\tpath`, `-\t-\t` for binary).
+fn parse_log(text: &str) -> Vec<CommitSummary> {
+    let mut commits = Vec::new();
+    for record in text.split('\u{1e}').filter(|part| !part.trim().is_empty()) {
+        let mut lines = record.lines();
+        let Some(header) = lines.next() else {
+            continue;
+        };
+        let mut fields = header.split('\u{1f}');
+        let sha = fields.next().unwrap_or_default().to_owned();
+        let short_sha = fields.next().unwrap_or_default().to_owned();
+        let at = fields
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        let author = fields.next().unwrap_or_default().to_owned();
+        let subject = fields.next().unwrap_or_default().to_owned();
+        let mut additions = 0u32;
+        let mut deletions = 0u32;
+        let mut files = 0u32;
+        for line in lines {
+            let mut parts = line.splitn(3, '\t');
+            let added = parts.next().unwrap_or_default();
+            let deleted = parts.next().unwrap_or_default();
+            if parts.next().is_none() {
+                continue;
+            }
+            files = files.saturating_add(1);
+            additions = additions.saturating_add(added.parse().unwrap_or(0));
+            deletions = deletions.saturating_add(deleted.parse().unwrap_or(0));
+        }
+        commits.push(CommitSummary {
+            sha,
+            short_sha,
+            at,
+            author,
+            subject,
+            additions,
+            deletions,
+            files,
+        });
+    }
+    commits
 }
 
 pub async fn current_branch(root: &Path) -> Result<String, GitError> {
@@ -247,6 +332,8 @@ pub async fn worktree_patch(worktree: &Path, base_sha: Option<&str>) -> Result<S
 /// nothing to commit, return the current HEAD. This is used at turn start so
 /// "Last turn" compares against the state before the agent started editing.
 pub async fn snapshot_worktree(root: &Path, message: &str) -> Result<String, GitError> {
+    // The message is written by the caller; `TURN_SNAPSHOT_MESSAGE` is what
+    // the history endpoint recognises as a checkpoint.
     add_all(root).await?;
     let status = Command::new("git")
         .arg("-C")
@@ -350,5 +437,24 @@ mod tests {
         let result =
             create_worktree(dir.path(), &dir.path().join("wt"), "bad branch", "main").await;
         assert!(matches!(result, Err(GitError::InvalidBranch(_))));
+    }
+
+    #[test]
+    fn parses_log_numstat_records() {
+        let text = "\u{1e}abc123\u{1f}abc123\u{1f}1700000000\u{1f}Ada\u{1f}turn one\n\
+                    4\t1\tsrc/lib.rs\n\
+                    2\t0\tREADME.md\n\
+                    \u{1e}def456\u{1f}def456\u{1f}1700000100\u{1f}Ada\u{1f}binary\n\
+                    -\t-\tlogo.png";
+        let commits = parse_log(text);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].sha, "abc123");
+        assert_eq!(commits[0].subject, "turn one");
+        assert_eq!(
+            (commits[0].additions, commits[0].deletions, commits[0].files),
+            (6, 1, 2)
+        );
+        assert_eq!(commits[1].files, 1);
+        assert_eq!(commits[1].additions, 0);
     }
 }

@@ -17,6 +17,7 @@ interface TitleActionsProps {
   onFork: () => void;
   onRevert: () => void;
   onArchive: (archived: boolean) => void;
+  onHistory: () => void;
 }
 
 export function TitleActions({
@@ -33,6 +34,7 @@ export function TitleActions({
   onFork,
   onRevert,
   onArchive,
+  onHistory,
 }: TitleActionsProps) {
   return (
     <Group
@@ -78,6 +80,7 @@ export function TitleActions({
         onFork={onFork}
         onRevert={onRevert}
         onArchive={onArchive}
+        onHistory={onHistory}
       />
     </Group>
   );
