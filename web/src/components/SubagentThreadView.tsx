@@ -210,8 +210,11 @@ export const SubagentThreadView = memo(function SubagentThreadView({
             leftSection={<IconArrowLeft size={13} stroke={1.5} />}
             onClick={onBack}
             className="subagent-back"
+            aria-label={`Back to ${parentTitle}`}
+            title={parentTitle}
           >
-            {parentTitle}
+            <span className="subagent-back-long">{parentTitle}</span>
+            <span className="subagent-back-short">Back</span>
           </Button>
           <span className="subagent-bar-divider" />
           <IconGitBranch size={12} stroke={1.5} />
@@ -228,7 +231,7 @@ export const SubagentThreadView = memo(function SubagentThreadView({
             </Text>
           ) : null}
           {subagent.usage ? (
-            <Text size="xs" c="dimmed" className="subagent-meta">
+            <Text size="xs" c="dimmed" className="subagent-meta subagent-tokens">
               {subagent.usage.totalTokens.toLocaleString()} tokens
             </Text>
           ) : null}
@@ -269,8 +272,13 @@ export const SubagentThreadView = memo(function SubagentThreadView({
       </div>
       <div className="composer-stack">
         <div className="subagent-readonly">
-          This subagent runs under the parent thread — its conversation is
-          read-only.
+          <span className="subagent-readonly-long">
+            This subagent runs under the parent thread — its conversation is
+            read-only.
+          </span>
+          <span className="subagent-readonly-short">
+            Read-only · replies go through the parent thread
+          </span>
         </div>
       </div>
     </>

@@ -842,10 +842,19 @@
 }
 
 .subagent-back .mantine-Button-label {
-  display: block;
+  display: flex;
+  min-width: 0;
+}
+
+.subagent-back-long {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.subagent-back-short,
+.subagent-readonly-short {
+  display: none;
 }
 
 .subagent-bar-divider {
@@ -964,6 +973,10 @@
 .subagent-parent .block-body {
   border-color: color-mix(in srgb, var(--brand) 28%, var(--line));
   background: color-mix(in srgb, var(--brand) 5%, var(--paper));
+}
+
+.subagent-task-text {
+  overflow-wrap: anywhere;
 }
 
 .subagent-bubble-label {

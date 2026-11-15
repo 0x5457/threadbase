@@ -701,3 +701,80 @@
 .inbox-swipe-action:active {
   filter: brightness(0.96);
 }
+
+/* ── subagents on touch ────────────────────────────────────── */
+
+/* The delegation tree is the only way to reach a child on a phone, so its
+   rows get real touch targets instead of the 26px desktop rail. */
+@media (any-pointer: coarse) {
+  .side-subagents {
+    margin-left: 22px;
+    padding-left: 4px;
+  }
+
+  .side-subagent-toggle {
+    width: calc(100% - 24px);
+    height: 36px;
+    margin-left: 20px;
+    padding-left: 2px;
+    font-size: 12.5px;
+  }
+
+  .side-subagent {
+    height: 40px;
+    gap: 8px;
+    padding-right: 10px;
+  }
+
+  .side-subagent-title {
+    font-size: 14px;
+  }
+
+  .side-subagent .dot {
+    width: 7px;
+    height: 7px;
+  }
+}
+
+/* On a phone the header already names the subagent; the bar only has to
+   carry the way back plus its state. */
+@media (max-width: 47.99em) {
+  .subagent-bar {
+    min-height: 44px;
+    gap: 6px;
+    padding: 2px 10px 2px 2px;
+  }
+
+  .subagent-back {
+    max-width: none;
+    min-height: 36px;
+    padding-right: 8px;
+    padding-left: 4px;
+  }
+
+  .subagent-back-long,
+  .subagent-tokens {
+    display: none;
+  }
+
+  .subagent-back-short {
+    display: inline;
+  }
+
+  .subagent-readonly-long {
+    display: none;
+  }
+
+  .subagent-readonly-short {
+    display: inline;
+  }
+
+  .subagent-readonly {
+    padding: 7px 14px;
+    font-size: 11.5px;
+  }
+
+  .subagent-scroll-wrap {
+    height: auto;
+  }
+}
