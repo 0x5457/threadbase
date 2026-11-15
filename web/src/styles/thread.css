@@ -958,3 +958,24 @@
   margin-top: 2px;
   color: var(--error);
 }
+
+/* The parent's side of the conversation: same bubble anatomy as the brief,
+   tinted so steering reads as an incoming message, not the child talking. */
+.subagent-parent .block-body {
+  border-color: color-mix(in srgb, var(--brand) 28%, var(--line));
+  background: color-mix(in srgb, var(--brand) 5%, var(--paper));
+}
+
+.subagent-bubble-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.subagent-notice {
+  padding-top: 2px;
+}

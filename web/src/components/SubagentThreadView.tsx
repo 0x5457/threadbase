@@ -4,6 +4,7 @@ import {
   IconArrowLeft,
   IconChevronDown,
   IconGitBranch,
+  IconInfoCircle,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useMemo, useState } from "react";
@@ -57,8 +58,30 @@ const ToolRun = memo(function ToolRun({ entries }: { entries: Entry[] }) {
   );
 });
 
+/** The harness frames steering with a heading that would read as noise once
+ *  the bubble already says where it came from. */
+function parentText(text: string) {
+  return text
+    .replace(/^Mid-run steering from the parent orchestrator:\s*/i, "")
+    .trim();
+}
+
 function message(entry: Entry, index: number) {
   const agent = entry.role === "agent";
+  const parent = entry.role === "parent";
+  if (entry.role === "notice") {
+    return (
+      <div key={`notice:${index}`} className="block">
+        <div className="block-gutter" />
+        <div className="block-body">
+          <Text size="sm" c="dimmed" className="notice-row subagent-notice">
+            <IconInfoCircle size={12} stroke={1.5} />
+            {entry.text}
+          </Text>
+        </div>
+      </div>
+    );
+  }
   if (entry.role === "error") {
     // The launch itself failed, so there is no conversation to show: keep the
     // adapter's reason in the same column instead of an empty transcript.
@@ -79,7 +102,9 @@ function message(entry: Entry, index: number) {
   return (
     <div
       key={`${entry.role}:${index}`}
-      className={`block message-block ${agent ? "message-agent" : "message-user"}`}
+      className={`block message-block ${
+        agent ? "message-agent" : `message-user${parent ? " subagent-parent" : ""}`
+      }`}
     >
       <div className="block-gutter">
         <Avatar
@@ -89,7 +114,7 @@ function message(entry: Entry, index: number) {
           variant="light"
           className={agent ? "avatar-agent" : "avatar-user"}
         >
-          {agent ? "AI" : "T"}
+          {agent ? "AI" : parent ? "P" : "T"}
         </Avatar>
         {entry.ts ? (
           <span className="msg-time" title={new Date(entry.ts).toLocaleString()}>
@@ -105,9 +130,14 @@ function message(entry: Entry, index: number) {
             </ReactMarkdown>
           </div>
         ) : (
-          <div className="prose subagent-task-text">
-            <p>{entry.text}</p>
-          </div>
+          <>
+            <span className="subagent-bubble-label">
+              {parent ? "Parent" : "Task"}
+            </span>
+            <div className="prose subagent-task-text">
+              <p>{parent ? parentText(entry.text) : entry.text.replace(/^Task:\s*/i, "")}</p>
+            </div>
+          </>
         )}
       </div>
     </div>

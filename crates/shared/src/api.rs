@@ -51,7 +51,7 @@ pub struct CreateProjectRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SubagentLogEntryDto {
-    /// "task", "agent", "tool" or "error".
+    /// "task", "parent", "agent", "tool", "notice" or "error".
     pub role: String,
     pub text: String,
     /// Milliseconds since the epoch; 0 when the adapter left no timestamp.

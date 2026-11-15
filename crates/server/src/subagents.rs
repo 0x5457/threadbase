@@ -475,6 +475,7 @@ fn session_file(run_id: &str) -> Option<PathBuf> {
 
 fn parse_session(text: &str) -> Vec<SubagentLogEntryDto> {
     let mut entries = Vec::new();
+    let mut saw_user = false;
     for line in text.lines() {
         let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
@@ -531,8 +532,16 @@ fn parse_session(text: &str) -> Vec<SubagentLogEntryDto> {
         if text.is_empty() {
             continue;
         }
+        // The first user message is the brief; later ones are the parent
+        // steering the child (or the runtime nudging it). Keeping them apart
+        // is what makes the parent's side of the conversation visible.
         let role = match role {
-            "user" => "task",
+            "user" if !saw_user => {
+                saw_user = true;
+                "task"
+            }
+            "user" if runtime_notice(&text) => "notice",
+            "user" => "parent",
             "assistant" => "agent",
             "toolResult" => "tool",
             other => other,
@@ -550,6 +559,22 @@ fn parse_session(text: &str) -> Vec<SubagentLogEntryDto> {
     }
     let keep = entries.len().saturating_sub(300);
     entries.split_off(keep)
+}
+
+/// Budget and context warnings are injected into the session as user
+/// messages, but they are the harness talking, not the parent agent.
+fn runtime_notice(text: &str) -> bool {
+    let head = text.trim_start().to_ascii_lowercase();
+    [
+        "tool budget",
+        "run budget",
+        "time budget",
+        "turn budget",
+        "budget soft limit",
+        "soft limit reached",
+    ]
+    .iter()
+    .any(|prefix| head.starts_with(prefix))
 }
 
 /// The session log keeps an ISO timestamp on the envelope and, usually, a
@@ -703,9 +728,11 @@ mod log_tests {
         let text = r#"{"type":"session"}
 {"type":"message","timestamp":"2026-11-14T17:28:38.899Z","message":{"role":"user","content":[{"type":"text","text":"Do the task."}]}}
 {"type":"message","message":{"role":"assistant","timestamp":"2026-11-14T17:28:39.500Z","content":[{"type":"text","text":"On it."},{"type":"toolCall","name":"read","arguments":{"path":"/tmp/a.md"}}]}}
-{"type":"message","message":{"role":"toolResult","toolName":"read","content":[{"type":"text","text":"file body"}]}}"#;
+{"type":"message","message":{"role":"toolResult","toolName":"read","content":[{"type":"text","text":"file body"}]}}
+{"type":"message","timestamp":"2026-11-14T17:29:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Mid-run steering from the parent orchestrator:\n\nDo X."}]}}
+{"type":"message","timestamp":"2026-11-14T17:30:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Tool budget soft limit reached after 240 tool calls."}]}}"#;
         let entries = parse_session(text);
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 5);
         assert_eq!(entries[0].role, "task");
         assert_eq!(entries[0].text, "Do the task.");
         assert_eq!(
@@ -718,5 +745,7 @@ mod log_tests {
         assert_eq!(entries[2].role, "tool");
         assert!(entries[2].text.starts_with("[read]"));
         assert_eq!(entries[2].ts, 0, "no timestamp is not a crash");
+        assert_eq!(entries[3].role, "parent");
+        assert_eq!(entries[4].role, "notice");
     }
 }
