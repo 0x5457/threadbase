@@ -70,6 +70,79 @@ pub struct UpdateProjectRequest {
     pub name: Option<String>,
     pub remote_url: Option<String>,
     pub path: Option<String>,
+    /// Empty string clears the configured command.
+    pub verify_command: Option<String>,
+    /// Empty string clears the configured command.
+    pub setup_command: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThreadWatchRequest {
+    /// Target relationship. Declarative, so retries and double-clicks are
+    /// idempotent and callers never have to order two booleans correctly.
+    pub state: crate::model::WatchState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThreadWatchResponse {
+    pub state: crate::model::WatchState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchHitDto {
+    pub thread_id: ThreadId,
+    pub thread_title: String,
+    pub project_id: ProjectId,
+    pub project_name: String,
+    /// `thread`, `message` or `comment`.
+    pub kind: String,
+    pub ref_id: String,
+    pub snippet: String,
+    pub ts: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchResponse {
+    pub hits: Vec<SearchHitDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PushConfigResponse {
+    pub enabled: bool,
+    pub public_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PushSubscriptionKeys {
+    pub p256dh: String,
+    pub auth: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PushSubscriptionRequest {
+    pub endpoint: String,
+    pub keys: PushSubscriptionKeys,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PushUnsubscribeRequest {
+    pub endpoint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -204,6 +277,12 @@ pub struct MergeBackResponse {
     pub committed: bool,
     pub commit: Option<String>,
     pub files: Vec<String>,
+    /// Branch the patch was applied to.
+    pub branch: String,
+    /// The base branch advanced since this thread started.
+    pub base_drift: bool,
+    /// A project verify command ran successfully before the patch was applied.
+    pub verified: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -271,6 +350,10 @@ pub struct ThreadState {
     /// Monotonic revision for this thread; consumers must discard older values.
     pub revision: u64,
     pub status: crate::model::ThreadStatus,
+    /// Commands legal from this state, from `ThreadMachine`. The client renders
+    /// controls from this list instead of re-deriving rules from `status`, so a
+    /// button and the endpoint it calls can never disagree.
+    pub allowed_actions: Vec<String>,
     pub current_turn: Option<String>,
     pub pending_approvals: u32,
     pub pending_elicitations: u32,
@@ -283,7 +366,10 @@ pub struct ThreadState {
 #[ts(export)]
 pub struct InboxPageDto {
     pub items: Vec<InboxItemDto>,
+    /// Total unread items for this user, not just the ones on this page.
     pub unread: u32,
+    /// Another page exists before the last item.
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -366,6 +452,7 @@ pub enum ServerWsMessage {
         state: ThreadState,
     },
     InboxCount {
+        user_id: crate::ids::UserId,
         unread: u32,
     },
     Notice {

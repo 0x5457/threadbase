@@ -45,9 +45,15 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
     let unread = crate::inbox::unread_count(&state.pool, user.user.id.as_str())
         .await
         .unwrap_or(0);
-    if send_json(&mut sender, &ServerWsMessage::InboxCount { unread })
-        .await
-        .is_err()
+    if send_json(
+        &mut sender,
+        &ServerWsMessage::InboxCount {
+            user_id: user.user.id.clone(),
+            unread,
+        },
+    )
+    .await
+    .is_err()
     {
         return;
     }
@@ -178,6 +184,16 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
                             continue;
                         }
                         if send_json(&mut sender, &ServerWsMessage::ThreadState { state }).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(ServerWsMessage::InboxCount { user_id, unread }) => {
+                        // The projection channel is global; only the owner's
+                        // sockets see this count.
+                        if user_id != user.user.id {
+                            continue;
+                        }
+                        if send_json(&mut sender, &ServerWsMessage::InboxCount { user_id, unread }).await.is_err() {
                             break;
                         }
                     }

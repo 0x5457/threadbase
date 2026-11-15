@@ -295,3 +295,32 @@ async fn heartbeat_pings_idle_connections() {
         .unwrap();
     assert!(matches!(message, WsMessage::Ping(_)));
 }
+
+#[tokio::test]
+async fn a_new_notification_pushes_the_owner_unread_count() {
+    let server = start().await;
+    let mut socket = connect(&server, "/ws").await;
+    let initial = next_json(&mut socket).await;
+    assert_eq!(initial["type"], "inbox_count");
+    assert_eq!(initial["unread"], 0);
+    threadbase_server::notify::notify_user(
+        &server.state.pool,
+        &server.state.projection,
+        threadbase_server::notify::InboxItem {
+            user_id: &server.user_id,
+            kind: "mention",
+            thread_id: &server.thread_id,
+            actor_id: None,
+            approval_id: None,
+            elicitation_id: None,
+            comment_id: None,
+            summary: "Ada mentioned you",
+        },
+    )
+    .await
+    .unwrap();
+    let pushed = next_json(&mut socket).await;
+    assert_eq!(pushed["type"], "inbox_count");
+    assert_eq!(pushed["unread"], 1);
+    assert_eq!(pushed["userId"], server.user_id);
+}

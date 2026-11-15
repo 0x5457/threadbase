@@ -66,7 +66,6 @@ pub async fn mark_failed(
 ) -> Result<(), ServerError> {
     let _ =
         crate::threads::transition(pool, projection, thread_id, ThreadAction::AgentFailed).await;
-    let _ = crate::bindings::set_status(pool, thread_id, "error", Some(message)).await;
     let _ = events
         .append(
             &ThreadId::from(thread_id.to_owned()),
@@ -78,5 +77,17 @@ pub async fn mark_failed(
             EventMeta::default(),
         )
         .await;
+    let summary: String = message.chars().take(240).collect();
+    let _ = crate::notify::notify_watchers(
+        pool,
+        projection,
+        thread_id,
+        "error",
+        None,
+        None,
+        &format!("The agent failed to start: {summary}"),
+        None,
+    )
+    .await;
     Ok(())
 }

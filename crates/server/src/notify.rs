@@ -39,21 +39,26 @@ pub async fn insert(pool: &SqlitePool, item: InboxItem<'_>) -> Result<(), Server
     Ok(())
 }
 
-/// Notify every account: every thread is visible to the whole workspace, so
-/// there is no smaller audience. A failure to write one inbox row must not
-/// lose the originating event, so callers use the result only for logging.
-pub async fn notify_members(
+/// Notify every unmuted watcher of a thread. A legacy thread without watcher
+/// rows falls back to its creator. Completion notifications skip users whose
+/// current focus is already this thread.
+#[allow(clippy::too_many_arguments)]
+pub async fn notify_watchers(
     pool: &SqlitePool,
+    projection: &crate::projection::Projection,
     thread_id: &str,
     kind: &str,
     approval_id: Option<&str>,
     elicitation_id: Option<&str>,
     summary: &str,
+    presence: Option<&crate::presence::PresenceHub>,
 ) -> Result<(), ServerError> {
-    let members: Vec<String> = sqlx::query_scalar("SELECT id FROM users")
-        .fetch_all(pool)
-        .await?;
-    for user_id in members {
+    let mut recipients = crate::watchers::recipients(pool, thread_id).await?;
+    if let Some(presence) = presence {
+        let focused = presence.focused_user_ids(thread_id).await;
+        recipients.retain(|user_id| !focused.contains(user_id));
+    }
+    for user_id in recipients {
         insert(
             pool,
             InboxItem {
@@ -68,7 +73,20 @@ pub async fn notify_members(
             },
         )
         .await?;
+        crate::inbox::publish_count(pool, projection, &user_id).await;
     }
+    Ok(())
+}
+
+/// Insert one notification and refresh that user's badge.
+pub async fn notify_user(
+    pool: &SqlitePool,
+    projection: &crate::projection::Projection,
+    item: InboxItem<'_>,
+) -> Result<(), ServerError> {
+    let user_id = item.user_id.to_owned();
+    insert(pool, item).await?;
+    crate::inbox::publish_count(pool, projection, &user_id).await;
     Ok(())
 }
 

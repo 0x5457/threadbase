@@ -244,13 +244,15 @@ pub async fn create(
         .await?;
     let summary = crate::notify::approval_summary(&approval.title);
     crate::notify::webhook(pool, "approval.pending", &approval.thread_id, &summary).await;
-    crate::notify::notify_members(
+    crate::notify::notify_watchers(
         pool,
+        projection,
         &approval.thread_id,
         "approval",
         Some(&approval.id),
         None,
         &summary,
+        None,
     )
     .await?;
     // The newly-created row is pending, so the projection changed too.
@@ -276,6 +278,7 @@ pub async fn decide(
         )));
     }
     crate::authz::require_write_role(pool, &row.thread_id, user).await?;
+    crate::watchers::watch(pool, &row.thread_id, user.user.id.as_str()).await?;
     let scope = resolve_scope(pool, &row, decision).await?;
     let now = now_ms();
     let next = apply_decision(
@@ -292,6 +295,7 @@ pub async fn decide(
         },
     )
     .await?;
+    crate::inbox::clear_for_approval(pool, projection, approval_id).await?;
     if matches!(scope.as_deref(), Some("session" | "thread")) {
         rules::save_rule(
             pool,
@@ -394,7 +398,7 @@ pub async fn auto_allow(
         },
     )
     .await?;
-    crate::inbox::clear_for_approval(pool, approval_id).await?;
+    crate::inbox::clear_for_approval(pool, projection, approval_id).await?;
     let decided_by = UserBrief::from_user(&owner);
     events
         .append(

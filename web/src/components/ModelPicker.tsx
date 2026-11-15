@@ -9,7 +9,7 @@ import {
   useCombobox,
 } from "@mantine/core";
 import { IconCheck, IconChevronDown, IconSearch } from "@tabler/icons-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   OTHER_GROUP,
   RECENT_GROUP,
@@ -37,6 +37,16 @@ interface ModelPickerProps {
   onOpen?: () => void;
   /** Label shown when nothing is selected, for example "Default effort". */
   placeholder?: string;
+  /** A compact suffix shown next to the value, for example the effort. */
+  badge?: ReactNode;
+  /** Extra agent settings rendered under the searchable model list. */
+  footer?: ReactNode;
+  /** The thread's delivery mode is queue; show the state dot on the trigger. */
+  queue?: boolean;
+  /** Accessible name for the trigger when the picker owns more than a model. */
+  triggerLabel?: string;
+  /** Native tooltip explaining what the unified picker controls. */
+  triggerTitle?: string;
   /** Accessible name; "Model" for the model picker, "Effort" for the other. */
   label?: string;
 }
@@ -70,9 +80,15 @@ export function ModelPicker({
   onOpen,
   placeholder = "Default model",
   label: name = "Model",
+  triggerLabel,
+  triggerTitle,
+  badge,
+  footer,
+  queue = false,
 }: ModelPickerProps) {
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState("");
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [recent, setRecent] = useState<string[]>([]);
   const wasOpened = useRef(false);
   const agent = usePickerAgent();
@@ -270,10 +286,13 @@ export function ModelPicker({
     >
       <Combobox.Target targetType="button" withExpandedAttribute>
         <UnstyledButton
+          ref={triggerRef}
           type="button"
           className="model-picker"
+          data-queue={queue ? "true" : undefined}
           disabled={disabled}
-          aria-label={`${name}: ${label}`}
+          aria-label={triggerLabel ?? `${name}: ${label}`}
+          title={triggerTitle}
           onClick={() => combobox.toggleDropdown()}
         >
           <Text
@@ -283,10 +302,23 @@ export function ModelPicker({
           >
             {label}
           </Text>
+          {badge ? <span className="model-picker-effort">{badge}</span> : null}
           <IconChevronDown size={10} stroke={1.5} className="model-picker-chevron" />
         </UnstyledButton>
       </Combobox.Target>
-      <Combobox.Dropdown p={6} className="model-picker-dropdown">
+      <Combobox.Dropdown
+        p={6}
+        className="model-picker-dropdown"
+        onKeyDown={(event) => {
+          // Escape closes from the effort/delivery chips too, not only from
+          // the search field, and returns focus to the trigger.
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            combobox.closeDropdown();
+            triggerRef.current?.focus();
+          }
+        }}
+      >
         <Combobox.Search
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
@@ -340,6 +372,7 @@ export function ModelPicker({
             ) : null}
           </Combobox.Options>
         </ScrollArea.Autosize>
+        {footer ? <div className="model-picker-settings">{footer}</div> : null}
         <Group className="model-picker-foot" gap={6} px={4} pt={4}>
           <Text size="xs" c="dimmed">
             ↑↓ navigate · ↵ choose · esc close

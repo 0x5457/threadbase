@@ -9,6 +9,7 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import {
+  IconFolder,
   IconGitBranch,
   IconInbox,
   IconLayoutSidebarLeftCollapse,
@@ -38,6 +39,10 @@ interface TitleBarProps {
   canOpenChanges: boolean;
   /** Thread has its own git worktree; the badge and merge actions need it. */
   hasWorktree: boolean;
+  /** A thread is open; the worktree/project-tree badge is only meaningful then. */
+  threadOpen: boolean;
+  /** The project behind this thread has a setup command to (re)run. */
+  canRunSetup: boolean;
   branch: string;
   baseBranch: string;
   /** Desktop changes panel is hidden; the toggle reveals it again. */
@@ -58,11 +63,13 @@ interface TitleBarProps {
   onMerge: () => void;
   canManage: boolean;
   isPinned: boolean;
+  /** Thread-machine commands legal for the current state. */
+  allowedActions?: string[];
   onRename: () => void;
   onTogglePin: () => void;
   onFork: () => void;
   onRevert: () => void;
-  onArchive: () => void;
+  onArchive: (archived: boolean) => void;
 }
 
 export function TitleBar({
@@ -73,6 +80,8 @@ export function TitleBar({
   unreadCount,
   canOpenChanges,
   hasWorktree,
+  threadOpen,
+  canRunSetup,
   branch,
   baseBranch,
   asideCollapsed,
@@ -91,6 +100,7 @@ export function TitleBar({
   onMerge,
   canManage,
   isPinned,
+  allowedActions,
   onRename,
   onTogglePin,
   onFork,
@@ -187,28 +197,39 @@ export function TitleBar({
             <Badge
               variant="light"
               color="gray"
+              className="scope-badge"
               leftSection={<IconGitBranch size={9} stroke={1.5} />}
               style={{ textTransform: "none" }}
             >
-              worktree
+              <span className="scope-badge-text">worktree</span>
             </Badge>
           </Tooltip>
-        ) : (
+        ) : threadOpen ? (
           <Tooltip label="Runs directly in the project working tree; changes are live">
-            <Badge variant="light" color="gray" style={{ textTransform: "none" }}>
-              project tree
+            <Badge
+              variant="light"
+              color="gray"
+              className="scope-badge"
+              leftSection={<IconFolder size={9} stroke={1.5} />}
+              style={{ textTransform: "none" }}
+            >
+              <span className="scope-badge-text">project tree</span>
             </Badge>
           </Tooltip>
-        )}
-        <Participants
-          participants={participants}
-          onlineUserIds={onlineUserIds}
-        />
+        ) : null}
+        <Box visibleFrom="sm">
+          <Participants
+            participants={participants}
+            onlineUserIds={onlineUserIds}
+          />
+        </Box>
         <TitleActions
           visible={canManage && !navOpened}
           canManage={canManage}
           hasWorktree={hasWorktree}
+          canRunSetup={canRunSetup}
           isPinned={isPinned}
+          allowedActions={allowedActions ?? []}
           onReviews={onReviews}
           onMerge={onMerge}
           onRename={onRename}
@@ -253,7 +274,9 @@ export function TitleBar({
             <ThreadMenu
               canManage={canManage}
               hasWorktree={hasWorktree}
+              canRunSetup={canRunSetup}
               isPinned={isPinned}
+              allowedActions={allowedActions ?? []}
                   onMerge={onMerge}
               onReviews={onReviews}
               onRename={onRename}
@@ -278,7 +301,11 @@ export function TitleBar({
           </Tooltip>
         ) : null}
         <Tooltip label={dark ? "Light mode" : "Dark mode"}>
-          <ActionIcon aria-label="Toggle theme" onClick={toggleColorScheme}>
+          <ActionIcon
+            aria-label="Toggle theme"
+            visibleFrom="sm"
+            onClick={toggleColorScheme}
+          >
             {dark ? (
               <IconSun size={15} stroke={1.5} />
             ) : (

@@ -11,11 +11,12 @@
 //! prompt preparation. Other senders observe the claim as busy and queue
 //! instead, which preserves the single-turn invariant.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use threadbase_agent::{Capabilities, Harness, TurnHandle};
-use threadbase_shared::{MessageId, TurnId};
-use tokio::sync::Mutex;
+use threadbase_core::state::{TurnAction, TurnMachine};
+use threadbase_shared::{now_ms, MessageId, TurnId, TurnState};
+use tokio::sync::{Mutex, OwnedSemaphorePermit};
 
 pub(crate) struct Session {
     pub(crate) capabilities: Capabilities,
@@ -25,6 +26,8 @@ pub(crate) struct Session {
     /// Set once the adapter is gone or being torn down, so a process exit is
     /// not mistaken for a crash and a dead session is never reused.
     stopped: AtomicBool,
+    /// Last harness interaction, used by the idle-session reaper.
+    last_used_ms: AtomicI64,
 }
 
 impl Session {
@@ -39,7 +42,20 @@ impl Session {
             turn: Mutex::new(TurnSlot::default()),
             run,
             stopped: AtomicBool::new(false),
+            last_used_ms: AtomicI64::new(now_ms()),
         }
+    }
+
+    pub(crate) fn touch(&self) {
+        self.last_used_ms.store(now_ms(), Ordering::Relaxed);
+    }
+
+    /// Milliseconds since the last interaction; `i64::MAX` when stopped.
+    pub(crate) fn idle_ms(&self) -> i64 {
+        if self.is_stopped() {
+            return i64::MAX;
+        }
+        now_ms().saturating_sub(self.last_used_ms.load(Ordering::Relaxed))
     }
 
     /// Mark the session before the harness is stopped, or when its process
@@ -56,6 +72,10 @@ impl Session {
     /// handed to `begin_turn` or released; it is the only way to start a
     /// prompt, so two input paths cannot prepare turns concurrently.
     pub(crate) async fn claim_start(&self) -> Option<TurnStartClaim<'_>> {
+        if self.is_stopped() {
+            return None;
+        }
+        self.touch();
         self.turn
             .lock()
             .await
@@ -69,29 +89,38 @@ impl Session {
 
     /// Install the prompt's handle and report whether the turn already ended
     /// while the start claim was held.
-    pub(crate) async fn install_turn(&self, handle: TurnHandle) -> TurnInstall {
-        self.turn.lock().await.install(handle)
+    pub(crate) async fn install_turn(
+        &self,
+        handle: TurnHandle,
+        permit: Option<OwnedSemaphorePermit>,
+    ) -> TurnInstall {
+        self.touch();
+        self.turn.lock().await.install(handle, permit)
     }
 
     pub(crate) async fn clear_turn(&self) {
+        self.touch();
         self.turn.lock().await.clear();
     }
 
     /// Take the turn for stop-and-send or cancellation without setting the
     /// cancel flag used for turns that are still starting.
     pub(crate) async fn take_turn(&self) -> Option<TurnHandle> {
-        self.turn.lock().await.turn.take()
+        self.touch();
+        self.turn.lock().await.take_running()
     }
 
     /// Take a running turn, or remember that a turn which is still being
     /// prepared must be cancelled as soon as its prompt is issued.
     pub(crate) async fn take_turn_for_cancel(&self) -> Option<TurnHandle> {
+        self.touch();
         self.turn.lock().await.take_for_cancel()
     }
 
     /// Reconcile the in-memory handle with the persisted thread status. A
     /// handle is stale once the thread is no longer running.
     pub(crate) async fn observe_running(&self, persisted_running: bool) -> bool {
+        self.touch();
         self.turn.lock().await.observe_running(persisted_running)
     }
 }
@@ -119,65 +148,141 @@ pub(crate) enum TurnInstall {
     AlreadyFinished,
 }
 
+/// The one in-memory turn slot for a thread.
+///
+/// The shape mirrors [`TurnMachine`] exactly; legality is asked of the machine
+/// so the persisted status rules and the concurrency rules cannot disagree.
 #[derive(Default)]
-struct TurnSlot {
-    turn: Option<TurnHandle>,
-    starting: bool,
-    cancel_requested: bool,
-    completed_while_starting: bool,
+enum TurnSlot {
+    #[default]
+    Empty,
+    Starting {
+        /// A cancel arrived before the prompt handle existed.
+        cancel_requested: bool,
+        /// A completion event arrived before the handle existed.
+        completed_while_starting: bool,
+    },
+    Running {
+        handle: TurnHandle,
+        /// Global turn-concurrency permit, released when the turn clears.
+        _permit: Option<OwnedSemaphorePermit>,
+    },
 }
 
 impl TurnSlot {
+    fn state(&self) -> TurnState {
+        match self {
+            Self::Empty => TurnState::Empty,
+            Self::Starting { .. } => TurnState::Starting,
+            Self::Running { .. } => TurnState::Running,
+        }
+    }
+
+    /// Ask the machine whether `action` is legal here. Every method below
+    /// returns early when it is not, so the enum can never reach a shape the
+    /// machine would reject.
+    fn allows(&self, action: &TurnAction) -> bool {
+        TurnMachine::transition(self.state(), action).is_ok()
+    }
+
     fn claim(&mut self) -> bool {
-        if self.turn.is_some() || self.starting {
+        if !self.allows(&TurnAction::Claim) {
             return false;
         }
-        self.starting = true;
-        self.cancel_requested = false;
-        self.completed_while_starting = false;
+        *self = Self::Starting {
+            cancel_requested: false,
+            completed_while_starting: false,
+        };
         true
     }
 
     fn abandon_start(&mut self) {
-        self.starting = false;
-        self.cancel_requested = false;
-        self.completed_while_starting = false;
+        if self.allows(&TurnAction::Abandon) {
+            *self = Self::Empty;
+        }
     }
 
-    fn install(&mut self, handle: TurnHandle) -> TurnInstall {
-        self.starting = false;
-        if self.completed_while_starting {
-            self.completed_while_starting = false;
+    fn install(&mut self, handle: TurnHandle, permit: Option<OwnedSemaphorePermit>) -> TurnInstall {
+        let Self::Starting {
+            cancel_requested,
+            completed_while_starting,
+        } = std::mem::take(self)
+        else {
+            debug_assert!(false, "install without a start claim");
+            return TurnInstall::AlreadyFinished;
+        };
+        if completed_while_starting {
             return TurnInstall::AlreadyFinished;
         }
-        self.turn = Some(handle);
-        TurnInstall::Running {
-            cancel_requested: std::mem::take(&mut self.cancel_requested),
-        }
+        *self = Self::Running {
+            handle,
+            _permit: permit,
+        };
+        TurnInstall::Running { cancel_requested }
     }
 
     fn clear(&mut self) {
-        if self.starting {
-            self.completed_while_starting = true;
-        } else {
-            self.turn = None;
+        if self.allows(&TurnAction::End) {
+            match std::mem::take(self) {
+                // The starter still has to observe the completion.
+                Self::Starting {
+                    cancel_requested, ..
+                } => {
+                    *self = Self::Starting {
+                        cancel_requested,
+                        completed_while_starting: true,
+                    };
+                }
+                _ => *self = Self::Empty,
+            }
         }
     }
 
     fn take_for_cancel(&mut self) -> Option<TurnHandle> {
-        if self.starting {
-            self.cancel_requested = true;
+        if !self.allows(&TurnAction::Cancel) {
+            return None;
         }
-        self.turn.take()
+        match self {
+            Self::Starting {
+                cancel_requested, ..
+            } => {
+                *cancel_requested = true;
+                None
+            }
+            Self::Running { .. } => match std::mem::take(self) {
+                Self::Running { handle, .. } => Some(handle),
+                _ => None,
+            },
+            Self::Empty => None,
+        }
+    }
+
+    /// Take a running turn without arming the cancel flag. A turn that is
+    /// still starting has no handle yet, so stop-and-send falls back to the
+    /// queued path.
+    fn take_running(&mut self) -> Option<TurnHandle> {
+        match std::mem::take(self) {
+            Self::Running { handle, .. } => Some(handle),
+            other => {
+                *self = other;
+                None
+            }
+        }
     }
 
     fn observe_running(&mut self, persisted_running: bool) -> bool {
-        if persisted_running {
-            self.turn.is_some()
-        } else {
-            self.turn = None;
-            false
+        if !self.allows(&TurnAction::Sync {
+            running: persisted_running,
+        }) {
+            return false;
         }
+        if persisted_running {
+            return matches!(self, Self::Running { .. });
+        }
+        if matches!(self, Self::Running { .. }) {
+            *self = Self::Empty;
+        }
+        false
     }
 }
 
@@ -219,12 +324,12 @@ mod tests {
         let mut slot = TurnSlot::default();
         assert!(slot.claim());
         assert!(matches!(
-            slot.install(handle("turn-1")),
+            slot.install(handle("turn-1"), None),
             TurnInstall::Running {
                 cancel_requested: false
             }
         ));
-        assert!(slot.turn.is_some());
+        assert_eq!(slot.state(), TurnState::Running);
         assert!(!slot.claim(), "a running turn cannot be started again");
         assert!(slot.observe_running(true));
     }
@@ -244,7 +349,7 @@ mod tests {
         assert!(slot.take_for_cancel().is_none());
         assert!(
             matches!(
-                slot.install(handle("turn-1")),
+                slot.install(handle("turn-1"), None),
                 TurnInstall::Running {
                     cancel_requested: true
                 }
@@ -259,10 +364,29 @@ mod tests {
         assert!(slot.claim());
         slot.clear();
         assert!(matches!(
-            slot.install(handle("turn-1")),
+            slot.install(handle("turn-1"), None),
             TurnInstall::AlreadyFinished
         ));
-        assert!(slot.turn.is_none(), "a completed turn stays completed");
+        assert_eq!(
+            slot.state(),
+            TurnState::Empty,
+            "a completed turn stays completed"
+        );
+    }
+
+    #[tokio::test]
+    async fn clearing_a_turn_releases_the_concurrency_permit() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = slots.clone().try_acquire_owned().unwrap();
+        let mut slot = TurnSlot::default();
+        assert!(slot.claim());
+        assert!(matches!(
+            slot.install(handle("turn-1"), Some(permit)),
+            TurnInstall::Running { .. }
+        ));
+        assert!(slots.clone().try_acquire_owned().is_err());
+        slot.clear();
+        assert!(slots.clone().try_acquire_owned().is_ok());
     }
 
     #[test]
@@ -270,10 +394,10 @@ mod tests {
         let mut slot = TurnSlot::default();
         assert!(slot.claim());
         assert!(matches!(
-            slot.install(handle("turn-1")),
+            slot.install(handle("turn-1"), None),
             TurnInstall::Running { .. }
         ));
         assert!(!slot.observe_running(false));
-        assert!(slot.turn.is_none());
+        assert_eq!(slot.state(), TurnState::Empty);
     }
 }

@@ -107,6 +107,25 @@ impl PresenceHub {
             .unwrap_or_default()
     }
 
+    /// Users whose current focus is this thread. Completion notifications use
+    /// this to avoid telling someone about a turn they are already watching.
+    pub async fn focused_user_ids(&self, thread_id: &str) -> HashSet<String> {
+        let projects = self.projects.read().await;
+        let mut focused = HashSet::new();
+        for entry in projects.values() {
+            for focus in entry.focuses.values() {
+                if focus
+                    .thread_id
+                    .as_ref()
+                    .is_some_and(|id| id.as_str() == thread_id)
+                {
+                    focused.insert(focus.user_id.0.clone());
+                }
+            }
+        }
+        focused
+    }
+
     pub async fn remove_user(&self, user_id: &str) {
         let projects_to_flush = {
             let mut projects = self.projects.write().await;

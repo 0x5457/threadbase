@@ -7,6 +7,14 @@ export type ProjectDto = {
   path: string;
   remoteUrl: string | null;
   defaultBranch: string;
+  /**
+   * Optional command run in a thread worktree before merge-back accepts it.
+   */
+  verifyCommand: string | null;
+  /**
+   * Optional command run once when a thread worktree is created.
+   */
+  setupCommand: string | null;
   activeThreads: number;
   waitingApprovals: number;
   lastActivityAt: number | null;

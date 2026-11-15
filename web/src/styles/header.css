@@ -2,7 +2,8 @@
 
 .header {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr) auto;
+  /* Match the 260px navbar so the title starts exactly over the main pane. */
+  grid-template-columns: 260px minmax(0, 1fr) auto;
   align-items: center;
   border-bottom: 1px solid var(--line);
   background: var(--chrome);

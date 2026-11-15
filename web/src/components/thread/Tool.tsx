@@ -169,6 +169,34 @@ const DETAIL_LABELS: Partial<Record<ToolKind, string>> = {
   fetch: "Response",
 };
 
+/** The truncation row is the obvious place to ask for more: make it open the
+ *  same details body as the label below it instead of being inert text. */
+function MoreLines({
+  hidden,
+  canExpand,
+  expanded,
+  onExpand,
+}: {
+  hidden: number;
+  canExpand: boolean;
+  expanded: boolean;
+  onExpand: () => void;
+}) {
+  const label = `… ${hidden} more ${hidden === 1 ? "line" : "lines"}`;
+  if (expanded) return null;
+  if (!canExpand) return <div className="tool-line more">{label}</div>;
+  return (
+    <button
+      type="button"
+      className="tool-line more tool-more"
+      aria-expanded={false}
+      onClick={onExpand}
+    >
+      {label}
+    </button>
+  );
+}
+
 export const Tool = memo(function Tool({
   item,
   expanded,
@@ -241,7 +269,7 @@ export const Tool = memo(function Tool({
               </>
             ) : null}
           </Text>
-          <StatusDot status={call.status} />
+          <StatusDot status={call.status} label={call.status.replaceAll("_", " ")} />
           {call.status !== "pending" && duration > 0 ? (
             <Text size="xs" className="tool-duration">
               {formatDuration(duration)}
@@ -268,7 +296,12 @@ export const Tool = memo(function Tool({
               </div>
             ))}
             {preview.hidden > 0 ? (
-              <div className="tool-line more">… {preview.hidden} more lines</div>
+              <MoreLines
+                hidden={preview.hidden}
+                canExpand={hasDetails}
+                expanded={expanded}
+                onExpand={onToggleExpanded}
+              />
             ) : null}
           </div>
         ) : null}
@@ -280,9 +313,12 @@ export const Tool = memo(function Tool({
               </div>
             ))}
             {outputLines.length > 3 ? (
-              <div className="tool-line more">
-                … {outputLines.length - 3} more lines
-              </div>
+              <MoreLines
+                hidden={outputLines.length - 3}
+                canExpand={hasDetails}
+                expanded={expanded}
+                onExpand={onToggleExpanded}
+              />
             ) : null}
           </div>
         ) : null}

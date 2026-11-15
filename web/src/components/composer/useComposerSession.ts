@@ -10,6 +10,7 @@ import {
   sendMessage,
 } from "../../api";
 import { useDraftSession } from "../../lib/draft";
+import { stateLabel } from "../../lib/machine";
 
 export type ComposerDelivery = "auto" | "queue";
 
@@ -35,6 +36,7 @@ interface UseComposerSessionOptions {
   userId?: string;
   userName?: string;
   canWrite?: boolean;
+  sendWithModifier?: boolean;
 }
 
 /**
@@ -52,6 +54,7 @@ export function useComposerSession({
   userId,
   userName,
   canWrite,
+  sendWithModifier = false,
 }: UseComposerSessionOptions) {
   const queryClient = useQueryClient();
   const [sending, setSending] = useState(false);
@@ -144,7 +147,7 @@ export function useComposerSession({
         return false;
       }
       const shared = Boolean(threadId) && draft.active;
-      if (shared && !draft.synced) {
+      if (shared && draft.phase !== "live") {
         notifications.show({
           message: "Draft is still syncing with the thread",
           color: "yellow",
@@ -199,7 +202,7 @@ export function useComposerSession({
       agent,
       delivery,
       draft.active,
-      draft.synced,
+      draft.phase,
       onSent,
       queryClient,
       sending,
@@ -212,16 +215,16 @@ export function useComposerSession({
     new Set(draft.remoteEditors.map((peer) => peer.name)),
   );
   const liveLabel = draft.active
-    ? `${draft.synced && draft.connected ? "live" : draft.connected ? "syncing" : "offline"}${editingNames.length ? ` · ${editingNames.join(", ")} editing` : ""}`
+    ? `${stateLabel("draft", draft.phase).toLowerCase()}${editingNames.length ? ` · ${editingNames.join(", ")} editing` : ""}`
     : "";
-  const sendBlocked = draft.active && !draft.synced;
+  const sendBlocked = draft.active && draft.phase !== "live";
   const sendLabel = readOnlyAccount
     ? "Read-only account: ask an admin for editing access"
     : !writable
       ? "Viewers cannot send"
       : sendBlocked
         ? "Waiting for the shared draft to sync"
-        : "Send  ⌘↵";
+        : `Send  ${sendWithModifier ? "⌘↵" : "↵"}`;
 
   return {
     agent,

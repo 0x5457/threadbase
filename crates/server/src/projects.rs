@@ -17,6 +17,8 @@ pub struct ProjectRow {
     pub path: String,
     pub remote_url: Option<String>,
     pub default_branch: String,
+    pub verify_command: Option<String>,
+    pub setup_command: Option<String>,
     pub created_at: i64,
     pub active_threads: i64,
     pub waiting_approvals: i64,
@@ -36,7 +38,8 @@ pub(crate) fn inspect_message(error: &git::GitError) -> &'static str {
 }
 
 const PROJECT_SELECT: &str = "
-    SELECT p.id, p.name, p.path, p.remote_url, p.default_branch, p.created_at,
+    SELECT p.id, p.name, p.path, p.remote_url, p.default_branch, p.verify_command,
+      p.setup_command, p.created_at,
       (SELECT COUNT(*) FROM threads t WHERE t.project_id = p.id AND t.archived_at IS NULL) AS active_threads,
       (SELECT COUNT(*) FROM approvals a JOIN threads t ON a.thread_id = t.id
          WHERE t.project_id = p.id AND a.status = 'pending') AS waiting_approvals,
@@ -339,7 +342,8 @@ pub async fn delete(pool: &SqlitePool, project_id: &str) -> Result<(), ServerErr
             .bind(project_id)
             .fetch_all(pool)
             .await?;
-    for (_, worktree, branch) in threads {
+    for (thread_id, worktree, branch) in threads {
+        let _ = crate::search::remove_thread(pool, &thread_id).await;
         let Some(worktree) = worktree.as_deref() else {
             // Threads without a worktree run on the project branch; deleting
             // that branch would delete the user's own branch.
@@ -367,6 +371,8 @@ pub async fn update(
     name: Option<&str>,
     remote_url: Option<&str>,
     path: Option<&str>,
+    verify_command: Option<&str>,
+    setup_command: Option<&str>,
 ) -> Result<ProjectDto, ServerError> {
     let current = row(pool, project_id).await?;
     if let Some(name) = name {
@@ -390,6 +396,23 @@ pub async fn update(
             .bind(project_id)
             .execute(pool)
             .await?;
+    }
+    for (column, command) in [
+        ("verify_command", verify_command),
+        ("setup_command", setup_command),
+    ] {
+        if let Some(command) = command {
+            let command = command.trim();
+            let value = (!command.is_empty()).then_some(command);
+            sqlx::query(&format!(
+                "UPDATE projects SET {column} = ?, updated_at = ? WHERE id = ?"
+            ))
+            .bind(value)
+            .bind(now_ms())
+            .bind(project_id)
+            .execute(pool)
+            .await?;
+        }
     }
     if let Some(path) = path {
         let raw = path.trim();
@@ -455,6 +478,8 @@ pub fn to_dto(row: ProjectRow, available: bool) -> ProjectDto {
         path: row.path,
         remote_url: row.remote_url,
         default_branch: row.default_branch,
+        verify_command: row.verify_command,
+        setup_command: row.setup_command,
         active_threads: u32::try_from(row.active_threads).unwrap_or(0),
         waiting_approvals: u32::try_from(row.waiting_approvals).unwrap_or(0),
         last_activity_at: row.last_activity_at,

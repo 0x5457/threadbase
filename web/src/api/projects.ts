@@ -24,7 +24,13 @@ export function createProject(
 
 export function updateProject(
   projectId: string,
-  patch: { name?: string; path?: string; remoteUrl?: string | null },
+  patch: {
+    name?: string;
+    path?: string;
+    remoteUrl?: string | null;
+    verifyCommand?: string | null;
+    setupCommand?: string | null;
+  },
 ) {
   return jsonRequest<ProjectResponse>(`/api/projects/${projectId}`, "PATCH", patch);
 }

@@ -9,11 +9,10 @@ use crate::events::{EventMeta, EventStore};
 use crate::projection::{self, Projection};
 use crate::projects;
 use crate::queue;
+use crate::watchers;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
-use threadbase_core::state::{
-    subagent_status_str, ThreadAction, ThreadMachine, INITIAL_BINDING_STATUS,
-};
+use threadbase_core::state::{subagent_status_str, ThreadAction, ThreadMachine};
 use threadbase_shared::api::{CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest};
 use threadbase_shared::{
     now_ms, Actor, ApiError, SubagentStatus, ThreadDto, ThreadEvent, ThreadId, ThreadStatus, TurnId,
@@ -56,6 +55,38 @@ pub async fn transition(
     }
     sqlx::query("UPDATE threads SET status = ?, updated_at = ? WHERE id = ?")
         .bind(threadbase_core::state::thread_status_str(next))
+        .bind(now_ms())
+        .bind(thread_id)
+        .execute(pool)
+        .await?;
+    projection.publish(thread_id).await;
+    Ok(next)
+}
+
+/// Archive or unarchive a thread, writing the status and its `archived_at`
+/// marker in one statement.
+///
+/// They used to be written by two separate statements, so a failure between
+/// them left a thread that was filtered out of lists but still reported
+/// `running`, or vice versa. `archived_at` is now a projection of the machine
+/// state, never an independent switch.
+pub async fn set_archived(
+    pool: &SqlitePool,
+    projection: &Projection,
+    thread_id: &str,
+    archived: bool,
+) -> Result<ThreadStatus, ServerError> {
+    let current = status(pool, thread_id).await?;
+    let action = if archived {
+        ThreadAction::Archive
+    } else {
+        ThreadAction::Unarchive
+    };
+    let next = ThreadMachine::transition(current, &action)
+        .map_err(|error| ServerError::internal(error.to_string()))?;
+    sqlx::query("UPDATE threads SET status = ?, archived_at = ?, updated_at = ? WHERE id = ?")
+        .bind(threadbase_core::state::thread_status_str(next))
+        .bind(archived.then(now_ms))
         .bind(now_ms())
         .bind(thread_id)
         .execute(pool)
@@ -142,7 +173,6 @@ pub async fn reconcile_after_restart(
         .bind(&thread_id)
         .execute(pool)
         .await?;
-        let _ = bindings::set_status(pool, &thread_id, INITIAL_BINDING_STATUS, None).await;
         let _ = sqlx::query(
             "UPDATE subagents SET status = ?, updated_at = ?
               WHERE thread_id = ? AND status IN (?, ?)",
@@ -293,6 +323,7 @@ pub async fn create(
         },
     )
     .await?;
+    watchers::watch(pool, &thread_id, user.user.id.as_str()).await?;
 
     if let Some(worktree) = worktree.as_deref() {
         if let Err(error) = git::create_worktree(&project_root, worktree, &branch, &base_sha).await
@@ -311,6 +342,7 @@ pub async fn create(
     let agent_cwd = worktree_path.as_deref().unwrap_or(&project.path);
     bindings::insert(pool, &thread_id, &agent, agent_cwd, now).await?;
     transition(pool, projection, &thread_id, ThreadAction::StartSucceeded).await?;
+    let _ = crate::search::index_thread(pool, &thread_id).await;
 
     if let Some(prompt) = request
         .initial_prompt
@@ -370,6 +402,7 @@ pub async fn update(
             .bind(thread_id)
             .execute(pool)
             .await?;
+        let _ = crate::search::index_thread(pool, thread_id).await;
     }
     if let Some(pinned) = request.pinned {
         sqlx::query("UPDATE threads SET pinned = ?, updated_at = ? WHERE id = ?")
@@ -380,19 +413,7 @@ pub async fn update(
             .await?;
     }
     if let Some(archived) = request.archived {
-        let archived_at = if archived { Some(now_ms()) } else { None };
-        sqlx::query("UPDATE threads SET archived_at = ?, updated_at = ? WHERE id = ?")
-            .bind(archived_at)
-            .bind(now_ms())
-            .bind(thread_id)
-            .execute(pool)
-            .await?;
-        let action = if archived {
-            ThreadAction::Archive
-        } else {
-            ThreadAction::Unarchive
-        };
-        transition(pool, projection, thread_id, action).await?;
+        set_archived(pool, projection, thread_id, archived).await?;
     }
     for (column, value) in [
         ("model", request.model.as_deref()),
@@ -494,6 +515,9 @@ pub async fn fork(
         }
     }
     bindings::copy(pool, &new_id, &worktree_path, &source.id, now).await?;
+    watchers::copy_for_fork(pool, &new_id, source.id.as_str()).await?;
+    let _ = crate::search::index_thread(pool, &new_id).await;
+    watchers::watch(pool, &new_id, user.user.id.as_str()).await?;
     transition(pool, projection, &new_id, ThreadAction::StartSucceeded).await?;
     audit(
         pool,
@@ -535,6 +559,7 @@ pub async fn delete(
         .bind(thread_id)
         .execute(pool)
         .await?;
+    let _ = crate::search::remove_thread(pool, thread_id).await;
     audit(
         pool,
         Some(user.user.id.as_str()),

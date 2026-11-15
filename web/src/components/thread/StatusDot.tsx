@@ -1,4 +1,5 @@
 import { Group, Text } from "@mantine/core";
+import { stateLabel } from "../../lib/machine";
 
 export function statusTone(status: string) {
   return status === "completed"
@@ -12,13 +13,20 @@ export function statusTone(status: string) {
           : "idle";
 }
 
-export function StatusDot({ status }: { status: string }) {
+export function StatusDot({
+  status,
+  label,
+}: {
+  status: string;
+  /** Machine label when the status belongs to a known machine. */
+  label?: string;
+}) {
   const tone = statusTone(status);
   return (
     <Group gap={4} className="status-inline" wrap="nowrap">
       <span className={`dot ${tone}`} />
       <Text size="xs" c="dimmed">
-        {status.replaceAll("_", " ")}
+        {label ?? stateLabel("thread", status)}
       </Text>
     </Group>
   );

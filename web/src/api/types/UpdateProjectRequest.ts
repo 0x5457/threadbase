@@ -4,4 +4,12 @@ export type UpdateProjectRequest = {
   name: string | null;
   remoteUrl: string | null;
   path: string | null;
+  /**
+   * Empty string clears the configured command.
+   */
+  verifyCommand: string | null;
+  /**
+   * Empty string clears the configured command.
+   */
+  setupCommand: string | null;
 };

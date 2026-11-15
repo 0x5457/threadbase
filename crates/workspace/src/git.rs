@@ -123,6 +123,25 @@ pub async fn head_sha(root: &Path) -> Result<String, GitError> {
     git(root, &["rev-parse", "HEAD"]).await
 }
 
+pub async fn current_branch(root: &Path) -> Result<String, GitError> {
+    git(root, &["branch", "--show-current"]).await
+}
+
+/// Porcelain status; an empty string means the tree is clean.
+pub async fn status_porcelain(root: &Path) -> Result<String, GitError> {
+    git(root, &["status", "--porcelain"]).await
+}
+
+/// Restore a clean tree to a known commit. Only used after Threadbase itself
+/// verified the tree was clean before applying a patch.
+pub async fn reset_hard(root: &Path, reference: &str) -> Result<(), GitError> {
+    git(root, &["reset", "--hard", reference]).await.map(|_| ())
+}
+
+pub async fn clean_untracked(root: &Path) -> Result<(), GitError> {
+    git(root, &["clean", "-fd"]).await.map(|_| ())
+}
+
 pub async fn rev_parse(root: &Path, reference: &str) -> Result<String, GitError> {
     git(root, &["rev-parse", "--verify", reference]).await
 }

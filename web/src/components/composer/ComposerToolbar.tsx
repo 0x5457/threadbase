@@ -1,36 +1,25 @@
+import { ActionIcon, Box, Group, Kbd, Text, Tooltip } from "@mantine/core";
 import {
-  ActionIcon,
-  Box,
-  Group,
-  Kbd,
-  Menu,
-  Text,
-  Tooltip,
-} from "@mantine/core";
-import {
-  IconAdjustmentsHorizontal,
   IconArrowUp,
   IconAt,
-  IconCheck,
   IconCommand,
   IconEye,
   IconTerminal2,
   IconMessagePlus,
 } from "@tabler/icons-react";
 import type { ModelChoice } from "../ModelPicker";
+import type { DraftPhase } from "../../api/types/DraftPhase";
 import type { Usage } from "../../api/types/Usage";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ContextMeter } from "./ContextMeter";
 import type { ComposerDelivery } from "./useComposerSession";
 
 interface ComposerToolbarProps {
-  agent: string;
   usage?: Usage | null;
   watching?: number;
   terminalUsers?: string[];
   draftActive: boolean;
-  draftSynced: boolean;
-  draftConnected: boolean;
+  draftPhase: DraftPhase;
   liveLabel: string;
   onThreadComment?: () => void;
   onOpenTrigger: (kind: "command" | "file") => void;
@@ -50,17 +39,16 @@ interface ComposerToolbarProps {
   sending: boolean;
   sendBlocked: boolean;
   sendLabel: string;
+  sendWithModifier: boolean;
   onSend: () => void;
 }
 
 export function ComposerToolbar({
-  agent,
   usage,
   watching,
   terminalUsers,
   draftActive,
-  draftSynced,
-  draftConnected,
+  draftPhase,
   liveLabel,
   onThreadComment,
   onOpenTrigger,
@@ -80,6 +68,7 @@ export function ComposerToolbar({
   sending,
   sendBlocked,
   sendLabel,
+  sendWithModifier,
   onSend,
 }: ComposerToolbarProps) {
   return (
@@ -115,47 +104,11 @@ export function ComposerToolbar({
       </Tooltip>
       <div className="spacer" />
       <ContextMeter usage={usage ?? null} />
-      <Kbd visibleFrom="sm" mr={4}>
-        ⌘↵
-      </Kbd>
-      <Menu position="top-end" width={230} shadow="md">
-        <Menu.Target>
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size={22}
-            aria-label="Effort and delivery"
-          >
-            <IconAdjustmentsHorizontal size={13} stroke={1.5} />
-          </ActionIcon>
-        </Menu.Target>
-        <Menu.Dropdown>
-          <Menu.Label>Agent</Menu.Label>
-          <Menu.Item disabled>{agent}</Menu.Item>
-          <Menu.Divider />
-          <Menu.Label>Delivery</Menu.Label>
-          <Menu.Item
-            onClick={() => onDeliveryChange("auto")}
-            rightSection={
-              delivery === "auto" ? (
-                <IconCheck size={12} stroke={1.5} />
-              ) : null
-            }
-          >
-            Send now
-          </Menu.Item>
-          <Menu.Item
-            onClick={() => onDeliveryChange("queue")}
-            rightSection={
-              delivery === "queue" ? (
-                <IconCheck size={12} stroke={1.5} />
-              ) : null
-            }
-          >
-            Queue for next turn
-          </Menu.Item>
-        </Menu.Dropdown>
-      </Menu>
+      {sendWithModifier ? (
+        <Kbd visibleFrom="sm" mr={4}>
+          ⌘↵
+        </Kbd>
+      ) : null}
       {terminalUsers?.length ? (
         <Tooltip
           label={`${terminalUsers.join(", ")} in the terminal`}
@@ -185,9 +138,9 @@ export function ComposerToolbar({
         <Tooltip label={liveLabel}>
           <span
             className={`live-dot ${
-              draftSynced && draftConnected
+              draftPhase === "live"
                 ? "online"
-                : draftConnected
+                : draftPhase === "syncing"
                   ? "syncing"
                   : ""
             }`}
@@ -200,6 +153,8 @@ export function ComposerToolbar({
         modelOptions={modelOptions}
         effectiveEffort={effectiveEffort}
         effortOptions={effortOptions}
+        delivery={delivery}
+        onDeliveryChange={onDeliveryChange}
         loading={configLoading}
         writable={writable}
         onModelChange={onModelChange}

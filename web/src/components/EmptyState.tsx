@@ -10,12 +10,15 @@ export function EmptyState({
   title,
   children,
   hint,
+  action,
   loading = false,
 }: {
   icon?: ReactNode;
   title: string;
   children?: ReactNode;
   hint?: string;
+  /** Optional next step, rendered below the copy. */
+  action?: ReactNode;
   loading?: boolean;
 }) {
   return (
@@ -33,6 +36,7 @@ export function EmptyState({
           </Text>
         ) : null}
         {hint ? <Text className="empty-state-hint">{hint}</Text> : null}
+        {action ? <Box mt={4}>{action}</Box> : null}
       </Stack>
     </Box>
   );

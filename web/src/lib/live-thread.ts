@@ -3,7 +3,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadEvent } from "../api";
 import { getOlderEvents } from "../api";
 import { emptyStore, mergeEvents, replaceEvents } from "./live/store";
-import type { EventStore, LivePresence, PresencePayload } from "./live/types";
+import type {
+  EventStore,
+  LivePresence,
+  PresencePayload,
+} from "./live/types";
+import type { ConnectionPhase } from "../api/types/ConnectionPhase";
+import type { ThreadState } from "../api/types/ThreadState";
 import {
   createThreadView,
   extendThreadView,
@@ -29,6 +35,7 @@ import {
   parseEventsPage,
   parsePresence,
   parseThreadEvent,
+  parseThreadState,
 } from "./live/wire";
 
 const EVENTS_PAGE_LIMIT = 500;
@@ -58,11 +65,12 @@ export function useLiveThread(
   const [events, setEvents] = useState<ThreadEvent[]>([]);
   const [initialView] = useState(() => createThreadView(agentName));
   const [view, setView] = useState<ThreadViewState>(initialView);
-  const [connected, setConnected] = useState(false);
+  const [phase, setPhase] = useState<ConnectionPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [presence, setPresence] = useState<LivePresence>(EMPTY_PRESENCE);
   const [hasEarlier, setHasEarlier] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [threadState, setThreadState] = useState<ThreadState | null>(null);
+  const threadStateRevision = useRef(-1);
   const oldestRef = useRef(0);
   const publishRef = useRef<((next: EventStore) => void) | null>(null);
   const loadingEarlier = useRef(false);
@@ -132,23 +140,25 @@ export function useLiveThread(
       storeRef.current = emptyStore();
       resetView();
       setEvents([]);
-      setConnected(false);
+      setPhase("idle");
       setError(null);
+      setThreadState(null);
+      threadStateRevision.current = -1;
       return;
     }
 
     storeRef.current = emptyStore();
     resetView();
     setEvents([]);
-    setConnected(false);
+    setPhase("loading");
     setError(null);
     setHasEarlier(false);
-    setLoading(true);
     oldestRef.current = 0;
 
     if (typeof WebSocket === "undefined") {
       // Server-rendered or exotic host without WebSocket: stay inert instead
       // of throwing from render.
+      setPhase("failed");
       setError("Live updates are unavailable: this browser has no WebSocket.");
       return;
     }
@@ -213,7 +223,7 @@ export function useLiveThread(
         ? replaceEvents(page.events)
         : mergeEvents(storeRef.current, page.events);
       publish(next);
-      setLoading(false);
+      setPhase("live");
       if (firstLoad) {
         oldestRef.current = page.oldestSeq;
         setHasEarlier(page.oldestSeq > 1);
@@ -276,12 +286,21 @@ export function useLiveThread(
           if (text !== null && message.level === "error") setError(text);
           return;
         }
+        case "thread_state": {
+          const snapshot = parseThreadState(message.state);
+          // Revisions are monotonic; an out-of-order frame would flicker the
+          // composer between enabled and disabled.
+          if (snapshot === null || snapshot.threadId !== threadId) return;
+          if (snapshot.revision < threadStateRevision.current) return;
+          threadStateRevision.current = snapshot.revision;
+          setThreadState(snapshot);
+          return;
+        }
         case "pong": {
           pingOutstanding = false;
           return;
         }
         default:
-          // "thread_state" and any future frame the hook does not use.
           return;
       }
     };
@@ -314,6 +333,7 @@ export function useLiveThread(
         RECONNECT_OPTIONS,
       );
     } catch (cause) {
+      setPhase("failed");
       setError(errorMessage(cause, "Could not open the live connection."));
       return;
     }
@@ -324,7 +344,6 @@ export function useLiveThread(
     next.onopen = () => {
       catchUpRounds = 0;
       pingOutstanding = false;
-      setConnected(true);
       setError(null);
       clearHeartbeat();
       heartbeatTimer = window.setInterval(() => {
@@ -357,7 +376,7 @@ export function useLiveThread(
       flush();
       clearTimers();
       pingOutstanding = false;
-      setConnected(false);
+      setPhase("reconnecting");
       setPresence(EMPTY_PRESENCE);
       setError(
         event.reason !== ""
@@ -419,12 +438,12 @@ export function useLiveThread(
       threadId !== null && storeThreadRef.current === threadId
         ? events
         : EMPTY_EVENTS,
+    threadState,
     view,
-    connected,
+    phase,
     error,
     presence,
     hasEarlier,
-    loading,
     loadEarlier,
     sendPresence,
   };

@@ -248,6 +248,7 @@ export function ProjectNode({
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
       void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
       setRemoveOpen(false);
       if (active) {
         navigate("/inbox");

@@ -3,6 +3,7 @@
 use crate::auth::CurrentUser;
 use crate::error::ServerError;
 use crate::events::EventStore;
+use crate::projection::Projection;
 use sqlx::{FromRow, SqlitePool};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -79,6 +80,7 @@ pub async fn load(pool: &SqlitePool, comment_id: &str) -> Result<CommentDto, Ser
 
 pub async fn create(
     pool: &SqlitePool,
+    projection: &Projection,
     events: &EventStore,
     thread_id: &str,
     user: &CurrentUser,
@@ -111,6 +113,7 @@ pub async fn create(
         now,
     )
     .await?;
+    crate::watchers::watch(pool, thread_id, user.user.id.as_str()).await?;
     let comment = load(pool, &id).await?;
     events
         .append(
@@ -122,7 +125,7 @@ pub async fn create(
             Default::default(),
         )
         .await?;
-    notify_mentions(pool, thread_id, body, &id, &user.user).await?;
+    notify_mentions(pool, projection, thread_id, body, &id, &user.user).await?;
     Ok(comment)
 }
 
@@ -186,10 +189,12 @@ pub async fn delete(
             "only the author can delete this comment",
         )));
     }
+    let thread_id = current.thread_id.0.clone();
     sqlx::query("DELETE FROM comments WHERE id = ?")
         .bind(comment_id)
         .execute(pool)
         .await?;
+    let _ = crate::search::remove_comment(pool, &thread_id, comment_id).await;
     Ok(())
 }
 
@@ -465,6 +470,7 @@ fn to_dto(row: CommentRow) -> CommentDto {
 
 async fn notify_mentions(
     pool: &SqlitePool,
+    projection: &Projection,
     thread_id: &str,
     body: &str,
     comment_id: &str,
@@ -486,8 +492,10 @@ async fn notify_mentions(
         if target.id == actor.id {
             continue;
         }
-        crate::notify::insert(
+        crate::watchers::watch(pool, thread_id, target.id.as_str()).await?;
+        crate::notify::notify_user(
             pool,
+            projection,
             crate::notify::InboxItem {
                 user_id: target.id.as_str(),
                 kind: "mention",

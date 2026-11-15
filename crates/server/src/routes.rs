@@ -27,6 +27,8 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::routes_actions::router())
         .merge(crate::routes_agent::router())
         .merge(crate::routes_meta::router())
+        .merge(crate::routes_search::router())
+        .merge(crate::routes_push::router())
         .merge(crate::routes_comments::router())
         .merge(crate::routes_files::router())
         .merge(crate::routes_fs::router())

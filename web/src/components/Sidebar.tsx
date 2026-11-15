@@ -82,7 +82,7 @@ export function Sidebar({
     refetchIntervalInBackground: false,
   });
   const inbox = useQuery({
-    queryKey: ["inbox", "unread"],
+    queryKey: ["inbox-unread"],
     queryFn: () => listInbox("unread"),
     retry: false,
     refetchInterval: 5_000,

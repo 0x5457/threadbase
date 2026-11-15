@@ -96,6 +96,15 @@ pub(crate) fn spawn(
     });
 }
 
+fn truncate_summary(message: &str) -> String {
+    const MAX: usize = 240;
+    let mut text: String = message.chars().take(MAX).collect();
+    if message.chars().count() > MAX {
+        text.push('…');
+    }
+    format!("The agent stopped with an error: {text}")
+}
+
 /// Append a text delta to a buffer that may receive either incremental chunks
 /// or cumulative snapshots, mirroring the rule used by the web reducer and the
 /// cold-page fold.
@@ -233,7 +242,12 @@ impl Pump {
                     return Ok(());
                 }
                 session.mark_stopped();
-                let had_turn = self.inner.current_turn(&self.thread_id).await.is_some();
+                // A dying adapter reports a prompt error first, and that path
+                // clears `current_turn_id`. Ask the run state too, otherwise
+                // whether an interrupted turn is continued depends on which
+                // event the ACP reader happens to deliver first.
+                let had_turn = self.inner.current_turn(&self.thread_id).await.is_some()
+                    || self.run.lock().await.turn_id.is_some();
                 self.inner.clear_turn(&self.thread_id).await;
                 self.run.lock().await.turn_id = None;
                 sqlx::query(
@@ -249,6 +263,8 @@ impl Pump {
                     message: "agent process exited".into(),
                 })
                 .await?;
+                self.notify("error", "The agent process exited unexpectedly.", false)
+                    .await;
                 let archived = threads::status(&self.inner.pool, &self.thread_id)
                     .await
                     .ok()
@@ -414,6 +430,8 @@ impl Pump {
             .execute(&self.inner.pool)
             .await?;
         self.transition(ThreadAction::TurnEnded).await?;
+        self.notify("completed", "The agent finished its turn.", true)
+            .await;
         // A finished turn proves the adapter is healthy; forget earlier crashes.
         self.inner.restarts.lock().await.remove(&self.thread_id);
         let _ = self.inner.queue_tx.send(self.thread_id.clone());
@@ -422,7 +440,11 @@ impl Pump {
 
     async fn abort_turn(&self, action: ThreadAction, message: String) -> Result<(), ServerError> {
         self.inner.clear_turn(&self.thread_id).await;
-        let turn_id = self.run.lock().await.turn_id.take();
+        let summary = truncate_summary(&message);
+        // Clone rather than take: if this error was the adapter dying, the
+        // following `ProcessExited` still has to know a turn was cut off.
+        // A new turn resets the run state, a normal finish clears it.
+        let turn_id = self.run.lock().await.turn_id.clone();
         self.append(ThreadEvent::TurnError { turn_id, message })
             .await?;
         sqlx::query("UPDATE threads SET current_turn_id = NULL, updated_at = ? WHERE id = ?")
@@ -431,9 +453,29 @@ impl Pump {
             .execute(&self.inner.pool)
             .await?;
         self.transition(action).await?;
+        self.notify("error", &summary, false).await;
         // A failed turn must not strand the messages queued behind it.
         let _ = self.inner.queue_tx.send(self.thread_id.clone());
         Ok(())
+    }
+
+    /// Best-effort watcher notification; it must never fail the turn itself.
+    async fn notify(&self, kind: &str, summary: &str, skip_focused: bool) {
+        let presence = skip_focused.then_some(&self.inner.presence);
+        if let Err(error) = crate::notify::notify_watchers(
+            &self.inner.pool,
+            &self.inner.projection,
+            &self.thread_id,
+            kind,
+            None,
+            None,
+            summary,
+            presence,
+        )
+        .await
+        {
+            tracing::warn!(%error, thread_id = %self.thread_id, "could not notify watchers");
+        }
     }
 
     async fn transition(&self, action: ThreadAction) -> Result<(), ServerError> {

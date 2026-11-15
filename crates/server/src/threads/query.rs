@@ -24,6 +24,8 @@ pub struct ThreadRow {
     pub base_sha: Option<String>,
     pub last_turn_sha: Option<String>,
     pub worktree_path: Option<String>,
+    pub setup_status: String,
+    pub setup_error: Option<String>,
     pub created_by: String,
     pub created_at: i64,
     pub updated_at: i64,
@@ -34,8 +36,9 @@ pub struct ThreadRow {
 
 const THREAD_COLUMNS: &str =
     "t.id, t.project_id, t.parent_thread_id, t.title, t.status, t.agent, t.model, t.effort,
-     t.branch, t.base_branch, t.base_sha, t.last_turn_sha, t.worktree_path, t.created_by,
-     t.created_at, t.updated_at, t.archived_at, t.pinned, t.last_activity_at";
+     t.branch, t.base_branch, t.base_sha, t.last_turn_sha, t.worktree_path, t.setup_status,
+     t.setup_error, t.created_by, t.created_at, t.updated_at, t.archived_at, t.pinned,
+     t.last_activity_at";
 
 #[derive(Clone, Default)]
 struct Aggregate {
@@ -79,6 +82,19 @@ pub async fn list(
     .fetch_all(pool)
     .await?;
     dtos(pool, rows).await
+}
+
+/// Thread ids for a project, used to stop their adapters before deletion.
+pub async fn ids_for_project(
+    pool: &SqlitePool,
+    project_id: &str,
+) -> Result<Vec<String>, ServerError> {
+    Ok(
+        sqlx::query_scalar("SELECT id FROM threads WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
 pub async fn list_all(
@@ -142,13 +158,15 @@ fn to_dto(
     participants: Vec<Participant>,
     subagents: Vec<threadbase_shared::SubagentDto>,
 ) -> ThreadDto {
+    let status =
+        threadbase_core::state::parse_thread_status(&row.status).unwrap_or(ThreadStatus::Idle);
     ThreadDto {
         id: id.into(),
         project_id: row.project_id.clone().into(),
         parent_thread_id: row.parent_thread_id.clone().map(Into::into),
         title: row.title.clone(),
-        status: threadbase_core::state::parse_thread_status(&row.status)
-            .unwrap_or(ThreadStatus::Idle),
+        status,
+        allowed_actions: threadbase_core::state::thread_commands(status),
         agent: row.agent.clone(),
         model: row.model.clone(),
         effort: row.effort.clone(),
@@ -156,6 +174,9 @@ fn to_dto(
         base_branch: row.base_branch.clone(),
         base_sha: row.base_sha.clone(),
         worktree_path: row.worktree_path.clone(),
+        setup_status: threadbase_core::state::parse_setup_status(&row.setup_status)
+            .unwrap_or(threadbase_shared::SetupStatus::None),
+        setup_error: row.setup_error.clone(),
         created_by: row.created_by.clone().into(),
         created_at: row.created_at,
         updated_at: row.updated_at,

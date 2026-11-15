@@ -17,6 +17,7 @@ import {
 } from "@tabler/icons-react";
 import { useState } from "react";
 import type { Comment } from "../../api";
+import { can } from "../../lib/machine";
 import { initials, timeOf } from "./format";
 
 /**
@@ -106,7 +107,7 @@ export function CommentCard({
                   </ActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown>
-                  {comment.status === "pending" && onSend ? (
+                  {can("comment", comment.status, "deliver") && onSend ? (
                     <Menu.Item
                       leftSection={<IconSend size={12} />}
                       onClick={onSend}
@@ -114,7 +115,7 @@ export function CommentCard({
                       Send now
                     </Menu.Item>
                   ) : null}
-                  {comment.status !== "resolved" && onResolve ? (
+                  {can("comment", comment.status, "resolve") && onResolve ? (
                     <Menu.Item
                       leftSection={<IconCheck size={12} />}
                       onClick={onResolve}

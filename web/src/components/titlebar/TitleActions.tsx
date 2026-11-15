@@ -6,21 +6,26 @@ interface TitleActionsProps {
   visible: boolean;
   canManage: boolean;
   hasWorktree: boolean;
+  canRunSetup: boolean;
   isPinned: boolean;
+  /** Thread-machine commands legal for the current state. */
+  allowedActions: string[];
   onReviews: () => void;
   onMerge: () => void;
   onRename: () => void;
   onTogglePin: () => void;
   onFork: () => void;
   onRevert: () => void;
-  onArchive: () => void;
+  onArchive: (archived: boolean) => void;
 }
 
 export function TitleActions({
   visible,
   canManage,
   hasWorktree,
+  canRunSetup,
   isPinned,
+  allowedActions,
   onReviews,
   onMerge,
   onRename,
@@ -62,7 +67,10 @@ export function TitleActions({
       <ThreadMenu
         canManage={canManage}
         hasWorktree={hasWorktree}
+        canRunSetup={canRunSetup}
+        inlineActions
         isPinned={isPinned}
+        allowedActions={allowedActions}
         onMerge={onMerge}
         onReviews={onReviews}
         onRename={onRename}

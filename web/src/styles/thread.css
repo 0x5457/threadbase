@@ -50,11 +50,33 @@
 }
 
 .settings-view {
+  display: flex;
   width: min(860px, 100%);
   height: 100%;
   margin: 0 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding-bottom: 24px;
+}
+
+/* Sticky only while the form is dirty: no permanent footer competing with the
+   content, but a save that is visible wherever the user stopped scrolling. */
+.settings-savebar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 24px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  backdrop-filter: blur(8px);
 }
 
 .settings-head {
@@ -157,6 +179,20 @@
 
 .inbox-row.unread {
   background: color-mix(in srgb, var(--ink) 2%, transparent);
+  box-shadow: inset 2px 0 0 var(--brand);
+}
+
+/* Day separators make a long notification list scannable; they stick to the
+   top so the current day stays named while scrolling. */
+.inbox-day {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 10px 24px 5px;
+  background: var(--paper);
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  font-weight: 600;
 }
 
 .inbox-icon {
@@ -492,7 +528,7 @@
   padding-left: 2px;
   color: var(--ink-muted);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -512,6 +548,23 @@
 
 .tool-line.more {
   color: var(--ink-faint);
+}
+
+/* The truncation row is the most obvious “show me the rest” affordance in the
+   collapsed tool; make it behave like it, not like a caption. */
+.tool-line.tool-more {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-line.tool-more:hover {
+  color: var(--ink);
 }
 
 /* Image tool results render as images; the base64 payload never reaches the
@@ -609,12 +662,21 @@
 .run-more > summary {
   display: flex;
   width: fit-content;
+  max-width: 100%;
   height: 20px;
   align-items: center;
   gap: 4px;
   color: var(--ink-muted);
   font-size: 12.5px;
   list-style: none;
+}
+
+/* The summary can now include the file count; keep it on one line instead of
+   letting a fifteen-tool run push the right edge of the column. */
+.run-head > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-more > summary {
@@ -725,4 +787,29 @@
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Worktree setup status, rendered as the first row of the transcript. */
+.setup-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--raised);
+}
+
+.setup-banner-failed {
+  align-items: flex-start;
+  border-color: color-mix(in srgb, var(--danger, #d9472b) 35%, var(--line-soft));
+}
+
+.setup-banner .setup-error {
+  flex: 1;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

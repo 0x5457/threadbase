@@ -4,4 +4,16 @@ export type MergeBackResponse = {
   committed: boolean;
   commit: string | null;
   files: Array<string>;
+  /**
+   * Branch the patch was applied to.
+   */
+  branch: string;
+  /**
+   * The base branch advanced since this thread started.
+   */
+  baseDrift: boolean;
+  /**
+   * A project verify command ran successfully before the patch was applied.
+   */
+  verified: boolean;
 };

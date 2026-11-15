@@ -5,6 +5,7 @@ pub mod error;
 pub mod event;
 pub mod focus;
 pub mod ids;
+pub mod machines;
 pub mod model;
 
 pub use api::*;
@@ -12,6 +13,7 @@ pub use error::{ApiError, ErrorCode};
 pub use event::*;
 pub use focus::*;
 pub use ids::*;
+pub use machines::{ActionKind, MachineAction, MachineCommand, MachineSpec, MachineState};
 pub use model::*;
 
 /// Milliseconds since the Unix epoch.

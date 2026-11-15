@@ -28,7 +28,10 @@ import {
 } from "../../api";
 import { useXterm } from "./use-xterm";
 
-type Phase = "connecting" | "live" | "exited" | "error";
+// The phase union is generated from the `terminal` machine; no hand-written
+// string set to drift from the catalogue.
+import type { TerminalPhase } from "../../api/types/TerminalPhase";
+import { can } from "../../lib/machine";
 
 type ServerMessage =
   | {
@@ -120,7 +123,7 @@ export function TerminalDrawer({
   onClose: () => void;
 }) {
   const [height, setHeight] = useState(storedHeight);
-  const [phase, setPhase] = useState<Phase>("connecting");
+  const [phase, setPhase] = useState<TerminalPhase>("connecting");
   const [role, setRole] = useState<"controller" | "watcher">("controller");
   // Only read from handlers (kill), so keep it out of the render state.
   const sessionRef = useRef<TerminalSession | null>(null);
@@ -293,7 +296,7 @@ export function TerminalDrawer({
     onClose();
   };
 
-  const canDrive = role === "controller" && phase === "live";
+  const canDrive = role === "controller" && can("terminal", phase, "drive");
   const watchNote =
     controller === null
       ? "Watching: nobody is driving. Only an administrator can type in this shell."

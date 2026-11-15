@@ -223,13 +223,15 @@ pub async fn create(
         &summary,
     )
     .await;
-    crate::notify::notify_members(
+    crate::notify::notify_watchers(
         pool,
+        projection,
         elicitation.thread_id.as_str(),
         "elicitation",
         None,
         Some(elicitation.id.as_str()),
         &summary,
+        None,
     )
     .await?;
     Ok(elicitation)
@@ -252,6 +254,7 @@ pub async fn respond_for_user(
         )));
     }
     crate::authz::require_write_role(pool, &row.thread_id, user).await?;
+    crate::watchers::watch(pool, &row.thread_id, user.user.id.as_str()).await?;
     if action == ElicitationAction::Accept {
         reject_secret_schema(&row.schema_json)?;
     }
@@ -274,6 +277,7 @@ pub async fn respond_for_user(
         },
     )
     .await?;
+    crate::inbox::clear_for_elicitation(pool, projection, elicitation_id).await?;
     let actor = UserBrief::from_user(&user.user);
     events
         .append(

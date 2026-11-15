@@ -46,6 +46,11 @@ pub fn router() -> Router<AppState> {
             get(get_thread).patch(update_thread).delete(delete_thread),
         )
         .route("/api/threads/{thread_id}/fork", post(fork_thread))
+        .route("/api/threads/{thread_id}/setup", post(run_thread_setup))
+        .route(
+            "/api/threads/{thread_id}/watch",
+            get(get_thread_watch).post(set_thread_watch),
+        )
         .route(
             "/api/threads/{thread_id}/changes/file",
             get(thread_file_diff),
@@ -135,6 +140,8 @@ async fn update_project(
             request.name.as_deref(),
             request.remote_url.as_deref(),
             request.path.as_deref(),
+            request.verify_command.as_deref(),
+            request.setup_command.as_deref(),
         )
         .await?,
     }))
@@ -182,13 +189,23 @@ async fn create_thread(
         .initial_prompt
         .as_deref()
         .is_some_and(|prompt| !prompt.trim().is_empty());
-    tokio::spawn(async move {
-        match manager.ensure_started(&thread_id).await {
-            Ok(()) if has_initial_prompt => manager.kick_queue(&thread_id),
-            Ok(()) => {}
-            Err(error) => tracing::warn!(thread_id, %error, "agent startup failed"),
-        }
-    });
+    let setup_started = crate::setup::maybe_start(&state, &thread_id).await?;
+    let thread = if setup_started {
+        threads::get(&state.pool, &thread_id, &user).await?
+    } else {
+        thread
+    };
+    // A thread without a first prompt starts its adapter on the first send.
+    // Creating a dozen threads must not leave a dozen idle ACP processes.
+    // Setup owns the kick when it runs: it must finish before the agent starts.
+    if has_initial_prompt && !setup_started {
+        tokio::spawn(async move {
+            match manager.ensure_started(&thread_id).await {
+                Ok(()) => manager.kick_queue(&thread_id),
+                Err(error) => tracing::warn!(thread_id, %error, "agent startup failed"),
+            }
+        });
+    }
     Ok(Json(ThreadResponse { thread }))
 }
 
@@ -248,6 +265,11 @@ async fn update_thread(
     Path(thread_id): Path<String>,
     Json(request): Json<UpdateThreadRequest>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
+    if request.archived == Some(true) {
+        // Authorize before touching the live adapter; archiving is also a stop.
+        crate::authz::require_manage_role(&state.pool, &thread_id, &user).await?;
+        state.agents.stop(&thread_id).await;
+    }
     let thread =
         threads::update(&state.pool, &state.projection, &thread_id, &user, &request).await?;
     if request.model.is_some() || request.effort.is_some() {
@@ -293,7 +315,16 @@ async fn delete_project(
             "only the project creator or an admin can remove this project",
         )));
     }
+    let thread_ids = threads::ids_for_project(&state.pool, &project_id).await?;
+    for thread_id in &thread_ids {
+        state.agents.stop(thread_id).await;
+    }
     projects::delete(&state.pool, &project_id).await?;
+    for thread_id in thread_ids {
+        let _ =
+            tokio::fs::remove_dir_all(state.config.data_dir.join("attachments").join(thread_id))
+                .await;
+    }
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -308,8 +339,35 @@ async fn delete_thread(
             "deleting a thread requires confirm=true; its worktree and uncommitted changes will be removed",
         )));
     }
+    crate::authz::require_manage_role(&state.pool, &thread_id, &user).await?;
+    state.agents.stop(&thread_id).await;
     threads::delete(&state.pool, &thread_id, &user).await?;
+    let _ =
+        tokio::fs::remove_dir_all(state.config.data_dir.join("attachments").join(&thread_id)).await;
     Ok(Json(OkResponse { ok: true }))
+}
+
+async fn get_thread_watch(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<threadbase_shared::api::ThreadWatchResponse>, ServerError> {
+    crate::authz::require_read(&state.pool, &thread_id, &user).await?;
+    Ok(Json(
+        crate::watchers::state(&state.pool, &thread_id, user.user.id.as_str()).await?,
+    ))
+}
+
+async fn set_thread_watch(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<threadbase_shared::api::ThreadWatchRequest>,
+) -> Result<Json<threadbase_shared::api::ThreadWatchResponse>, ServerError> {
+    crate::authz::require_read(&state.pool, &thread_id, &user).await?;
+    Ok(Json(
+        crate::watchers::set(&state.pool, &thread_id, user.user.id.as_str(), &request).await?,
+    ))
 }
 
 async fn fork_thread(
@@ -318,17 +376,31 @@ async fn fork_thread(
     Path(thread_id): Path<String>,
     Json(request): Json<ForkThreadRequest>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
-    Ok(Json(ThreadResponse {
-        thread: threads::fork(
-            &state.pool,
-            &state.projection,
-            &state.config.data_dir,
-            &thread_id,
-            &user,
-            &request,
-        )
-        .await?,
-    }))
+    let thread = threads::fork(
+        &state.pool,
+        &state.projection,
+        &state.config.data_dir,
+        &thread_id,
+        &user,
+        &request,
+    )
+    .await?;
+    let thread = if crate::setup::maybe_start(&state, thread.id.as_str()).await? {
+        threads::get(&state.pool, thread.id.as_str(), &user).await?
+    } else {
+        thread
+    };
+    Ok(Json(ThreadResponse { thread }))
+}
+
+async fn run_thread_setup(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+) -> Result<Json<OkResponse>, ServerError> {
+    crate::authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    crate::setup::rerun(&state, &thread_id).await?;
+    Ok(Json(OkResponse { ok: true }))
 }
 
 #[derive(Debug, Deserialize)]

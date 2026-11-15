@@ -4,6 +4,8 @@ export * from "./actions";
 export * from "./files";
 export * from "./inbox";
 export * from "./projects";
+export * from "./push";
+export * from "./search";
 export * from "./settings";
 export * from "./terminal";
 export * from "./threads";

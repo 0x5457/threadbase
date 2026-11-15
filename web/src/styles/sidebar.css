@@ -336,28 +336,44 @@
   min-height: 32px;
 }
 
-/* Threads with their own worktree get a quiet branch mark in the sidebar. */
+/* Threads with their own worktree get a quiet branch mark in the sidebar. It
+   is secondary to the title, so it waits for hover/selection (and stays shown
+   on touch, where there is no hover). */
 .thread-worktree-mark {
   display: inline-flex;
   color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out;
+}
+
+.side-nav:hover .thread-worktree-mark,
+.side-nav:focus-visible .thread-worktree-mark,
+.side-nav[data-active] .thread-worktree-mark {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .thread-worktree-mark {
+    opacity: 1;
+  }
 }
 
 /* Delta-style nested subagents: a labelled toggle under the thread row,
    then the indented delegation tree. */
 .side-subagent-toggle {
   display: flex;
-  width: calc(100% - 24px);
-  height: 25px;
-  margin: 1px 6px 2px 18px;
+  width: calc(100% - 30px);
+  height: 20px;
+  margin: 0 6px 1px 24px;
   padding: 0 8px 0 4px;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: var(--ink-faint);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 11px;
   text-align: left;
   cursor: pointer;
 }

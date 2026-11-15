@@ -53,6 +53,7 @@ tracing-subscriber.workspace = true
 ulid.workspace = true
 unidiff.workspace = true
 url.workspace = true
+web-push.workspace = true
 which.workspace = true
 yrs.workspace = true
 y-sync.workspace = true

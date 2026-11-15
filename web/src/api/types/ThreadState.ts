@@ -14,6 +14,12 @@ export type ThreadState = {
    */
   revision: number;
   status: ThreadStatus;
+  /**
+   * Commands legal from this state, from `ThreadMachine`. The client renders
+   * controls from this list instead of re-deriving rules from `status`, so a
+   * button and the endpoint it calls can never disagree.
+   */
+  allowedActions: Array<string>;
   currentTurn: string | null;
   pendingApprovals: number;
   pendingElicitations: number;

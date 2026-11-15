@@ -21,24 +21,44 @@ struct Fixture {
     thread: threadbase_shared::ThreadDto,
 }
 
+/// Locate the scripted adapter once per process.
+///
+/// `cargo nextest` runs every test in its own process, so calling `cargo build`
+/// from each of them made 20+ builds fight over the package-cache lock while
+/// clippy was running, which is why crash-recovery waits occasionally timed
+/// out. The binary sits next to the test executable after any workspace build;
+/// only build when it is genuinely missing.
 fn fixture_binary() -> Option<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let status = Command::new("cargo")
-        .current_dir(&root)
-        .args([
-            "build",
-            "-p",
-            "threadbase-agent",
-            "--bin",
-            "threadbase_acp_fixture",
-        ])
-        .status()
-        .ok()?;
-    if !status.success() {
-        return None;
-    }
-    let path = root.join("target/debug/threadbase_acp_fixture");
-    path.is_file().then_some(path)
+    static BINARY: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            if let Ok(current) = std::env::current_exe() {
+                if let Some(dir) = current.parent().and_then(Path::parent) {
+                    let candidate = dir.join("threadbase_acp_fixture");
+                    if candidate.is_file() {
+                        return Some(candidate);
+                    }
+                }
+            }
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let status = Command::new("cargo")
+                .current_dir(&root)
+                .args([
+                    "build",
+                    "-p",
+                    "threadbase-agent",
+                    "--bin",
+                    "threadbase_acp_fixture",
+                ])
+                .status()
+                .ok()?;
+            if !status.success() {
+                return None;
+            }
+            let path = root.join("target/debug/threadbase_acp_fixture");
+            path.is_file().then_some(path)
+        })
+        .clone()
 }
 
 /// Issues a real session cookie value for an identity created by `fixture`.
@@ -182,7 +202,10 @@ async fn wait_for_after(
     after_seq: i64,
     predicate: impl Fn(&ThreadEvent) -> bool,
 ) -> ThreadEvent {
-    for _ in 0..200 {
+    // 30s, not 10s: these tests spawn real processes and are run alongside the
+    // other quality gates. A real regression still fails, just with room for a
+    // loaded machine to schedule the adapter.
+    for _ in 0..600 {
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT payload_json, seq FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC",
         )
@@ -199,7 +222,22 @@ async fn wait_for_after(
         }
         sleep(Duration::from_millis(50)).await;
     }
-    panic!("timed out waiting for event after seq {after_seq}");
+    let seen: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT kind FROM events WHERE thread_id = ? ORDER BY seq DESC LIMIT 12",
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM threads WHERE id = ?")
+        .bind(thread_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+    panic!(
+        "timed out waiting for event after seq {after_seq}; status={status:?}; last events={seen:?}"
+    );
 }
 
 #[tokio::test]
@@ -437,7 +475,117 @@ async fn fake_agent_streams_tools_and_permissions() {
         fixture.state.pool.clone(),
         EventStore::new(fixture.state.pool.clone()),
         fixture.state.projection.clone(),
+        threadbase_server::presence::PresenceHub::new(),
+        0,
+        0,
     );
+}
+
+#[tokio::test]
+async fn worktree_setup_runs_before_the_agent_can_start() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    sqlx::query("UPDATE projects SET setup_command = 'printf ready > setup.txt' WHERE id = ?")
+        .bind(fixture.project.id.as_str())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    let thread = threads::create(
+        &fixture.state.pool,
+        &fixture.state.projection,
+        fixture.data.path(),
+        &fixture.user,
+        fixture.project.id.as_str(),
+        &CreateThreadRequest {
+            title: Some("Setup".into()),
+            agent: Some("codex".into()),
+            model: None,
+            effort: None,
+            base_branch: Some("main".into()),
+            initial_prompt: None,
+            worktree: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        threadbase_server::setup::maybe_start(&fixture.state, thread.id.as_str())
+            .await
+            .unwrap()
+    );
+    let mut row = threads::load_row(&fixture.state.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if row.setup_status != "pending" && row.setup_status != "running" {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+        row = threads::load_row(&fixture.state.pool, thread.id.as_str())
+            .await
+            .unwrap();
+    }
+    assert_eq!(row.setup_status, "succeeded", "{:?}", row.setup_error);
+    let worktree = row.worktree_path.as_deref().unwrap();
+    assert_eq!(
+        tokio::fs::read_to_string(Path::new(worktree).join("setup.txt"))
+            .await
+            .unwrap(),
+        "ready"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_worktree_setup_is_recorded_and_does_not_start_the_agent() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    sqlx::query("UPDATE projects SET setup_command = 'exit 9' WHERE id = ?")
+        .bind(fixture.project.id.as_str())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    let thread = threads::create(
+        &fixture.state.pool,
+        &fixture.state.projection,
+        fixture.data.path(),
+        &fixture.user,
+        fixture.project.id.as_str(),
+        &CreateThreadRequest {
+            title: Some("Setup failure".into()),
+            agent: Some("codex".into()),
+            model: None,
+            effort: None,
+            base_branch: Some("main".into()),
+            initial_prompt: None,
+            worktree: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        threadbase_server::setup::maybe_start(&fixture.state, thread.id.as_str())
+            .await
+            .unwrap()
+    );
+    let mut row = threads::load_row(&fixture.state.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if row.setup_status != "pending" && row.setup_status != "running" {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+        row = threads::load_row(&fixture.state.pool, thread.id.as_str())
+            .await
+            .unwrap();
+    }
+    assert_eq!(row.setup_status, "failed");
+    assert!(row
+        .setup_error
+        .as_deref()
+        .is_some_and(|error| error.contains("exited with")));
 }
 
 #[tokio::test]
@@ -579,6 +727,9 @@ async fn failed_session_restore_emits_a_context_reset_notice() {
         fixture.state.pool.clone(),
         fixture.state.events.clone(),
         fixture.state.projection.clone(),
+        threadbase_server::presence::PresenceHub::new(),
+        0,
+        0,
     );
     manager
         .ensure_started(fixture.thread.id.as_str())

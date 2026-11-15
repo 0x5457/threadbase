@@ -117,7 +117,7 @@
   }
 
   .header {
-    grid-template-columns: 232px minmax(0, 1fr) auto;
+    grid-template-columns: 260px minmax(0, 1fr) auto;
   }
 
   .doc {
@@ -175,6 +175,17 @@
     height: 36px;
   }
 
+  /* The worktree/project-tree badge becomes icon-only on phones: it is a
+     scope hint, not a control, and the label was eating the title width. */
+  .scope-badge {
+    padding-right: 5px;
+    padding-left: 5px;
+  }
+
+  .scope-badge .scope-badge-text {
+    display: none;
+  }
+
   .header .mantine-Burger-root {
     width: 36px;
     height: 36px;
@@ -201,6 +212,16 @@
   .inbox-head {
     padding: 12px max(14px, var(--safe-right)) 10px
       max(14px, var(--safe-left));
+  }
+
+  .inbox-day {
+    padding-right: max(14px, var(--safe-right));
+    padding-left: max(14px, var(--safe-left));
+  }
+
+  .settings-savebar {
+    padding-right: max(14px, var(--safe-right));
+    padding-left: max(14px, var(--safe-left));
   }
 
   .inbox-row {
@@ -284,7 +305,9 @@
   }
 
   .model-picker {
-    max-width: 132px;
+    /* One unified agent-settings control replaces the old model + effort +
+       delivery trio on phones; it can use the space they leave behind. */
+    max-width: 176px;
     min-height: 32px;
     margin: 0;
   }

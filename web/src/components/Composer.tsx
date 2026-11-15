@@ -68,6 +68,7 @@ export const Composer = memo(function Composer({
     userId,
     userName,
     canWrite,
+    sendWithModifier,
   });
   const { extension, openTrigger, active: suggestionOpen } =
     useComposerSuggestions({
@@ -117,7 +118,15 @@ export const Composer = memo(function Composer({
           void images.accept(files);
         }}
         onKeyDownCapture={(event) => {
+          // Enter sends from the editor, not from every control that happens
+          // to live inside the composer: the model picker trigger and the
+          // settings chips must keep their native Enter activation.
+          const target = event.target;
+          const inEditor =
+            target instanceof Element &&
+            Boolean(target.closest(".composer-editor"));
           if (
+            inEditor &&
             !sendWithModifier &&
             event.key === "Enter" &&
             !event.shiftKey &&
@@ -176,13 +185,11 @@ export const Composer = memo(function Composer({
             userColor={userColor}
           />
           <ComposerToolbar
-            agent={session.agent}
             usage={usage}
             watching={watching}
             terminalUsers={terminalUsers}
             draftActive={session.draft.active}
-            draftSynced={session.draft.synced}
-            draftConnected={session.draft.connected}
+            draftPhase={session.draft.phase}
             liveLabel={session.liveLabel}
             onThreadComment={onThreadComment}
             onOpenTrigger={(kind) => openTrigger(kind, editor)}
@@ -202,6 +209,7 @@ export const Composer = memo(function Composer({
             sending={session.sending}
             sendBlocked={session.sendBlocked || images.uploading}
             sendLabel={session.sendLabel}
+            sendWithModifier={sendWithModifier}
             onSend={send}
           />
         </div>

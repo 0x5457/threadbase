@@ -59,6 +59,7 @@ impl Projection {
         Ok(ThreadState {
             thread_id: ThreadId::from(thread_id.to_owned()),
             revision: self.revision.load(Ordering::SeqCst),
+            allowed_actions: threadbase_core::state::thread_commands(status),
             status,
             current_turn: row.current_turn_id,
             pending_approvals: count(row.pending_approvals),
@@ -85,6 +86,15 @@ impl Projection {
             return;
         };
         let _ = self.tx.send(ServerWsMessage::ThreadState { state });
+    }
+
+    /// Push one user's unread count. Sockets filter by user id, so a single
+    /// broadcast channel can carry per-user badges without extra plumbing.
+    pub fn publish_inbox_count(&self, user_id: &str, unread: u32) {
+        let _ = self.tx.send(ServerWsMessage::InboxCount {
+            user_id: threadbase_shared::UserId::from(user_id),
+            unread,
+        });
     }
 
     /// Compact semantic summary injected at prompt start.

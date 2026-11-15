@@ -20,7 +20,6 @@ struct QueueRow {
     text: String,
     status: String,
     position: i64,
-    superseded: i64,
     authors_json: Option<String>,
     created_at: i64,
     username: String,
@@ -28,8 +27,7 @@ struct QueueRow {
     avatar_url: Option<String>,
 }
 
-const SELECT: &str =
-    "SELECT q.id, q.thread_id, q.author_id, q.text, q.status, q.position, q.superseded,
+const SELECT: &str = "SELECT q.id, q.thread_id, q.author_id, q.text, q.status, q.position,
             q.authors_json, q.created_at, u.username, u.display_name, u.avatar_url
      FROM queued_inputs q JOIN users u ON u.id = q.author_id";
 
@@ -121,7 +119,7 @@ pub async fn head(
 ) -> Result<Option<(String, String, String, Option<String>, Option<String>)>, ServerError> {
     let row = sqlx::query_as(
         "SELECT id, author_id, text, authors_json, attachments_json FROM queued_inputs
-         WHERE thread_id = ? AND status = ? AND superseded = 0
+         WHERE thread_id = ? AND status = ?
          ORDER BY position ASC LIMIT 1",
     )
     .bind(thread_id)
@@ -444,7 +442,7 @@ pub async fn supersede(
 ) -> Result<u32, ServerError> {
     let superseded = queue_status_str(QueueStatus::Superseded);
     let result = sqlx::query(
-        "UPDATE queued_inputs SET status = ?, superseded = 1, turn_id = ?, updated_at = ?
+        "UPDATE queued_inputs SET status = ?, turn_id = ?, updated_at = ?
          WHERE thread_id = ? AND status = ?",
     )
     .bind(superseded)
@@ -536,7 +534,6 @@ fn to_dto(row: QueueRow) -> QueueItemDto {
         status: parse_queue_status(&row.status).unwrap_or(QueueStatus::Queued),
         position: u32::try_from(row.position).unwrap_or(0),
         created_at: row.created_at,
-        superseded: row.superseded != 0,
     }
 }
 
@@ -594,7 +591,7 @@ mod tests {
             .unwrap();
         let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
         assert_eq!(items.len(), 1);
-        assert!(items[0].superseded);
+        assert_eq!(items[0].status, QueueStatus::Superseded);
         assert_eq!(items[0].status, QueueStatus::Superseded);
     }
 

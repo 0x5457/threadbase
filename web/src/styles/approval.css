@@ -70,13 +70,20 @@
 
 .tool-details summary {
   display: flex;
-  height: 20px;
+  width: fit-content;
+  height: 24px;
   align-items: center;
   gap: 4px;
-  padding: 0;
+  padding: 0 6px 0 2px;
+  border-radius: 4px;
   color: var(--ink-muted);
   cursor: pointer;
   list-style: none;
+}
+
+.tool-details summary:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink);
 }
 
 .tool-details summary::-webkit-details-marker {

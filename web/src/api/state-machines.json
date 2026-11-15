@@ -1,0 +1,1182 @@
+[
+  {
+    "id": "thread",
+    "title": "Thread",
+    "summary": "A shared agent conversation: startup, turns, attention and archiving.",
+    "states": [
+      {
+        "id": "preparing",
+        "label": "Preparing",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "restart",
+            "to": "preparing"
+          },
+          {
+            "id": "archive",
+            "to": "archived"
+          }
+        ]
+      },
+      {
+        "id": "idle",
+        "label": "Idle",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "prompt",
+            "to": "running"
+          },
+          {
+            "id": "restart",
+            "to": "preparing"
+          },
+          {
+            "id": "archive",
+            "to": "archived"
+          }
+        ]
+      },
+      {
+        "id": "running",
+        "label": "Running",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "prompt",
+            "to": "running"
+          },
+          {
+            "id": "cancel",
+            "to": "idle"
+          },
+          {
+            "id": "restart",
+            "to": "preparing"
+          },
+          {
+            "id": "archive",
+            "to": "archived"
+          }
+        ]
+      },
+      {
+        "id": "requires_action",
+        "label": "Needs you",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "prompt",
+            "to": "running"
+          },
+          {
+            "id": "cancel",
+            "to": "idle"
+          },
+          {
+            "id": "restart",
+            "to": "preparing"
+          },
+          {
+            "id": "archive",
+            "to": "archived"
+          }
+        ]
+      },
+      {
+        "id": "interrupted",
+        "label": "Interrupted",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "prompt",
+            "to": "running"
+          },
+          {
+            "id": "restart",
+            "to": "preparing"
+          },
+          {
+            "id": "archive",
+            "to": "archived"
+          }
+        ]
+      },
+      {
+        "id": "error",
+        "label": "Error",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "prompt",
+            "to": "running"
+          },
+          {
+            "id": "restart",
+            "to": "preparing"
+          },
+          {
+            "id": "archive",
+            "to": "archived"
+          }
+        ]
+      },
+      {
+        "id": "archived",
+        "label": "Archived",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "unarchive",
+            "to": "idle"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "create",
+        "label": "Create",
+        "kind": "fact"
+      },
+      {
+        "id": "restart",
+        "label": "Restart agent",
+        "kind": "command"
+      },
+      {
+        "id": "start_succeeded",
+        "label": "Agent started",
+        "kind": "fact"
+      },
+      {
+        "id": "start_failed",
+        "label": "Agent failed to start",
+        "kind": "fact"
+      },
+      {
+        "id": "prompt",
+        "label": "Send a prompt",
+        "kind": "command"
+      },
+      {
+        "id": "approval_pending",
+        "label": "Approval requested",
+        "kind": "fact"
+      },
+      {
+        "id": "elicitation_pending",
+        "label": "Question asked",
+        "kind": "fact"
+      },
+      {
+        "id": "approval_resolved",
+        "label": "Approval resolved",
+        "kind": "fact"
+      },
+      {
+        "id": "elicitation_resolved",
+        "label": "Question answered",
+        "kind": "fact"
+      },
+      {
+        "id": "turn_ended",
+        "label": "Turn ended",
+        "kind": "fact"
+      },
+      {
+        "id": "turn_error",
+        "label": "Turn failed",
+        "kind": "fact"
+      },
+      {
+        "id": "process_exited",
+        "label": "Agent process exited",
+        "kind": "fact"
+      },
+      {
+        "id": "agent_failed",
+        "label": "Agent failed",
+        "kind": "fact"
+      },
+      {
+        "id": "cancel",
+        "label": "Stop the turn",
+        "kind": "command"
+      },
+      {
+        "id": "archive",
+        "label": "Archive",
+        "kind": "command"
+      },
+      {
+        "id": "unarchive",
+        "label": "Unarchive",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "setup",
+    "title": "Worktree setup",
+    "summary": "The project's setup command for this worktree; it gates the agent.",
+    "states": [
+      {
+        "id": "none",
+        "label": "Not configured",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "start",
+            "to": "pending"
+          }
+        ]
+      },
+      {
+        "id": "pending",
+        "label": "Queued",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "running",
+        "label": "Running",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "succeeded",
+        "label": "Succeeded",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "start",
+            "to": "pending"
+          }
+        ]
+      },
+      {
+        "id": "failed",
+        "label": "Failed",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "start",
+            "to": "pending"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "start",
+        "label": "Run setup",
+        "kind": "command"
+      },
+      {
+        "id": "started",
+        "label": "Setup started",
+        "kind": "fact"
+      },
+      {
+        "id": "finish",
+        "label": "Setup finished",
+        "kind": "fact"
+      },
+      {
+        "id": "fail",
+        "label": "Setup failed",
+        "kind": "fact"
+      },
+      {
+        "id": "interrupt",
+        "label": "Setup interrupted by restart",
+        "kind": "fact"
+      }
+    ]
+  },
+  {
+    "id": "approval",
+    "title": "Approval",
+    "summary": "One agent permission request awaiting a human decision.",
+    "states": [
+      {
+        "id": "pending",
+        "label": "Pending",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "allow",
+            "to": "allowed"
+          },
+          {
+            "id": "deny",
+            "to": "denied"
+          },
+          {
+            "id": "cancel",
+            "to": "cancelled"
+          }
+        ]
+      },
+      {
+        "id": "allowed",
+        "label": "Allowed",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "denied",
+        "label": "Denied",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "cancelled",
+        "label": "Cancelled",
+        "terminal": true,
+        "commands": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "create",
+        "label": "Requested",
+        "kind": "fact"
+      },
+      {
+        "id": "allow",
+        "label": "Allow",
+        "kind": "command"
+      },
+      {
+        "id": "deny",
+        "label": "Deny",
+        "kind": "command"
+      },
+      {
+        "id": "cancel",
+        "label": "Cancel",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "elicitation",
+    "title": "Question",
+    "summary": "One agent question awaiting a structured answer.",
+    "states": [
+      {
+        "id": "pending",
+        "label": "Pending",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "accept",
+            "to": "accepted"
+          },
+          {
+            "id": "decline",
+            "to": "declined"
+          },
+          {
+            "id": "cancel",
+            "to": "cancelled"
+          }
+        ]
+      },
+      {
+        "id": "accepted",
+        "label": "Answered",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "declined",
+        "label": "Declined",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "cancelled",
+        "label": "Cancelled",
+        "terminal": true,
+        "commands": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "create",
+        "label": "Asked",
+        "kind": "fact"
+      },
+      {
+        "id": "accept",
+        "label": "Answer",
+        "kind": "command"
+      },
+      {
+        "id": "decline",
+        "label": "Decline",
+        "kind": "command"
+      },
+      {
+        "id": "cancel",
+        "label": "Cancel",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "subagent",
+    "title": "Subagent",
+    "summary": "A delegation reported by the adapter; mirrored from tool calls when needed.",
+    "states": [
+      {
+        "id": "idle",
+        "label": "Idle",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "cancel",
+            "to": "cancelled"
+          }
+        ]
+      },
+      {
+        "id": "running",
+        "label": "Running",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "cancel",
+            "to": "cancelled"
+          }
+        ]
+      },
+      {
+        "id": "requires_action",
+        "label": "Needs input",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "cancel",
+            "to": "cancelled"
+          }
+        ]
+      },
+      {
+        "id": "cancelled",
+        "label": "Cancelled",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "error",
+        "label": "Error",
+        "terminal": true,
+        "commands": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "create",
+        "label": "Created",
+        "kind": "fact"
+      },
+      {
+        "id": "run",
+        "label": "Running",
+        "kind": "fact"
+      },
+      {
+        "id": "idle",
+        "label": "Idle",
+        "kind": "fact"
+      },
+      {
+        "id": "require_action",
+        "label": "Needs input",
+        "kind": "fact"
+      },
+      {
+        "id": "resolve",
+        "label": "Input received",
+        "kind": "fact"
+      },
+      {
+        "id": "fail",
+        "label": "Failed",
+        "kind": "fact"
+      },
+      {
+        "id": "cancel",
+        "label": "Cancel subagent",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "queue",
+    "title": "Queued input",
+    "summary": "A message waiting for the thread's next turn or being delivered now.",
+    "states": [
+      {
+        "id": "queued",
+        "label": "Queued",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "delete",
+            "to": "dropped"
+          }
+        ]
+      },
+      {
+        "id": "sending",
+        "label": "Sending",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "sent",
+        "label": "Sent",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "superseded",
+        "label": "Superseded",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "dropped",
+        "label": "Removed",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "restore",
+            "to": "queued"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "enqueue",
+        "label": "Queued",
+        "kind": "fact"
+      },
+      {
+        "id": "dispatch",
+        "label": "Dispatching",
+        "kind": "fact"
+      },
+      {
+        "id": "prompt_succeeded",
+        "label": "Sent",
+        "kind": "fact"
+      },
+      {
+        "id": "prompt_failed",
+        "label": "Send failed",
+        "kind": "fact"
+      },
+      {
+        "id": "release",
+        "label": "Returned to queue",
+        "kind": "fact"
+      },
+      {
+        "id": "supersede",
+        "label": "Superseded",
+        "kind": "fact"
+      },
+      {
+        "id": "delete",
+        "label": "Remove from queue",
+        "kind": "command"
+      },
+      {
+        "id": "restore",
+        "label": "Restore to queue",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "comment",
+    "title": "Comment",
+    "summary": "A review note; pending comments are batched into the next prompt.",
+    "states": [
+      {
+        "id": "pending",
+        "label": "Pending",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "deliver",
+            "to": "delivered"
+          },
+          {
+            "id": "resolve",
+            "to": "resolved"
+          }
+        ]
+      },
+      {
+        "id": "delivered",
+        "label": "Delivered",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "resolve",
+            "to": "resolved"
+          }
+        ]
+      },
+      {
+        "id": "resolved",
+        "label": "Resolved",
+        "terminal": true,
+        "commands": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "create_pending",
+        "label": "Comment added",
+        "kind": "fact"
+      },
+      {
+        "id": "create_delivered",
+        "label": "Comment added",
+        "kind": "fact"
+      },
+      {
+        "id": "deliver",
+        "label": "Send to agent",
+        "kind": "command"
+      },
+      {
+        "id": "resolve",
+        "label": "Resolve",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "watch",
+    "title": "Watching",
+    "summary": "One user's notification relationship with a thread.",
+    "states": [
+      {
+        "id": "not_watching",
+        "label": "Not watching",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "watch",
+            "to": "watching"
+          }
+        ]
+      },
+      {
+        "id": "watching",
+        "label": "Watching",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "mute",
+            "to": "muted"
+          },
+          {
+            "id": "unwatch",
+            "to": "not_watching"
+          }
+        ]
+      },
+      {
+        "id": "muted",
+        "label": "Muted",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "unmute",
+            "to": "watching"
+          },
+          {
+            "id": "unwatch",
+            "to": "not_watching"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "watch",
+        "label": "Watch thread",
+        "kind": "command"
+      },
+      {
+        "id": "mute",
+        "label": "Mute notifications",
+        "kind": "command"
+      },
+      {
+        "id": "unmute",
+        "label": "Unmute notifications",
+        "kind": "command"
+      },
+      {
+        "id": "unwatch",
+        "label": "Stop watching",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "turn",
+    "title": "Turn",
+    "summary": "The single in-memory turn slot that serialises prompts for one thread.",
+    "states": [
+      {
+        "id": "empty",
+        "label": "Idle",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "starting",
+        "label": "Starting",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "cancel",
+            "to": "starting"
+          }
+        ]
+      },
+      {
+        "id": "running",
+        "label": "Running",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "cancel",
+            "to": "empty"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "claim",
+        "label": "Start a turn",
+        "kind": "fact"
+      },
+      {
+        "id": "abandon",
+        "label": "Release the start",
+        "kind": "fact"
+      },
+      {
+        "id": "install",
+        "label": "Prompt issued",
+        "kind": "fact"
+      },
+      {
+        "id": "install_after_finish",
+        "label": "Turn finished while starting",
+        "kind": "fact"
+      },
+      {
+        "id": "complete",
+        "label": "Turn finished",
+        "kind": "fact"
+      },
+      {
+        "id": "end",
+        "label": "Turn ended",
+        "kind": "fact"
+      },
+      {
+        "id": "cancel",
+        "label": "Stop the turn",
+        "kind": "command"
+      },
+      {
+        "id": "sync",
+        "label": "Reconcile with thread status",
+        "kind": "fact"
+      }
+    ]
+  },
+  {
+    "id": "auth_session",
+    "title": "Sign-in session",
+    "summary": "One browser session cookie; live until it expires or is revoked.",
+    "states": [
+      {
+        "id": "active",
+        "label": "Active",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "touch",
+            "to": "active"
+          },
+          {
+            "id": "revoke",
+            "to": "revoked"
+          }
+        ]
+      },
+      {
+        "id": "expired",
+        "label": "Expired",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "revoked",
+        "label": "Revoked",
+        "terminal": true,
+        "commands": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "create",
+        "label": "Signed in",
+        "kind": "fact"
+      },
+      {
+        "id": "touch",
+        "label": "Refresh session",
+        "kind": "command"
+      },
+      {
+        "id": "revoke",
+        "label": "Sign out",
+        "kind": "command"
+      },
+      {
+        "id": "expire",
+        "label": "Expired",
+        "kind": "fact"
+      }
+    ]
+  },
+  {
+    "id": "push",
+    "title": "Web Push delivery",
+    "summary": "One inbox row's delivery to browser push subscriptions, with retries.",
+    "states": [
+      {
+        "id": "pending",
+        "label": "Pending",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "sent",
+        "label": "Sent",
+        "terminal": true,
+        "commands": []
+      },
+      {
+        "id": "failed",
+        "label": "Failed",
+        "terminal": true,
+        "commands": [
+          {
+            "id": "retry",
+            "to": "pending"
+          }
+        ]
+      },
+      {
+        "id": "skipped",
+        "label": "Skipped",
+        "terminal": true,
+        "commands": [
+          {
+            "id": "retry",
+            "to": "pending"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "enqueue",
+        "label": "Queued",
+        "kind": "fact"
+      },
+      {
+        "id": "deliver",
+        "label": "Delivered",
+        "kind": "fact"
+      },
+      {
+        "id": "fail",
+        "label": "Attempt failed",
+        "kind": "fact"
+      },
+      {
+        "id": "give_up",
+        "label": "Delivery failed",
+        "kind": "fact"
+      },
+      {
+        "id": "skip",
+        "label": "Skipped",
+        "kind": "fact"
+      },
+      {
+        "id": "retry",
+        "label": "Retry delivery",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "connection",
+    "title": "Live connection",
+    "summary": "The browser's WebSocket subscription to one thread's event stream.",
+    "states": [
+      {
+        "id": "idle",
+        "label": "Idle",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "loading",
+        "label": "Loading",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "live",
+        "label": "Live",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "reconnecting",
+        "label": "Reconnecting",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "retry",
+            "to": "loading"
+          }
+        ]
+      },
+      {
+        "id": "failed",
+        "label": "Failed",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "retry",
+            "to": "loading"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "connect",
+        "label": "Connect",
+        "kind": "fact"
+      },
+      {
+        "id": "opened",
+        "label": "Socket open",
+        "kind": "fact"
+      },
+      {
+        "id": "ready",
+        "label": "Live",
+        "kind": "fact"
+      },
+      {
+        "id": "lost",
+        "label": "Connection lost",
+        "kind": "fact"
+      },
+      {
+        "id": "fail",
+        "label": "Failed",
+        "kind": "fact"
+      },
+      {
+        "id": "retry",
+        "label": "Reconnect",
+        "kind": "command"
+      },
+      {
+        "id": "close",
+        "label": "Closed",
+        "kind": "fact"
+      }
+    ]
+  },
+  {
+    "id": "draft",
+    "title": "Shared draft",
+    "summary": "The collaborative composer document; sending waits for the live phase.",
+    "states": [
+      {
+        "id": "idle",
+        "label": "Idle",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "connecting",
+        "label": "Connecting",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "syncing",
+        "label": "Syncing",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "live",
+        "label": "Live",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "offline",
+        "label": "Offline",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "retry",
+            "to": "connecting"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "connect",
+        "label": "Connect",
+        "kind": "fact"
+      },
+      {
+        "id": "connected",
+        "label": "Connected",
+        "kind": "fact"
+      },
+      {
+        "id": "synced",
+        "label": "Synced",
+        "kind": "fact"
+      },
+      {
+        "id": "lost",
+        "label": "Connection lost",
+        "kind": "fact"
+      },
+      {
+        "id": "close",
+        "label": "Closed",
+        "kind": "fact"
+      },
+      {
+        "id": "retry",
+        "label": "Reconnect",
+        "kind": "command"
+      }
+    ]
+  },
+  {
+    "id": "terminal",
+    "title": "Terminal",
+    "summary": "One browser's attachment to the thread's tmux session.",
+    "states": [
+      {
+        "id": "connecting",
+        "label": "Connecting",
+        "terminal": false,
+        "commands": []
+      },
+      {
+        "id": "live",
+        "label": "Live",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "drive",
+            "to": "live"
+          }
+        ]
+      },
+      {
+        "id": "exited",
+        "label": "Exited",
+        "terminal": true,
+        "commands": [
+          {
+            "id": "reconnect",
+            "to": "connecting"
+          }
+        ]
+      },
+      {
+        "id": "error",
+        "label": "Error",
+        "terminal": true,
+        "commands": [
+          {
+            "id": "reconnect",
+            "to": "connecting"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "connect",
+        "label": "Connect",
+        "kind": "fact"
+      },
+      {
+        "id": "attached",
+        "label": "Attached",
+        "kind": "fact"
+      },
+      {
+        "id": "exit",
+        "label": "Terminal exited",
+        "kind": "fact"
+      },
+      {
+        "id": "fail",
+        "label": "Failed",
+        "kind": "fact"
+      },
+      {
+        "id": "reconnect",
+        "label": "Reconnect",
+        "kind": "command"
+      },
+      {
+        "id": "drive",
+        "label": "Take control",
+        "kind": "command"
+      }
+    ]
+  }
+]

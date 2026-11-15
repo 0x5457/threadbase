@@ -32,6 +32,8 @@ export function ProjectSettingsModal({
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
+  const [verifyCommand, setVerifyCommand] = useState("");
+  const [setupCommand, setSetupCommand] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,6 +42,8 @@ export function ProjectSettingsModal({
     setName(project?.name ?? "");
     setPath(project?.path ?? "");
     setRemoteUrl("");
+    setVerifyCommand(project?.verifyCommand ?? "");
+    setSetupCommand(project?.setupCommand ?? "");
     setError(null);
   }, [opened, project]);
 
@@ -57,6 +61,8 @@ export function ProjectSettingsModal({
         name: trimmedName,
         path: trimmedPath,
         remoteUrl: trimmedRemote || undefined,
+        verifyCommand: verifyCommand.trim(),
+        setupCommand: setupCommand.trim(),
       });
       notifications.show({ message: `${updated.name} updated`, color: "teal" });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -112,6 +118,20 @@ export function ProjectSettingsModal({
             placeholder="https://github.com/org/project.git"
             value={remoteUrl}
             onChange={(event) => setRemoteUrl(event.currentTarget.value)}
+          />
+          <TextInput
+            label="Setup command"
+            description="Optional. Runs once in each new thread worktree before the agent starts."
+            placeholder="pnpm install"
+            value={setupCommand}
+            onChange={(event) => setSetupCommand(event.currentTarget.value)}
+          />
+          <TextInput
+            label="Verify command"
+            description="Optional. Runs in the thread worktree before Apply changes; it must exit 0."
+            placeholder="pnpm test"
+            value={verifyCommand}
+            onChange={(event) => setVerifyCommand(event.currentTarget.value)}
           />
           {error ? (
             <Alert

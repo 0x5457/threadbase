@@ -91,34 +91,40 @@
   padding: 6px 24px 4px;
 }
 
-/* Agent-reported context usage: a 3px gauge plus the percentage. */
+/* Agent-reported context usage: one quiet pill instead of a gauge plus label,
+   so the right side of the toolbar has a single readout. */
 .context-meter {
+  height: 20px;
   flex: none;
   align-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
-.context-meter-bar {
-  display: block;
-  width: 34px;
-  height: 3px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--line);
-}
-
-.context-meter-bar > span {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--ink-faint);
-}
-
-.context-meter.hot .context-meter-bar > span {
-  background: var(--del);
+.context-meter.hot {
+  background: var(--error-bg);
 }
 
 .context-meter.hot .mantine-Text-root {
   color: var(--del);
+}
+
+/* Queue delivery is persistent per thread; a dot keeps it visible while the
+   agent-settings popover is closed without adding another label to the row. */
+.model-picker[data-queue="true"] {
+  position: relative;
+}
+
+.model-picker[data-queue="true"]::after {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--warning);
+  content: "";
 }
 
 /* Pasted images preview above the input; each chip is the upload's progress. */
@@ -252,9 +258,10 @@
 /* ── model picker ──────────────────────────────────────────── */
 
 .model-picker {
+  position: relative;
   display: inline-flex;
   overflow: hidden;
-  max-width: 190px;
+  max-width: 230px;
   min-width: 0;
   align-items: center;
   gap: 2px;
@@ -262,6 +269,18 @@
   padding: 1px 3px;
   border-radius: 3px;
   color: var(--ink-muted);
+}
+
+/* The trigger carries the effort so the unified picker still answers "which
+   model at which effort" at a glance. */
+.model-picker-effort {
+  flex: none;
+  margin-left: 3px;
+  padding-left: 4px;
+  border-left: 1px solid var(--line-soft);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .model-picker:hover:not(:disabled),
@@ -372,6 +391,58 @@
 .model-picker-empty {
   padding: 8px 6px 10px;
   line-height: 1.45;
+}
+
+.model-picker-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 4px 2px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.model-picker-setting {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.model-picker-setting-label {
+  flex: none;
+}
+
+.model-picker-chips {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.model-picker-chip {
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.model-picker-chip:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.model-picker-chip[data-active="true"] {
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  color: var(--ink);
+  font-weight: 500;
 }
 
 .model-picker-foot {

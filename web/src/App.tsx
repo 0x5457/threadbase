@@ -5,7 +5,7 @@ import {
   Loader,
   useMantineColorScheme,
 } from "@mantine/core";
-import { useDisclosure, useMediaQuery } from "@mantine/hooks";
+import { useDebouncedValue, useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
   Spotlight,
@@ -50,8 +50,10 @@ import {
   listInbox,
   listProjects,
   markInboxRead,
+  searchWorkspace,
   updateThread,
   type InboxItem,
+  type SearchHit,
   type ThreadSummary,
 } from "./api";
 import type { InboxPageDto } from "./api/types/InboxPageDto";
@@ -179,11 +181,13 @@ function Workspace() {
   });
   const [asideCollapsed, setAsideCollapsed] = useState(() => {
     try {
-      return (
-        window.localStorage.getItem("threadbase.aside-collapsed") === "1"
-      );
+      const stored = window.localStorage.getItem("threadbase.aside-collapsed");
+      // First visit: keep the transcript full-width. The 420px diff aside used
+      // to open on every worktree thread and squeeze the conversation, so it
+      // now opens on demand (⌘⇧B or the header toggle) and remembers the choice.
+      return stored === null ? true : stored === "1";
     } catch {
-      return false;
+      return true;
     }
   });
   const [asideTab, setAsideTab] = useState<"changes" | "files">("changes");
@@ -245,6 +249,8 @@ function Workspace() {
     ),
   );
   const [paletteOpened, setPaletteOpened] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [debouncedQuery] = useDebouncedValue(paletteQuery.trim(), 180);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
 
@@ -282,17 +288,26 @@ function Workspace() {
     staleTime: 10_000,
   });
   const inboxUnread = useQuery({
-    queryKey: ["inbox", "unread"],
+    queryKey: ["inbox-unread"],
     queryFn: () => listInbox("unread"),
+    staleTime: 5_000,
+  });
+  const search = useQuery({
+    queryKey: ["search", debouncedQuery],
+    queryFn: () => searchWorkspace(debouncedQuery, { limit: 20 }),
+    enabled: paletteOpened && debouncedQuery.length >= 2,
     staleTime: 5_000,
   });
 
   /** History push guard: clicking the open thread twice must not stack
    *  duplicate entries. */
-  const go = (path: string, options?: { replace?: boolean }) => {
-    if (path === location.pathname) return;
-    void navigate(path, options);
-  };
+  const go = useCallback(
+    (path: string, options?: { replace?: boolean }) => {
+      if (path === location.pathname) return;
+      void navigate(path, options);
+    },
+    [location.pathname, navigate],
+  );
 
   // Back closes the topmost overlay instead of leaving the screen behind it.
   useOverlayBack(navOpened, nav.close);
@@ -507,6 +522,12 @@ function Workspace() {
 
   const showAside = view === "thread" && selectedThread !== null;
   const hasWorktree = Boolean(selectedThread?.worktreePath);
+  const threadProject = projects.data?.projects.find(
+    (project) => project.id === selectedThread?.projectId,
+  );
+  // A thread in a project without a setup command has nothing to run; keeping
+  // the menu item would leave a control that can only fail.
+  const canRunSetup = Boolean(threadProject?.setupCommand?.trim());
 
   // ⌘/Ctrl+Shift+B hides or reveals the changes panel without leaving the
   // thread; the preference persists like the nav width.
@@ -530,24 +551,54 @@ function Workspace() {
   const participants =
     view === "thread" ? (selectedThread?.participants ?? []) : [];
 
-  const openThread = (thread: ThreadSummary) => {
-    setSelectedThread(thread);
-    setAsideTab("changes");
-    setOnlineUserIds([]);
-    changes.close();
-    go(pathFor({ kind: "thread", projectId: thread.projectId, threadId: thread.id }));
-  };
-
-  const openProject = (projectId: string) => {
-    startTransition(() => {
-      setSelectedThread(null);
+  const openThread = useCallback(
+    (thread: ThreadSummary) => {
+      setSelectedThread(thread);
+      setAsideTab("changes");
       setOnlineUserIds([]);
       changes.close();
-      go(pathFor({ kind: "project", projectId }));
-    });
-  };
+      go(pathFor({ kind: "thread", projectId: thread.projectId, threadId: thread.id }));
+    },
+    [changes.close, go],
+  );
 
-  const openInbox = () => {
+  const openSearchHit = useCallback(
+    async (hit: SearchHit) => {
+      spotlight.close();
+      const cached = allThreads.data?.threads.find(
+        (thread) => thread.id === hit.threadId,
+      );
+      if (cached) {
+        openThread(cached);
+        return;
+      }
+      try {
+        const { thread } = await getThread(hit.threadId);
+        openThread(thread);
+      } catch (cause) {
+        notifications.show({
+          message:
+            cause instanceof Error ? cause.message : "Could not open that result",
+          color: "red",
+        });
+      }
+    },
+    [allThreads.data, openThread],
+  );
+
+  const openProject = useCallback(
+    (projectId: string) => {
+      startTransition(() => {
+        setSelectedThread(null);
+        setOnlineUserIds([]);
+        changes.close();
+        go(pathFor({ kind: "project", projectId }));
+      });
+    },
+    [changes.close, go],
+  );
+
+  const openInbox = useCallback(() => {
     startTransition(() => {
       setSelectedThread(null);
       setOnlineUserIds([]);
@@ -555,9 +606,9 @@ function Workspace() {
       nav.close();
       go(pathFor({ kind: "inbox" }));
     });
-  };
+  }, [changes.close, go, nav.close]);
 
-  const openSettings = () => {
+  const openSettings = useCallback(() => {
     // Tearing down a long transcript and the diff panel is the most expensive
     // navigation in the app; let React render Settings concurrently instead of
     // blocking the click on the teardown.
@@ -567,7 +618,7 @@ function Workspace() {
       nav.close();
       go(pathFor({ kind: "settings" }));
     });
-  };
+  }, [changes.close, go, nav.close]);
 
   // Read bookkeeping runs in the background: the row leaves the unread cache
   // immediately, and a failed write puts it back and says why.
@@ -575,15 +626,16 @@ function Workspace() {
     if (pendingInboxReads.current.has(threadId)) return;
     pendingInboxReads.current.add(threadId);
     const snapshot = queryClient.getQueriesData<InboxPageDto>({
-      queryKey: ["inbox", "unread"],
+      queryKey: ["inbox-unread"],
     });
     queryClient.setQueriesData<InboxPageDto>(
-      { queryKey: ["inbox", "unread"] },
+      { queryKey: ["inbox-unread"] },
       (page) => (page ? withoutThreadInboxItems(page, threadId) : page),
     );
     void markInboxRead(threadId)
       .then(() => {
         void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+        void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
       })
       .catch((cause: unknown) => {
         for (const [queryKey, data] of snapshot) {
@@ -662,8 +714,16 @@ function Workspace() {
         project.name,
       ]),
     );
-    const threadActions = (allThreads.data?.threads ?? [])
-      .slice(0, 20)
+    const query = paletteQuery.trim().toLowerCase();
+    const matches = (value: string | undefined) =>
+      !query || (value ?? "").toLowerCase().includes(query);
+    const threadActions = (query ? [] : (allThreads.data?.threads ?? []).slice(0, 20))
+      .filter(
+        (thread) =>
+          matches(thread.title) ||
+          matches(names.get(thread.projectId)) ||
+          matches(thread.agent),
+      )
       .map((thread) => ({
         id: `thread:${thread.id}`,
         group: "Threads",
@@ -676,7 +736,32 @@ function Workspace() {
         },
       }));
 
-    return [
+    const hits =
+      query && search.data && debouncedQuery === paletteQuery.trim()
+        ? search.data.hits.map((hit) => {
+            const threadLabel =
+              hit.kind === "thread" ? hit.threadTitle : hit.snippet;
+            return {
+              id: `hit:${hit.kind}:${hit.refId}`,
+              group:
+                hit.kind === "comment"
+                  ? "Comments"
+                  : hit.kind === "thread"
+                    ? "Thread titles"
+                    : "Messages",
+              label: (threadLabel || hit.threadTitle)
+                .replace(/\s+/g, " ")
+                .trim(),
+              description: `${hit.threadTitle} · ${hit.projectName}`,
+              leftSection: <IconMessage size={15} stroke={1.5} />,
+              onClick: () => {
+                void openSearchHit(hit);
+              },
+            };
+          })
+        : [];
+
+    const nav = [
       {
         id: "inbox",
         group: "Navigate",
@@ -714,23 +799,46 @@ function Workspace() {
           spotlight.close();
         },
       },
+    ].filter(
+      (action) => matches(action.label) || matches(action.description),
+    );
+
+    return [
+      ...nav,
+      ...hits,
       ...threadActions,
-      {
-        id: "theme",
-        group: "Appearance",
-        label: `Switch to ${dark ? "light" : "dark"} mode`,
-        leftSection: dark ? (
-          <IconSun size={16} stroke={1.5} />
-        ) : (
-          <IconMoon size={16} stroke={1.5} />
-        ),
-        onClick: () => {
-          toggleColorScheme();
-          spotlight.close();
-        },
-      },
+      ...(query
+        ? []
+        : [
+            {
+              id: "theme",
+              group: "Appearance",
+              label: `Switch to ${dark ? "light" : "dark"} mode`,
+              leftSection: dark ? (
+                <IconSun size={16} stroke={1.5} />
+              ) : (
+                <IconMoon size={16} stroke={1.5} />
+              ),
+              onClick: () => {
+                toggleColorScheme();
+                spotlight.close();
+              },
+            },
+          ]),
     ];
-  }, [allThreads.data, dark, projects.data, toggleColorScheme]);
+  }, [
+    allThreads.data,
+    dark,
+    debouncedQuery,
+    openInbox,
+    openSearchHit,
+    openSettings,
+    openThread,
+    paletteQuery,
+    projects.data,
+    search.data,
+    toggleColorScheme,
+  ]);
 
   return (
     <>
@@ -776,10 +884,15 @@ function Workspace() {
           asideCollapsed={asideCollapsed}
           onToggleAside={toggleAside}
           hasWorktree={hasWorktree}
+          threadOpen={view === "thread" && selectedThread !== null}
+          canRunSetup={canRunSetup}
           branch={selectedThread?.branch ?? ""}
           baseBranch={selectedThread?.baseBranch ?? ""}
           canManage={Boolean(selectedThread) && route.kind === "thread"}
           isPinned={selectedThread?.pinned ?? false}
+          allowedActions={
+            route.kind === "thread" ? selectedThread?.allowedActions : []
+          }
           navOpened={navOpened}
           navCollapsed={navCollapsed}
           onToggleNav={toggleNav}
@@ -831,13 +944,16 @@ function Workspace() {
           onRevert={() => {
             if (selectedThread) revert.open();
           }}
-          onArchive={() => {
+          onArchive={(archived) => {
             if (!selectedThread) return;
             void runAction(async () => {
-              await updateThread(selectedThread.id, { archived: true });
-              openInbox();
+              await updateThread(selectedThread.id, { archived });
+              if (archived) openInbox();
               refreshThreadLists(selectedThread);
-              notifications.show({ message: "Thread archived", color: "teal" });
+              notifications.show({
+                message: archived ? "Thread archived" : "Thread unarchived",
+                color: "teal",
+              });
             });
           }}
         />
@@ -1069,12 +1185,25 @@ function Workspace() {
       <Spotlight
         actions={actions}
         shortcut={["mod + K"]}
+        query={paletteQuery}
+        onQueryChange={setPaletteQuery}
+        filter={(_query, actions) => actions}
         highlightQuery
-        nothingFound="Nothing here."
-        onSpotlightOpen={() => setPaletteOpened(true)}
-        onSpotlightClose={() => setPaletteOpened(false)}
+        nothingFound={
+          paletteQuery.trim().length >= 2 && search.isFetching
+            ? "Searching…"
+            : "Nothing here."
+        }
+        onSpotlightOpen={() => {
+          setPaletteOpened(true);
+          setPaletteQuery("");
+        }}
+        onSpotlightClose={() => {
+          setPaletteOpened(false);
+          setPaletteQuery("");
+        }}
         searchProps={{
-          placeholder: "Search threads or run a command…",
+          placeholder: "Search threads, messages or run a command…",
         }}
         className="spotlight"
       />

@@ -146,11 +146,6 @@ async fn restart_recovery_resets_interrupted_threads() {
         .execute(&fixture.pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE agent_bindings SET status = 'running' WHERE thread_id = ?")
-        .bind(thread.id.as_str())
-        .execute(&fixture.pool)
-        .await
-        .unwrap();
     queue::enqueue(
         &fixture.pool,
         queue::NewQueuedInput {
@@ -196,14 +191,6 @@ async fn restart_recovery_resets_interrupted_threads() {
     .unwrap();
     assert_eq!(kind, "turn_error");
     assert!(payload.contains(turn_id), "{payload}");
-
-    let binding: String =
-        sqlx::query_scalar("SELECT status FROM agent_bindings WHERE thread_id = ?")
-            .bind(thread.id.as_str())
-            .fetch_one(&fixture.pool)
-            .await
-            .unwrap();
-    assert_eq!(binding, "idle");
 
     // Queued input survives the reset; a second boot has nothing left to do.
     let queued: i64 = sqlx::query_scalar(
@@ -762,6 +749,9 @@ async fn diff_baselines_seen_and_merge_back() {
         .unwrap();
     assert!(!result.committed);
     assert_eq!(result.files.len(), 2);
+    assert_eq!(result.branch, "main");
+    assert!(!result.base_drift);
+    assert!(!result.verified);
     assert_eq!(
         tokio::fs::read_to_string(fixture.repo.path().join("README.md"))
             .await
@@ -774,6 +764,15 @@ async fn diff_baselines_seen_and_merge_back() {
         head_before
     );
 
+    // The first apply left the project dirty; a second apply must refuse
+    // rather than commit unrelated working-tree state.
+    assert!(
+        diff::merge_back(&fixture.pool, &row, &fixture.current, true, None)
+            .await
+            .is_err()
+    );
+    git(fixture.repo.path(), &["reset", "--hard", &head_before]);
+    git(fixture.repo.path(), &["clean", "-fd"]);
     let result = diff::merge_back(
         &fixture.pool,
         &row,
@@ -781,12 +780,53 @@ async fn diff_baselines_seen_and_merge_back() {
         true,
         Some("Apply thread"),
     )
-    .await;
-    // The same patch is already in the working tree, so a second apply fails or is empty.
-    // A clean commit path is covered by making a new change first when needed.
-    if let Ok(result) = result {
-        assert!(result.committed);
-    }
+    .await
+    .unwrap();
+    assert!(result.committed);
+    assert!(result.commit.is_some());
+}
+
+#[tokio::test]
+async fn merge_back_runs_verify_before_touching_the_project() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    let worktree = thread.worktree_path.as_deref().unwrap();
+    tokio::fs::write(Path::new(worktree).join("README.md"), "one\nverified\n")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE projects SET verify_command = 'exit 7' WHERE id = ?")
+        .bind(project.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let row = threads::load_row(&fixture.pool, thread.id.as_str())
+        .await
+        .unwrap();
+    let error = diff::merge_back(&fixture.pool, &row, &fixture.current, false, None)
+        .await
+        .unwrap_err();
+    assert!(error.0.message.contains("verify command failed"));
+    assert_eq!(
+        tokio::fs::read_to_string(fixture.repo.path().join("README.md"))
+            .await
+            .unwrap(),
+        "one\ntwo\n"
+    );
+    assert!(git_output(fixture.repo.path(), &["status", "--porcelain"])
+        .trim()
+        .is_empty());
+
+    sqlx::query("UPDATE projects SET verify_command = NULL WHERE id = ?")
+        .bind(project.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let result = diff::merge_back(&fixture.pool, &row, &fixture.current, false, None)
+        .await
+        .unwrap();
+    assert!(!result.verified);
+    assert_eq!(result.files, vec!["README.md".to_owned()]);
 }
 
 #[tokio::test]
@@ -930,6 +970,7 @@ async fn diff_comment_hunk_ids_are_reresolved_then_degrade() {
     let events = EventStore::new(fixture.pool.clone());
     let comment = comments::create(
         &fixture.pool,
+        &test_projection(&fixture.pool),
         &events,
         thread.id.as_str(),
         &fixture.current,
@@ -1025,6 +1066,7 @@ async fn diff_comment_drift_and_revert_to_base() {
     let events = EventStore::new(fixture.pool.clone());
     let comment = comments::create(
         &fixture.pool,
+        &test_projection(&fixture.pool),
         &events,
         thread.id.as_str(),
         &fixture.current,
@@ -1080,6 +1122,8 @@ async fn project_path_can_be_relocated() {
         None,
         None,
         Some(moved.path().to_str().unwrap()),
+        None,
+        None,
     )
     .await
     .unwrap();

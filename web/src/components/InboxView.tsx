@@ -9,18 +9,19 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconAlertTriangle,
   IconArrowUpRight,
   IconCheck,
+  IconCircleCheck,
   IconClock,
   IconCopy,
   IconHelp,
   IconInbox,
   IconMessage,
 } from "@tabler/icons-react";
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import {
   listInbox,
   markAllInboxRead,
@@ -36,6 +37,7 @@ const kindLabel: Record<InboxItem["kind"], string> = {
   approval: "Approval",
   elicitation: "Question",
   mention: "Mention",
+  completed: "Finished",
   error: "Error",
 };
 
@@ -45,6 +47,8 @@ function kindIcon(kind: InboxItem["kind"]) {
       return <IconClock size={14} stroke={1.5} />;
     case "elicitation":
       return <IconHelp size={14} stroke={1.5} />;
+    case "completed":
+      return <IconCircleCheck size={14} stroke={1.5} />;
     case "error":
       return <IconAlertTriangle size={14} stroke={1.5} />;
     default:
@@ -61,6 +65,23 @@ const inboxTime = new Intl.DateTimeFormat(undefined, {
 
 function timeOf(ts: number) {
   return inboxTime.format(new Date(ts));
+}
+
+const dayFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
+
+/** Sticky section label: today and yesterday read better than a date. */
+function dayLabel(ts: number) {
+  const date = new Date(ts);
+  const now = new Date();
+  const startOf = (value: Date) =>
+    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const days = Math.round((startOf(now) - startOf(date)) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return dayFormat.format(date);
 }
 
 const SWIPE_ACTION_WIDTH = 84;
@@ -215,7 +236,7 @@ function InboxRow({
         <Group gap={6} wrap="nowrap">
           <Text
             size="sm"
-            fw={item.read ? 400 : 500}
+            fw={item.read ? 400 : 600}
             className="inbox-summary"
           >
             {item.summary}
@@ -247,19 +268,26 @@ export function InboxView({
   const [filter, setFilter] = useState<"unread" | "all">("unread");
   const [sheetItem, setSheetItem] = useState<InboxItem | null>(null);
   const queryClient = useQueryClient();
-  const inbox = useQuery({
+  const inbox = useInfiniteQuery({
     queryKey: ["inbox", filter],
-    queryFn: () => listInbox(filter),
+    queryFn: ({ pageParam }) => listInbox(filter, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) =>
+      last.hasMore && last.items.length > 0
+        ? last.items[last.items.length - 1]?.id
+        : undefined,
     refetchInterval: 5_000,
     refetchIntervalInBackground: false,
   });
-  const items = inbox.data?.items ?? [];
-  const unread = inbox.data?.unread ?? 0;
+  const pages = inbox.data?.pages ?? [];
+  const items = pages.flatMap((page) => page.items);
+  const unread = pages[0]?.unread ?? 0;
 
   const markRead = (item: InboxItem) => {
     void markInboxRead(item.threadId)
       .then(() => {
         void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+        void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
         notifications.show({ message: "Marked read", color: "teal" });
       })
       .catch((cause: unknown) =>
@@ -318,7 +346,7 @@ export function InboxView({
               Inbox
             </Text>
             <Text size="sm" c="dimmed">
-              Approvals, questions and mentions from every thread.
+              Approvals, questions, mentions and turn outcomes.
             </Text>
           </Box>
           <Group gap={2} className="inbox-filters" wrap="nowrap">
@@ -344,6 +372,9 @@ export function InboxView({
                     .then(() => {
                       void queryClient.invalidateQueries({
                         queryKey: ["inbox"],
+                      });
+                      void queryClient.invalidateQueries({
+                        queryKey: ["inbox-unread"],
                       });
                       notifications.show({
                         message: "Inbox marked read",
@@ -376,20 +407,61 @@ export function InboxView({
           <EmptyState
             icon={<IconInbox size={16} stroke={1.5} />}
             title={filter === "unread" ? "All clear" : "Nothing here"}
+            hint={
+              filter === "unread"
+                ? "Switch to All to review earlier notifications."
+                : undefined
+            }
+            action={
+              filter === "unread" ? (
+                <Button
+                  variant="default"
+                  size="xs"
+                  onClick={() => setFilter("all")}
+                >
+                  View all notifications
+                </Button>
+              ) : undefined
+            }
           >
-            Approvals and questions waiting on you show up in this list.
+            {filter === "unread"
+              ? "Approvals, questions and mentions waiting on you show up here."
+              : "Notifications from every thread show up here."}
           </EmptyState>
         ) : (
-          items.map((item) => (
-            <InboxRow
-              key={item.id}
-              item={item}
-              onOpen={onOpenThread}
-              onLongPress={setSheetItem}
-              onMarkRead={markRead}
-              onCopyLink={copyLink}
-            />
-          ))
+          <>
+            {items.map((item, index) => {
+              const day = dayLabel(item.createdAt);
+              const previous = items[index - 1];
+              const newDay =
+                !previous || dayLabel(previous.createdAt) !== day;
+              return (
+                <Fragment key={item.id}>
+                  {newDay ? <div className="inbox-day">{day}</div> : null}
+                  <InboxRow
+                    item={item}
+                    onOpen={onOpenThread}
+                    onLongPress={setSheetItem}
+                    onMarkRead={markRead}
+                    onCopyLink={copyLink}
+                  />
+                </Fragment>
+              );
+            })}
+            {inbox.hasNextPage ? (
+              <Group justify="center" py="sm">
+                <Button
+                  variant="subtle"
+                  size="compact-sm"
+                  color="gray"
+                  loading={inbox.isFetchingNextPage}
+                  onClick={() => void inbox.fetchNextPage()}
+                >
+                  Load earlier notifications
+                </Button>
+              </Group>
+            ) : null}
+          </>
         )}
       </ScrollArea>
 

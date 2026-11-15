@@ -6,6 +6,7 @@ use crate::drafts::DraftHub;
 use crate::events::EventStore;
 use crate::presence::PresenceHub;
 use crate::projection::Projection;
+use crate::push::PushHub;
 use crate::terminal::TerminalHub;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ pub struct AppState {
     pub presence: PresenceHub,
     pub drafts: DraftHub,
     pub agents: AgentManager,
+    pub push: Arc<PushHub>,
     pub terminal: Arc<TerminalHub>,
     pub started_at: i64,
 }
@@ -36,13 +38,24 @@ impl AppState {
             &config.terminal_shell,
             &config.terminal_socket,
         ));
+        let presence = PresenceHub::new();
+        let push = Arc::new(PushHub::new(pool.clone()));
+        let agents = AgentManager::new(
+            pool.clone(),
+            events.clone(),
+            projection.clone(),
+            presence.clone(),
+            config.idle_session_seconds,
+            config.max_active_turns,
+        );
         Self {
-            agents: AgentManager::new(pool.clone(), events.clone(), projection.clone()),
+            agents,
+            push,
             terminal,
             drafts: DraftHub::new(pool.clone()),
             events,
             projection,
-            presence: PresenceHub::new(),
+            presence,
             started_at: now_ms(),
             config: Arc::new(config),
             pool,

@@ -8,12 +8,20 @@ use axum::routing::{get, patch};
 use axum::Json;
 use axum::Router;
 use threadbase_shared::api::SettingsPatch;
-use threadbase_shared::StateResponse;
+use threadbase_shared::{MachineSpec, StateResponse};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/state", get(state))
+        .route("/api/machines", get(machines))
         .route("/api/settings", patch(update_settings))
+}
+
+/// The lifecycle catalogue. Unauthenticated on purpose: it describes the
+/// product, not any user's data, and agent tooling should be able to read it
+/// before a session exists.
+async fn machines() -> Json<Vec<MachineSpec>> {
+    Json(threadbase_core::state::catalogue())
 }
 
 async fn state(

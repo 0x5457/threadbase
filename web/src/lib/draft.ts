@@ -1,4 +1,5 @@
 import { WebsocketProvider } from "y-websocket";
+import type { DraftPhase } from "../api/types/DraftPhase";
 import * as Y from "yjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -28,7 +29,21 @@ export const EDITORS_MAP = "editors";
 /** Byte cap the server enforces on the shared draft. */
 export const MAX_THREAD_DRAFT_BYTES = 200 * 1024;
 
-export type DraftStatus = "idle" | "connecting" | "connected" | "disconnected";
+/** Provider status, as reported by y-websocket. */
+type ProviderStatus = "connecting" | "connected" | "disconnected";
+
+/**
+ * Collapse the provider status and the first-sync flag into one phase.
+ *
+ * The old shape exposed `status`, `connected` and `synced` side by side, so
+ * every caller combined them differently. This is the only place that
+ * combination happens.
+ */
+export function draftPhase(status: ProviderStatus, synced: boolean): DraftPhase {
+  if (status === "connected") return synced ? "live" : "syncing";
+  if (status === "connecting") return "connecting";
+  return "offline";
+}
 
 export interface DraftAuthor {
   id: string;
@@ -46,10 +61,8 @@ export interface DraftEditor {
 export interface DraftSession {
   /** A document exists for this thread; false in the design-preview composer. */
   active: boolean;
-  /** The provider finished its first sync round-trip. */
-  synced: boolean;
-  status: DraftStatus;
-  connected: boolean;
+  /** Single lifecycle value: see the `draft` machine. */
+  phase: DraftPhase;
   /** Shared CRDT document; bind the Tiptap collaboration extension to this. */
   document: Y.Doc | null;
   /** Awareness source for collaboration carets; null while connecting. */
@@ -61,16 +74,12 @@ export interface DraftSession {
 }
 
 interface DraftSessionState {
-  synced: boolean;
-  status: DraftStatus;
-  connected: boolean;
+  phase: DraftPhase;
   remoteEditors: DraftEditor[];
 }
 
 const IDLE_STATE: DraftSessionState = {
-  synced: false,
-  status: "idle",
-  connected: false,
+  phase: "idle",
   remoteEditors: [],
 };
 
@@ -164,7 +173,7 @@ export function useDraftSession(
 
     let disposed = false;
     let synced = false;
-    let status: DraftStatus = "connecting";
+    let status: ProviderStatus = "connecting";
     let lastSignature = "";
 
     const next = new WebsocketProvider(draftSocketUrl(), threadId, document, {
@@ -174,9 +183,7 @@ export function useDraftSession(
     const publish = () => {
       if (disposed) return;
       const snapshot: DraftSessionState = {
-        synced,
-        status,
-        connected: status === "connected",
+        phase: draftPhase(status, synced),
         remoteEditors: readEditors(next.awareness, document.clientID),
       };
       const signature = JSON.stringify(snapshot);
@@ -189,7 +196,7 @@ export function useDraftSession(
       synced = isSynced;
       publish();
     };
-    const onStatus = (event: { status: DraftStatus }) => {
+    const onStatus = (event: { status: ProviderStatus }) => {
       status = event.status;
       publish();
     };

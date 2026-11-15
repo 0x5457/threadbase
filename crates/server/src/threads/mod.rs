@@ -11,4 +11,4 @@ mod query;
 
 pub use bundle::bundle;
 pub use lifecycle::{create, delete, fork, reconcile_after_restart, status, transition, update};
-pub use query::{get, list, list_all, load_row, ThreadRow};
+pub use query::{get, ids_for_project, list, list_all, load_row, ThreadRow};

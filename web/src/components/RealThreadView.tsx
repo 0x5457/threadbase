@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Group,
+  Loader,
   Skeleton,
   Text,
   UnstyledButton,
@@ -13,8 +14,10 @@ import {
   IconChevronDown,
   IconCopy,
   IconMessagePlus,
+  IconRefresh,
 } from "@tabler/icons-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { threadCan } from "../lib/machine";
 import { readPick, rememberPick } from "../lib/model-prefs";
 import {
   Fragment,
@@ -39,6 +42,7 @@ import {
   reorderQueue,
   respondElicitation,
   restoreQueueItem,
+  retryThreadSetup,
   sendComment,
   steerQueueItem,
   updateComment,
@@ -156,6 +160,15 @@ function TimelineRowImpl({
       0,
     );
 
+  /** Unique files a run touched; a summary that says what changed, not only
+   *  how many tools ran. */
+  const toolFileCount = (tools: ToolItem[]) =>
+    new Set(
+      tools
+        .map((tool) => tool.call.locations[0]?.path)
+        .filter((path): path is string => Boolean(path)),
+    ).size;
+
   const groupTools = (tools: ToolItem[], key: string) => {
     const preview = tools.slice(0, PREVIEW_TOOLS);
     const rest = tools.slice(PREVIEW_TOOLS);
@@ -190,9 +203,12 @@ function TimelineRowImpl({
     const count = item.thinking.count;
     const thought = count > 1 ? `Thought ${count} times` : "Thought once";
     const elapsed = toolDuration(item.tools);
+    const files = toolFileCount(item.tools);
     const ran = ` · ran ${item.tools.length} ${
       item.tools.length === 1 ? "tool" : "tools"
-    }${elapsed > 0 ? ` · ${formatDuration(elapsed)}` : ""}`;
+    }${elapsed > 0 ? ` · ${formatDuration(elapsed)}` : ""}${
+      files > 0 ? ` · ${files} ${files === 1 ? "file" : "files"}` : ""
+    }`;
     return (
       <div className="run">
         <div
@@ -210,6 +226,7 @@ function TimelineRowImpl({
   }
 
   if (item.kind === "tools" && item.tools.length > 1) {
+    const files = toolFileCount(item.tools);
     return (
       <div className="tool-group">
         <div className="run-head">
@@ -217,6 +234,9 @@ function TimelineRowImpl({
             ran {item.tools.length} tools
             {toolDuration(item.tools) > 0
               ? ` · ${formatDuration(toolDuration(item.tools))}`
+              : ""}
+            {files > 0
+              ? ` · ${files} ${files === 1 ? "file" : "files"}`
               : ""}
           </span>
         </div>
@@ -421,6 +441,7 @@ export const RealThreadView = memo(function RealThreadView({
     hidden: stateQuery.data?.settings.hiddenPresence ?? false,
     onInboxCount: () => {
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
     },
   });
 
@@ -663,6 +684,51 @@ export const RealThreadView = memo(function RealThreadView({
       color: "red",
     });
   }, []);
+
+  const setupStatus = bundle?.thread.setupStatus ?? "none";
+  const setupActive = setupStatus === "pending" || setupStatus === "running";
+  // `unarchive` is legal only while the thread is archived, so it doubles as
+  // the machine's answer to "is input frozen here?". Prompting itself may
+  // degrade to queueing (a busy adapter), so it is not the right gate.
+  const actions =
+    live.threadState?.allowedActions ?? bundle?.thread.allowedActions;
+  const archived = threadCan(actions, "unarchive");
+  const writable = canWrite && !setupActive && !archived;
+  const retrySetup = useCallback(() => {
+    void retryThreadSetup(threadId)
+      .then(() => refresh())
+      .catch((cause: unknown) => reportFailure(cause, "Could not start setup"));
+  }, [refresh, reportFailure, threadId]);
+  const setupBanner = setupActive ? (
+    <div className="setup-banner" role="status">
+      <Loader size={12} />
+      <Text size="xs" c="dimmed">
+        Setting up the worktree — the agent starts after it finishes.
+      </Text>
+    </div>
+  ) : setupStatus === "failed" ? (
+    <Alert
+      className="setup-banner setup-banner-failed"
+      icon={<IconAlertCircle size={14} />}
+      color="red"
+      title="Worktree setup failed"
+    >
+      <Group justify="space-between" gap="sm" wrap="nowrap">
+        <Text size="xs" className="setup-error">
+          {bundle?.thread.setupError ||
+            "The setup command did not finish successfully."}
+        </Text>
+        <Button
+          size="compact-xs"
+          variant="default"
+          leftSection={<IconRefresh size={12} />}
+          onClick={retrySetup}
+        >
+          Retry setup
+        </Button>
+      </Group>
+    </Alert>
+  ) : null;
 
   const applyConfig = useCallback(
     (patch: { model?: string; effort?: string }, failure: string) => {
@@ -974,7 +1040,7 @@ export const RealThreadView = memo(function RealThreadView({
   if (
     !live.error &&
     live.events.length === 0 &&
-    (bundleQuery.isPending || live.loading)
+    (bundleQuery.isPending || live.phase === "loading")
   ) {
     // Slow links should see the shape of a transcript instead of a bare spinner.
     return (
@@ -1053,21 +1119,26 @@ export const RealThreadView = memo(function RealThreadView({
                     </Button>
                   </div>
                 ) : null}
+                {setupBanner}
               </div>
             ),
             Footer: () => <div className="timeline-footer">{footerContent}</div>,
-            EmptyPlaceholder: () =>
-              live.error ? (
-                <Alert
-                  icon={<IconAlertCircle size={14} />}
-                  title="Cannot load thread activity"
-                  color="red"
-                >
-                  {live.error}
-                </Alert>
-              ) : (
-                <EmptyThread agent={bundle?.thread.agent ?? "the agent"} />
-              ),
+            EmptyPlaceholder: () => (
+              <>
+                {setupBanner}
+                {live.error ? (
+                  <Alert
+                    icon={<IconAlertCircle size={14} />}
+                    title="Cannot load thread activity"
+                    color="red"
+                  >
+                    {live.error}
+                  </Alert>
+                ) : (
+                  <EmptyThread agent={bundle?.thread.agent ?? "the agent"} />
+                )}
+              </>
+            ),
           }}
           itemContent={(_index, item) => (
             <TimelineRow
@@ -1165,7 +1236,7 @@ export const RealThreadView = memo(function RealThreadView({
         <QueueBar
           items={queue}
           busy={queueBusy}
-          canWrite={canWrite}
+          canWrite={writable}
           onDrop={drop}
           onSteer={steer}
           onEdit={edit}
@@ -1173,7 +1244,7 @@ export const RealThreadView = memo(function RealThreadView({
         />
         <Composer
           threadId={threadId}
-          canWrite={canWrite}
+          canWrite={writable}
           projectId={bundle?.project.id}
           agentName={bundle?.thread.agent}
           modelName={bundle?.thread.model}

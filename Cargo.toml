@@ -63,6 +63,7 @@ ts-rs = { version = "12.0", features = ["format", "no-serde-warnings", "serde-js
 ulid = "1.2"
 unidiff = "0.4"
 url = "2.5"
+web-push = { version = "0.11", default-features = false }
 which = "8.0"
 yrs = "0.17"
 y-sync = "0.4"

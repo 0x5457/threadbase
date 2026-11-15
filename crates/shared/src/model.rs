@@ -133,6 +133,30 @@ impl Role {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 #[ts(export)]
+pub enum SetupStatus {
+    None,
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
 pub enum ThreadStatus {
     Preparing,
     Idle,
@@ -394,6 +418,57 @@ pub enum CommentStatus {
     Resolved,
 }
 
+/// One thread's notification relationship with the current user.
+///
+/// Rows live in `thread_watchers`; this enum is the only interpretation of
+/// them, so "no row", "row with muted=0" and "row with muted=1" never leak
+/// out as two booleans that callers have to combine themselves.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum WatchState {
+    /// No row: no notifications and no implicit follow.
+    NotWatching,
+    /// Row with muted=0: notified about pending items, mentions and turns.
+    Watching,
+    /// Row with muted=1: still a watcher, but notifications are suppressed.
+    Muted,
+}
+
+impl WatchState {
+    /// The `muted` column value for a state, or `None` when no row should exist.
+    #[must_use]
+    pub fn muted_value(self) -> Option<bool> {
+        match self {
+            Self::NotWatching => None,
+            Self::Watching => Some(false),
+            Self::Muted => Some(true),
+        }
+    }
+
+    #[must_use]
+    pub fn from_row(muted: Option<i64>) -> Self {
+        match muted {
+            None => Self::NotWatching,
+            Some(0) => Self::Watching,
+            Some(_) => Self::Muted,
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -599,6 +674,7 @@ pub enum InboxKind {
     Approval,
     Elicitation,
     Mention,
+    Completed,
     Error,
 }
 
@@ -694,6 +770,10 @@ pub struct ProjectDto {
     pub path: String,
     pub remote_url: Option<String>,
     pub default_branch: String,
+    /// Optional command run in a thread worktree before merge-back accepts it.
+    pub verify_command: Option<String>,
+    /// Optional command run once when a thread worktree is created.
+    pub setup_command: Option<String>,
     pub active_threads: u32,
     pub waiting_approvals: u32,
     pub last_activity_at: Option<i64>,
@@ -710,6 +790,10 @@ pub struct ThreadDto {
     pub parent_thread_id: Option<ThreadId>,
     pub title: String,
     pub status: ThreadStatus,
+    /// Commands legal from `status`, from the thread machine. Menus and
+    /// buttons are rendered from this list instead of comparing status
+    /// strings, so the UI cannot offer an action the server would reject.
+    pub allowed_actions: Vec<String>,
     pub agent: String,
     pub model: Option<String>,
     pub effort: Option<String>,
@@ -717,6 +801,8 @@ pub struct ThreadDto {
     pub base_branch: String,
     pub base_sha: Option<String>,
     pub worktree_path: Option<String>,
+    pub setup_status: SetupStatus,
+    pub setup_error: Option<String>,
     pub created_by: UserId,
     pub created_at: i64,
     pub updated_at: i64,
@@ -874,7 +960,6 @@ pub struct QueueItemDto {
     pub status: QueueStatus,
     pub position: u32,
     pub created_at: i64,
-    pub superseded: bool,
 }
 
 /// A stored file a user attached to a message. Bytes live on disk; the DTO is
@@ -1148,10 +1233,161 @@ pub struct DirectoryListingDto {
     pub entries: Vec<DirectoryEntryDto>,
 }
 
+/// In-memory state of one thread's single turn slot.
+///
+/// The ACP connection allows exactly one turn at a time. This models the
+/// claim/install/clear protocol that enforces it, including the "turn ended
+/// while still starting" race the harness creates.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum TurnState {
+    Empty,
+    Starting,
+    Running,
+}
+
+/// A server-side sign-in session. Derived from `expires_at` / `revoked_at`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum AuthSessionState {
+    Active,
+    Expired,
+    Revoked,
+}
+
+/// Delivery state of one inbox row to Web Push.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum PushStatus {
+    Pending,
+    Sent,
+    Failed,
+    /// Read before it could be delivered, or the user has no subscription.
+    Skipped,
+}
+
+/// Browser WebSocket lifecycle for one thread subscription.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum ConnectionPhase {
+    Idle,
+    Loading,
+    Live,
+    Reconnecting,
+    Failed,
+}
+
+/// Shared composer draft lifecycle (y-websocket provider).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum DraftPhase {
+    Idle,
+    Connecting,
+    /// Socket is up, first sync round-trip has not completed.
+    Syncing,
+    Live,
+    Offline,
+}
+
+/// Browser terminal lifecycle for one tmux session.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum TerminalPhase {
+    Connecting,
+    Live,
+    Exited,
+    Error,
+}
+
 impl_as_str!(
     Role,
     UserAccess,
     ThreadStatus,
+    SetupStatus,
     SubagentStatus,
     Delivery,
     QueueStatus,
@@ -1159,6 +1395,13 @@ impl_as_str!(
     ApprovalDecision,
     ElicitationStatus,
     CommentStatus,
+    WatchState,
+    TurnState,
+    AuthSessionState,
+    PushStatus,
+    ConnectionPhase,
+    DraftPhase,
+    TerminalPhase,
 );
 
 #[cfg(test)]

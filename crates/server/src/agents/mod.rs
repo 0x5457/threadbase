@@ -17,8 +17,9 @@ mod session;
 use crate::auth::CurrentUser;
 use crate::error::ServerError;
 use crate::events::{EventMeta, EventStore};
+use crate::presence::PresenceHub;
 use crate::projection::Projection;
-use crate::{approvals, bindings, elicitations, queue, subagents, threads};
+use crate::{approvals, bindings, elicitations, queue, subagents, threads, watchers};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -35,7 +36,7 @@ use threadbase_shared::{
     ElicitationAction, MessageId, ThreadEvent, ThreadId, ThreadStatus, TurnId, UserBrief,
 };
 use threadbase_workspace::git;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, OwnedSemaphorePermit, Semaphore};
 
 pub use mapping::{briefs_by_ids, user_brief};
 pub(crate) use session::{RunState, Session, TurnInstall, TurnStartClaim};
@@ -55,6 +56,12 @@ pub(crate) struct Inner {
     /// Timestamps of automatic adapter restarts per thread, so a crashing
     /// adapter cannot spin forever.
     pub(crate) restarts: Mutex<HashMap<String, Vec<i64>>>,
+    /// Live focus, used to suppress completion pings for people already here.
+    pub(crate) presence: PresenceHub,
+    /// Global cap on concurrently running turns. The permit lives inside the
+    /// session's turn slot, so it is released exactly when the turn ends.
+    pub(crate) turn_slots: Arc<Semaphore>,
+    pub(crate) idle_session_ms: i64,
 }
 
 /// Everything needed to start one turn, whichever input path produced it.
@@ -65,12 +72,26 @@ pub(crate) struct TurnStart<'a> {
     pub prompt: &'a str,
     pub delivery: Delivery,
     pub attachments: &'a [AttachmentDto],
+    /// Acquired before the session is started; held for the whole turn.
+    pub permit: Option<OwnedSemaphorePermit>,
 }
 
 impl AgentManager {
     #[must_use]
-    pub fn new(pool: SqlitePool, events: EventStore, projection: Projection) -> Self {
+    pub fn new(
+        pool: SqlitePool,
+        events: EventStore,
+        projection: Projection,
+        presence: PresenceHub,
+        idle_session_seconds: i64,
+        max_active_turns: usize,
+    ) -> Self {
         let (queue_tx, queue_rx) = mpsc::unbounded_channel::<String>();
+        let capacity = if max_active_turns == 0 {
+            Semaphore::MAX_PERMITS
+        } else {
+            max_active_turns
+        };
         let inner = Arc::new(Inner {
             pool,
             events,
@@ -79,10 +100,74 @@ impl AgentManager {
             starts: crate::locks::KeyedLocks::new(),
             queue_tx: queue_tx.clone(),
             restarts: Mutex::new(HashMap::new()),
+            presence,
+            turn_slots: Arc::new(Semaphore::new(capacity)),
+            idle_session_ms: idle_session_seconds.saturating_mul(1000),
         });
         let manager = Self { inner };
         queue_worker::spawn(manager.clone(), queue_rx);
+        manager.spawn_idle_reaper();
         manager
+    }
+
+    /// Stop an idle adapter on purpose before deleting or archiving its thread.
+    pub async fn stop(&self, thread_id: &str) {
+        self.shutdown_session(thread_id).await;
+    }
+
+    /// Shut down adapters that have been idle past the configured TTL. ACP
+    /// session ids live in the binding, so the next prompt transparently
+    /// resumes the conversation.
+    fn spawn_idle_reaper(&self) {
+        if self.inner.idle_session_ms <= 0 {
+            return;
+        }
+        let manager = self.clone();
+        tokio::spawn(async move {
+            let period = std::time::Duration::from_secs(60);
+            loop {
+                tokio::time::sleep(period).await;
+                manager.evict_idle_sessions().await;
+            }
+        });
+    }
+
+    async fn evict_idle_sessions(&self) {
+        let sessions: Vec<(String, Arc<Session>)> = self
+            .inner
+            .sessions
+            .lock()
+            .await
+            .iter()
+            .map(|(id, session)| (id.clone(), session.clone()))
+            .collect();
+        for (thread_id, session) in sessions {
+            if session.idle_ms() < self.inner.idle_session_ms {
+                continue;
+            }
+            // Claiming the start slot is the same lock a sender needs, so a
+            // session cannot be reaped while a prompt is being prepared.
+            let Some(claim) = session.claim_start().await else {
+                continue;
+            };
+            let busy = threads::status(&self.inner.pool, &thread_id)
+                .await
+                .map(|status| status != ThreadStatus::Idle)
+                .unwrap_or(true)
+                || approvals::count_pending_items(&self.inner.pool, &thread_id)
+                    .await
+                    .map(|count| count > 0)
+                    .unwrap_or(true)
+                || has_queued_input(&self.inner.pool, &thread_id).await;
+            if busy {
+                claim.release().await;
+                continue;
+            }
+            session.mark_stopped();
+            claim.release().await;
+            self.shutdown_session(&thread_id).await;
+            tracing::info!(thread_id, "idle agent session stopped");
+        }
     }
 
     /// Clean up after a restart. Threads whose agent processes died with the
@@ -179,6 +264,11 @@ impl AgentManager {
     }
 
     pub async fn restart(&self, thread_id: &str) -> Result<(), ServerError> {
+        if crate::setup::busy(&self.inner.pool, thread_id).await {
+            return Err(ServerError(ApiError::conflict(
+                "worktree setup is still running; wait for it to finish",
+            )));
+        }
         self.shutdown_session(thread_id).await;
         self.start_fresh(thread_id).await
     }
@@ -283,6 +373,11 @@ impl AgentManager {
     /// Start the harness once. Concurrent callers for the same thread wait on
     /// a per-thread start lock instead of holding the session map.
     pub async fn ensure_started(&self, thread_id: &str) -> Result<(), ServerError> {
+        if crate::setup::busy(&self.inner.pool, thread_id).await {
+            return Err(ServerError(ApiError::conflict(
+                "worktree setup is still running; wait for it to finish",
+            )));
+        }
         if let Some(session) = self.inner.session(thread_id).await {
             if !session.is_stopped() {
                 return Ok(());
@@ -353,7 +448,6 @@ impl AgentManager {
         };
         if let Some(session_id) = session_id.as_ref() {
             bindings::set_session(&self.inner.pool, thread_id, session_id.0.as_str()).await?;
-            bindings::set_status(&self.inner.pool, thread_id, "idle", None).await?;
         }
         if reset_context {
             let _ = self
@@ -422,6 +516,7 @@ impl AgentManager {
         authors: &[UserBrief],
         attachments: &[AttachmentDto],
     ) -> Result<SendMessageResponse, ServerError> {
+        watchers::watch(&self.inner.pool, thread_id, user.user.id.as_str()).await?;
         self.ensure_started(thread_id).await?;
         let session = self.session(thread_id).await?;
         if !attachments.is_empty() && !session.capabilities.images {
@@ -513,6 +608,7 @@ impl AgentManager {
                         prompt: text,
                         delivery: Delivery::StoppedAndSent,
                         attachments,
+                        permit: None,
                     },
                     user,
                     text,
@@ -530,6 +626,7 @@ impl AgentManager {
                         prompt: text,
                         delivery: Delivery::Injected,
                         attachments,
+                        permit: None,
                     },
                     user,
                     text,
@@ -666,6 +763,18 @@ impl AgentManager {
             return self
                 .queue(thread_id, user, text, authors, start.attachments)
                 .await;
+        };
+        // A direct prompt waits behind the global turn cap by queuing, not by
+        // holding the HTTP request open.
+        let Some(permit) = self.inner.try_turn_permit() else {
+            claim.release().await;
+            return self
+                .queue(thread_id, user, text, authors, start.attachments)
+                .await;
+        };
+        let start = TurnStart {
+            permit: Some(permit),
+            ..start
         };
         let (_, message_id) = begin_turn(&self.inner, claim, start).await?;
         Ok(SendMessageResponse {
@@ -854,6 +963,20 @@ impl AgentManager {
 }
 
 impl Inner {
+    /// Non-blocking permit for a direct prompt; queue instead when full.
+    pub(crate) fn try_turn_permit(&self) -> Option<OwnedSemaphorePermit> {
+        self.turn_slots.clone().try_acquire_owned().ok()
+    }
+
+    /// Blocking permit for the queue worker; it resumes when a turn finishes.
+    pub(crate) async fn acquire_turn_permit(&self) -> OwnedSemaphorePermit {
+        self.turn_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("turn semaphore is never closed")
+    }
+
     pub(crate) async fn session(&self, thread_id: &str) -> Option<Arc<Session>> {
         self.sessions.lock().await.get(thread_id).cloned()
     }
@@ -1002,7 +1125,8 @@ async fn prepare_and_prompt(
             return Err(mapping::agent_error(error));
         }
     };
-    let cancel_requested = match session.install_turn(handle.clone()).await {
+    let permit = start.permit;
+    let cancel_requested = match session.install_turn(handle.clone(), permit).await {
         TurnInstall::Running { cancel_requested } => cancel_requested,
         TurnInstall::AlreadyFinished => {
             return Ok((handle, message_id));

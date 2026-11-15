@@ -458,7 +458,8 @@ pub(crate) async fn load_session_user(
     let row = sqlx::query_as::<_, SessionUserRow>(&format!(
         "SELECT s.method, s.expires_at, s.last_seen_at, {USER_COLUMNS}
          FROM auth_sessions s JOIN users u ON u.id = s.user_id
-         WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?"
+         WHERE s.token_hash = ? AND {}",
+        threadbase_core::state::AuthSessionMachine::live_predicate("s")
     ))
     .bind(token_hash)
     .bind(now)

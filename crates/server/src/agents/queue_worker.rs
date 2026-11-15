@@ -17,10 +17,38 @@ pub(crate) fn spawn(manager: AgentManager, mut rx: mpsc::UnboundedReceiver<Strin
 }
 
 async fn process(manager: &AgentManager, thread_id: &str) -> Result<(), ServerError> {
-    // The adapter may be gone: after a restart, or because nothing has started
-    // it yet. Queued input still means "run this", so bring it back first.
-    manager.ensure_started(thread_id).await?;
     let inner = &manager.inner;
+    // Observe an already-running turn before touching the queue. The adapter
+    // may not be started yet, which is fine: no session means no turn.
+    if let Some(session) = inner.session(thread_id).await {
+        let status = threads::status(&inner.pool, thread_id).await?;
+        if session
+            .observe_running(status == ThreadStatus::Running)
+            .await
+        {
+            return Ok(());
+        }
+    }
+    if queue::head(&inner.pool, thread_id).await?.is_none() {
+        return Ok(());
+    }
+    // Setup owns the queue until it finishes; it kicks the worker on success.
+    if crate::setup::busy(&inner.pool, thread_id).await {
+        return Ok(());
+    }
+    // Wait for a global turn slot before starting an adapter or preparing the
+    // prompt. Direct sends queue instead of blocking; this worker is the one
+    // place that should wait.
+    let permit = inner.acquire_turn_permit().await;
+    // Input may have been superseded while this worker was waiting.
+    let Some((id, author_id, text, authors_json, attachments_json)) =
+        queue::head(&inner.pool, thread_id).await?
+    else {
+        return Ok(());
+    };
+    // The adapter may be gone: after a restart, after idle eviction, or
+    // because nothing has started it yet.
+    manager.ensure_started(thread_id).await?;
     let Some(session) = inner.session(thread_id).await else {
         return Err(ServerError::internal("agent is not running"));
     };
@@ -31,11 +59,6 @@ async fn process(manager: &AgentManager, thread_id: &str) -> Result<(), ServerEr
     {
         return Ok(());
     }
-    let Some((id, author_id, text, authors_json, attachments_json)) =
-        queue::head(&inner.pool, thread_id).await?
-    else {
-        return Ok(());
-    };
     let parsed_authors = authors_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<Vec<UserBrief>>(json).ok())
@@ -69,6 +92,7 @@ async fn process(manager: &AgentManager, thread_id: &str) -> Result<(), ServerEr
         prompt: &text,
         delivery: Delivery::Queued,
         attachments: &attachments,
+        permit: Some(permit),
     };
     match begin_turn(inner, claim, start).await {
         Ok((handle, _)) => {

@@ -16,6 +16,6 @@ export type ServerWsMessage =
     onlineUserIds: Array<UserId>;
   }
   | { "type": "thread_state"; state: ThreadState }
-  | { "type": "inbox_count"; unread: number }
+  | { "type": "inbox_count"; userId: UserId; unread: number }
   | { "type": "notice"; level: string; message: string }
   | { "type": "pong" };

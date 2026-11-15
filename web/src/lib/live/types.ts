@@ -1,4 +1,6 @@
 import type { ThreadEvent } from "../../api";
+import type { ConnectionPhase } from "../../api/types/ConnectionPhase";
+import type { ThreadState } from "../../api/types/ThreadState";
 import type { ThreadViewState } from "../thread-events";
 
 export type LivePanel =
@@ -43,17 +45,21 @@ export interface LiveThreadOptions {
 
 export interface LiveThreadState {
   events: ThreadEvent[];
+  /**
+   * Latest server projection for this thread (status, allowed actions, pending
+   * counts). Null until the first frame lands.
+   */
+  threadState: ThreadState | null;
   /** Incrementally folded transcript; recomputed once per event batch. */
   view: ThreadViewState;
-  connected: boolean;
+  /** Single lifecycle value for the socket: see the `connection` machine. */
+  phase: ConnectionPhase;
   error: string | null;
   presence: LivePresence;
   /** The cold page did not reach the start of the log. */
   hasEarlier: boolean;
   /** Fetch the next older window; true when something was appended. */
   loadEarlier: () => Promise<boolean>;
-  /** True until the first events page lands; the transcript skeleton keys on it. */
-  loading: boolean;
   sendPresence: (focus: Partial<PresencePayload>) => void;
 }
 

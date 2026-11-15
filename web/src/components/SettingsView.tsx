@@ -16,6 +16,13 @@ import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { getMe, getState, updateSettings, type Settings } from "../api";
+import {
+  currentPushState,
+  disablePush,
+  enablePush,
+  pushSupported,
+  type PushState,
+} from "../lib/push";
 import { PeopleSection } from "./PeopleSection";
 
 const agents = [
@@ -45,11 +52,31 @@ export function SettingsView() {
     staleTime: 10_000,
   });
   const [settings, setSettings] = useState<Settings | null>(null);
+  // Last persisted snapshot, so the bar can tell an actual edit from a refetch
+  // and Discard has something to return to.
+  const [saved, setSaved] = useState<Settings | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pushState, setPushState] = useState<PushState>(() =>
+    pushSupported() ? "off" : "unsupported",
+  );
+  const [pushBusy, setPushBusy] = useState(false);
 
   useEffect(() => {
-    if (state.data) setSettings(state.data.settings);
+    if (state.data) {
+      setSettings(state.data.settings);
+      setSaved(state.data.settings);
+    }
   }, [state.data]);
+
+  useEffect(() => {
+    if (!pushSupported()) {
+      setPushState("unsupported");
+      return;
+    }
+    void currentPushState()
+      .then(setPushState)
+      .catch(() => setPushState("off"));
+  }, []);
 
   const patch = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings((current) =>
@@ -59,18 +86,28 @@ export function SettingsView() {
 
   const save = async () => {
     if (!settings) return;
+    const payload: Settings = {
+      ...settings,
+      theme: colorScheme === "dark" ? "dark" : "light",
+    };
     setSaving(true);
     try {
-      await updateSettings({
-        ...settings,
-        theme: colorScheme === "dark" ? "dark" : "light",
-      });
+      await updateSettings(payload);
+      // The state query refetch is async; mark this exact payload saved now so
+      // the sticky bar disappears as soon as the request resolves. Only the
+      // theme is merged back so an edit made while the save was in flight is
+      // not overwritten.
+      setSaved(payload);
+      setSettings((current) =>
+        current ? { ...current, theme: payload.theme } : current,
+      );
       notifications.show({ message: "Settings saved", color: "teal" });
       void queryClient.invalidateQueries({ queryKey: ["state"] });
       void queryClient.invalidateQueries({ queryKey: ["thread"] });
       void queryClient.invalidateQueries({ queryKey: ["threads"] });
       void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
     } catch (cause) {
       notifications.show({
         message:
@@ -90,17 +127,26 @@ export function SettingsView() {
     );
   }
 
+  // The header toggle changes the live scheme without touching the settings
+  // object; count that as unsaved too, otherwise leaving Settings would keep
+  // the server on the old theme.
+  const dirty = saved
+    ? JSON.stringify(settings) !== JSON.stringify(saved) ||
+      settings.theme !== colorScheme
+    : false;
+
   return (
     <div className="settings-view">
-      <div className="settings-head">
-        <Text size="md" fw={500}>
-          Settings
-        </Text>
-        <Text size="sm" c="dimmed">
-          Workspace defaults and personal preferences.
-        </Text>
-      </div>
-      <div className="settings-body">
+      <div className="settings-scroll">
+        <div className="settings-head">
+          <Text size="md" fw={500}>
+            Settings
+          </Text>
+          <Text size="sm" c="dimmed">
+            Workspace defaults and personal preferences.
+          </Text>
+        </div>
+        <div className="settings-body">
         <Stack gap="md">
           <Card withBorder p="md" className="settings-card">
             <Stack gap="sm">
@@ -227,8 +273,8 @@ export function SettingsView() {
               />
               <Switch
                 color="dark"
-                label="Browser notifications"
-                description="Notify me when an agent needs approval or input."
+                label="In-app browser notifications"
+                description="Show a notification while Threadbase is open and an agent needs approval or input."
                 checked={settings.browserNotifications}
                 onChange={(event) => {
                   const enabled = event.currentTarget.checked;
@@ -250,20 +296,89 @@ export function SettingsView() {
                   patch("webhookUrl", event.currentTarget.value)
                 }
               />
+              <Group justify="space-between" align="center">
+                <Stack gap={0}>
+                  <Text size="sm">Push notifications</Text>
+                  <Text size="xs" c="dimmed">
+                    Get notified when an agent needs input, finishes or fails,
+                    even when Threadbase is closed.
+                  </Text>
+                </Stack>
+                {pushState === "unsupported" ? (
+                  <Text size="xs" c="dimmed">
+                    Not supported by this browser
+                  </Text>
+                ) : pushState === "denied" ? (
+                  <Text size="xs" c="red">
+                    Blocked in browser settings
+                  </Text>
+                ) : (
+                  <Button
+                    size="xs"
+                    variant={pushState === "on" ? "default" : "filled"}
+                    color="dark"
+                    loading={pushBusy}
+                    onClick={() => {
+                      setPushBusy(true);
+                      const action =
+                        pushState === "on" ? disablePush() : enablePush();
+                      void action
+                        .then(() => currentPushState())
+                        .then(setPushState)
+                        .catch((cause: unknown) =>
+                          notifications.show({
+                            message:
+                              cause instanceof Error
+                                ? cause.message
+                                : "Could not update push notifications",
+                            color: "red",
+                          }),
+                        )
+                        .finally(() => setPushBusy(false));
+                    }}
+                  >
+                    {pushState === "on" ? "Disable push" : "Enable push"}
+                  </Button>
+                )}
+              </Group>
             </Stack>
           </Card>
 
           {me.data?.user.isAdmin ? (
             <PeopleSection currentUserId={me.data.user.id} />
           ) : null}
-
-          <Group justify="flex-end">
-            <Button color="dark" loading={saving} onClick={() => void save()}>
-              Save settings
-            </Button>
-          </Group>
         </Stack>
       </div>
+      </div>
+      {dirty ? (
+        <div className="settings-savebar">
+          <Text size="xs" c="dimmed">
+            Unsaved changes
+          </Text>
+          <Group gap="xs">
+            <Button
+              variant="default"
+              size="xs"
+              disabled={saving}
+              onClick={() => {
+                if (!saved) return;
+                setSettings(saved);
+                setColorScheme(saved.theme === "dark" ? "dark" : "light");
+              }}
+            >
+              Discard
+            </Button>
+            <Button
+              color="dark"
+              size="xs"
+              loading={saving}
+              onClick={() => void save()}
+            >
+              Save changes
+            </Button>
+          </Group>
+        </div>
+      ) : null}
     </div>
   );
 }

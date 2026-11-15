@@ -1,6 +1,7 @@
 import { Box, Button, Group, Text } from "@mantine/core";
 import { IconGitBranch } from "@tabler/icons-react";
 import type { Subagent } from "../../api";
+import { stateLabel } from "../../lib/machine";
 import { StatusDot } from "./StatusDot";
 
 export function SubagentList({
@@ -29,7 +30,7 @@ export function SubagentList({
             <Text size="sm" fw={500} className="subagent-title">
               {subagent.title}
             </Text>
-            <StatusDot status={subagent.status} />
+            <StatusDot status={subagent.status} label={stateLabel("subagent", subagent.status)} />
             <Box style={{ flex: 1 }} />
             {subagent.canCancel &&
             !["cancelled", "error"].includes(subagent.status) ? (

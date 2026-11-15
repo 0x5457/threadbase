@@ -31,16 +31,11 @@ export function ContextMeter({ usage }: { usage: Usage | null }) {
   return (
     <Tooltip label={detail}>
       <Group
-        gap={5}
+        gap={0}
         wrap="nowrap"
         className={`context-meter${percent !== null && percent >= 85 ? " hot" : ""}`}
         visibleFrom="sm"
       >
-        {percent !== null ? (
-          <span className="context-meter-bar" aria-hidden="true">
-            <span style={{ width: `${percent}%` }} />
-          </span>
-        ) : null}
         <Text size="xs" c="dimmed">
           {label}
         </Text>

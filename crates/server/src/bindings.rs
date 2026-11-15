@@ -1,11 +1,10 @@
-//! Agent bindings: which adapter and worktree a thread runs in.
+//! Agent bindings: which adapter, worktree and ACP session a thread resumes.
 //!
-//! The binding is diagnostic, not authoritative for lifecycle state; the
-//! thread status machine remains the source of truth.
+//! The row holds identity only. Lifecycle lives in `threads.status` and the
+//! in-memory turn slot; there is deliberately no second status column here.
 
 use crate::error::ServerError;
 use sqlx::{FromRow, SqlitePool};
-use threadbase_core::state::INITIAL_BINDING_STATUS;
 use threadbase_shared::now_ms;
 
 #[derive(Clone, FromRow)]
@@ -31,17 +30,13 @@ pub async fn insert(
     cwd: &str,
     updated_at: i64,
 ) -> Result<(), ServerError> {
-    sqlx::query(
-        "INSERT INTO agent_bindings(thread_id, agent, cwd, status, updated_at)
-         VALUES(?, ?, ?, ?, ?)",
-    )
-    .bind(thread_id)
-    .bind(agent)
-    .bind(cwd)
-    .bind(INITIAL_BINDING_STATUS)
-    .bind(updated_at)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO agent_bindings(thread_id, agent, cwd, updated_at) VALUES(?, ?, ?, ?)")
+        .bind(thread_id)
+        .bind(agent)
+        .bind(cwd)
+        .bind(updated_at)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -54,12 +49,11 @@ pub async fn copy(
     updated_at: i64,
 ) -> Result<(), ServerError> {
     sqlx::query(
-        "INSERT INTO agent_bindings(thread_id, agent, cwd, status, updated_at)
-         SELECT ?, agent, ?, ?, ? FROM agent_bindings WHERE thread_id = ?",
+        "INSERT INTO agent_bindings(thread_id, agent, cwd, updated_at)
+         SELECT ?, agent, ?, ? FROM agent_bindings WHERE thread_id = ?",
     )
     .bind(new_thread_id)
     .bind(cwd)
-    .bind(INITIAL_BINDING_STATUS)
     .bind(updated_at)
     .bind(source_thread_id)
     .execute(pool)
@@ -78,24 +72,6 @@ pub async fn set_session(
         .bind(thread_id)
         .execute(pool)
         .await?;
-    Ok(())
-}
-
-pub async fn set_status(
-    pool: &SqlitePool,
-    thread_id: &str,
-    status: &str,
-    last_error: Option<&str>,
-) -> Result<(), ServerError> {
-    sqlx::query(
-        "UPDATE agent_bindings SET status = ?, last_error = ?, updated_at = ? WHERE thread_id = ?",
-    )
-    .bind(status)
-    .bind(last_error)
-    .bind(now_ms())
-    .bind(thread_id)
-    .execute(pool)
-    .await?;
     Ok(())
 }
 

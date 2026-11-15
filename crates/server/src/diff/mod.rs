@@ -403,6 +403,33 @@ pub async fn merge_back(
     let worktree = worktree(row)?;
     let project = crate::projects::row(pool, &row.project_id).await?;
     let project_root = PathBuf::from(&project.path);
+    let branch = git::current_branch(&project_root).await.map_err(|error| {
+        ServerError::internal(format!("could not read current branch: {error}"))
+    })?;
+    if branch != row.base_branch && branch != project.default_branch {
+        return Err(ServerError(ApiError::conflict(format!(
+            "check out `{}` (or `{}`) before applying this thread; the current branch is `{branch}`",
+            row.base_branch, project.default_branch
+        ))));
+    }
+    let status = git::status_porcelain(&project_root)
+        .await
+        .map_err(|error| {
+            ServerError::internal(format!("could not inspect the worktree: {error}"))
+        })?;
+    if !status.trim().is_empty() {
+        let preview: String = status.lines().take(6).collect::<Vec<_>>().join("\n");
+        return Err(ServerError(ApiError::conflict(format!(
+            "commit or stash the project changes before applying this thread:\n{preview}"
+        ))));
+    }
+    let base_drift = match (
+        row.base_sha.as_deref(),
+        git::rev_parse(&project_root, &row.base_branch).await,
+    ) {
+        (Some(base), Ok(tip)) => tip != base,
+        _ => false,
+    };
     let changes = list(
         pool,
         row,
@@ -420,6 +447,30 @@ pub async fn merge_back(
                 "could not build patch: {error}"
             )))
         })?;
+    if patch.trim().is_empty() {
+        return Ok(MergeBackResponse {
+            committed: false,
+            commit: None,
+            files: Vec::new(),
+            branch,
+            base_drift,
+            verified: false,
+        });
+    }
+    let verified = if let Some(command) = project
+        .verify_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        run_verify(&worktree, command).await?;
+        true
+    } else {
+        false
+    };
+    let head_before = git::head_sha(&project_root)
+        .await
+        .map_err(|error| ServerError::internal(format!("could not read HEAD: {error}")))?;
     git::apply_patch(&project_root, &patch)
         .await
         .map_err(|error| {
@@ -432,10 +483,18 @@ pub async fn merge_back(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or("Apply thread changes");
-        git::commit_all(&project_root, message)
-            .await
-            .map_err(|error| ServerError(ApiError::conflict(format!("commit failed: {error}"))))?;
-        true
+        match git::commit_all(&project_root, message).await {
+            Ok(_) => true,
+            Err(error) => {
+                // The tree was clean before the patch, so restoring HEAD is
+                // safe and prevents a half-applied merge.
+                let _ = git::reset_hard(&project_root, &head_before).await;
+                let _ = git::clean_untracked(&project_root).await;
+                return Err(ServerError(ApiError::conflict(format!(
+                    "commit failed; the project was restored: {error}"
+                ))));
+            }
+        }
     } else {
         false
     };
@@ -462,7 +521,47 @@ pub async fn merge_back(
             None
         },
         files,
+        branch,
+        base_drift,
+        verified,
     })
+}
+
+/// Run the project's verify command in the thread worktree. The command is
+/// deliberately run there, before the patch reaches the project tree.
+async fn run_verify(worktree: &Path, command: &str) -> Result<(), ServerError> {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-lc")
+        .arg(command)
+        .current_dir(worktree)
+        .kill_on_drop(true);
+    let output = match tokio::time::timeout(std::time::Duration::from_secs(300), cmd.output()).await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            return Err(ServerError::internal(format!(
+                "could not run the verify command: {error}"
+            )))
+        }
+        Err(_) => {
+            return Err(ServerError(ApiError::conflict(
+                "the verify command timed out after 5 minutes",
+            )))
+        }
+    };
+    if output.status.success() {
+        return Ok(());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+    let total = combined.chars().count();
+    let combined: String = combined.chars().skip(total.saturating_sub(4000)).collect();
+    Err(ServerError(ApiError::conflict(format!(
+        "the verify command failed ({}):\n{}",
+        output.status,
+        combined.trim()
+    ))))
 }
 
 async fn resolve_baseline(

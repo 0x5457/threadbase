@@ -136,6 +136,13 @@ impl EventStore {
             .await?;
         tx.commit().await?;
         let _ = self.event_tx.send(envelope.clone());
+        crate::search::index_event(
+            &self.pool,
+            thread_id.as_str(),
+            &envelope.payload,
+            envelope.ts,
+        )
+        .await;
         Ok(envelope)
     }
 

@@ -42,6 +42,15 @@ pub struct Config {
     pub terminal_shell: String,
     /// tmux socket name. Tests and side-by-side instances use their own.
     pub terminal_socket: String,
+    /// Idle ACP sessions are shut down after this many seconds; `0` disables
+    /// the reaper. The binding keeps the ACP session id, so the next prompt
+    /// resumes it transparently.
+    pub idle_session_seconds: i64,
+    /// Maximum number of agent turns running at once across all threads.
+    /// `0` means unlimited.
+    pub max_active_turns: usize,
+    /// Worktree setup commands are killed after this many seconds.
+    pub setup_timeout_seconds: i64,
 }
 
 /// Test and tooling defaults. Production always goes through [`Config::load`],
@@ -64,6 +73,9 @@ impl Default for Config {
             terminal_drivers: Vec::new(),
             terminal_shell: "/bin/bash".to_owned(),
             terminal_socket: crate::terminal::SOCKET.to_owned(),
+            idle_session_seconds: 15 * 60,
+            max_active_turns: 4,
+            setup_timeout_seconds: 15 * 60,
         }
     }
 }
@@ -147,6 +159,17 @@ impl Config {
             .unwrap_or_else(|| "/bin/bash".to_owned());
         let terminal_socket = non_empty("THREADBASE_TERMINAL_SOCKET")
             .unwrap_or_else(|| crate::terminal::SOCKET.to_owned());
+        let idle_session_seconds = non_empty("THREADBASE_IDLE_SESSION_SECS")
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|value| *value >= 0)
+            .unwrap_or(15 * 60);
+        let max_active_turns = non_empty("THREADBASE_MAX_ACTIVE_TURNS")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(4);
+        let setup_timeout_seconds = non_empty("THREADBASE_SETUP_TIMEOUT_SECS")
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(15 * 60);
         Ok(Self {
             data_dir,
             db_path,
@@ -163,6 +186,9 @@ impl Config {
             terminal_drivers,
             terminal_shell,
             terminal_socket,
+            idle_session_seconds,
+            max_active_turns,
+            setup_timeout_seconds,
         })
     }
 

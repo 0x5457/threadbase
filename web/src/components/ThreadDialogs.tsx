@@ -144,10 +144,17 @@ export function MergeThreadDialog({
       const result = await mergeThread(thread.id);
       notifications.show({
         message: result.committed
-          ? `Applied ${result.commit?.slice(0, 7) ?? ""}`
-          : `Applied ${result.files.length} files`,
+          ? `Applied ${result.commit?.slice(0, 7) ?? ""} to ${result.branch}`
+          : `Applied ${result.files.length} files to ${result.branch}`,
         color: "teal",
       });
+      if (result.baseDrift) {
+        notifications.show({
+          message:
+            "Applied, but the base branch moved since this thread started. Review the merged result.",
+          color: "yellow",
+        });
+      }
       onMerged(result);
       onClose();
     } catch (cause) {
@@ -161,8 +168,10 @@ export function MergeThreadDialog({
     <Modal opened={opened} onClose={onClose} title="Apply changes" size="md" centered>
       <Text size="sm" c="dimmed" mb="md">
         Apply the worktree changes from <strong>{thread?.title}</strong> to the
-        project working tree on your <strong>currently checked-out branch</strong>{" "}
-        and commit them. Branches are not switched and nothing is pushed.
+        project working tree on its <strong>base branch</strong> and commit them.
+        The project must be clean; the project verify command (if set) runs in
+        the thread worktree first. Nothing is pushed and branches are not
+        switched.
       </Text>
       <Group justify="flex-end" gap="xs">
         <Button variant="default" onClick={onClose}>

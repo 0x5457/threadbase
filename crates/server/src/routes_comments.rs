@@ -42,8 +42,15 @@ async fn create_comment(
     Json(request): Json<CreateCommentRequest>,
 ) -> Result<Json<CommentResponse>, ServerError> {
     authz::require_write_role(&state.pool, &thread_id, &user).await?;
-    let comment =
-        crate::comments::create(&state.pool, &state.events, &thread_id, &user, &request).await?;
+    let comment = crate::comments::create(
+        &state.pool,
+        &state.projection,
+        &state.events,
+        &thread_id,
+        &user,
+        &request,
+    )
+    .await?;
     if request.send {
         if let Err(error) = state
             .agents

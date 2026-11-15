@@ -5,8 +5,13 @@ import type { OkResponse } from "./types/OkResponse";
 
 export type InboxItem = InboxItemDto;
 
-export function listInbox(filter: "unread" | "all" = "unread") {
-  return request<InboxPageDto>(`/api/inbox?filter=${filter}`);
+export function listInbox(
+  filter: "unread" | "all" = "unread",
+  before?: string,
+) {
+  const params = new URLSearchParams({ filter });
+  if (before) params.set("before", before);
+  return request<InboxPageDto>(`/api/inbox?${params.toString()}`);
 }
 
 export function markInboxRead(threadId: string) {

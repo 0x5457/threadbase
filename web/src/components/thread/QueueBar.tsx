@@ -17,6 +17,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { QueueItem } from "../../api";
+import { can } from "../../lib/machine";
 
 const SWIPE_DROP = 64;
 const SWIPE_MAX = 120;
@@ -47,7 +48,7 @@ const QueueRow = memo(function QueueRow({
   onReorderMove: (event: ReactPointerEvent) => void;
   onReorderEnd: () => void;
 }) {
-  const actionable = canWrite && item.status === "queued";
+  const actionable = canWrite && can("queue", item.status, "delete");
   const [dx, setDx] = useState(0);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);

@@ -216,7 +216,7 @@ async fn approvals_are_visible_and_viewers_cannot_decide() {
 async fn inbox_tracks_pending_items_and_read_state() {
     let fixture = fixture().await;
     let _ = new_approval(&fixture).await;
-    let inbox = inbox::list(&fixture.pool, &fixture.owner, false)
+    let inbox = inbox::list(&fixture.pool, &fixture.owner, false, None, 50)
         .await
         .unwrap();
     assert_eq!(inbox.items.len(), 1);
@@ -230,7 +230,7 @@ async fn inbox_tracks_pending_items_and_read_state() {
     .await
     .unwrap();
     assert_eq!(read, 1);
-    let inbox = inbox::list(&fixture.pool, &fixture.owner, false)
+    let inbox = inbox::list(&fixture.pool, &fixture.owner, false, None, 50)
         .await
         .unwrap();
     assert_eq!(inbox.unread, 0);
@@ -410,4 +410,102 @@ async fn decline_and_cancel_have_distinct_states() {
         assert_eq!(answered.status, expected);
     }
     let _ = Role::Owner;
+}
+
+#[tokio::test]
+async fn inbox_pages_without_losing_the_total_unread_count() {
+    let fixture = fixture().await;
+    for _ in 0..3 {
+        let _ = new_approval(&fixture).await;
+    }
+    let first = inbox::list(&fixture.pool, &fixture.owner, true, None, 2)
+        .await
+        .unwrap();
+    assert_eq!(first.items.len(), 2);
+    assert!(first.has_more);
+    assert_eq!(first.unread, 3);
+    let last = first.items.last().unwrap().id.clone();
+    let second = inbox::list(&fixture.pool, &fixture.owner, true, Some(last.as_str()), 2)
+        .await
+        .unwrap();
+    assert_eq!(second.items.len(), 1);
+    assert!(!second.has_more);
+    assert_eq!(second.unread, 3);
+}
+
+#[tokio::test]
+async fn watchers_receive_notifications_and_mute_suppresses_them() {
+    let fixture = fixture().await;
+    threadbase_server::watchers::watch(
+        &fixture.pool,
+        fixture.thread.as_str(),
+        fixture.owner.user.id.as_str(),
+    )
+    .await
+    .unwrap();
+    threadbase_server::watchers::watch(
+        &fixture.pool,
+        fixture.thread.as_str(),
+        fixture.viewer.user.id.as_str(),
+    )
+    .await
+    .unwrap();
+    let _ = new_approval(&fixture).await;
+    let owner = inbox::list(&fixture.pool, &fixture.owner, true, None, 50)
+        .await
+        .unwrap();
+    let viewer = inbox::list(&fixture.pool, &fixture.viewer, true, None, 50)
+        .await
+        .unwrap();
+    assert_eq!(owner.items.len(), 1);
+    assert_eq!(viewer.items.len(), 1);
+
+    let state = threadbase_server::watchers::set(
+        &fixture.pool,
+        fixture.thread.as_str(),
+        fixture.viewer.user.id.as_str(),
+        &threadbase_shared::api::ThreadWatchRequest {
+            state: threadbase_shared::WatchState::Muted,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(state.state, threadbase_shared::WatchState::Muted);
+    let _ = new_approval(&fixture).await;
+    let viewer = inbox::list(&fixture.pool, &fixture.viewer, true, None, 50)
+        .await
+        .unwrap();
+    // The old unread item remains; the muted one did not create a second row.
+    assert_eq!(viewer.items.len(), 1);
+}
+
+#[tokio::test]
+async fn muting_the_only_watcher_does_not_fall_back_to_the_creator() {
+    let fixture = fixture().await;
+    threadbase_server::watchers::watch(
+        &fixture.pool,
+        fixture.thread.as_str(),
+        fixture.viewer.user.id.as_str(),
+    )
+    .await
+    .unwrap();
+    threadbase_server::watchers::set(
+        &fixture.pool,
+        fixture.thread.as_str(),
+        fixture.viewer.user.id.as_str(),
+        &threadbase_shared::api::ThreadWatchRequest {
+            state: threadbase_shared::WatchState::Muted,
+        },
+    )
+    .await
+    .unwrap();
+    let _ = new_approval(&fixture).await;
+    let owner = inbox::list(&fixture.pool, &fixture.owner, true, None, 50)
+        .await
+        .unwrap();
+    let viewer = inbox::list(&fixture.pool, &fixture.viewer, true, None, 50)
+        .await
+        .unwrap();
+    assert!(owner.items.is_empty());
+    assert!(viewer.items.is_empty());
 }

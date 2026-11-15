@@ -7,6 +7,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { getMe, getThreadBundle, type ThreadSummary } from "../api";
+import { stateLabel } from "../lib/machine";
 
 function TerminalChip({ onClick }: { onClick: () => void }) {
   return (
@@ -68,7 +69,7 @@ export function StatusBar({
 
   const running = thread.status === "running";
   const waiting = thread.status === "requires_action";
-  const statusLabel = thread.status.replaceAll("_", " ");
+  const statusLabel = stateLabel("thread", thread.status);
 
   return (
     <AppShell.Footer className="statusbar">
@@ -95,14 +96,10 @@ export function StatusBar({
             read-only
           </Text>
         ) : null}
+        {/* The agent is not repeated by the composer (which names model and
+            effort); keep it here so the thread's runtime stays identifiable. */}
         <Text size="xs" c="dimmed" visibleFrom="md">
           {thread.agent}
-        </Text>
-        <Text size="xs" c="dimmed" visibleFrom="md">
-          {thread.model ?? "default"}
-        </Text>
-        <Text size="xs" c="dimmed" visibleFrom="sm">
-          {thread.effort ?? ""}
         </Text>
         <Group gap={4} wrap="nowrap">
           <Text size="xs" className="stat-add">

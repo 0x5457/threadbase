@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片粘贴、presence/跟随、CLI 与发布工作流。
+v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片粘贴、presence/跟随、线程关注/静音、全文搜索、Worktree 初始化钩子、PWA/Web Push、CLI 与发布工作流。
 
 质量门由 `scripts/verify.sh` 统一执行；界面审计记录保留在 `web/audit/`。
 
@@ -97,6 +97,45 @@ threadbase install --uninstall              # 停用并删除 unit、关掉 serv
 
 unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例。日志：`journalctl --user -u threadbase -f`。
 
+### 通知、关注与 Agent 生命周期
+
+- 每个 thread 的创建者自动成为 watcher；之后发消息、评论、审批或回答问题的人也会自动加入。`GET/POST /api/threads/{id}/watch` 可以显式关注、静音或取消关注；`ThreadMenu` 里的 “Mute notifications” 只影响通知，不影响读写。
+- approval、elicitation、@mention、turn 完成和错误只通知该 thread 的 **未静音 watcher**，不再给全工作区每人写一条 inbox。完成通知会跳过当前正聚焦该 thread 的人；错误通知不会。
+- Inbox 现在有分页（`/api/inbox?before=<id>&limit=50`），`unread` 是账号的完整未读数而不是当前页的条数；新通知、标记已读和审批/提问解决都会通过现有 `/ws` 推送 `inbox_count`，只发给对应用户的 socket。
+- Agent 采用懒启动：新建 thread 不再立刻拉起 ACP 进程，首次发送/排队输入时才启动。空闲 `THREADBASE_IDLE_SESSION_SECS`（默认 900，0 关闭）后会关闭进程；binding 里的 ACP session id 会在下次 prompt 时自动 resume，失败则发 context reset notice。
+- `THREADBASE_MAX_ACTIVE_TURNS`（默认 4，0 不限）限制所有 thread 同时运行的 turn。达到上限时直接发送会转成 queued input，队列 worker 等到 permit 释放后继续，不会把 HTTP 请求挂住。
+- 删除 thread/project、归档 thread 之前会先停掉对应的 agent 进程，避免 agent 在已删除的 worktree 里继续写。
+- PWA：`/manifest.webmanifest` 与 `sw.js` 让页面可以安装；设置页的 **Push notifications** 通过 VAPID + `push_subscriptions` 接收审批、@mention、turn 完成和错误通知。VAPID 密钥首次使用时自动生成并保存在 `push_config`，不需要手工配置。Push 只在 HTTPS（或 localhost）安全上下文可用；iOS 需要先“添加到主屏幕”。关掉页面后仍能收到通知，打开且正聚焦同一 thread 时 service worker 会抑制重复通知。
+
+### Worktree 初始化钩子
+
+项目设置里的 **Setup command** 会在每个新 worktree（包括 fork）创建后、agent 启动前执行一次，适合做 `pnpm install`、复制 `.env`、启动依赖服务等：
+
+- 状态持久化在 `threads.setup_status`（`none/pending/running/succeeded/failed`）与 `setup_error`；对话框和 thread 顶部的 banner 会显示进度，失败时可以点 **Retry setup**。
+- setup 期间不能发 prompt，后端 `ensure_started` 会拒绝，避免 agent 在依赖还没装好的 worktree 里开始工作。
+- 输出以 `AgentLog` 写进事件流（最多保留尾部 32 KB），最终结果写一条 `SystemNotice`；失败也会向 watcher 发 inbox 通知。
+- setup 被服务重启打断时，启动阶段会把它标成 `failed` 并提示重跑，而不是永久卡在 running。
+- 超时由 `THREADBASE_SETUP_TIMEOUT_SECS` 控制（默认 900 秒）。
+
+### 全文搜索
+
+`GET /api/search?q=&project_id=&limit=` 使用 SQLite FTS5 搜索 thread 标题、用户 prompt、agent 消息和评论。`Cmd/Ctrl+K` 打开 Spotlight 后输入至少 2 个字符，结果按 Messages / Comments / Thread titles 分组，点击直接打开 thread。
+
+- 索引由 `EventStore::append` 增量维护，thread 重命名、删除和评论删除会同步清理；已有数据库第一次启动时后台回填。
+- 需要强制重建时运行 `threadbase reindex`。
+- 查询按空白分词并全部加引号，只做 AND 匹配，不会把 `-`、`:`、`*` 当成 FTS 运算符。
+
+### 应用变更前的检查
+
+`Apply changes` 不再直接 `git apply` + `commit -a`：
+
+- 要求项目工作区干净，并且当前 checkout 的分支就是 thread 的 base branch（或项目默认分支）；
+- 如果 base branch 在 thread 启动后前进过，响应会带 `baseDrift: true`，UI 会提示复查；
+- 项目设置里的 **Verify command** 会先在 thread worktree 里执行，退出码非 0 时拒绝应用并返回输出尾部；命令超时 5 分钟；
+- commit 失败会自动 `reset --hard` + `clean -fd` 回到应用前的 HEAD，避免留下半应用状态。
+
+顶部菜单的 “Apply changes” 仍然是本地 worktree 模型：不切分支、不 push、不创建 PR。
+
 ### 事件日志维护
 
 每个 token chunk 都写一行事件，长期使用后 `events` 表会膨胀（本机实测 181 MB）。`compact` 用和冷加载相同的折叠规则重写日志：流式思考/消息合并成一条，已完成消息只保留 `message_completed`，usage/plan 历史全部保留，重放出来的 transcript 不变。
@@ -154,7 +193,7 @@ THREADBASE_DEV_IDENTITY=dev cargo run -p threadbase
 
 ```
 crates/shared    wire 类型与领域模型（ts-rs 直接生成 web/src/api/types）
-crates/core      纯领域策略：状态机、投递决策、权限
+crates/core      纯领域策略：状态机（`state/` 一台机器一个文件）、投递决策、权限
 crates/workspace 路径约束、git worktree、文件浏览
 crates/draft     Yjs 草稿文档
 crates/agent     ACP harness 与 adapter profile
@@ -171,12 +210,36 @@ server 按职责分模块：
 | `agents/` | `AgentManager` 门面、事件泵、队列 worker、生命周期副作用 |
 | `approvals` / `elicitations` | 审批与提问的持久化、状态迁移、规则 |
 | `queue` / `comments` / `subagents` / `bindings` | 各自实体的唯一写入点 |
-| `inbox` / `notify` | inbox 记录、webhook 与通知 |
+| `inbox` / `notify` / `watchers` | inbox 记录、webhook、watcher 与通知 |
+| `setup` / `search` / `push` | worktree 初始化钩子、FTS5 索引、Web Push 投递 |
 | `events` | 追加式事件日志（每线程顺序、跨线程并行） |
 | `diff` | 基线与审阅；线程列表不再触发任何 git 子进程 |
 | `routes_*` | HTTP 路由，只做鉴权、解析和调用领域模块 |
 
 前端入口按域拆分：`web/src/api/` 是 fetch 层，`components/thread/` 是时间线行组件，`components/composer/` 是 Composer 的命令与建议面板。线程、变更面板、设置与终端各自按需拆成 chunk；事件流按增量折叠并以 20fps 批量提交，长对话在流式输出时不会阻塞交互。
+
+## 生命周期状态机
+
+每个实体的合法状态、迁移和“当前能做什么”只有一处定义：`crates/core/src/state.rs`。服务端、前端和 agent 工具读同一个目录，不再各自比较状态字符串。
+
+```bash
+threadbase machines          # 人读的大纲
+threadbase machines --json   # 与 GET /api/machines 完全相同
+```
+
+- 覆盖 14 台机器：thread、setup、approval、elicitation、subagent、queue、comment、watch、turn、auth_session、push、connection、draft、terminal。前三组是服务端领域状态，`turn`/`auth_session`/`push` 是进程内与投递状态，`connection`/`draft`/`terminal` 是浏览器侧生命周期（类型由 Rust 生成，前端不再手写字符串联合）。
+- 每台机器区分**命令**与**事实**：命令是调用方可以主动执行的动作（`prompt`、`cancel`、`restore`），事实是适配器上报的事件（`turn_ended`、`process_exited`）。事实永远不会出现在按钮里。
+- 每条命令带目标状态（`cancel -> idle`），所以 `threadbase machines` 输出的是完整的迁移图；目标值由同一组测试对照 `transition()` 校验，写错就测试失败。
+- `ThreadDto.allowedActions` 与 `ThreadState.allowedActions` 由机器生成；前端通过 `web/src/lib/machine.ts` 的 `can()` / `threadCan()` 判断，所以按钮和服务端不会给出相反答案。
+- `crates/core/tests/state_machines.rs` 会把目录导出到 `web/src/api/state-machines.json`。改了迁移就必须同步更新目录，否则测试失败。
+- 新增一台机器：在 `crates/core/src/state/` 新建一个文件写 `XxxAction` 与 `XxxMachine`（`transition` + `commands`），在 `state/mod.rs` 声明并 `pub use`，在 `state/catalogue.rs` 的 `catalogue()` 加一条 `MachineSpec`，最后在 `web/src/lib/machine.ts` 的 `MachineId` 登记。一台机器一个文件，目录本身就是索引。
+
+状态只保留一种表示：
+
+- 归档同时写 `threads.status` 与 `archived_at`（单条 UPDATE，`archived_at` 不是独立开关）。
+- 队列是否被取代只看 `queued_inputs.status`，`superseded` 布尔列已删除（迁移 `0019`）。
+- 关注/静音是一个 `WatchState`，不是两个需要按顺序理解的布尔值。
+- 推送投递用 `inbox.push_status` + `push_attempts` + `push_next_at`：失败会退避重试，不再把失败标成已送达（迁移 `0020`）。
 
 ## 已定的事
 

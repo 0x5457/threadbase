@@ -56,7 +56,9 @@ body {
   --line-soft: #dfdfe0; /* border.variant */
   --ink: #242529; /* text */
   --ink-muted: #58585a; /* text.muted */
-  --ink-faint: #7e8086; /* text.placeholder */
+  /* Slightly darker than Zed's text.placeholder (#7e8086, 3.8:1 on paper):
+     this tone carries 9.5–11.5px timestamps and metrics, which need ≥4.5:1. */
+  --ink-faint: #6e7075;
   --hover: #dfdfe0; /* element.hover */
   --selected: #cacaca; /* element.selected */
   --code: #ebebec; /* surface.background */
@@ -128,7 +130,7 @@ body {
   --line-soft: #363c46;
   --ink: #dce0e5;
   --ink-muted: #a9afbc;
-  --ink-faint: #878a98;
+  --ink-faint: #9699a6;
   --hover: #363c46;
   --selected: #454a56;
   --code: #2f343e;
@@ -205,6 +207,10 @@ body {
   /* transcript, composer, terminal drawer (the drawer row collapses to 0
      height when it is closed, so two children keep the old layout). */
   grid-template-rows: minmax(0, 1fr) auto auto;
+  /* Without an explicit column the implicit `auto` track sizes to the widest
+     child's min-content (an Inbox row with a no-wrap timestamp needs 433px),
+     so a 390px phone clipped the right edge. Pin the column instead. */
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
   padding: 0;

@@ -11,7 +11,8 @@ use cookie::time::Duration;
 use rand::TryRng;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
-use threadbase_shared::now_ms;
+use threadbase_core::state::AuthSessionMachine;
+use threadbase_shared::{now_ms, AuthSessionState};
 
 /// Session cookie name.
 pub const COOKIE: &str = "threadbase_session";
@@ -77,6 +78,9 @@ pub async fn create(
 
 /// Resolves a cookie value to a live session, sliding the expiry forward when
 /// the session has not been touched for an hour.
+/// The persisted column subset a session lookup needs.
+type SessionRow = (String, String, i64, Option<i64>, Option<i64>);
+
 pub async fn lookup(
     pool: &SqlitePool,
     token: &str,
@@ -84,17 +88,21 @@ pub async fn lookup(
 ) -> Result<Option<Session>, sqlx::Error> {
     let now = now_ms();
     let token_hash = hash(token);
-    let row: Option<(String, String, i64, Option<i64>)> = sqlx::query_as(
-        "SELECT user_id, method, expires_at, last_seen_at FROM auth_sessions
-         WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+    // Read the row and let the machine decide whether it is usable. The joined
+    // lookup in the `CurrentUser` extractor filters with the same predicate.
+    let row: Option<SessionRow> = sqlx::query_as(
+        "SELECT user_id, method, expires_at, last_seen_at, revoked_at
+         FROM auth_sessions WHERE token_hash = ?",
     )
     .bind(&token_hash)
-    .bind(now)
     .fetch_optional(pool)
     .await?;
-    let Some((user_id, method, expires_at, last_seen_at)) = row else {
+    let Some((user_id, method, expires_at, last_seen_at, revoked_at)) = row else {
         return Ok(None);
     };
+    if AuthSessionMachine::classify(revoked_at, expires_at, now) != AuthSessionState::Active {
+        return Ok(None);
+    }
     slide(
         pool,
         &token_hash,

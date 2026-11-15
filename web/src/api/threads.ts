@@ -15,7 +15,10 @@ import type { ThreadBundleDto } from "./types/ThreadBundleDto";
 import type { ThreadDto } from "./types/ThreadDto";
 import type { ThreadResponse } from "./types/ThreadResponse";
 import type { ThreadsResponse } from "./types/ThreadsResponse";
+import type { ThreadWatchRequest } from "./types/ThreadWatchRequest";
+import type { ThreadWatchResponse } from "./types/ThreadWatchResponse";
 import type { UpdateThreadRequest } from "./types/UpdateThreadRequest";
+import type { WatchState } from "./types/WatchState";
 
 export type ThreadSummary = ThreadDto;
 export type ThreadBundle = ThreadBundleDto;
@@ -107,6 +110,33 @@ export function createThread(projectId: string, input: CreateThreadInput) {
 
 export function updateThread(threadId: string, patch: UpdateThreadPatch) {
   return jsonRequest<ThreadResponse>(`/api/threads/${threadId}`, "PATCH", patch);
+}
+
+export function retryThreadSetup(threadId: string) {
+  return jsonRequest<OkResponse>(`/api/threads/${threadId}/setup`, "POST");
+}
+
+export function getThreadWatch(threadId: string) {
+  return request<ThreadWatchResponse>(`/api/threads/${threadId}/watch`);
+}
+
+export function setThreadWatch(threadId: string, state: WatchState) {
+  const body: ThreadWatchRequest = { state };
+  return jsonRequest<ThreadWatchResponse>(
+    `/api/threads/${threadId}/watch`,
+    "POST",
+    body,
+  );
+}
+
+/** Stop the running turn. Legal according to the thread machine's commands. */
+export function cancelThread(threadId: string) {
+  return jsonRequest<OkResponse>(`/api/threads/${threadId}/cancel`, "POST");
+}
+
+/** Restart the adapter in a fresh ACP session. */
+export function restartThread(threadId: string) {
+  return jsonRequest<OkResponse>(`/api/threads/${threadId}/restart`, "POST");
 }
 
 export function forkThread(threadId: string, title?: string) {

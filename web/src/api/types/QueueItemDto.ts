@@ -12,5 +12,4 @@ export type QueueItemDto = {
   status: QueueStatus;
   position: number;
   createdAt: number;
-  superseded: boolean;
 };

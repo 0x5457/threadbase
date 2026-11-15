@@ -146,6 +146,9 @@ async fn respond_elicitation(
 #[derive(Debug, serde::Deserialize)]
 struct InboxQuery {
     filter: Option<String>,
+    /// Id of the last item already loaded; returns the page before it.
+    before: Option<String>,
+    limit: Option<usize>,
 }
 
 async fn list_inbox(
@@ -155,7 +158,14 @@ async fn list_inbox(
 ) -> Result<Json<InboxPageDto>, ServerError> {
     let unread_only = query.filter.as_deref() == Some("unread");
     Ok(Json(
-        crate::inbox::list(&state.pool, &user, unread_only).await?,
+        crate::inbox::list(
+            &state.pool,
+            &user,
+            unread_only,
+            query.before.as_deref(),
+            query.limit.unwrap_or(crate::inbox::PAGE),
+        )
+        .await?,
     ))
 }
 
@@ -171,5 +181,6 @@ async fn read_inbox(
         request.all.unwrap_or(false),
     )
     .await?;
+    crate::inbox::publish_count(&state.pool, &state.projection, user.user.id.as_str()).await;
     Ok(Json(OkResponse { ok: true }))
 }

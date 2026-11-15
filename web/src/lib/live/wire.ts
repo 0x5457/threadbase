@@ -1,6 +1,8 @@
 import type { ThreadEvent } from "../../api";
 import type { ActorKind } from "../../api/types/ActorKind";
 import type { Delivery } from "../../api/types/Delivery";
+import type { ThreadState } from "../../api/types/ThreadState";
+import type { ThreadStatus } from "../../api/types/ThreadStatus";
 import type {
   LiveAnchor,
   LiveEventsPage,
@@ -9,6 +11,7 @@ import type {
   LivePresence,
 } from "./types";
 import { DEFAULT_PANEL } from "./types";
+import { isState } from "../machine";
 
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
@@ -24,6 +27,45 @@ export function asString(value: unknown): string | null {
 
 export function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function asStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+/**
+ * Parse one `thread_state` frame. Unknown statuses are rejected against the
+ * published `thread` machine, so a stale client and a newer server fail closed
+ * instead of rendering a state neither understands.
+ */
+export function parseThreadState(value: unknown): ThreadState | null {
+  const record = asRecord(value);
+  if (record === null) return null;
+  const threadId = asString(record.threadId);
+  const status = asString(record.status);
+  const revision = asNumber(record.revision);
+  const allowedActions = asStringArray(record.allowedActions);
+  if (
+    threadId === null ||
+    status === null ||
+    revision === null ||
+    allowedActions === null ||
+    !isState("thread", status)
+  ) {
+    return null;
+  }
+  return {
+    threadId,
+    revision,
+    status: status as ThreadStatus,
+    allowedActions,
+    currentTurn: asString(record.currentTurn),
+    pendingApprovals: asNumber(record.pendingApprovals) ?? 0,
+    pendingElicitations: asNumber(record.pendingElicitations) ?? 0,
+    queuedInputs: asNumber(record.queuedInputs) ?? 0,
+    activeSubagents: asNumber(record.activeSubagents) ?? 0,
+  };
 }
 
 export function isPanel(value: string | null): value is LivePanel {
