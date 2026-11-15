@@ -181,7 +181,12 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
   fi
   printf '    serving  %s\n' "${served:-unknown}"
 
+  # Only the app's own output carries the `threadbase[pid]:` prefix. Agent
+  # adapters are children of the unit, and an adapter tearing down during the
+  # restart prints panics/backtraces into the same journal; counting those made
+  # every deploy with a live agent look like a failed startup.
   startup_errors="$(journalctl --user -u "$UNIT" --since "-30 seconds" --no-pager 2>/dev/null \
+    | grep -E "threadbase\[[0-9]+\]" \
     | grep -c -iE "panic|ERROR" || true)"
   if [[ "${startup_errors:-0}" -gt 0 ]]; then
     echo "deploy: service logged errors during startup:" >&2
