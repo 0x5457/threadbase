@@ -376,6 +376,7 @@ impl Fixture {
         match text.trim() {
             "stream" => self.stream(out, id, &session),
             "permission" => self.permission(reader, out, id, &session, "permission"),
+            "permission-choice" => self.permission(reader, out, id, &session, "permission-choice"),
             "permission-deny" => self.permission(reader, out, id, &session, "permission-deny"),
             "permission-reject" => self.permission(reader, out, id, &session, "permission-reject"),
             "permission-none" => self.permission(reader, out, id, &session, "permission-none"),
@@ -488,6 +489,10 @@ impl Fixture {
             }),
         )?;
         let options = match mode {
+            "permission-choice" => json!([
+                {"optionId": "opt-enabled", "name": "Enabled — require approval", "kind": "allow_once"},
+                {"optionId": "opt-disabled", "name": "Disabled — skip the check", "kind": "allow_once"}
+            ]),
             "permission-deny" => json!([
                 {"optionId": "opt-allow-once", "name": "Allow once", "kind": "allow_once"},
                 {"optionId": "opt-reject-always", "name": "Never allow", "kind": "reject_always"},

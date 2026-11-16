@@ -1048,6 +1048,7 @@ impl AgentManager {
         thread_id: &str,
         approval_id: &str,
         decision: SharedDecision,
+        option_id: Option<&str>,
     ) -> Result<(), ServerError> {
         let session = self.session(thread_id).await?;
         // Approval decisions contend only on harness IPC, never on turn
@@ -1055,7 +1056,7 @@ impl AgentManager {
         {
             let mut harness = session.harness.lock().await;
             harness
-                .decide(approval_id, decision)
+                .decide(approval_id, decision, option_id)
                 .await
                 .map_err(mapping::agent_error)?;
         }

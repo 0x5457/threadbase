@@ -524,7 +524,7 @@ async fn permission_allow_selects_the_matching_option_kind() {
         .any(|option| option.kind == "allow_once"));
 
     test.harness
-        .decide(&request.id, ApprovalDecision::AllowOnce)
+        .decide(&request.id, ApprovalDecision::AllowOnce, None)
         .await
         .expect("allow once");
     assert_eq!(
@@ -557,7 +557,7 @@ async fn permission_deny_selects_a_reject_option() {
         .any(|option| option.kind == "reject_once"));
 
     test.harness
-        .decide(&request.id, ApprovalDecision::Deny)
+        .decide(&request.id, ApprovalDecision::Deny, None)
         .await
         .expect("deny");
     assert_eq!(
@@ -590,7 +590,7 @@ async fn permission_deny_prefers_reject_once_when_present() {
         .any(|option| option.kind == "reject_once"));
 
     test.harness
-        .decide(&request.id, ApprovalDecision::Deny)
+        .decide(&request.id, ApprovalDecision::Deny, None)
         .await
         .expect("deny");
     assert_eq!(
@@ -621,7 +621,7 @@ async fn permission_without_matching_option_is_denied_by_default() {
     assert_eq!(request.options[0].kind, "allow_always");
 
     test.harness
-        .decide(&request.id, ApprovalDecision::Deny)
+        .decide(&request.id, ApprovalDecision::Deny, None)
         .await
         .expect("deny");
     assert_eq!(expect_selected_option(&mut test.events).await, "cancelled");

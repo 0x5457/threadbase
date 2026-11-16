@@ -236,6 +236,11 @@ pub struct UpdateQueuedInputRequest {
 pub struct DecisionRequest {
     pub decision: ApprovalDecision,
     pub note: Option<String>,
+    /// Exact adapter option the user picked. Two `allow_once` options can be
+    /// different answers (for example "enabled" vs "disabled"), so the
+    /// decision kind alone cannot identify the choice.
+    #[serde(default)]
+    pub option_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

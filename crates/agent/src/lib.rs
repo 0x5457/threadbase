@@ -238,7 +238,12 @@ pub trait Harness: Send + Sync {
     async fn load_session(&mut self, id: &SessionId) -> HarnessResult<()>;
     async fn prompt(&mut self, parts: Vec<PromptPart>) -> HarnessResult<TurnHandle>;
     async fn cancel(&mut self, turn: &TurnHandle) -> HarnessResult<()>;
-    async fn decide(&mut self, request_id: &str, decision: ApprovalDecision) -> HarnessResult<()>;
+    async fn decide(
+        &mut self,
+        request_id: &str,
+        decision: ApprovalDecision,
+        option_id: Option<&str>,
+    ) -> HarnessResult<()>;
     async fn respond_elicitation(
         &mut self,
         request_id: &str,

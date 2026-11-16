@@ -39,11 +39,12 @@ export function decideApproval(
   approvalId: string,
   decision: ApprovalDecision,
   note?: string,
+  optionId?: string,
 ) {
   return jsonRequest<ApprovalResolvedResponse>(
     `/api/approvals/${approvalId}/decide`,
     "POST",
-    { decision, note: note ?? null },
+    { decision, note: note ?? null, optionId: optionId ?? null },
   );
 }
 

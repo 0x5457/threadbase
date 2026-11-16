@@ -694,12 +694,29 @@ impl Harness for AcpHarness {
         self.send_cancel(&session)
     }
 
-    async fn decide(&mut self, request_id: &str, decision: ApprovalDecision) -> HarnessResult<()> {
+    async fn decide(
+        &mut self,
+        request_id: &str,
+        decision: ApprovalDecision,
+        option_id: Option<&str>,
+    ) -> HarnessResult<()> {
         let pending = lock_state(&self.state)
             .permissions
             .remove(request_id)
             .ok_or_else(|| HarnessError::RequestNotFound(request_id.to_owned()))?;
-        let outcome = option_for_decision(decision, &pending.options)
+        // An explicit option id is authoritative: adapters use permission
+        // requests for multi-choice questions whose answers share the
+        // `allow_once` kind. Falling back to the kind here would silently
+        // select the first option (e.g. "enabled" when the user chose "disabled").
+        let selected = match option_id {
+            Some(id) => pending
+                .options
+                .iter()
+                .find(|(_, option_id)| option_id.to_string() == id)
+                .map(|(_, option_id)| option_id.clone()),
+            None => option_for_decision(decision, &pending.options),
+        };
+        let outcome = selected
             .map(|option_id| {
                 RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id))
             })

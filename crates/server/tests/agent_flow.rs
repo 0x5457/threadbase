@@ -356,7 +356,12 @@ async fn approval_ids_stay_unique_across_threads() {
         fixture
             .state
             .agents
-            .decide(thread_id, approval.id.as_str(), ApprovalDecision::AllowOnce)
+            .decide(
+                thread_id,
+                approval.id.as_str(),
+                ApprovalDecision::AllowOnce,
+                None,
+            )
             .await
             .unwrap();
         ids.push(approval.id.as_str().to_owned());
@@ -365,6 +370,75 @@ async fn approval_ids_stay_unique_across_threads() {
         ids[0], ids[1],
         "approval ids are global primary keys: {ids:?}"
     );
+}
+
+#[tokio::test]
+async fn a_choice_uses_the_exact_option_id_not_the_decision_kind() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    fixture
+        .state
+        .agents
+        .ensure_started(thread_id)
+        .await
+        .unwrap();
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "permission-choice", None)
+        .await
+        .unwrap();
+    let event = wait_for(&fixture.state.pool, thread_id, |event| {
+        matches!(event, ThreadEvent::PermissionRequested { .. })
+    })
+    .await;
+    let ThreadEvent::PermissionRequested { approval } = event else {
+        unreachable!();
+    };
+    let disabled = approval
+        .options
+        .iter()
+        .find(|option| option.label.starts_with("Disabled"))
+        .expect("the adapter offers a disabled choice");
+    assert_eq!(disabled.kind, ApprovalDecision::AllowOnce);
+
+    threadbase_server::approvals::decide(
+        &fixture.state.pool,
+        &fixture.state.projection,
+        &fixture.state.events,
+        approval.id.as_str(),
+        &fixture.user,
+        ApprovalDecision::AllowOnce,
+        None,
+    )
+    .await
+    .unwrap();
+    fixture
+        .state
+        .agents
+        .decide(
+            thread_id,
+            approval.id.as_str(),
+            ApprovalDecision::AllowOnce,
+            Some(disabled.id.as_str()),
+        )
+        .await
+        .unwrap();
+
+    wait_for(&fixture.state.pool, thread_id, |event| {
+        matches!(
+            event,
+            ThreadEvent::ToolCallUpdate { call }
+                if call.id.as_str() == "call-perm"
+                    && call
+                        .output
+                        .as_deref()
+                        .is_some_and(|output| output.contains("opt-disabled"))
+        )
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -438,6 +512,7 @@ async fn fake_agent_streams_tools_and_permissions() {
             fixture.thread.id.as_str(),
             approval.id.as_str(),
             ApprovalDecision::AllowThread,
+            None,
         )
         .await
         .unwrap();

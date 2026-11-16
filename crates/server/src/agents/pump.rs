@@ -426,7 +426,12 @@ impl Pump {
                 tracing::warn!(%error, thread_id = %self.thread_id, "could not record a permission request");
                 let _ = self
                     .manager
-                    .decide(&self.thread_id, request_id.as_str(), ApprovalDecision::Deny)
+                    .decide(
+                        &self.thread_id,
+                        request_id.as_str(),
+                        ApprovalDecision::Deny,
+                        None,
+                    )
                     .await;
                 self.append(ThreadEvent::SystemNotice {
                     level: "warning".to_owned(),
@@ -677,7 +682,7 @@ impl Pump {
         {
             let mut harness = session.harness.lock().await;
             harness
-                .decide(approval.id.as_str(), ApprovalDecision::AllowOnce)
+                .decide(approval.id.as_str(), ApprovalDecision::AllowOnce, None)
                 .await
                 .map_err(mapping::agent_error)?;
         }

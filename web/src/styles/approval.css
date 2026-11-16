@@ -11,7 +11,30 @@
 .approval-head {
   height: 24px;
   border-bottom: 1px solid var(--line-soft);
-  background: color-mix(in srgb, var(--ink) 2%, transparent);
+  background: color-mix(in srgb, var(--brand) 7%, transparent);
+}
+
+/* A permission used as a multi-choice question: the full label is the choice,
+   not a caption for an icon button. */
+.approval-choice .mantine-Button-inner {
+  justify-content: flex-start;
+}
+
+.approval-choice .mantine-Button-label {
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+}
+
+@media (max-width: 47.99em) {
+  .approval-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .approval-actions .mantine-Button-root {
+    width: 100%;
+  }
 }
 
 /* An approval has to be readable before it is granted: wrap instead of

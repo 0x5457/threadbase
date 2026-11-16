@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   Group,
+  Radio,
   Select,
   Stack,
   Text,
@@ -64,7 +65,32 @@ export function ElicitationCard({
             {properties.length ? (
               <Stack gap="xs" mb="sm">
                 {properties.map(([key, property]) =>
-                  property.enum?.length ? (
+                  property.enum?.length && property.enum.length <= 4 ? (
+                    <Radio.Group
+                      key={key}
+                      label={property.title ?? key}
+                      description={property.description}
+                      value={values[key] ?? ""}
+                      onChange={(value) =>
+                        setValues((current) => ({
+                          ...current,
+                          [key]: value,
+                        }))
+                      }
+                      required={required.has(key)}
+                    >
+                      <Stack gap={5} mt={5}>
+                        {property.enum.map((option) => (
+                          <Radio
+                            key={option}
+                            value={option}
+                            label={option}
+                            disabled={readOnly}
+                          />
+                        ))}
+                      </Stack>
+                    </Radio.Group>
+                  ) : property.enum?.length ? (
                     <Select
                       key={key}
                       label={property.title ?? key}
@@ -105,7 +131,12 @@ export function ElicitationCard({
                 Ask an administrator to allow editing.
               </Text>
             ) : null}
-            <Group justify="flex-end" gap={6} mt={readOnly ? 8 : 0}>
+            <Group
+              justify="flex-end"
+              gap={6}
+              mt={readOnly ? 8 : 0}
+              className="approval-actions"
+            >
               <Button
                 variant="subtle"
                 color="gray"
@@ -117,7 +148,7 @@ export function ElicitationCard({
               </Button>
               <Button
                 variant="filled"
-                color="dark"
+                color="brand"
                 loading={busy}
                 disabled={readOnly || missing}
                 onClick={() => onRespond("accept", values)}

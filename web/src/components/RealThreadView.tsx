@@ -1054,12 +1054,12 @@ export const RealThreadView = memo(function RealThreadView({
 
   const decide = async (
     approval: Approval,
-    kind: Approval["options"][number]["kind"],
+    option: Approval["options"][number],
   ) => {
     if (readOnlyAccount) return;
     setDeciding(approval.id);
     try {
-      await decideApproval(approval.id, kind);
+      await decideApproval(approval.id, option.kind, undefined, option.id);
       refresh();
     } catch (cause) {
       reportFailure(cause, "Could not record decision");
@@ -1300,7 +1300,7 @@ export const RealThreadView = memo(function RealThreadView({
           approval={approval}
           busy={deciding === approval.id}
           readOnly={readOnlyAccount}
-          onDecide={(kind) => void decide(approval, kind)}
+          onDecide={(option) => void decide(approval, option)}
         />
       ))}
 

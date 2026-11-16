@@ -74,7 +74,12 @@ async fn decide_impl(
     .await?;
     if let Err(error) = state
         .agents
-        .decide(approval.thread_id.as_str(), approval_id, request.decision)
+        .decide(
+            approval.thread_id.as_str(),
+            approval_id,
+            request.decision,
+            request.option_id.as_deref(),
+        )
         .await
     {
         tracing::warn!(%error, approval_id, "could not deliver decision to agent");
