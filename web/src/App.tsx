@@ -1315,9 +1315,10 @@ function Workspace() {
             <Suspense fallback={null}>
               <TerminalDrawer
                 key={
-                  terminalTarget.kind === "host"
+                  (terminalTarget.kind === "host"
                     ? `host:${terminalTarget.socket}:${terminalTarget.id}`
-                    : `thread:${terminalTarget.threadId ?? "home"}`
+                    : `thread:${terminalTarget.threadId ?? "home"}`) +
+                  (phone ? ":phone" : ":wide")
                 }
                 target={terminalTarget}
                 fullscreen={terminalFull}

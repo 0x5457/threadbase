@@ -49,6 +49,24 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
   });
 }
 
+if (import.meta.env.PROD) {
+  // A deploy replaces the hashed chunks. A tab opened before it can still ask
+  // for an old lazy chunk and otherwise keeps a blank terminal or diff pane
+  // forever. Reload once onto the new manifest; the timestamp stops a broken
+  // chunk from creating a reload loop.
+  window.addEventListener("vite:preloadError", () => {
+    const key = "threadbase.chunk-reload-at";
+    try {
+      const last = Number(window.sessionStorage.getItem(key) ?? 0);
+      if (Date.now() - last < 30_000) return;
+      window.sessionStorage.setItem(key, String(Date.now()));
+    } catch {
+      // Private mode: the reload below is still the right recovery.
+    }
+    window.location.reload();
+  });
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { refetchOnWindowFocus: false, retry: 1, staleTime: 5_000 },

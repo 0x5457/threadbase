@@ -56,6 +56,7 @@ export function useXterm({ disabled, onData, onResize }: Options) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const dataRef = useRef(onData);
   useEffect(() => {
@@ -93,99 +94,108 @@ export function useXterm({ disabled, onData, onResize }: Options) {
     observer.observe(container);
 
     void (async () => {
-      const [{ Terminal }, { FitAddon }] = await Promise.all([
-        import("@xterm/xterm"),
-        import("@xterm/addon-fit"),
-      ]);
-      if (disposed) return;
-
-      const terminal = new Terminal({
-        allowProposedApi: true,
-        convertEol: false,
-        cursorBlink: true,
-        fontFamily: FONT_STACK,
-        fontSize: FONT_SIZE,
-        lineHeight: 1.25,
-        scrollback: 5000,
-        theme: readTheme(),
-      });
-      const fit = new FitAddon();
-      terminal.loadAddon(fit);
-      terminal.open(container);
-      fit.fit();
-      termRef.current = terminal;
-      fitRef.current = fit;
-
-      // The soft keyboard types into this textarea. Mobile browsers only open it
-      // for an editable field with sane autocorrect/spellcheck settings, and
-      // `enterkeyhint` makes the return key say what it does.
-      const textarea = terminal.textarea;
-      if (textarea) {
-        textarea.setAttribute("autocapitalize", "off");
-        textarea.setAttribute("autocorrect", "off");
-        textarea.setAttribute("autocomplete", "off");
-        textarea.setAttribute("spellcheck", "false");
-        textarea.setAttribute("inputmode", "text");
-        textarea.setAttribute("enterkeyhint", "enter");
-        textarea.setAttribute("aria-label", "Terminal input");
-      }
-
-      terminal.onData((data) => dataRef.current(data));
-      terminal.attachCustomKeyEventHandler((event) => {
-        if (event.type !== "keydown") return true;
-        const modifier = event.ctrlKey || event.metaKey;
-        // Enter is sent here rather than left to xterm: a soft keyboard can
-        // still insert the newline into the helper textarea after the keydown
-        // was cancelled, and xterm flushes that leftover later as a second
-        // Enter. Sending the CR and emptying the textarea leaves nothing to
-        // flush. Composing keys, and IME text still waiting in the textarea,
-        // stay with xterm so a commit is never swallowed.
-        const pending = textarea?.value.replace(/[\r\n]+/g, "") ?? "";
-        if (event.key === "Enter" && !event.isComposing && !pending) {
-          event.preventDefault();
-          if (textarea) textarea.value = "";
-          if (terminal.options.scrollOnUserInput) terminal.scrollToBottom();
-          if (!terminal.options.disableStdin) dataRef.current("\r");
-          return false;
-        }
-        if (modifier && event.shiftKey && event.key.toLowerCase() === "c") {
-          const selection = terminal.getSelection();
-          if (selection) void navigator.clipboard.writeText(selection);
-          return false;
-        }
-        if (modifier && event.shiftKey && event.key.toLowerCase() === "v") {
-          void navigator.clipboard.readText().then((text) => {
-            if (!text) return;
-            const lines = text.split("\n").length;
-            if (
-              lines > 1 &&
-              !window.confirm(`Paste ${lines} lines into the terminal?`)
-            ) {
-              return;
-            }
-            dataRef.current(text);
-          });
-          return false;
-        }
-        return true;
-      });
-
-      if (!disabled) terminal.focus();
-      setReady(true);
-      resizeRef.current(terminal.cols, terminal.rows);
-      // The Nerd Font has 1 MB of icon glyphs and may arrive after the first
-      // paint. Re-measure and repaint once it is actually available, otherwise
-      // xterm keeps the fallback font's cell metrics and shows tofu boxes.
-      void document.fonts.ready.then(() => {
+      try {
+        const [{ Terminal }, { FitAddon }] = await Promise.all([
+          import("@xterm/xterm"),
+          import("@xterm/addon-fit"),
+        ]);
         if (disposed) return;
-        try {
-          fit.fit();
-          terminal.refresh(0, Math.max(0, terminal.rows - 1));
-        } catch {
-          return;
+
+        const terminal = new Terminal({
+          allowProposedApi: true,
+          convertEol: false,
+          cursorBlink: true,
+          fontFamily: FONT_STACK,
+          fontSize: FONT_SIZE,
+          lineHeight: 1.25,
+          scrollback: 5000,
+          theme: readTheme(),
+        });
+        const fit = new FitAddon();
+        terminal.loadAddon(fit);
+        terminal.open(container);
+        fit.fit();
+        termRef.current = terminal;
+        fitRef.current = fit;
+
+        // The soft keyboard types into this textarea. Mobile browsers only open it
+        // for an editable field with sane autocorrect/spellcheck settings, and
+        // `enterkeyhint` makes the return key say what it does.
+        const textarea = terminal.textarea;
+        if (textarea) {
+          textarea.setAttribute("autocapitalize", "off");
+          textarea.setAttribute("autocorrect", "off");
+          textarea.setAttribute("autocomplete", "off");
+          textarea.setAttribute("spellcheck", "false");
+          textarea.setAttribute("inputmode", "text");
+          textarea.setAttribute("enterkeyhint", "enter");
+          textarea.setAttribute("aria-label", "Terminal input");
         }
+
+        terminal.onData((data) => dataRef.current(data));
+        terminal.attachCustomKeyEventHandler((event) => {
+          if (event.type !== "keydown") return true;
+          const modifier = event.ctrlKey || event.metaKey;
+          // Enter is sent here rather than left to xterm: a soft keyboard can
+          // still insert the newline into the helper textarea after the keydown
+          // was cancelled, and xterm flushes that leftover later as a second
+          // Enter. Sending the CR and emptying the textarea leaves nothing to
+          // flush. Composing keys, and IME text still waiting in the textarea,
+          // stay with xterm so a commit is never swallowed.
+          const pending = textarea?.value.replace(/[\r\n]+/g, "") ?? "";
+          if (event.key === "Enter" && !event.isComposing && !pending) {
+            event.preventDefault();
+            if (textarea) textarea.value = "";
+            if (terminal.options.scrollOnUserInput) terminal.scrollToBottom();
+            if (!terminal.options.disableStdin) dataRef.current("\r");
+            return false;
+          }
+          if (modifier && event.shiftKey && event.key.toLowerCase() === "c") {
+            const selection = terminal.getSelection();
+            if (selection) void navigator.clipboard.writeText(selection);
+            return false;
+          }
+          if (modifier && event.shiftKey && event.key.toLowerCase() === "v") {
+            void navigator.clipboard.readText().then((text) => {
+              if (!text) return;
+              const lines = text.split("\n").length;
+              if (
+                lines > 1 &&
+                !window.confirm(`Paste ${lines} lines into the terminal?`)
+              ) {
+                return;
+              }
+              dataRef.current(text);
+            });
+            return false;
+          }
+          return true;
+        });
+
+        if (!disabled) terminal.focus();
+        setReady(true);
         resizeRef.current(terminal.cols, terminal.rows);
-      });
+        // The Nerd Font has 1 MB of icon glyphs and may arrive after the first
+        // paint. Re-measure and repaint once it is actually available, otherwise
+        // xterm keeps the fallback font's cell metrics and shows tofu boxes.
+        void document.fonts.ready.then(() => {
+          if (disposed) return;
+          try {
+            fit.fit();
+            terminal.refresh(0, Math.max(0, terminal.rows - 1));
+          } catch {
+            return;
+          }
+          resizeRef.current(terminal.cols, terminal.rows);
+        });
+      } catch (caught) {
+        if (disposed) return;
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Could not load the terminal renderer",
+        );
+      }
     })();
 
     return () => {
@@ -226,5 +236,5 @@ export function useXterm({ disabled, onData, onResize }: Options) {
     [],
   );
 
-  return { containerRef, ready, write, reset, focus, size };
+  return { containerRef, ready, error, write, reset, focus, size };
 }

@@ -137,10 +137,33 @@
 }
 
 .terminal-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   padding: 4px 2px 2px 8px;
   overflow: hidden;
+}
+
+/* The xterm chunk is loaded on the first terminal open. Keep a readable
+   placeholder there instead of an unexplained black sheet when that import
+   is slow or fails after a deploy. */
+.terminal-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  pointer-events: none;
+}
+
+/* Fullscreen terminals are portaled to body, so the viewport cutouts apply. */
+.terminal-drawer[data-fullscreen="true"] .terminal-head {
+  padding-top: var(--safe-top);
+}
+
+.terminal-drawer[data-fullscreen="true"] .terminal-keys {
+  padding-bottom: calc(3px + var(--safe-bottom));
 }
 
 .terminal-body .xterm {

@@ -19,6 +19,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   ApiError,
   attachHostTerminalSession,
@@ -175,7 +176,12 @@ export function TerminalDrawer({
   const queryClient = useQueryClient();
   // Phones lay the drawer out full-screen; they drive the shell like any other
   // screen, which means the soft keyboard has to reach xterm's textarea.
-  const phone = useMediaQuery("(max-width: 47.99em)");
+  // Read the query synchronously: the drawer moves into a portal on phones, and
+  // remounting it after the first effect would leave xterm attached to the
+  // discarded inline container (a blank terminal).
+  const phone = useMediaQuery("(max-width: 47.99em)", undefined, {
+    getInitialValueInEffect: false,
+  });
 
   const socketRef = useRef<WebSocket | null>(null);
   const sendRef = useRef<(message: unknown) => void>(() => {});
@@ -206,11 +212,12 @@ export function TerminalDrawer({
     [send],
   );
 
-  const { containerRef, ready, write, reset, focus, size } = useXterm({
-    disabled: role === "watcher",
-    onData,
-    onResize,
-  });
+  const { containerRef, ready, error: rendererError, write, reset, focus, size } =
+    useXterm({
+      disabled: role === "watcher",
+      onData,
+      onResize,
+    });
   // A takeover promotes a watcher in place. Move focus into xterm once the
   // keyboard becomes available, but do not steal focus on a fresh attach.
   const wasController = useRef(role === "controller");
@@ -395,7 +402,7 @@ export function TerminalDrawer({
         ? "terminal"
         : "terminal · home";
 
-  return (
+  const drawer = (
     <section
       className="terminal-drawer"
       data-fullscreen={fullscreen || phone ? "true" : undefined}
@@ -526,6 +533,19 @@ export function TerminalDrawer({
         </div>
       ) : null}
 
+      {rendererError ? (
+        <div className="terminal-notice" data-kind="error">
+          <Text size="xs">Could not load the terminal renderer.</Text>
+          <Button
+            variant="light"
+            size="compact-xs"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </Button>
+        </div>
+      ) : null}
+
       {phase === "exited" ? (
         <div className="terminal-notice" data-kind="exited">
           <Text size="xs">
@@ -580,7 +600,13 @@ export function TerminalDrawer({
         onTouchStart={() => {
           if (canDrive) focus();
         }}
-      />
+      >
+        {!ready ? (
+          <div className="terminal-loading" role="status">
+            {rendererError ? "Terminal renderer unavailable" : "Loading terminal…"}
+          </div>
+        ) : null}
+      </div>
 
       {showKeys ? (
         <div className="terminal-keys">
@@ -613,4 +639,11 @@ export function TerminalDrawer({
       ) : null}
     </section>
   );
+
+  // The shell is transformed on phones to follow the visual viewport. WebKit
+  // mis-composites a `position: fixed` terminal inside that transformed
+  // ancestor (the canvas/DOM sheet can paint black), so the fullscreen phone
+  // drawer lives outside it, on `body`. Desktop fullscreen has no transformed
+  // ancestor and stays inline, which also keeps xterm mounted.
+  return phone ? createPortal(drawer, document.body) : drawer;
 }
