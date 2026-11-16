@@ -61,8 +61,22 @@ export function sessionMatches(session: SessionSummary, needle: string): boolean
   if (!needle) return true;
   const fields =
     session.kind === "thread"
-      ? [session.title, session.projectName, session.agent, session.status]
-      : [session.name, session.socket, session.cwd, session.command];
+      ? [
+          session.title,
+          session.projectName,
+          session.agent,
+          session.status,
+          session.terminal?.controller?.displayName,
+          ...(session.terminal?.viewers.map((user) => user.displayName) ?? []),
+        ]
+      : [
+          session.name,
+          session.socket,
+          session.cwd,
+          session.command,
+          session.controller?.displayName,
+          ...session.viewers.map((user) => user.displayName),
+        ];
   return fields.some((field) => field?.toLowerCase().includes(needle));
 }
 

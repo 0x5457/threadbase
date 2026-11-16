@@ -233,7 +233,7 @@ export function useLiveThread(
       setPhase("live");
       if (firstLoad) {
         oldestRef.current = page.oldestSeq;
-        setHasEarlier(page.oldestSeq > 1);
+        setHasEarlier(page.hasEarlier);
       }
       if (
         page.events.length >= EVENTS_PAGE_LIMIT &&

@@ -6,7 +6,7 @@ use crate::authz;
 use crate::error::ServerError;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::Json;
@@ -52,7 +52,7 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/threads/{thread_id}/attachments",
             post(upload_attachment).layer(DefaultBodyLimit::max(
-                crate::attachments::MAX_IMAGE_BYTES + 1,
+                crate::attachments::MAX_FILE_BYTES + 1,
             )),
         )
         .route("/api/attachments/{attachment_id}", get(read_attachment))
@@ -394,8 +394,9 @@ async fn steer_queue_item(
     }
 }
 
-/// Store one pasted image. The body is the raw image; the content type names
-/// the format. Uploads are scoped to the thread and gated on write access.
+/// Store one pasted/picked file. The body is raw bytes, the content type names
+/// the format, and `x-attachment-name` carries the percent-encoded original
+/// name. Uploads are scoped to the thread and gated on write access.
 async fn upload_attachment(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -409,22 +410,32 @@ async fn upload_attachment(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_owned();
-    if mime_type.trim().is_empty() {
-        return Err(ServerError(ApiError::validation("image type is required")));
-    }
+    let file_name = headers
+        .get("x-attachment-name")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| {
+            // `x-attachment-name` is encodeURIComponent(name), so wrap it as a
+            // form value to get percent decoding without treating `+` as a
+            // path separator.
+            url::form_urlencoded::parse(format!("v={raw}").as_bytes())
+                .next()
+                .map(|(_, value)| value.into_owned())
+        });
     let attachment = crate::attachments::create(
         &state.pool,
         &state.config.data_dir,
         &thread_id,
         user.user.id.as_str(),
         &mime_type,
+        file_name.as_deref(),
         &bytes,
     )
     .await?;
     Ok(Json(attachment))
 }
 
-/// Serve a stored image to anyone who can read its thread.
+/// Serve a stored attachment to anyone who can read its thread. Images stay
+/// inline; everything else is a forced download with a sanitized name.
 async fn read_attachment(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -435,17 +446,35 @@ async fn read_attachment(
     let bytes = tokio::fs::read(&stored.path)
         .await
         .map_err(|error| ServerError::internal(format!("could not read attachment: {error}")))?;
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, stored.dto.mime_type),
-            (
-                header::CACHE_CONTROL,
-                "private, max-age=31536000, immutable".to_owned(),
-            ),
-        ],
-        bytes,
-    ))
+    let is_image = crate::attachments::is_image_mime(&stored.dto.mime_type);
+    let mut headers = HeaderMap::new();
+    let content_type = if is_image {
+        stored.dto.mime_type.as_str()
+    } else {
+        "application/octet-stream"
+    };
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(content_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    if !is_image {
+        let disposition = crate::attachments::content_disposition(stored.dto.file_name.as_deref());
+        headers.insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_str(&disposition)
+                .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+        );
+    }
+    Ok((StatusCode::OK, headers, bytes))
 }
 
 #[derive(Deserialize)]

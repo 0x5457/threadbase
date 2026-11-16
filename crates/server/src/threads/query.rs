@@ -32,13 +32,14 @@ pub struct ThreadRow {
     pub archived_at: Option<i64>,
     pub pinned: i64,
     pub last_activity_at: Option<i64>,
+    pub has_draft: i64,
 }
 
 const THREAD_COLUMNS: &str =
     "t.id, t.project_id, t.parent_thread_id, t.title, t.status, t.agent, t.model, t.effort,
      t.branch, t.base_branch, t.base_sha, t.last_turn_sha, t.worktree_path, t.setup_status,
      t.setup_error, t.created_by, t.created_at, t.updated_at, t.archived_at, t.pinned,
-     t.last_activity_at";
+     t.last_activity_at, t.has_draft";
 
 #[derive(Clone, Default)]
 struct Aggregate {
@@ -184,6 +185,7 @@ fn to_dto(
         pinned: row.pinned != 0,
         participants,
         pending_approvals: u32::try_from(aggregate.pending_approvals).unwrap_or(0),
+        has_draft: row.has_draft != 0,
         subagents,
     }
 }

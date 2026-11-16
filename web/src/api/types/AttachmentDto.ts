@@ -4,4 +4,13 @@
  * A stored file a user attached to a message. Bytes live on disk; the DTO is
  * what events carry so a cold reload can still render the image.
  */
-export type AttachmentDto = { id: string; mimeType: string; byteSize: number };
+export type AttachmentDto = {
+  id: string;
+  mimeType: string;
+  byteSize: number;
+  /**
+   * Original name for display and download; NULL for rows created before
+   * arbitrary files were supported.
+   */
+  fileName: string | null;
+};

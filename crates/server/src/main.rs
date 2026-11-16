@@ -229,6 +229,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     if let Err(error) = state.agents.backfill_derived_subagents().await {
         tracing::warn!(%error, "subagent backfill failed");
     }
+    if let Err(error) = state.drafts.backfill_flags().await {
+        tracing::warn!(%error, "draft marker backfill failed");
+    }
     let index_pool = state.pool.clone();
     tokio::spawn(async move {
         if let Err(error) = threadbase_server::search::ensure_indexed(&index_pool).await {
@@ -236,6 +239,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
     });
     state.push.spawn();
+    let agents = state.agents.clone();
     let app = routes::router(state);
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -275,7 +279,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        // The unit keeps daemonized tmux servers alive across restarts; the
+        // agent adapters are not daemons and must not be left orphaned.
+        agents.shutdown_all().await;
+    })
     .await
     .context("server error")
 }

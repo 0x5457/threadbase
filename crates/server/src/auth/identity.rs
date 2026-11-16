@@ -6,9 +6,10 @@
 
 use super::{audit, matches_login, Identity};
 use crate::error::ServerError;
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, QueryBuilder, SqlitePool};
+use std::collections::{HashMap, HashSet};
 use threadbase_shared::api::UpdateUserRequest;
-use threadbase_shared::{now_ms, ApiError, UserAccess, UserDto};
+use threadbase_shared::{now_ms, ApiError, UserAccess, UserBrief, UserDto};
 use ulid::Ulid;
 
 #[derive(Debug, FromRow)]
@@ -384,6 +385,59 @@ pub async fn list_users(pool: &SqlitePool) -> Result<Vec<UserDto>, sqlx::Error> 
     .into_iter()
     .map(UserRow::into_dto)
     .collect())
+}
+
+/// Small public profile rows for presence surfaces (terminal viewers, session
+/// avatars). Hidden-presence accounts are omitted: a visible count may still
+/// include them, but their identity is not exposed.
+pub async fn load_user_briefs(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<Vec<UserBrief>, sqlx::Error> {
+    let mut unique = Vec::new();
+    let mut seen = HashSet::new();
+    for id in ids {
+        if seen.insert(id.as_str()) {
+            unique.push(id);
+        }
+    }
+    if unique.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut query = QueryBuilder::new(
+        "SELECT id, username, display_name, avatar_url FROM users
+          WHERE hidden_presence = 0 AND id IN (",
+    );
+    let mut separated = query.separated(", ");
+    for id in &unique {
+        separated.push_bind(id.as_str());
+    }
+    separated.push_unseparated(")");
+    #[derive(FromRow)]
+    struct BriefRow {
+        id: String,
+        username: String,
+        display_name: String,
+        avatar_url: Option<String>,
+    }
+    let rows: Vec<BriefRow> = query.build_query_as().fetch_all(pool).await?;
+    let users: HashMap<String, UserBrief> = rows
+        .into_iter()
+        .map(|row| {
+            let user = UserBrief {
+                id: row.id.clone().into(),
+                username: row.username,
+                display_name: row.display_name,
+                avatar_url: row.avatar_url,
+                color: threadbase_shared::user_color(&row.id).to_owned(),
+            };
+            (row.id, user)
+        })
+        .collect();
+    Ok(unique
+        .into_iter()
+        .filter_map(|id| users.get(id).cloned())
+        .collect())
 }
 
 pub async fn update_user(

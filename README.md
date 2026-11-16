@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片粘贴、presence/跟随、线程关注/静音、全文搜索、线程历史与行级 diff 评论、Worktree 初始化钩子、PWA/Web Push、CLI 与发布工作流。
+v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片/文件附件与大文本粘贴、presence/跟随、线程关注/静音、全文搜索、线程历史与行级 diff 评论、Worktree 初始化钩子、PWA/Web Push、CLI 与发布工作流。
 
 质量门由 `scripts/verify.sh` 统一执行；界面审计记录保留在 `web/audit/`。
 
@@ -133,6 +133,13 @@ unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例�
 - 行级评论只在 base-branch 基线上创建和展示，因为服务端锚点校正是相对 base 的；其他基线仍可查看 diff。
 - History 读的是 worktree 的 git 历史：删除 thread 会一并删除它的 worktree 和分支，因此这些提交最终会被 git 清理。需要长期审计时，应把提交信息持久化进数据库，而不是只依赖 worktree。
 
+### 编辑消息与回退
+
+- 用户消息在桌面悬停时出现铅笔按钮，手机长按打开 ActionSheet；保存走 `POST /api/threads/{id}/messages/{message_id}/edit`，不会新增一条“请忽略上一条”的补丁消息。
+- 保存会删除该消息之后的全部事件，同时清理排队输入、待处理的审批/提问、相关评论通知和子代理行；`ThreadRewound` 通过 `/ws` 通知所有打开的窗口丢弃本地日志并重新订阅。
+- ACP adapter 的会话无法回退，所以 Threadbase 会清掉 binding 里的 session id，在新会话里只发送这一条编辑后的 prompt。编辑点之前的轮次不会进入新会话上下文，worktree 文件也不会回滚——对话框会明确写出这两点。
+- 因为 seq 不复用，回退后的日志会从较高的序号开始；`events_page.hasEarlier` 单独判断是否真的有更早的事件，避免出现空的 “Load earlier”。
+
 ### 应用变更前的检查
 
 `Apply changes` 不再直接 `git apply` + `commit -a`：
@@ -155,6 +162,22 @@ threadbase compact --vacuum    # 重建数据库文件回收磁盘
 ```
 
 `--vacuum` 需要独占锁，服务正在写时会自动跳过并提示；要稳定回收磁盘，先 `systemctl --user stop threadbase`，跑完再启动。折叠可以反复跑，第二次之后就没有可删的行。
+
+### 附件与大文本粘贴
+
+- Composer 左下角的回形针可以选多个本地文件；也可以直接把文件拖进 Composer，或从剪贴板粘贴图片/文件。
+- 图片（PNG / JPEG / WebP / GIF，单张 8 MB）在对话里内联显示，点开灯箱预览。
+- 其它文件（单个 25 MB）作为附件保存到数据目录，消息里显示文件名/大小，点击强制下载；一条消息最多 8 个附件。
+- 服务端不会把非图片文件当 HTML/SVG 内联执行：下载时使用 `application/octet-stream`、`Content-Disposition: attachment` 和 `nosniff`。
+- 粘贴超过 **8000 字符** 的纯文本时，Composer 自动把它保存成 `pasted-<timestamp>.txt` 附件，不再把整段文字塞进编辑器；上传失败会回退为普通文本插入，避免丢内容。
+- 给 agent 的 prompt：图片走原生 image block；文本文件 ≤32 KB 内联到 prompt，较大的文本给前 4 KB 预览 + 绝对路径；二进制文件只给路径和元数据，让 agent 用自己的文件工具读取。
+- 存储位置 `<数据目录>/attachments/<thread>/`，不写入项目 worktree，也不会自动提交进 git；附件按现有事件模型随消息保留。
+
+### 草稿标记
+
+- 共享 composer 草稿一旦有文字，左栏对应 thread 行会显示一个铅笔小标志；Sessions 列表里对应 thread 行也会显示 `draft`。
+- 服务端只在空 ↔ 非空转换时更新 `threads.has_draft`，不会每个按键写库；发送或清空草稿后标记消失。
+- 启动时会从已持久化的 `draft_updates` / `draft_snapshots` 回填旧草稿的标记，所以升级前的草稿也不会丢标志。
 
 ### 网页终端（默认关闭）
 
@@ -188,11 +211,11 @@ cargo run -p threadbase
 
 - `THREADBASE_TERMINAL_HOST_SOCKETS` 是 `tmux -L` 的 socket 名，逗号分隔；不写默认只有 `default`（普通 `tmux` 用的那个）。私有 `THREADBASE_TERMINAL_SOCKET` 永远会被排除，否则可以从宿主机入口绕过 workbench 的只读策略。
 - 顶部栏的 Sessions 图标、左栏 Sessions、或命令面板的 “Go to Sessions” 打开统一列表；点任意一行就在底部抽屉里 attach。抽屉标题是 `tmux · <name>`，不会杀掉宿主机会话，关闭只是 detach。终端抽屉头部的列表按钮打开快速切换器。
-- 权限：所有 `member` 和 admin 都能看、能接管（可写 tmux client）；`read_only` 和待接受邀请仍然拿不到 shell。workbench 线程终端的规则不变（member 默认只看）。
+- 权限：所有 `member` 和 admin 都能看、能接管；`read_only` 和待接受邀请仍然拿不到 shell。workbench 线程终端的规则不变（member 默认只看）。
 - 目标一律用 tmux 的 `$N` session id，不用名字；名字可以包含 `:`、`.` 等 target 语法字符，只用于展示。
-- 多个浏览器可以同时 attach，和在本机另开一个 `tmux attach` 一样是共享的；本地已经 attach 的客户端也可以继续输入。
+- **单浏览器 driver**：同一时刻只有一个浏览器持有键盘，其他浏览器是 watching，点提示条里的 **Take over** 就可以在没有重连的情况下接管；前一个 driver 的输入会立即被服务端丢掉。抽屉头部显示当前 viewers 头像和谁在 driving。本机已经 attach 的 tmux client 不受这个仲裁控制，仍然可以输入。
 - **窗口尺寸**：tmux 默认 `window-size latest`，浏览器抽屉的 pty 尺寸会成为最新 client 的尺寸，可能让你本机终端短暂重排。介意的话在 `~/.tmux.conf` 用 `set -g window-size largest` 或 `manual`；Threadbase 不会改宿主机的 tmux 全局选项。
-- **安全边界**：这个开关等价于“把服务账号在这台机器上的交互式 shell，以可写方式给所有 member”。只对可信团队打开，隧道入口建议再加 Tailscale ACL；不想给了就删掉 `THREADBASE_TERMINAL_HOST` 并重启。宿主机会话的内容不写日志、不落盘。
+- **安全边界**：这个开关等价于“把服务账号在这台机器上的交互式 shell，以可接管方式给所有 member”。只对可信团队打开，隧道入口建议再加 Tailscale ACL；不想给了就删掉 `THREADBASE_TERMINAL_HOST` 并重启。宿主机会话的内容不写日志、不落盘。
 
 ### Sessions 视图
 
@@ -201,7 +224,9 @@ cargo run -p threadbase
 - 左边栏的 **Sessions**、顶部栏的列表图标或命令面板都能打开。
 - 支持搜索、`All / Threads / Tmux` 过滤；排序是 pinned → 正在运行 → 最近活动。
 - thread 行打开 transcript；如果该 thread 的私有 workbench shell 还活着，行内会显示 shell 状态和一个终端按钮。member 默认只能 watch，admin/driver 可以 drive。
-- tmux 行直接打开底部抽屉，并标记 `shared`：所有 member 都能 attach、能写；旁边的 `N here` 是 Threadbase 内的浏览器数，`N attached` 是 tmux 自己的 client 数（包含本机终端）。
+- tmux 行直接打开底部抽屉，并标记 `shared`：所有 member 都能 attach；同一时刻只有一个浏览器 driver，其他人在抽屉里点 **Take over**。行内头像就是 Threadbase 内的 viewers，`N attached` 是 tmux 自己的 client 数（包含本机终端），`X driving` 是当前 driver。隐藏 presence 的账号不会出现在头像里。
+- 如果 tmux 的 live cwd 位于某个已注册 project 内，行内显示 project 名，并出现 **+**：从该 session 创建一个 thread。服务端用 cwd 推断 project，线程默认使用隔离 worktree，首条消息可以预填“从 tmux session 继续”；同一 session 只能绑定一个 thread。
+- 创建后 `tmux_links` 记录 `(socket, $N, created_at)` 指纹和 thread；会话被 kill 后 `$N` 被新 session 复用时不会误认领旧 thread。tmux 行会出现 `thread` 标记和打开入口。
 - **深链**：`/sessions?session=tmux:<socket>:<$N>` 可以直接分享并在打开时 attach；关掉抽屉会移除 query，路径保持不变。
 - 快速切换器：终端抽屉头部的列表按钮打开；桌面是居中 modal，手机是底部 sheet，支持搜索、方向键和 Enter。
 - 这只是读模型，不新建 session 表：thread 仍然存在 SQLite，tmux 仍然是从 tmux 实时读取的运行时对象。`GET /api/sessions` 负责组合、排序和标记 partial failure（某个 tmux socket 读不到时返回 `warnings`，其余照常显示）。
@@ -224,6 +249,7 @@ THREADBASE_DEV_IDENTITY=dev cargo run -p threadbase
 
 - 后端：Rust、axum、sqlx/SQLite、`agent-client-protocol` 5.1、`yrs`/`y-sync`、`rust-embed`。
 - 前端：Vite 8、React 19、TypeScript strict、Mantine 9、TanStack Query、Zustand、CodeMirror 6。
+- 终端字体：JetBrains Mono Nerd Font（OFL 1.1，`web/public/fonts/`）作为 xterm 的字体，保证 eza/lsd 等 Nerd Font 图标在没有本地字体的浏览器里也能显示；本机已安装时优先用 local 字体。
 - 分发：单二进制，内嵌 web 资源；macOS 与 Linux 优先。
 
 

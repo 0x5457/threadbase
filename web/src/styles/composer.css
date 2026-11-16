@@ -128,9 +128,10 @@
 }
 
 /* Pasted images preview above the input; each chip is the upload's progress. */
-.composer-images {
+.composer-attachments {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: 6px;
   padding: 2px 0 6px 30px;
 }
@@ -164,6 +165,41 @@
   position: absolute;
   top: 2px;
   right: 2px;
+}
+
+.composer-file {
+  display: flex;
+  max-width: 300px;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  color: var(--ink-muted);
+}
+
+.composer-file-info {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.composer-file-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-file-size {
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Remote carets from `@tiptap/extension-collaboration-caret`: the label sits
@@ -265,6 +301,13 @@
 
 .composer-tools .stop-btn {
   margin-left: 2px;
+  background: color-mix(in srgb, var(--del) 12%, transparent);
+  color: var(--del);
+}
+
+.composer-tools .stop-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--del) 20%, transparent);
+  color: var(--del);
 }
 
 .composer-tools .spacer {
@@ -474,5 +517,11 @@
 
 .send-btn {
   margin-left: 2px;
+}
+
+/* Dark mode's accent is a light blue; Mantine's default white glyph on it is
+   about 1.9:1. Use the frame ink instead of the filled-button default. */
+[data-mantine-color-scheme="dark"] .composer-tools .send-btn:not(:disabled) {
+  color: var(--chrome);
 }
 

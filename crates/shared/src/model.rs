@@ -809,6 +809,9 @@ pub struct ThreadDto {
     pub pinned: bool,
     pub participants: Vec<Participant>,
     pub pending_approvals: u32,
+    /// A non-empty collaborative composer draft exists for this thread.
+    #[serde(default)]
+    pub has_draft: bool,
     /// Subagents this thread delegated to. Empty for adapters that do not
     /// report them and for threads that never spawned any.
     #[serde(default)]
@@ -1040,6 +1043,10 @@ pub struct AttachmentDto {
     pub id: String,
     pub mime_type: String,
     pub byte_size: i64,
+    /// Original name for display and download; NULL for rows created before
+    /// arbitrary files were supported.
+    #[serde(default)]
+    pub file_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

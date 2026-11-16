@@ -148,7 +148,11 @@ export function parseEventsPage(value: unknown): LiveEventsPage | null {
     threadId,
     events,
     lastSeq,
-    oldestSeq: events[0]?.seq ?? 0,
+    // The server decides whether anything exists before this page: a rewound
+    // thread's surviving log may start at a high sequence with no earlier
+    // branch, so the first event's seq alone cannot answer it.
+    oldestSeq: asNumber(record.oldestSeq) ?? events[0]?.seq ?? 0,
+    hasEarlier: record.hasEarlier === true,
     resync: record.resync === true,
   };
 }

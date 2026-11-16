@@ -81,6 +81,10 @@ pub(crate) fn render(spec: &UnitSpec<'_>) -> String {
     }
     unit.push_str("Restart=on-failure\n");
     unit.push_str("RestartSec=2\n");
+    // Tmux servers are daemonized children. A normal restart must detach the
+    // browser clients, not kill the shells; adapters are stopped explicitly by
+    // the server before it exits.
+    unit.push_str("KillMode=process\n");
     unit.push_str("NoNewPrivileges=yes\n");
     unit.push_str("PrivateTmp=no\n\n");
     unit.push_str("[Install]\n");
@@ -180,6 +184,7 @@ mod tests {
         assert!(unit.contains("THREADBASE_ADMINS=ada@example.com"));
         assert!(unit.contains("EnvironmentFile=-%h/.config/threadbase/env"));
         assert!(unit.contains("\"PATH=/usr/local/bin:/usr/bin\""), "{unit}");
+        assert!(unit.contains("KillMode=process"));
         assert!(unit.contains("WantedBy=default.target"));
         assert!(
             !unit.contains("0.0.0.0"),

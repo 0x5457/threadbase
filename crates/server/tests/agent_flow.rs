@@ -1179,6 +1179,14 @@ async fn agent_prompt_includes_state_summary_when_pending() {
         journal.contains("pending_approvals=1"),
         "agent prompt should report the same pending count; journal:\n{journal}"
     );
+    assert!(
+        journal.contains("status=running"),
+        "the summary must not say idle while a turn is current; journal:\n{journal}"
+    );
+    assert!(
+        !journal.contains("current_turn=-"),
+        "the summary must include the turn it just recorded; journal:\n{journal}"
+    );
 }
 
 #[tokio::test]
@@ -1601,6 +1609,94 @@ async fn snapshot_revisions_are_monotonic() {
 }
 
 #[tokio::test]
+async fn uploaded_files_download_and_reach_the_prompt() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, 1).await;
+    let body = b"# Notes\nhello from a file";
+
+    let mut upload = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{}/attachments", fixture.thread.id))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "text/markdown")
+        .header("x-attachment-name", "notes.md")
+        .header("cookie", format!("threadbase_session={session}"))
+        .body(Body::from(body.to_vec()))
+        .unwrap();
+    upload
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(upload).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let attachment: threadbase_shared::AttachmentDto = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(attachment.mime_type, "text/markdown");
+    assert_eq!(attachment.file_name.as_deref(), Some("notes.md"));
+
+    let mut read = Request::builder()
+        .method("GET")
+        .uri(format!("/api/attachments/{}", attachment.id))
+        .header("host", "localhost")
+        .header("cookie", format!("threadbase_session={session}"))
+        .body(Body::empty())
+        .unwrap();
+    read.extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(read).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/octet-stream"
+    );
+    assert!(response
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("notes.md"));
+    let served = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(served.as_ref(), body);
+
+    let attachments = threadbase_server::attachments::resolve(
+        &fixture.state.pool,
+        fixture.thread.id.as_str(),
+        &[attachment.id],
+    )
+    .await
+    .unwrap();
+    let parts = threadbase_server::attachments::prompt_parts(&fixture.state.pool, &attachments)
+        .await
+        .unwrap();
+    let threadbase_agent::PromptPart::Text(text) = &parts[0] else {
+        panic!("expected a text prompt part");
+    };
+    assert!(text.contains("notes.md"), "{text}");
+    assert!(text.contains("hello from a file"), "{text}");
+}
+
+#[tokio::test]
 async fn pasted_images_upload_serve_and_reach_the_agent() {
     use axum::body::Body;
     use axum::extract::ConnectInfo;
@@ -1628,6 +1724,7 @@ async fn pasted_images_upload_serve_and_reach_the_agent() {
         .header("origin", "http://localhost")
         .header("x-requested-with", "threadbase")
         .header("content-type", "image/png")
+        .header("x-attachment-name", "pasted.png")
         .header("cookie", format!("threadbase_session={session}"))
         .body(Body::from(png.to_vec()))
         .unwrap();
@@ -1645,6 +1742,7 @@ async fn pasted_images_upload_serve_and_reach_the_agent() {
     let attachment: threadbase_shared::AttachmentDto = serde_json::from_slice(&body).unwrap();
     assert_eq!(attachment.mime_type, "image/png");
     assert_eq!(attachment.byte_size, i64::try_from(png.len()).unwrap());
+    assert_eq!(attachment.file_name.as_deref(), Some("pasted.png"));
 
     let mut read = Request::builder()
         .method("GET")

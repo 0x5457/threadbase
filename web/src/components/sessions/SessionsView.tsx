@@ -21,10 +21,11 @@ import {
   IconSearch,
 } from "@tabler/icons-react";
 import { useState } from "react";
-import { listSessions, type SessionSummary } from "../../api";
+import { listSessions, type SessionSummary, type TmuxSessionSummary } from "../../api";
 import { sessionKey, sessionMatches } from "../../lib/sessions";
 import { EmptyState } from "../EmptyState";
 import { SessionRow } from "./SessionRow";
+import { ThreadFromTmuxDialog } from "./ThreadFromTmuxDialog";
 
 type Filter = "all" | "thread" | "tmux";
 
@@ -69,6 +70,9 @@ export function SessionsView({
   const phone = useMediaQuery("(max-width: 47.99em)");
   const [filter, setFilter] = useState<Filter>("all");
   const [needle, setNeedle] = useState("");
+  const [threadSession, setThreadSession] = useState<TmuxSessionSummary | null>(
+    null,
+  );
   const [debounced] = useDebouncedValue(needle.trim().toLowerCase(), 120);
   const sessions = useQuery({
     queryKey: ["sessions"],
@@ -104,7 +108,7 @@ export function SessionsView({
             </Text>
             <Text size="sm" c="dimmed">
               {hostEnabled
-                ? "Threads and tmux sessions on this machine. Tmux sessions are shared with every member."
+                ? "Threads and tmux sessions on this machine. Tmux sessions are shared; one browser drives at a time."
                 : "Threads and terminal shells on this machine."}
             </Text>
           </Box>
@@ -222,12 +226,23 @@ export function SessionsView({
                   session={row.session}
                   onOpen={row.onOpen}
                   onOpenShell={row.onOpenShell}
+                  onOpenLinkedThread={onOpenThread}
+                  onStartThread={setThreadSession}
                 />
               );
             })}
           </div>
         </ScrollArea>
       )}
+      <ThreadFromTmuxDialog
+        opened={threadSession !== null}
+        session={threadSession}
+        onClose={() => setThreadSession(null)}
+        onCreated={(thread) => {
+          setThreadSession(null);
+          onOpenThread(thread.id);
+        }}
+      />
     </div>
   );
 }

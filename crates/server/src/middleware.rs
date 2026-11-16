@@ -13,7 +13,7 @@ use threadbase_shared::{ApiError, ErrorCode};
 const CUSTOM_HEADER: &str = "x-requested-with";
 const CUSTOM_VALUE: &str = "threadbase";
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; \
-     style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; \
      font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; \
      base-uri 'none'; form-action 'self'";
 

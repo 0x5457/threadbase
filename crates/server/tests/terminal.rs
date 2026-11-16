@@ -700,8 +700,8 @@ async fn members_list_and_drive_host_tmux_sessions() {
     assert_eq!(session["name"], "work");
     assert_eq!(session["cwd"], project.as_str());
 
-    // Every member may drive a host session, and the room is shared: a second
-    // member is not demoted to a watcher.
+    // Every member may drive a host session, but only one browser holds the
+    // keyboard at a time; a watcher can take over explicitly.
     let (status, body) = fixture
         .call(
             Method::POST,
@@ -716,7 +716,8 @@ async fn members_list_and_drive_host_tmux_sessions() {
     let ready = next_json(&mut member).await;
     assert_eq!(ready["type"], "ready");
     assert_eq!(ready["role"], "controller");
-    assert_eq!(ready["shared"], true);
+    assert_eq!(ready["canTakeOver"], true);
+    assert_eq!(ready["viewerUsers"].as_array().unwrap().len(), 1);
 
     for ch in "echo host-round-trip\r".chars() {
         member
@@ -753,8 +754,99 @@ async fn members_list_and_drive_host_tmux_sessions() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body["ticket"].is_string());
+    let admin_ticket = body["ticket"].as_str().unwrap().to_owned();
+    let mut admin = fixture.connect_host(&fixture.admin, &admin_ticket).await;
+    let ready = next_json(&mut admin).await;
+    assert_eq!(ready["type"], "ready");
+    assert_eq!(ready["role"], "watcher");
+    assert_eq!(ready["canTakeOver"], true);
+    assert_eq!(ready["viewerUsers"].as_array().unwrap().len(), 2);
 
+    let mut viewer_event = Value::Null;
+    for _ in 0..20 {
+        let message = next_json(&mut member).await;
+        if message["type"] == "viewers" {
+            viewer_event = message;
+            break;
+        }
+    }
+    assert_eq!(
+        viewer_event["viewerUsers"].as_array().unwrap().len(),
+        2,
+        "{viewer_event}"
+    );
+
+    admin
+        .send(WsMessage::Text(
+            json!({ "type": "take" }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let mut admin_control = Value::Null;
+    for _ in 0..30 {
+        let message = next_json(&mut admin).await;
+        if message["type"] == "control" {
+            admin_control = message;
+            break;
+        }
+    }
+    assert_eq!(admin_control["role"], "controller", "{admin_control}");
+    let mut member_control = Value::Null;
+    for _ in 0..30 {
+        let message = next_json(&mut member).await;
+        if message["type"] == "control" {
+            member_control = message;
+            break;
+        }
+    }
+    assert_eq!(member_control["role"], "watcher", "{member_control}");
+    assert_eq!(member_control["controller"], fixture.admin.as_str());
+
+    // The previous driver's bytes are dropped by the controller check, not
+    // merely hidden by the UI.
+    for ch in "echo old-driver\r".chars() {
+        member
+            .send(WsMessage::Text(
+                json!({ "type": "input", "data": ch.to_string() })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    for ch in "echo new-driver\r".chars() {
+        admin
+            .send(WsMessage::Text(
+                json!({ "type": "input", "data": ch.to_string() })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let mut echoed = String::new();
+    for _ in 0..80 {
+        let message = next_json(&mut admin).await;
+        if message["type"] == "output" {
+            echoed.push_str(message["data"].as_str().unwrap_or_default());
+        }
+        if echoed.matches("new-driver").count() >= 2 {
+            break;
+        }
+    }
+    assert!(
+        echoed.matches("new-driver").count() >= 2,
+        "new driver keystrokes did not arrive: {echoed:?}"
+    );
+    assert!(
+        !echoed.contains("old-driver"),
+        "the previous driver's input leaked: {echoed:?}"
+    );
+
+    drop(admin);
     drop(member);
     let _ = std::process::Command::new("tmux")
         .args(["-L", &socket, "kill-server"])

@@ -220,11 +220,14 @@ export function sendMessage(
   );
 }
 
-/** Upload one pasted image; the prompt references it by id. */
+/** Upload one pasted/picked file; the prompt references it by id. */
 export function uploadAttachment(threadId: string, file: Blob) {
+  const name =
+    file instanceof File && file.name ? file.name : "attachment";
   return binaryRequest<ThreadAttachment>(
     `/api/threads/${threadId}/attachments`,
     file,
+    { "x-attachment-name": encodeURIComponent(name) },
   );
 }
 

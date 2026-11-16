@@ -9,7 +9,7 @@
 //! the socket presents.
 
 use crate::app::AppState;
-use crate::auth::{load_user_by_id, CurrentUser};
+use crate::auth::{load_user_briefs, load_user_by_id, CurrentUser};
 use crate::authz;
 use crate::error::ServerError;
 use crate::terminal::{self, Access, Attachment, Role, SessionRef, TerminalError, TicketGrant};
@@ -28,7 +28,7 @@ use threadbase_shared::{
     ApiError, AttachTerminalSessionRequest, CreateTerminalSessionRequest, ErrorCode,
     HostTerminalAttachResponse, HostTerminalServerDto, HostTerminalSessionDto,
     HostTerminalSessionsResponse, TerminalSessionDto, TerminalSessionResponse,
-    TerminalSessionsResponse, UserAccess, UserId,
+    TerminalSessionsResponse, UserAccess, UserBrief, UserId,
 };
 
 const DEFAULT_COLS: u16 = 120;
@@ -90,7 +90,7 @@ fn gate(state: &AppState, user: &CurrentUser) -> Result<Access, ServerError> {
 
 /// Host tmux is a second opt-in: every member gets a writable shell as the
 /// service account, so it is not implied by `THREADBASE_TERMINAL=1`.
-fn host_gate(state: &AppState, user: &CurrentUser) -> Result<(), ServerError> {
+pub(crate) fn host_gate(state: &AppState, user: &CurrentUser) -> Result<(), ServerError> {
     if !state.config.terminal || !state.config.terminal_host {
         return Err(ServerError(ApiError::not_found("unknown endpoint")));
     }
@@ -215,7 +215,7 @@ fn host_session_dto(
     }
 }
 
-fn host_socket_allowed(state: &AppState, socket: &str) -> bool {
+pub(crate) fn host_socket_allowed(state: &AppState, socket: &str) -> bool {
     state
         .config
         .terminal_host_sockets
@@ -383,27 +383,43 @@ async fn kill_session(
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
-    Input { data: String },
-    Resize { cols: u16, rows: u16 },
+    Input {
+        data: String,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    /// Ask for the keyboard in a host room. Workbench rooms ignore it.
+    Take,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ServerMessage {
+    #[serde(rename_all = "camelCase")]
     Ready {
         role: &'static str,
         session: String,
         cwd: String,
         controller: Option<String>,
         viewers: u32,
-        /// Host rooms let every writable client type at once.
-        shared: bool,
+        /// Visible viewer profiles; hidden-presence accounts are omitted.
+        viewer_users: Vec<UserBrief>,
+        /// True when this socket may send `take`.
+        can_take_over: bool,
     },
     Output {
         data: String,
     },
     Control {
         controller: Option<String>,
+        /// Present for takeover rooms; the receiver adopts this role.
+        role: Option<&'static str>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Viewers {
+        viewer_users: Vec<UserBrief>,
     },
     Exit {
         code: i32,
@@ -493,7 +509,7 @@ async fn upgrade(
         }
     };
     Ok(ws
-        .on_upgrade(move |socket| run(socket, state, room, attachment, role, user))
+        .on_upgrade(move |socket| run(socket, state, room, attachment, role, false, user))
         .into_response())
 }
 
@@ -618,6 +634,7 @@ async fn host_upgrade(
     let role = room
         .claim(user.user.id.as_str(), !watch_only)
         .map_err(map_terminal_error)?;
+    let can_take_over = room.allows_takeover() && !watch_only;
     let attachment = match terminal::attach(&room, DEFAULT_COLS, DEFAULT_ROWS, role) {
         Ok(attachment) => attachment,
         Err(error) => {
@@ -626,7 +643,7 @@ async fn host_upgrade(
         }
     };
     Ok(ws
-        .on_upgrade(move |socket| run(socket, state, room, attachment, role, user))
+        .on_upgrade(move |socket| run(socket, state, room, attachment, role, can_take_over, user))
         .into_response())
 }
 
@@ -635,7 +652,8 @@ async fn run(
     state: AppState,
     room: std::sync::Arc<terminal::Room>,
     mut attachment: Attachment,
-    role: Role,
+    mut role: Role,
+    can_take_over: bool,
     user: CurrentUser,
 ) {
     let user_id = user.user.id.as_str().to_owned();
@@ -646,6 +664,9 @@ async fn run(
     let (mut sender, mut receiver) = socket.split();
     let mut events = room.subscribe();
     let mut output_open = true;
+    let viewer_users = load_user_briefs(&state.pool, &room.viewer_ids())
+        .await
+        .unwrap_or_default();
 
     let ready = ServerMessage::Ready {
         role: role.as_str(),
@@ -653,7 +674,8 @@ async fn run(
         cwd: room.cwd.to_string_lossy().into_owned(),
         controller: room.controller(),
         viewers: room.viewers(),
-        shared: room.shared(),
+        viewer_users,
+        can_take_over,
     };
     if send(&mut sender, &ready).await.is_err() {
         room.release(&user_id, role);
@@ -684,13 +706,48 @@ async fn run(
                 break;
             }
             event = events.recv() => {
-                if let Ok(terminal::RoomEvent::Control(controller)) = event {
-                    let _ = send(&mut sender, &ServerMessage::Control { controller }).await;
+                match event {
+                    Ok(terminal::RoomEvent::Control(controller)) => {
+                        if room.allows_takeover() {
+                            role = if controller.as_deref() == Some(user_id.as_str()) {
+                                Role::Controller
+                            } else {
+                                Role::Watcher
+                            };
+                        }
+                        let next = room.allows_takeover().then_some(role.as_str());
+                        let _ = send(
+                            &mut sender,
+                            &ServerMessage::Control { controller, role: next },
+                        )
+                        .await;
+                    }
+                    Ok(terminal::RoomEvent::Viewers) => {
+                        let viewer_users =
+                            load_user_briefs(&state.pool, &room.viewer_ids())
+                                .await
+                                .unwrap_or_default();
+                        let _ = send(
+                            &mut sender,
+                            &ServerMessage::Viewers { viewer_users },
+                        )
+                        .await;
+                    }
+                    Err(_) => {}
                 }
             }
             incoming = receiver.next() => {
                 let Some(Ok(message)) = incoming else { break };
-                handle_client(&message, &attachment, role, &state, &room).await;
+                handle_client(
+                    &message,
+                    &attachment,
+                    &mut role,
+                    &state,
+                    &room,
+                    &user_id,
+                    can_take_over,
+                )
+                .await;
             }
             _ = ticker.tick() => {
                 flush(&mut sender, &mut pending, &attachment).await;
@@ -707,9 +764,11 @@ async fn run(
 async fn handle_client(
     message: &Message,
     attachment: &Attachment,
-    role: Role,
+    role: &mut Role,
     state: &AppState,
     room: &terminal::Room,
+    user_id: &str,
+    can_take_over: bool,
 ) {
     let Message::Text(text) = message else {
         return;
@@ -719,20 +778,19 @@ async fn handle_client(
     };
     match client {
         ClientMessage::Input { data } => {
-            // tmux already drops keystrokes from a read-only client; this keeps
-            // the bytes off the wire as well.
-            if role == Role::Controller && !data.is_empty() {
+            // The room controller is authoritative, not this socket's cached
+            // role: a takeover must stop the previous driver's bytes on the
+            // very next frame.
+            if room.controller().as_deref() == Some(user_id) && !data.is_empty() {
                 attachment.write(data.into_bytes());
             }
         }
         ClientMessage::Resize { cols, rows } => {
             // Every client sizes its own pty so tmux crops instead of wrapping;
-            // only the driver owns the shared window geometry.
+            // only the driver owns the shared window geometry. Host rooms are
+            // left to tmux's own window-size policy.
             attachment.resize(cols, rows);
-            // Host rooms are shared: every viewer sizes its own pty and tmux's
-            // window-size policy decides what the session window becomes. A
-            // workbench room keeps the exclusive driver's geometry.
-            if role != Role::Controller || room.shared() {
+            if room.controller().as_deref() != Some(user_id) || room.allows_takeover() {
                 return;
             }
             let state = state.clone();
@@ -744,6 +802,21 @@ async fn handle_client(
                     .resize_window(&socket, &session_id, cols, rows)
                     .await;
             });
+        }
+        ClientMessage::Take => {
+            if !can_take_over {
+                return;
+            }
+            // Re-check the live account row: a member downgraded after the
+            // ticket was minted must not take the keyboard on an open socket.
+            let allowed = load_user_by_id(&state.pool, user_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|user| user.is_admin || matches!(user.access, UserAccess::Member));
+            if allowed && room.takeover(user_id) {
+                *role = Role::Controller;
+            }
         }
     }
 }

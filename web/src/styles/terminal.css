@@ -1,3 +1,12 @@
+@font-face {
+  font-family: "Threadbase Nerd Mono";
+  src: local("JetBrainsMono Nerd Font"), local("JetBrainsMonoNF"),
+    url("/fonts/JetBrainsMonoNerdFont-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 /* ── terminal drawer ──────────────────────────────────────── */
 
 /* The drawer is the third grid row of `.main`: transcript, composer, terminal.
@@ -125,11 +134,6 @@
 .terminal-notice[data-kind="error"],
 .terminal-notice[data-kind="exited"] {
   background: color-mix(in srgb, var(--brand) 8%, var(--chrome));
-}
-
-.terminal-notice[data-kind="shared"] {
-  background: color-mix(in srgb, var(--add) 7%, var(--chrome));
-  color: var(--ink-muted);
 }
 
 .terminal-body {

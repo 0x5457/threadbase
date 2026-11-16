@@ -74,6 +74,8 @@ async fn handle_socket(
                             let mut room = room.lock().await;
                             room.apply(&bytes)
                         };
+                        let text_changed = applied.text_changed;
+                        let has_text = applied.has_text;
                         if !applied.limits_ok {
                             tracing::warn!(thread_id, "draft limits exceeded; dropping room");
                             state.drafts.drop_room(&thread_id).await;
@@ -99,6 +101,13 @@ async fn handle_socket(
                             }
                             if let Err(error) = state.drafts.persist_update(&thread_id, &update).await {
                                 tracing::warn!(%error, thread_id, "failed to persist draft update");
+                            }
+                        }
+                        if text_changed {
+                            if let Err(error) =
+                                state.drafts.set_has_text(&thread_id, has_text).await
+                            {
+                                tracing::warn!(%error, thread_id, "failed to persist draft marker");
                             }
                         }
                     }

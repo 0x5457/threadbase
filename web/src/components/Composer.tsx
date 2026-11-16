@@ -1,19 +1,26 @@
 import { ActionIcon, Loader } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
-import { IconX } from "@tabler/icons-react";
-import { memo, useEffect, useState } from "react";
+import { notifications } from "@mantine/notifications";
+import { useQueryClient } from "@tanstack/react-query";
+import { IconFileText, IconX } from "@tabler/icons-react";
+import { memo, useEffect, useRef, useState } from "react";
+import type { ThreadSummary } from "../api";
 import type { Usage } from "../api/types/Usage";
+import { attachmentSize, isTextLike } from "../lib/attachments";
 import { PickerAgentContext } from "../lib/model-prefs";
 import { ComposerInput } from "./composer/ComposerInput";
 import { ComposerSkeleton } from "./composer/ComposerSkeleton";
 import { ComposerToolbar } from "./composer/ComposerToolbar";
 import { useComposerEditor } from "./composer/useComposerEditor";
-import { useComposerImages } from "./composer/useComposerImages";
+import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerSession } from "./composer/useComposerSession";
 import {
   dismissComposerSuggestions,
   useComposerSuggestions,
 } from "./composer/useComposerSuggestions";
+
+/** Pastes longer than this become a text attachment instead of bloating the editor. */
+const LARGE_PASTE_CHARS = 8_000;
 
 interface ComposerProps {
   threadId?: string;
@@ -167,7 +174,34 @@ const ComposerBody = memo(function ComposerBody({
     suggestionExtension: extension,
     autoFocus,
   });
-  const images = useComposerImages(threadId, session.writable);
+  const attachments = useComposerAttachments(threadId, session.writable);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const queryClient = useQueryClient();
+  const lastDraftThread = useRef(threadId);
+
+  // The server persists the marker, but the author should see it as soon as
+  // they type. Only set it here; clearing waits for the server flag so a
+  // half-loaded editor cannot erase an existing draft marker.
+  useEffect(() => {
+    if (lastDraftThread.current !== threadId) {
+      lastDraftThread.current = threadId;
+      return;
+    }
+    if (!threadId || !hasText) return;
+    queryClient.setQueryData<{ threads: ThreadSummary[] }>(
+      ["threads-all"],
+      (current) => {
+        if (!current) return current;
+        let changed = false;
+        const threads = current.threads.map((thread) => {
+          if (thread.id !== threadId || thread.hasDraft) return thread;
+          changed = true;
+          return { ...thread, hasDraft: true };
+        });
+        return changed ? { ...current, threads } : current;
+      },
+    );
+  }, [hasText, queryClient, threadId]);
 
   const send = () => {
     void session
@@ -175,10 +209,13 @@ const ComposerBody = memo(function ComposerBody({
         editor,
         setHasText,
         () => dismissComposerSuggestions(editor),
-        images.attachmentIds,
+        attachments.attachmentIds,
       )
       .then((sent) => {
-        if (sent) images.clear();
+        if (sent) {
+          attachments.clear();
+          void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
+        }
       });
   };
 
@@ -190,13 +227,48 @@ const ComposerBody = memo(function ComposerBody({
         className="composer"
         onPasteCapture={(event) => {
           if (!session.writable) return;
-          const files = Array.from(event.clipboardData?.files ?? []).filter(
-            (file) => file.type.startsWith("image/"),
-          );
+          const files = Array.from(event.clipboardData?.files ?? []);
+          if (files.length > 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            void attachments.accept(files);
+            return;
+          }
+          const text = event.clipboardData?.getData("text/plain") ?? "";
+          if (text.length < LARGE_PASTE_CHARS) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const file = new File([text], `pasted-${stamp}.txt`, {
+            type: "text/plain",
+          });
+          void attachments.accept([file]).then((accepted) => {
+            if (accepted) {
+              notifications.show({
+                message: `Pasted text attached as ${file.name}`,
+                color: "teal",
+              });
+            } else {
+              // Never lose a paste because the local upload failed.
+              editor.chain().focus().insertContent({ type: "text", text }).run();
+            }
+          });
+        }}
+        onDragOver={(event) => {
+          if (
+            session.writable &&
+            event.dataTransfer.types.includes("Files")
+          ) {
+            event.preventDefault();
+          }
+        }}
+        onDrop={(event) => {
+          if (!session.writable) return;
+          const files = Array.from(event.dataTransfer.files);
           if (files.length === 0) return;
           event.preventDefault();
           event.stopPropagation();
-          void images.accept(files);
+          void attachments.accept(files);
         }}
         onKeyDownCapture={(event) => {
           // Enter sends from the editor, not from every control that happens
@@ -230,28 +302,68 @@ const ComposerBody = memo(function ComposerBody({
         }}
       >
         <div className="composer-inner">
-          {images.images.length > 0 ? (
-            <div className="composer-images">
-              {images.images.map((image) => (
-                <div key={image.key} className="composer-image">
-                  <img src={image.url} alt="" />
-                  {image.status === "uploading" ? (
-                    <span className="composer-image-busy">
-                      <Loader size={14} />
-                    </span>
-                  ) : null}
-                  <ActionIcon
-                    className="composer-image-remove"
-                    size={16}
-                    variant="filled"
-                    color="gray"
-                    aria-label="Remove image"
-                    onClick={() => images.remove(image.key)}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              void attachments.accept(files);
+            }}
+          />
+          {attachments.items.length > 0 ? (
+            <div className="composer-attachments">
+              {attachments.items.map((item) =>
+                item.isImage ? (
+                  <div key={item.key} className="composer-image">
+                    <img src={item.url} alt={item.name} />
+                    {item.status === "uploading" ? (
+                      <span className="composer-image-busy">
+                        <Loader size={14} />
+                      </span>
+                    ) : null}
+                    <ActionIcon
+                      className="composer-image-remove"
+                      size={16}
+                      variant="filled"
+                      color="gray"
+                      aria-label={`Remove ${item.name}`}
+                      onClick={() => attachments.remove(item.key)}
+                    >
+                      <IconX size={10} stroke={2} />
+                    </ActionIcon>
+                  </div>
+                ) : (
+                  <div
+                    key={item.key}
+                    className="composer-file"
+                    title={item.name}
                   >
-                    <IconX size={10} stroke={2} />
-                  </ActionIcon>
-                </div>
-              ))}
+                    <IconFileText size={18} stroke={1.5} />
+                    <span className="composer-file-info">
+                      <span className="composer-file-name">{item.name}</span>
+                      <span className="composer-file-size">
+                        {attachmentSize(item.byteSize)}
+                        {isTextLike(item.mimeType, item.name) ? " · text" : ""}
+                      </span>
+                    </span>
+                    {item.status === "uploading" ? (
+                      <Loader size={12} />
+                    ) : null}
+                    <ActionIcon
+                      size={16}
+                      variant="filled"
+                      color="gray"
+                      aria-label={`Remove ${item.name}`}
+                      onClick={() => attachments.remove(item.key)}
+                    >
+                      <IconX size={10} stroke={2} />
+                    </ActionIcon>
+                  </div>
+                ),
+              )}
             </div>
           ) : null}
           <ComposerInput
@@ -274,6 +386,7 @@ const ComposerBody = memo(function ComposerBody({
             liveLabel={session.liveLabel}
             onThreadComment={onThreadComment}
             onOpenTrigger={(kind) => openTrigger(kind, editor)}
+            onPickFiles={() => fileInputRef.current?.click()}
             delivery={session.delivery}
             onDeliveryChange={session.setDelivery}
             modelLabel={session.modelLabel}
@@ -286,9 +399,9 @@ const ComposerBody = memo(function ComposerBody({
             onModelChange={onModelChange}
             onEffortChange={onEffortChange}
             onConfigOpen={session.ensureConfig}
-            hasText={hasText || images.images.length > 0}
+            hasText={hasText || attachments.items.length > 0}
             sending={session.sending}
-            sendBlocked={session.sendBlocked || images.uploading}
+            sendBlocked={session.sendBlocked || attachments.uploading}
             sendLabel={session.sendLabel}
             sendWithModifier={sendWithModifier}
             running={running}

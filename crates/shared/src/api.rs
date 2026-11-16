@@ -327,6 +327,10 @@ pub struct EventsPageDto {
     pub events: Vec<EventEnvelope>,
     pub last_seq: u64,
     pub oldest_seq: u64,
+    /// Whether the stored log has events older than `oldest_seq`. A rewound
+    /// thread starts mid-sequence with no earlier branch, so a non-zero
+    /// `oldest_seq` is not enough to decide whether "load earlier" applies.
+    pub has_earlier: bool,
     pub resync: bool,
 }
 

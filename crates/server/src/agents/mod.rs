@@ -115,6 +115,19 @@ impl AgentManager {
         self.shutdown_session(thread_id).await;
     }
 
+    /// Stop every live adapter before the process exits. The systemd unit uses
+    /// `KillMode=process` so tmux servers survive a restart; that also means
+    /// agent children must be reaped explicitly here.
+    pub async fn shutdown_all(&self) {
+        let ids: Vec<String> = {
+            let sessions = self.inner.sessions.lock().await;
+            sessions.keys().cloned().collect()
+        };
+        for thread_id in ids {
+            self.shutdown_session(&thread_id).await;
+        }
+    }
+
     /// Whether this session's workspace holds a goal it keeps working on
     /// without prompts. Errors read as "no goal": never keep a session alive
     /// because a database read failed.
@@ -336,6 +349,12 @@ impl AgentManager {
         let attachments = attachments.clone();
         let cutoff = turn.seq;
 
+        // Serialize against `ensure_started` (queue worker, concurrent sends).
+        // Without this a worker that already read the old queue head could
+        // start an adapter between our shutdown and the truncation, then send
+        // the message the rewind is supposed to discard.
+        let start_guard = self.inner.starts.lock(thread_id).await;
+
         // Stop the current adapter before touching its log. `cancel` also
         // supersedes queued input and clears pending approvals/questions; the
         // unconditional pass below covers an adapter that was already gone.
@@ -386,6 +405,24 @@ impl AgentManager {
             .bind(thread_id)
             .execute(&self.inner.pool)
             .await?;
+        // Notifications about turns and comments that no longer exist would
+        // otherwise send people back to a message that is gone.
+        let inbox_users: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT user_id FROM inbox WHERE thread_id = ? AND created_at >= ?",
+        )
+        .bind(thread_id)
+        .bind(turn.ts)
+        .fetch_all(&self.inner.pool)
+        .await
+        .unwrap_or_default();
+        sqlx::query("DELETE FROM inbox WHERE thread_id = ? AND created_at >= ?")
+            .bind(thread_id)
+            .bind(turn.ts)
+            .execute(&self.inner.pool)
+            .await?;
+        for user_id in inbox_users {
+            crate::inbox::publish_count(&self.inner.pool, &self.inner.projection, &user_id).await;
+        }
         // The old ACP session contains the discarded tail. Clearing the id is
         // what makes `ensure_started` create a new conversation instead of
         // resuming it.
@@ -393,6 +430,7 @@ impl AgentManager {
         crate::search::reindex_thread(&self.inner.pool, thread_id).await?;
         self.inner.projection.publish_rewound(thread_id);
         self.inner.projection.publish(thread_id).await;
+        drop(start_guard);
 
         let author = user_brief(user);
         self.send_with_authors(thread_id, user, text, None, &[author], &attachments)
@@ -1174,6 +1212,14 @@ async fn prepare_and_prompt(
     session: &Session,
     start: TurnStart<'_>,
 ) -> Result<(TurnHandle, MessageId), ServerError> {
+    // A rewind, archive or delete may have shut this session down after the
+    // caller claimed a start. Never write a prompt for an adapter that is gone:
+    // it would resurrect part of a turn after the log was truncated.
+    if session.is_stopped() {
+        return Err(ServerError(ApiError::conflict(
+            "the agent session was stopped; try again",
+        )));
+    }
     // Git, title and event preparation happens before any harness lock.
     lifecycle::auto_title(&inner.pool, &inner.events, start.thread_id, start.prompt).await;
     snapshot_worktree(inner, start.thread_id).await;
@@ -1215,11 +1261,11 @@ async fn prepare_and_prompt(
     }
     let mut parts = vec![PromptPart::text(start.prompt)];
     parts.extend(image_parts);
-    if let Some(summary) = inner.projection.summary(start.thread_id).await {
-        parts.push(PromptPart::text(summary));
-    }
     // Mark the thread Running before the prompt is issued: any completion event
     // from the harness then necessarily arrives after the Prompt transition.
+    // Read the summary after this transition too: built before it, the text
+    // said `status=idle` next to the turn id it had just written, which gave
+    // the agent a contradictory picture of its own thread.
     threads::transition(
         &inner.pool,
         &inner.projection,
@@ -1227,6 +1273,9 @@ async fn prepare_and_prompt(
         ThreadAction::Prompt,
     )
     .await?;
+    if let Some(summary) = inner.projection.summary(start.thread_id).await {
+        parts.push(PromptPart::text(summary));
+    }
     // Harness IPC only. The turn lock stays free while the prompt is issued.
     let prompt_result = {
         let mut harness = session.harness.lock().await;
@@ -1445,13 +1494,13 @@ async fn prune_rewound_comments(
         let Ok(anchor) = serde_json::from_str::<CommentAnchor>(&json) else {
             continue;
         };
-        let removed = match anchor {
+        let stale = match anchor {
             CommentAnchor::Message { message_id } => messages.contains(&message_id),
             CommentAnchor::ToolCall { tool_call_id } => tools.contains(&tool_call_id),
             CommentAnchor::Elicitation { elicitation_id } => elicitations.contains(&elicitation_id),
             _ => false,
         };
-        if removed {
+        if stale {
             let _ = sqlx::query("DELETE FROM comments WHERE id = ?")
                 .bind(&id)
                 .execute(pool)

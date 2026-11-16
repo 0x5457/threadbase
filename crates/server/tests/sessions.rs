@@ -6,6 +6,7 @@ use axum::http::{Method, Request, StatusCode};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::net::{IpAddr, SocketAddr};
+use std::path::Path;
 use tempfile::TempDir;
 use threadbase_server::app::AppState;
 use threadbase_server::auth_session;
@@ -65,6 +66,7 @@ async fn fixture(host: bool) -> Fixture {
     .execute(&pool)
     .await
     .unwrap();
+    init_repo(worktree.path());
 
     let pinned = thread(&pool, &project, "Pinned", "idle", 1, now - 300, now - 300).await;
     let running = thread(
@@ -101,6 +103,23 @@ async fn fixture(host: bool) -> Fixture {
         member,
         read_only,
     }
+}
+
+fn init_repo(path: &Path) {
+    let run = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    run(&["init", "-q", "-b", "main"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "Test"]);
+    std::fs::write(path.join("README.md"), "fixture\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "init"]);
 }
 
 async fn user(pool: &SqlitePool, name: &str, admin: bool, access: &str) -> String {
@@ -340,6 +359,78 @@ async fn host_tmux_is_omitted_when_its_feature_is_off() {
         .all(|session| session["kind"] == "thread"));
     // Clean up the private tmux server created by the fixture's terminal test
     // setup, if any.
+    let _ = std::process::Command::new("tmux")
+        .args(["-L", &fixture.socket, "kill-server"])
+        .status();
+}
+
+#[tokio::test]
+async fn a_tmux_session_can_become_a_thread() {
+    if which::which("tmux").is_err() {
+        return;
+    }
+    let fixture = fixture(true).await;
+    let created = std::process::Command::new("tmux")
+        .args([
+            "-L",
+            &fixture.host_socket,
+            "new-session",
+            "-d",
+            "-s",
+            "api",
+            "-c",
+            fixture.worktree.path().to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(created.success());
+
+    let (status, body) = fixture
+        .call(
+            Method::POST,
+            &format!("/api/tmux/sessions/{}/%240/thread", fixture.host_socket),
+            &fixture.member,
+            Some(json!({
+                "title": "From tmux",
+                "agent": "codex",
+                "worktree": false
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let thread_id = body["thread"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(body["thread"]["title"], "From tmux");
+    assert_eq!(body["thread"]["status"], "idle");
+
+    let (status, body) = fixture
+        .call(Method::GET, "/api/sessions", &fixture.member, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tmux = body["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["kind"] == "tmux" && session["name"] == "api")
+        .unwrap();
+    assert_eq!(tmux["projectName"], "repo");
+    assert_eq!(tmux["link"]["threadId"], thread_id.as_str());
+    assert_eq!(tmux["link"]["threadTitle"], "From tmux");
+
+    // A second click on the same session is rejected rather than creating a
+    // duplicate thread.
+    let (status, _) = fixture
+        .call(
+            Method::POST,
+            &format!("/api/tmux/sessions/{}/%240/thread", fixture.host_socket),
+            &fixture.member,
+            Some(json!({ "worktree": false })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let _ = std::process::Command::new("tmux")
+        .args(["-L", &fixture.host_socket, "kill-server"])
+        .status();
     let _ = std::process::Command::new("tmux")
         .args(["-L", &fixture.socket, "kill-server"])
         .status();

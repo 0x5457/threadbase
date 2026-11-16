@@ -10,7 +10,8 @@ type Options = {
 };
 
 const FONT_STACK =
-  'ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, monospace';
+  '"Threadbase Nerd Mono", ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, monospace';
+const FONT_SIZE = 12.5;
 
 /** Terminal colours follow the app palette instead of shipping a theme. */
 function readTheme() {
@@ -103,7 +104,7 @@ export function useXterm({ disabled, onData, onResize }: Options) {
         convertEol: false,
         cursorBlink: true,
         fontFamily: FONT_STACK,
-        fontSize: 12.5,
+        fontSize: FONT_SIZE,
         lineHeight: 1.25,
         scrollback: 5000,
         theme: readTheme(),
@@ -172,6 +173,19 @@ export function useXterm({ disabled, onData, onResize }: Options) {
       if (!disabled) terminal.focus();
       setReady(true);
       resizeRef.current(terminal.cols, terminal.rows);
+      // The Nerd Font has 1 MB of icon glyphs and may arrive after the first
+      // paint. Re-measure and repaint once it is actually available, otherwise
+      // xterm keeps the fallback font's cell metrics and shows tofu boxes.
+      void document.fonts.ready.then(() => {
+        if (disposed) return;
+        try {
+          fit.fit();
+          terminal.refresh(0, Math.max(0, terminal.rows - 1));
+        } catch {
+          return;
+        }
+        resizeRef.current(terminal.cols, terminal.rows);
+      });
     })();
 
     return () => {

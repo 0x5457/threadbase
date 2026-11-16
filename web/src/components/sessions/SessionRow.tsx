@@ -2,13 +2,16 @@ import { ActionIcon, Tooltip } from "@mantine/core";
 import {
   IconChevronRight,
   IconMessage,
+  IconPencil,
   IconPin,
+  IconPlus,
   IconTerminal2,
 } from "@tabler/icons-react";
 import { stateLabel } from "../../lib/machine";
 import { fullTime, timeAgo } from "../../lib/sessions";
-import type { SessionSummary } from "../../api";
+import type { SessionSummary, TmuxSessionSummary } from "../../api";
 import { statusTone } from "../thread/StatusDot";
+import { ViewerAvatars } from "../ViewerAvatars";
 
 function plural(count: number, word: string) {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
@@ -25,20 +28,31 @@ function ThreadDetail({ session }: { session: Extract<SessionSummary, { kind: "t
           <i className={`dot ${statusTone(session.status)}`} />
           {stateLabel("thread", session.status)}
         </span>
+        {session.hasDraft ? (
+          <span className="session-chip" title="Draft saved">
+            <IconPencil size={11} stroke={1.5} />
+            draft
+          </span>
+        ) : null}
         {session.pendingApprovals > 0 ? (
           <span className="session-chip session-chip-warn">
             {session.pendingApprovals} waiting
           </span>
         ) : null}
         {session.terminal ? (
-          <span className="session-chip">
-            <IconTerminal2 size={11} stroke={1.5} />
-            shell
-            {session.terminal.canDrive ? "" : " · watch"}
-            {session.terminal.viewers > 0
-              ? ` · ${session.terminal.viewers} here`
-              : ""}
-          </span>
+          <>
+            <span className="session-chip">
+              <IconTerminal2 size={11} stroke={1.5} />
+              shell
+              {session.terminal.canDrive ? "" : " · watch"}
+            </span>
+            <ViewerAvatars users={session.terminal.viewers} size={15} />
+            {session.terminal.controller ? (
+              <span className="session-chip session-chip-live">
+                {session.terminal.controller.displayName || "someone"} driving
+              </span>
+            ) : null}
+          </>
         ) : null}
       </span>
     </>
@@ -53,12 +67,25 @@ function TmuxDetail({ session }: { session: Extract<SessionSummary, { kind: "tmu
         {plural(session.windows, "window")}
       </span>
       <span className="session-detail">
-        <span className="session-chip" title="Every member can attach and type">
+        {session.projectName ? (
+          <span className="session-chip">{session.projectName}</span>
+        ) : null}
+        <span className="session-chip" title="Every member can attach; one browser drives">
           shared
         </span>
-        {session.viewers > 0 ? (
+        {session.link?.threadId ? (
+          <span
+            className="session-chip"
+            title={session.link.threadTitle ?? "Linked thread"}
+          >
+            <IconMessage size={11} stroke={1.5} />
+            thread
+          </span>
+        ) : null}
+        <ViewerAvatars users={session.viewers} size={15} />
+        {session.controller ? (
           <span className="session-chip session-chip-live">
-            {session.viewers} here
+            {session.controller.displayName || "someone"} driving
           </span>
         ) : null}
         {session.attached > 0 ? (
@@ -87,6 +114,8 @@ export function SessionRow({
   active = false,
   onOpen,
   onOpenShell,
+  onOpenLinkedThread,
+  onStartThread,
   onHover,
 }: {
   session: SessionSummary;
@@ -95,6 +124,8 @@ export function SessionRow({
   active?: boolean;
   onOpen: (session: SessionSummary) => void;
   onOpenShell?: (threadId: string) => void;
+  onOpenLinkedThread?: (threadId: string) => void;
+  onStartThread?: (session: TmuxSessionSummary) => void;
   onHover?: () => void;
 }) {
   const title = session.kind === "thread" ? session.title : session.name;
@@ -105,6 +136,25 @@ export function SessionRow({
     session.kind === "thread" && session.terminal && onOpenShell
       ? onOpenShell
       : null;
+  const tmuxAction = (() => {
+    if (session.kind !== "tmux") return null;
+    if (session.link?.threadId && onOpenLinkedThread) {
+      const threadId = session.link.threadId;
+      return {
+        label: "Open linked thread",
+        icon: <IconMessage size={14} stroke={1.5} />,
+        onClick: () => onOpenLinkedThread(threadId),
+      };
+    }
+    if (session.projectId && onStartThread) {
+      return {
+        label: "Start a thread from this session",
+        icon: <IconPlus size={14} stroke={1.5} />,
+        onClick: () => onStartThread(session),
+      };
+    }
+    return null;
+  })();
 
   return (
     <div
@@ -169,6 +219,16 @@ export function SessionRow({
             onClick={() => shellAction(session.id)}
           >
             <IconTerminal2 size={14} stroke={1.5} />
+          </ActionIcon>
+        </Tooltip>
+      ) : tmuxAction ? (
+        <Tooltip label={tmuxAction.label}>
+          <ActionIcon
+            className="session-shell-action"
+            aria-label={tmuxAction.label}
+            onClick={tmuxAction.onClick}
+          >
+            {tmuxAction.icon}
           </ActionIcon>
         </Tooltip>
       ) : null}

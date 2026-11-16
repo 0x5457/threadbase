@@ -10,6 +10,11 @@ use threadbase_core::state::{
 };
 use threadbase_shared::{now_ms, ApiError, SubagentDto, SubagentLogEntryDto, SubagentStatus};
 
+/// Only recent delegations can still have a live worker on disk. Keep the
+/// status probe off the historical rows that make up most of a long-lived
+/// sidebar.
+const LIVE_STATUS_WINDOW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
 #[derive(FromRow)]
 struct SubagentRow {
     id: String,
@@ -27,7 +32,7 @@ struct SubagentRow {
 }
 
 pub async fn list(pool: &SqlitePool, thread_id: &str) -> Result<Vec<SubagentDto>, ServerError> {
-    let rows = sqlx::query_as::<_, SubagentRow>(
+    let mut rows = sqlx::query_as::<_, SubagentRow>(
         "SELECT id, thread_id, parent_id, title, description, status, cwd, can_cancel,
                 usage_json, last_seq, created_at, updated_at
          FROM subagents WHERE thread_id = ? ORDER BY created_at ASC",
@@ -35,6 +40,9 @@ pub async fn list(pool: &SqlitePool, thread_id: &str) -> Result<Vec<SubagentDto>
     .bind(thread_id)
     .fetch_all(pool)
     .await?;
+    for row in &mut rows {
+        apply_live_status(row);
+    }
     Ok(rows.into_iter().map(to_dto).collect())
 }
 
@@ -61,7 +69,8 @@ pub async fn list_for_threads(
         .fetch_all(pool)
         .await?;
     let mut out: HashMap<String, Vec<SubagentDto>> = HashMap::new();
-    for row in rows {
+    for mut row in rows {
+        apply_live_status(&mut row);
         out.entry(row.thread_id.clone())
             .or_default()
             .push(to_dto(row));
@@ -203,18 +212,30 @@ pub async fn transcript(
         return Err(ServerError(ApiError::not_found("subagent not found")));
     };
     let parent_id = parent_id.as_deref();
-    let run_id = match cwd
+    let workflow_run = cwd
         .as_deref()
         .and_then(|value| value.strip_prefix("pi-subagent:"))
-    {
-        Some(run) if valid_run_id(run) => run.to_owned(),
-        _ => match event_run_id(pool, thread_id, &id, parent_id, &title).await {
-            Some(run) => run,
-            None => match receipt_run_id(parent_id.unwrap_or(&id), &title) {
-                Some(run) => run,
-                None => return Ok(failure_entries(pool, thread_id, subagent_id).await),
-            },
-        },
+        .filter(|run| valid_run_id(run));
+    let mut run_id = None;
+    if let Some(workflow) = workflow_run {
+        // A single delegation stores its session under the run id itself. A
+        // detached workflow's row points at the workflow run, while the
+        // actual conversation lives in one of its children; the child run id
+        // is only published in the async run's status file.
+        if session_file(workflow).is_some() {
+            run_id = Some(workflow.to_owned());
+        } else {
+            run_id = workflow_child_run(workflow, &title);
+        }
+    }
+    if run_id.is_none() {
+        run_id = event_run_id(pool, thread_id, &id, parent_id, &title).await;
+    }
+    if run_id.is_none() {
+        run_id = receipt_run_id(parent_id.unwrap_or(&id), &title);
+    }
+    let Some(run_id) = run_id else {
+        return Ok(failure_entries(pool, thread_id, subagent_id).await);
     };
     let Some(file) = session_file(&run_id) else {
         return Ok(failure_entries(pool, thread_id, subagent_id).await);
@@ -457,6 +478,160 @@ fn receipt_run_id(parent_id: &str, title: &str) -> Option<String> {
     None
 }
 
+/// pi reports a detached workflow child as idle once its launch returns, even
+/// while the child keeps running in a separate process. The async run's
+/// `status.json` stays current, so prefer it over the stale event state
+/// whenever the row points at a pi subagent run.
+fn apply_live_status(row: &mut SubagentRow) {
+    if now_ms().saturating_sub(row.created_at) > LIVE_STATUS_WINDOW_MS {
+        return;
+    }
+    let Some(run_id) = row
+        .cwd
+        .as_deref()
+        .and_then(|value| value.strip_prefix("pi-subagent:"))
+        .filter(|run| valid_run_id(run))
+    else {
+        return;
+    };
+    let Some(status) = workflow_step_status(run_id, &row.title) else {
+        return;
+    };
+    let current = parse_subagent_status(&row.status).unwrap_or(SubagentStatus::Idle);
+    // A child waiting on its own question is not made active by the workflow
+    // still running, and a terminal row must not come back to life.
+    if SubagentMachine::is_terminal(current) || current == SubagentStatus::RequiresAction {
+        return;
+    }
+    row.status = subagent_status_str(status).to_owned();
+}
+
+fn workflow_step_status(run_id: &str, title: &str) -> Option<SubagentStatus> {
+    let value = read_workflow_status(run_id)?;
+    if let Some(steps) = value.get("steps").and_then(serde_json::Value::as_array) {
+        for step in steps {
+            if !step_matches(step, title) {
+                continue;
+            }
+            return step
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .and_then(step_status);
+        }
+        // A workflow names its children; a step that is not in the file is a
+        // different delegation, not the whole run's state.
+        if !steps.is_empty() {
+            return None;
+        }
+    }
+    value
+        .get("state")
+        .and_then(serde_json::Value::as_str)
+        .and_then(step_status)
+}
+
+fn step_status(value: &str) -> Option<SubagentStatus> {
+    match value {
+        "running" | "started" | "active" | "in_progress" => Some(SubagentStatus::Running),
+        "requires_action" | "blocked" => Some(SubagentStatus::RequiresAction),
+        "completed" | "succeeded" | "done" => Some(SubagentStatus::Idle),
+        "failed" | "error" => Some(SubagentStatus::Error),
+        "cancelled" | "canceled" => Some(SubagentStatus::Cancelled),
+        _ => None,
+    }
+}
+
+fn step_matches(step: &serde_json::Value, title: &str) -> bool {
+    ["label", "workflowKey", "childId"]
+        .iter()
+        .any(|key| step.get(*key).and_then(serde_json::Value::as_str) == Some(title))
+}
+
+fn workflow_child_run(run_id: &str, title: &str) -> Option<String> {
+    for dir in workflow_run_dirs(run_id) {
+        if let Ok(text) = std::fs::read_to_string(dir.join("status.json")) {
+            if let Some(run) = child_run_from_status(&text, title) {
+                return Some(run);
+            }
+        }
+        if let Ok(text) = std::fs::read_to_string(dir.join("workflow-children.jsonl")) {
+            if let Some(run) = child_run_from_children(&text, title) {
+                return Some(run);
+            }
+        }
+    }
+    None
+}
+
+fn read_workflow_status(run_id: &str) -> Option<serde_json::Value> {
+    for dir in workflow_run_dirs(run_id) {
+        let Ok(text) = std::fs::read_to_string(dir.join("status.json")) else {
+            continue;
+        };
+        if let Ok(value) = serde_json::from_str(&text) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn workflow_run_dirs(run_id: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("pi-subagents-uid-")
+        {
+            continue;
+        }
+        let dir = entry.path().join("async-subagent-runs").join(run_id);
+        if dir.is_dir() {
+            out.push(dir);
+        }
+    }
+    out
+}
+
+fn child_run_from_status(text: &str, title: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    for step in value.get("steps").and_then(serde_json::Value::as_array)? {
+        if !step_matches(step, title) {
+            continue;
+        }
+        let run = step.get("runId").and_then(serde_json::Value::as_str)?;
+        if valid_run_id(run) {
+            return Some(run.to_owned());
+        }
+    }
+    None
+}
+
+fn child_run_from_children(text: &str, title: &str) -> Option<String> {
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("start") {
+            continue;
+        }
+        let matches = ["key", "childId", "label"]
+            .iter()
+            .any(|key| value.get(*key).and_then(serde_json::Value::as_str) == Some(title));
+        if !matches {
+            continue;
+        }
+        let run = value.get("runId").and_then(serde_json::Value::as_str)?;
+        if valid_run_id(run) {
+            return Some(run.to_owned());
+        }
+    }
+    None
+}
+
 fn session_file(run_id: &str) -> Option<PathBuf> {
     let root = PathBuf::from(std::env::var_os("HOME")?).join(".pi/agent/sessions");
     for cwd in std::fs::read_dir(root).ok()?.flatten() {
@@ -626,6 +801,94 @@ mod log_tests {
         assert!(valid_run_id("ec23a790-52c7-443e-ae0a-8487d5b4bef3"));
         assert!(!valid_run_id("../etc/passwd"));
         assert!(!valid_run_id(""));
+    }
+
+    #[test]
+    fn active_workflow_children_resolve_and_refresh_status() {
+        let workflow = format!(
+            "00000000-0000-4000-8000-{:012x}",
+            now_ms() as u128 & 0xffff_ffff_ffff
+        );
+        let child = "6be7ad46-2deb-4c01-b08f-e7af5a62b785";
+        let root = std::env::temp_dir().join(format!(
+            "pi-subagents-uid-threadbase-test-{}",
+            std::process::id()
+        ));
+        let dir = root.join("async-subagent-runs").join(&workflow);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write_status = |status: &str| {
+            std::fs::write(
+                dir.join("status.json"),
+                serde_json::json!({
+                    "state": "running",
+                    "steps": [{
+                        "label": "task-1",
+                        "status": status,
+                        "runId": child
+                    }]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        };
+
+        write_status("running");
+        assert_eq!(
+            child_run_from_status(
+                &std::fs::read_to_string(dir.join("status.json")).unwrap(),
+                "task-1"
+            ),
+            Some(child.to_owned())
+        );
+        assert_eq!(
+            workflow_child_run(&workflow, "task-1"),
+            Some(child.to_owned())
+        );
+        assert_eq!(
+            workflow_step_status(&workflow, "task-1"),
+            Some(SubagentStatus::Running)
+        );
+        assert_eq!(
+            workflow_step_status(&workflow, "task-2"),
+            None,
+            "a title that is not a step must not inherit the run state"
+        );
+
+        let mut row = SubagentRow {
+            id: "call/task-1".to_owned(),
+            thread_id: "t".to_owned(),
+            parent_id: Some("call".to_owned()),
+            title: "task-1".to_owned(),
+            description: None,
+            status: "idle".to_owned(),
+            cwd: Some(format!("pi-subagent:{workflow}")),
+            can_cancel: 0,
+            usage_json: None,
+            last_seq: 0,
+            created_at: now_ms(),
+            updated_at: now_ms(),
+        };
+        apply_live_status(&mut row);
+        assert_eq!(row.status, "running");
+
+        write_status("completed");
+        apply_live_status(&mut row);
+        assert_eq!(row.status, "idle");
+
+        // Older pi builds only write the child index, not the full status.
+        std::fs::remove_file(dir.join("status.json")).unwrap();
+        let line = serde_json::json!({
+            "type": "start",
+            "key": "task-1",
+            "runId": child
+        });
+        std::fs::write(dir.join("workflow-children.jsonl"), format!("{line}\n")).unwrap();
+        assert_eq!(
+            workflow_child_run(&workflow, "task-1"),
+            Some(child.to_owned())
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]

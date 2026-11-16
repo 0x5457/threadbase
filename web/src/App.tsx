@@ -338,6 +338,14 @@ function Workspace() {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
 
+  // The meta tag tints mobile browser chrome. It must follow the app's manual
+  // scheme, not `prefers-color-scheme`, because the theme choice is local.
+  useEffect(() => {
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", dark ? "#1c1f24" : "#f4f4f5");
+  }, [dark]);
+
   // Warm the two route chunks once the shell is idle. Opening a thread is the
   // main next step from Inbox, and Settings is one tab away; neither should
   // wait for a download on a phone.

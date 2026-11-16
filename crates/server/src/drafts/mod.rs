@@ -101,6 +101,54 @@ impl DraftHub {
         Ok(())
     }
 
+    /// Persist the sidebar's cheap draft marker. Only empty/non-empty
+    /// transitions reach this method, so it does not write per keystroke.
+    pub(crate) async fn set_has_text(
+        &self,
+        thread_id: &str,
+        has_text: bool,
+    ) -> Result<(), anyhow::Error> {
+        let value = i64::from(has_text);
+        sqlx::query("UPDATE threads SET has_draft = ? WHERE id = ? AND has_draft <> ?")
+            .bind(value)
+            .bind(thread_id)
+            .bind(value)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Recompute markers from persisted draft rows. This runs at startup so
+    /// drafts created before the column existed do not lose their marker.
+    pub async fn backfill_flags(&self) -> Result<(), anyhow::Error> {
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM threads WHERE id IN (
+               SELECT thread_id FROM draft_updates
+               UNION SELECT thread_id FROM draft_snapshots
+             )",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for thread_id in ids {
+            match self.room(&thread_id).await {
+                Ok(room) => {
+                    let has_text = {
+                        let room = room.lock().await;
+                        room.has_text()
+                    };
+                    if let Err(error) = self.set_has_text(&thread_id, has_text).await {
+                        tracing::warn!(%error, %thread_id, "failed to backfill draft marker");
+                    }
+                    self.drop_room(&thread_id).await;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, %thread_id, "failed to load draft for marker backfill");
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn snapshot(&self, thread_id: &str, upto_seq: u64) -> Result<(), anyhow::Error> {
         let room = self.room(thread_id).await?;
         let full = {
@@ -168,6 +216,10 @@ impl DraftHub {
             let mut room = room.lock().await;
             room.take_draft()
         };
+        // A send always clears the marker, including the empty/empty case.
+        if let Err(error) = self.set_has_text(thread_id, false).await {
+            tracing::warn!(%error, %thread_id, "failed to clear draft marker");
+        }
         if taken.0.is_empty() && taken.1.is_empty() {
             return Ok(taken);
         }
@@ -194,6 +246,56 @@ mod tests {
 
     fn update_message(bytes: Vec<u8>) -> Vec<u8> {
         Envelope::Sync(SyncMessage::Update(bytes)).encode_v1()
+    }
+
+    #[tokio::test]
+    async fn draft_marker_tracks_text_and_backfills() {
+        let pool = db::connect_memory().await.unwrap();
+        let (_, _, thread) = seed_thread(&pool).await;
+        let hub = DraftHub::new(pool.clone());
+        let thread_id = thread.as_str();
+
+        let room = hub.room(thread_id).await.unwrap();
+        let mut other = DraftDoc::new();
+        threadbase_draft::seed_text(&mut other, "u1", &["hello"]).unwrap();
+        let encoded = other.encode_full();
+        let applied = {
+            let mut room = room.lock().await;
+            room.apply(&update_message(encoded.clone()))
+        };
+        assert!(applied.limits_ok);
+        assert!(applied.text_changed);
+        assert!(applied.has_text);
+        hub.persist_update(thread_id, &encoded).await.unwrap();
+        hub.set_has_text(thread_id, applied.has_text).await.unwrap();
+
+        let flag: i64 = sqlx::query_scalar("SELECT has_draft FROM threads WHERE id = ?")
+            .bind(thread_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(flag, 1);
+
+        // A restart reloads the draft; backfill must restore the marker even
+        // when the cached room is gone.
+        hub.drop_room(thread_id).await;
+        hub.set_has_text(thread_id, false).await.unwrap();
+        hub.backfill_flags().await.unwrap();
+        let flag: i64 = sqlx::query_scalar("SELECT has_draft FROM threads WHERE id = ?")
+            .bind(thread_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(flag, 1);
+
+        // Consuming the draft clears the marker.
+        hub.take_draft(thread_id).await.unwrap();
+        let flag: i64 = sqlx::query_scalar("SELECT has_draft FROM threads WHERE id = ?")
+            .bind(thread_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(flag, 0);
     }
 
     #[tokio::test]

@@ -35,7 +35,9 @@ import { useXterm } from "./use-xterm";
 // The phase union is generated from the `terminal` machine; no hand-written
 // string set to drift from the catalogue.
 import type { TerminalPhase } from "../../api/types/TerminalPhase";
+import type { UserBrief } from "../../api/types/UserBrief";
 import { can } from "../../lib/machine";
+import { ViewerAvatars } from "../ViewerAvatars";
 
 type ServerMessage =
   | {
@@ -45,10 +47,16 @@ type ServerMessage =
       cwd: string;
       controller: string | null;
       viewers: number;
-      shared: boolean;
+      viewerUsers: UserBrief[];
+      canTakeOver: boolean;
     }
   | { type: "output"; data: string }
-  | { type: "control"; controller: string | null }
+  | {
+      type: "control";
+      controller: string | null;
+      role: "controller" | "watcher" | null;
+    }
+  | { type: "viewers"; viewerUsers: UserBrief[] }
   | { type: "exit"; code: number };
 
 /** Keys the browser or xterm swallows, one tap away from the drawer footer. */
@@ -154,8 +162,8 @@ export function TerminalDrawer({
     null,
   );
   const [controller, setController] = useState<string | null>(null);
-  const [viewers, setViewers] = useState(0);
-  const [shared, setShared] = useState(false);
+  const [viewerUsers, setViewerUsers] = useState<UserBrief[]>([]);
+  const [canTakeOver, setCanTakeOver] = useState(false);
   const [sessionName, setSessionName] = useState(
     target.kind === "host" ? (target.name ?? target.id) : "",
   );
@@ -203,6 +211,15 @@ export function TerminalDrawer({
     onData,
     onResize,
   });
+  // A takeover promotes a watcher in place. Move focus into xterm once the
+  // keyboard becomes available, but do not steal focus on a fresh attach.
+  const wasController = useRef(role === "controller");
+  useEffect(() => {
+    if (role === "controller" && !wasController.current && phase === "live") {
+      focus();
+    }
+    wasController.current = role === "controller";
+  }, [focus, phase, role]);
 
   useEffect(() => {
     if (!ready) return;
@@ -248,8 +265,8 @@ export function TerminalDrawer({
             case "ready":
               setRole(message.role);
               setController(message.controller);
-              setViewers(message.viewers);
-              setShared(message.shared);
+              setViewerUsers(message.viewerUsers);
+              setCanTakeOver(message.canTakeOver);
               setCwd(message.cwd);
               setPhase("live");
               void queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -259,6 +276,12 @@ export function TerminalDrawer({
               break;
             case "control":
               setController(message.controller);
+              if (message.role) setRole(message.role);
+              void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+              break;
+            case "viewers":
+              setViewerUsers(message.viewerUsers);
+              void queryClient.invalidateQueries({ queryKey: ["sessions"] });
               break;
             case "exit":
               setExitCode(message.code);
@@ -334,6 +357,10 @@ export function TerminalDrawer({
     setAttempt((current) => current + 1);
   };
 
+  const takeOver = () => {
+    send({ type: "take" });
+  };
+
   const kill = async () => {
     const session = sessionRef.current;
     if (!session || session.kind === "host") {
@@ -350,11 +377,17 @@ export function TerminalDrawer({
   };
 
   const canDrive = role === "controller" && can("terminal", phase, "drive");
-  const watchNote = shared
-    ? "Watching this shared tmux session. Reopen it from the session list to type."
-    : controller === null
-      ? "Watching: nobody is driving. Only an administrator can type in this shell."
-      : `Watching: ${controller} is driving. The keyboard is off for you.`;
+  const driver = viewerUsers.find((user) => user.id === controller)?.displayName;
+  const watchNote =
+    target.kind === "host"
+      ? controller === null
+        ? "Nobody is driving."
+        : driver
+          ? `${driver} is driving.`
+          : "Someone is driving."
+      : controller === null
+        ? "Watching: nobody is driving. Only an administrator can type in this shell."
+        : `Watching: ${driver ?? "Someone"} is driving. The keyboard is off for you.`;
   const title =
     target.kind === "host"
       ? `tmux · ${sessionName || target.id}`
@@ -413,18 +446,22 @@ export function TerminalDrawer({
         </Text>
         <div className="terminal-head-gap" />
         {phase === "live" ? (
-          shared ? (
-            <Tooltip label="Every attached client can type at the same time">
-              <Text size="xs" c="dimmed" className="terminal-role">
-                shared{viewers > 1 ? ` · ${viewers}` : ""}
-              </Text>
-            </Tooltip>
-          ) : (
-            <Text size="xs" c="dimmed" className="terminal-role">
+          <>
+            <ViewerAvatars users={viewerUsers} size={16} />
+            <Text
+              size="xs"
+              c="dimmed"
+              className="terminal-role"
+              title={
+                target.kind === "host"
+                  ? "One browser drives at a time; local tmux clients can still type."
+                  : undefined
+              }
+            >
               {role === "controller" ? "driving" : "watching"}
-              {viewers > 1 ? ` · ${viewers}` : ""}
+              {viewerUsers.length > 1 ? ` · ${viewerUsers.length}` : ""}
             </Text>
-          )
+          </>
         ) : null}
         {onBrowse ? (
           <Tooltip label="Switch session">
@@ -524,14 +561,11 @@ export function TerminalDrawer({
       {phase === "live" && role === "watcher" ? (
         <div className="terminal-notice" data-kind="watching">
           <Text size="xs">{watchNote}</Text>
-        </div>
-      ) : null}
-
-      {phase === "live" && shared && role === "controller" ? (
-        <div className="terminal-notice" data-kind="shared">
-          <Text size="xs">
-            Shared shell. Other clients can type at the same time.
-          </Text>
+          {target.kind === "host" && canTakeOver ? (
+            <Button variant="light" size="compact-xs" onClick={takeOver}>
+              Take over
+            </Button>
+          ) : null}
         </div>
       ) : null}
 

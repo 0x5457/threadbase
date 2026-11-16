@@ -95,7 +95,7 @@ export function EditMessageDialog({
           <Button
             onClick={() => void save()}
             loading={busy}
-            disabled={trimmed.length === 0 || unchanged}
+            disabled={busy || trimmed.length === 0 || unchanged}
           >
             Save &amp; restart
           </Button>

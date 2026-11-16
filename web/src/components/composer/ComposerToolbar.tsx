@@ -4,6 +4,7 @@ import {
   IconAt,
   IconCommand,
   IconEye,
+  IconPaperclip,
   IconPlayerStopFilled,
   IconTerminal2,
   IconMessagePlus,
@@ -24,6 +25,7 @@ interface ComposerToolbarProps {
   liveLabel: string;
   onThreadComment?: () => void;
   onOpenTrigger: (kind: "command" | "file") => void;
+  onPickFiles: () => void;
   delivery: ComposerDelivery;
   onDeliveryChange: (delivery: ComposerDelivery) => void;
   modelLabel: string;
@@ -56,6 +58,7 @@ export function ComposerToolbar({
   liveLabel,
   onThreadComment,
   onOpenTrigger,
+  onPickFiles,
   delivery,
   onDeliveryChange,
   modelLabel,
@@ -92,6 +95,17 @@ export function ComposerToolbar({
           </ActionIcon>
         </Tooltip>
       ) : null}
+      <Tooltip label="Attach files">
+        <ActionIcon
+          aria-label="Attach files"
+          className="composer-insert-btn"
+          size={22}
+          onClick={onPickFiles}
+          disabled={!writable}
+        >
+          <IconPaperclip size={14} stroke={1.5} />
+        </ActionIcon>
+      </Tooltip>
       <Tooltip label="Reference a file">
         <ActionIcon
           aria-label="Reference a file"
@@ -171,7 +185,7 @@ export function ComposerToolbar({
         onEffortChange={onEffortChange}
         onOpen={onConfigOpen}
       />
-      {running && onStop ? (
+      {running && !hasText && onStop ? (
         <Tooltip label="Stop the agent">
           <ActionIcon
             aria-label="Stop the agent"
@@ -186,8 +200,7 @@ export function ComposerToolbar({
             <IconPlayerStopFilled size={13} stroke={1.5} />
           </ActionIcon>
         </Tooltip>
-      ) : null}
-      {running && !hasText ? null : (
+      ) : (
         <Tooltip label={sendLabel}>
           <Box component="span" style={{ display: "inline-flex" }}>
             <ActionIcon

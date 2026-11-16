@@ -7,7 +7,7 @@ import {
   IconInfoCircle,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
@@ -169,6 +169,15 @@ export const SubagentThreadView = memo(function SubagentThreadView({
     refetchInterval: subagent.status === "running" ? 3_000 : false,
     staleTime: 2_000,
   });
+  // The interval stops as soon as the run finishes, which can happen between
+  // the last poll and the final session write. Fetch once more on that edge.
+  const refetchLog = log.refetch;
+  const wasRunning = useRef(subagent.status === "running");
+  useEffect(() => {
+    const running = subagent.status === "running";
+    if (wasRunning.current && !running) void refetchLog();
+    wasRunning.current = running;
+  }, [refetchLog, subagent.status]);
   const entries = log.data?.entries ?? [];
 
   // Consecutive tool rows become one collapsible run; everything else keeps

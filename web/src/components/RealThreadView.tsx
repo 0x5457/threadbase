@@ -140,7 +140,7 @@ function TimelineRowImpl({
   editing: string | null;
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
-  onEditMessage: (item: Extract<ViewItem, { kind: "message" }>) => void;
+  onEditMessage?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onMessageLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
 }) {
   const toolRow = (tool: ToolItem, nested = false) => (
@@ -458,6 +458,9 @@ export const RealThreadView = memo(function RealThreadView({
   const scrollerRef = useRef<HTMLElement | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
   const stickRef = useRef(true);
+  const removeScrollerListenerRef = useRef<(() => void) | null>(null);
+  /** Coalesce Virtuoso height notifications into one follow per frame. */
+  const followFrameRef = useRef(0);
   // Virtuoso's firstItemIndex keeps the viewport anchored when older rows are
   // prepended; the absolute indices only ever grow downwards.
   const [firstItemIndex, setFirstItemIndex] = useState(1_000_000);
@@ -686,6 +689,104 @@ export const RealThreadView = memo(function RealThreadView({
     },
     [],
   );
+
+  // `followOutput` stops following as soon as Virtuoso's at-bottom estimate
+  // goes false. A tall tool result or a batch of streamed lines can cross that
+  // line before the next frame, which used to leave the reader permanently
+  // short of the tail with the "Jump to latest" button showing. Follow our own
+  // pin instead: only an upward scroll by the reader releases it.
+  const followTail = useCallback(() => {
+    if (!stickRef.current || followFrameRef.current !== 0) return;
+    followFrameRef.current = window.requestAnimationFrame(() => {
+      followFrameRef.current = 0;
+      if (stickRef.current) scrollToLatest("auto", true);
+    });
+  }, [scrollToLatest]);
+
+  const bindScroller = useCallback((element: HTMLElement | Window | null) => {
+    removeScrollerListenerRef.current?.();
+    removeScrollerListenerRef.current = null;
+    if (!(element instanceof HTMLElement)) {
+      scrollerRef.current = null;
+      return;
+    }
+    scrollerRef.current = element;
+    const unpin = () => {
+      if (!stickRef.current || element.scrollTop <= 0) return;
+      stickRef.current = false;
+      setStickToBottom(false);
+    };
+    const onScroll = () => {
+      const gap = element.scrollHeight - element.scrollTop - element.clientHeight;
+      if (gap > 32 || stickRef.current) return;
+      stickRef.current = true;
+      setStickToBottom(true);
+    };
+    // Unpin from explicit reader input, never from `scrollTop` moving on its
+    // own. Virtuoso re-anchors the viewport while streaming rows grow, and that
+    // adjustment used to look exactly like a reader scrolling up.
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) unpin();
+    };
+    let touchStartY: number | null = null;
+    const onTouchStart = (event: TouchEvent) => {
+      touchStartY = event.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY;
+      if (touchStartY !== null && y !== undefined && y > touchStartY + 6) {
+        unpin();
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "PageUp" &&
+        event.key !== "Home" &&
+        event.key !== "ArrowUp"
+      ) {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("input, textarea, [contenteditable='true']")
+      ) {
+        return;
+      }
+      unpin();
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const rect = element.getBoundingClientRect();
+      // A press on the scrollbar track/thumb is an explicit scroll gesture;
+      // the scroll handler alone cannot tell it apart from re-anchoring.
+      if (event.clientX >= rect.left + element.clientWidth - 1) unpin();
+    };
+    element.addEventListener("scroll", onScroll, { passive: true });
+    element.addEventListener("wheel", onWheel, { passive: true });
+    element.addEventListener("touchstart", onTouchStart, { passive: true });
+    element.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("keydown", onKeyDown);
+    element.addEventListener("pointerdown", onPointerDown);
+    removeScrollerListenerRef.current = () => {
+      element.removeEventListener("scroll", onScroll);
+      element.removeEventListener("wheel", onWheel);
+      element.removeEventListener("touchstart", onTouchStart);
+      element.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("keydown", onKeyDown);
+      element.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      removeScrollerListenerRef.current?.();
+      if (followFrameRef.current !== 0) {
+        window.cancelAnimationFrame(followFrameRef.current);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     let cancelled = false;
     const timers: number[] = [];
@@ -704,7 +805,10 @@ export const RealThreadView = memo(function RealThreadView({
         timers.push(window.setTimeout(step, 100));
         return;
       }
-      scrollToLatest();
+      // Opening a thread always lands on the latest message. The first jump is
+      // forced because Virtuoso may still place the last row at the top; the
+      // later corrections respect a reader who has already scrolled away.
+      scrollToLatest("auto", true);
       scrollLater(300);
       scrollLater(900);
     };
@@ -1255,20 +1359,14 @@ export const RealThreadView = memo(function RealThreadView({
       >
         <Virtuoso
           ref={virtuosoRef}
-          scrollerRef={(element) => {
-            if (element instanceof HTMLElement) scrollerRef.current = element;
-          }}
+          scrollerRef={bindScroller}
           className="thread-scroll"
           data={rows}
           firstItemIndex={firstItemIndex}
           initialTopMostItemIndex={
             firstItemIndex + Math.max(0, rows.length - 1)
           }
-          followOutput={(atBottom) => (atBottom ? "smooth" : false)}
-          atBottomStateChange={(atBottom) => {
-            stickRef.current = atBottom;
-            setStickToBottom(atBottom);
-          }}
+          totalListHeightChanged={followTail}
           increaseViewportBy={{ top: 600, bottom: 800 }}
           computeItemKey={(index, item) =>
             item.kind === "message"
@@ -1355,7 +1453,7 @@ export const RealThreadView = memo(function RealThreadView({
                 expanded={expandedRows}
                 onToggleExpanded={toggleExpandedRow}
                 onComment={commentOnMessage}
-                onEditMessage={openMessageEdit}
+                onEditMessage={writable ? openMessageEdit : undefined}
                 onMessageLongPress={openMessageSheet}
             />
             );
@@ -1391,7 +1489,7 @@ export const RealThreadView = memo(function RealThreadView({
         actions={
           messageSheet
             ? [
-                ...(messageSheet.role === "user"
+                ...(messageSheet.role === "user" && writable
                   ? [
                       {
                         label: "Edit message",
@@ -1473,9 +1571,9 @@ export const RealThreadView = memo(function RealThreadView({
             watching={watching}
             terminalUsers={terminalUsers}
             onThreadComment={openThreadComment}
-            running={canStop}
+            running={canStop && writable}
             stopping={stopping}
-            onStop={() => void stopTurn()}
+            onStop={writable ? () => void stopTurn() : undefined}
           />
         </Suspense>
       </div>

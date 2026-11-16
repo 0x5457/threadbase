@@ -182,11 +182,11 @@ impl EventStore {
         };
         // A cold page may have dropped its oldest turns to fit the wire
         // budget, so its first seq (not the thread's oldest) is the cursor the
-        // client needs for "load earlier". After a rewind the surviving log
-        // starts mid-sequence with nothing before it: report 0 so the client
-        // does not offer an empty "load earlier" row.
+        // client needs for "load earlier". `has_earlier` distinguishes that
+        // from a rewound log that happens to start mid-sequence with no prior
+        // branch at all.
         let first_seq = events.first().map(|event| event.seq).unwrap_or(0);
-        let has_before: bool = if first_seq == 0 {
+        let has_earlier: bool = if first_seq == 0 {
             false
         } else {
             sqlx::query_scalar(
@@ -197,12 +197,13 @@ impl EventStore {
             .fetch_one(&self.pool)
             .await?
         };
-        let oldest_seq = if has_before { first_seq } else { 0 };
+        let oldest_seq = first_seq;
         Ok(EventsPageDto {
             thread_id: thread_id.clone(),
             events,
             last_seq: last,
             oldest_seq,
+            has_earlier,
             resync,
         })
     }
@@ -741,6 +742,7 @@ mod tests {
         assert_eq!(page.events.len(), 3);
         assert_eq!(page.events[0].seq, 3);
         assert!(!page.resync);
+        assert!(page.has_earlier);
 
         sqlx::query("DELETE FROM events WHERE thread_id = ? AND seq IN (1,2)")
             .bind(thread.as_str())
@@ -751,6 +753,10 @@ mod tests {
         assert!(page.resync);
         assert_eq!(page.events.first().map(|event| event.seq), Some(3));
         assert_eq!(page.oldest_seq, 3);
+        assert!(
+            !page.has_earlier,
+            "a deleted prefix is not a load-earlier branch"
+        );
     }
 
     #[tokio::test]

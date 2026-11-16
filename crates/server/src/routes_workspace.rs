@@ -19,7 +19,7 @@ use threadbase_shared::api::{
 };
 use threadbase_shared::{
     Actor, ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse,
-    OkResponse, OlderEventsDto, ProjectResponse, ProjectsResponse, ThreadEvent,
+    OkResponse, OlderEventsDto, ProjectResponse, ProjectsResponse, ThreadDto, ThreadEvent,
     ThreadHistoryResponse, ThreadId, ThreadResponse, ThreadsResponse,
 };
 
@@ -185,13 +185,25 @@ async fn create_thread(
     Path(project_id): Path<String>,
     Json(request): Json<CreateThreadRequest>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
+    let thread = create_thread_and_start(&state, &user, &project_id, &request).await?;
+    Ok(Json(ThreadResponse { thread }))
+}
+
+/// Shared by the normal project route and the "start a thread from this tmux
+/// session" route, so setup and agent kick semantics cannot drift.
+pub(crate) async fn create_thread_and_start(
+    state: &AppState,
+    user: &CurrentUser,
+    project_id: &str,
+    request: &CreateThreadRequest,
+) -> Result<ThreadDto, ServerError> {
     let thread = threads::create(
         &state.pool,
         &state.projection,
         &state.config.data_dir,
-        &user,
-        &project_id,
-        &request,
+        user,
+        project_id,
+        request,
     )
     .await?;
     let manager = state.agents.clone();
@@ -200,9 +212,9 @@ async fn create_thread(
         .initial_prompt
         .as_deref()
         .is_some_and(|prompt| !prompt.trim().is_empty());
-    let setup_started = crate::setup::maybe_start(&state, &thread_id).await?;
+    let setup_started = crate::setup::maybe_start(state, &thread_id).await?;
     let thread = if setup_started {
-        threads::get(&state.pool, &thread_id, &user).await?
+        threads::get(&state.pool, &thread_id, user).await?
     } else {
         thread
     };
@@ -217,7 +229,7 @@ async fn create_thread(
             }
         });
     }
-    Ok(Json(ThreadResponse { thread }))
+    Ok(thread)
 }
 
 async fn list_all_threads(

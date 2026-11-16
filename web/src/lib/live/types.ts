@@ -85,6 +85,8 @@ export interface LiveEventsPage {
   lastSeq: number;
   /** seq of the page's first event, for walking further back. */
   oldestSeq: number;
+  /** The stored log has events before `oldestSeq`. */
+  hasEarlier: boolean;
   resync: boolean;
 }
 

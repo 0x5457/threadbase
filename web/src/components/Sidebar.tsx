@@ -16,6 +16,7 @@ import {
   IconLayoutList,
   IconLogout,
   IconMessage,
+  IconPencil,
   IconPlus,
   IconSettings,
 } from "@tabler/icons-react";
@@ -222,6 +223,17 @@ export const Sidebar = memo(function Sidebar({
                     onNavigate();
                   }}
                   leftSection={<IconMessage size={13} stroke={1.5} />}
+                  rightSection={
+                    thread.hasDraft ? (
+                      <span
+                        className="thread-draft-mark"
+                        title="Draft saved"
+                        aria-label="Draft saved"
+                      >
+                        <IconPencil size={11} stroke={1.5} />
+                      </span>
+                    ) : null
+                  }
                 />
               ))}
             </div>

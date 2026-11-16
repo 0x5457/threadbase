@@ -2,6 +2,7 @@ import { ActionIcon, Avatar, Text } from "@mantine/core";
 import {
   IconAlertCircle,
   IconClock,
+  IconFileText,
   IconMessagePlus,
   IconPencil,
 } from "@tabler/icons-react";
@@ -10,6 +11,11 @@ import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { memo, useMemo, useState } from "react";
+import {
+  attachmentName,
+  attachmentSize,
+  isPreviewableImage,
+} from "../../lib/attachments";
 import type { ViewItem } from "../../lib/thread-events";
 import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
@@ -43,6 +49,12 @@ export const Message = memo(function Message({
   // line inside the bubble; the prompt itself is already trimmed server-side.
   const text = agent ? item.text : item.text.replace(/^\n+|\n+$/g, "");
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const imageAttachments = item.attachments.filter((attachment) =>
+    isPreviewableImage(attachment.mimeType),
+  );
+  const fileAttachments = item.attachments.filter(
+    (attachment) => !isPreviewableImage(attachment.mimeType),
+  );
   // Markdown + syntax highlighting is the expensive part of an agent
   // message, and a streaming turn re-renders every token batch. Keep the
   // streamed text plain and parse markdown once, when the message completes.
@@ -105,20 +117,44 @@ export const Message = memo(function Message({
         >
           <IconMessagePlus size={12} stroke={1.5} />
         </ActionIcon>
-        {item.attachments.length ? (
+        {imageAttachments.length ? (
           <div className="message-images">
-            {item.attachments.map((attachment) => {
+            {imageAttachments.map((attachment) => {
               const url = `/api/attachments/${attachment.id}`;
+              const name = attachmentName(attachment);
               return (
                 <button
                   key={attachment.id}
                   type="button"
                   className="message-image"
                   onClick={() => setLightbox(url)}
-                  aria-label={`Preview image attachment (${attachment.mimeType})`}
+                  aria-label={`Preview ${name}`}
+                  title={name}
                 >
-                  <img src={url} alt="" loading="lazy" />
+                  <img src={url} alt={name} loading="lazy" />
                 </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {fileAttachments.length ? (
+          <div className="message-files">
+            {fileAttachments.map((attachment) => {
+              const name = attachmentName(attachment);
+              return (
+                <a
+                  key={attachment.id}
+                  className="message-file"
+                  href={`/api/attachments/${attachment.id}`}
+                  download={name}
+                  title={`Download ${name}`}
+                >
+                  <IconFileText size={14} stroke={1.5} />
+                  <span className="message-file-name">{name}</span>
+                  <span className="message-file-size">
+                    {attachmentSize(attachment.byteSize)}
+                  </span>
+                </a>
               );
             })}
           </div>

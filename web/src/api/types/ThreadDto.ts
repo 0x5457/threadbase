@@ -36,6 +36,10 @@ export type ThreadDto = {
   participants: Array<Participant>;
   pendingApprovals: number;
   /**
+   * A non-empty collaborative composer draft exists for this thread.
+   */
+  hasDraft: boolean;
+  /**
    * Subagents this thread delegated to. Empty for adapters that do not
    * report them and for threads that never spawned any.
    */

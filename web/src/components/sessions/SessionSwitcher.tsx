@@ -120,6 +120,10 @@ function SwitcherBody({
                 active={index === activeIndex}
                 onHover={() => setActive(index)}
                 onOpen={() => open(session)}
+                onOpenLinkedThread={(threadId) => {
+                  onOpenThread(threadId);
+                  onClose();
+                }}
                 onOpenShell={
                   session.kind === "thread"
                     ? () => {
@@ -134,8 +138,8 @@ function SwitcherBody({
         </ScrollArea.Autosize>
       )}
       <Text size="xs" c="dimmed" className="session-switcher-hint">
-        Threads open the transcript. Tmux opens a shell shared with everyone on
-        this server.
+        Threads open the transcript. Tmux opens a shared shell; take over the
+        keyboard when you need it.
       </Text>
     </div>
   );

@@ -169,10 +169,14 @@
 
 .session-chip {
   display: inline-flex;
+  overflow: hidden;
   flex: none;
   align-items: center;
   gap: 3px;
+  max-width: 24ch;
   padding: 0 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border-radius: 999px;
   background: var(--chrome);
   color: var(--ink-muted);
@@ -298,4 +302,55 @@
   .session-body {
     gap: 1px;
   }
+
+  /* Chips, avatars and the driver name can exceed one 390px line. Wrap them
+     and put the path on its own row instead of clipping the identity away. */
+  .session-detail {
+    flex-wrap: wrap;
+    white-space: normal;
+    row-gap: 2px;
+  }
+
+  .session-cwd {
+    flex-basis: 100%;
+    white-space: nowrap;
+  }
+}
+
+
+/* ── viewer avatars ─────────────────────────────────────────── */
+
+.viewer-avatars {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.viewer-avatars > .viewer-avatar + .viewer-avatar {
+  margin-left: -4px;
+}
+
+.viewer-avatar {
+  display: inline-grid;
+  overflow: hidden;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  box-shadow: 0 0 0 1px var(--paper);
+}
+
+.viewer-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.viewer-avatar-more {
+  background: var(--chrome);
+  color: var(--ink-muted);
 }

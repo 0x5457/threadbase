@@ -11,6 +11,12 @@ try {
     document.documentElement.dataset.mantineColorScheme = theme;
     document.documentElement.style.colorScheme = theme;
   }
+  // Match the phone's browser/status bar to the app frame before the first
+  // paint. React updates this again when the user toggles the theme.
+  const dark = theme === "dark";
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", dark ? "#1c1f24" : "#f4f4f5");
 } catch {
   // Private mode: fall through to the default scheme.
 }

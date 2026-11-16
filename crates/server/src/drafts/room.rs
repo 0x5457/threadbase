@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use threadbase_draft::DraftDoc;
+use threadbase_draft::{DraftDoc, MAX_THREAD_DRAFT_BYTES};
 use tokio::sync::broadcast;
 use y_sync::sync::{DefaultProtocol, Message as SyncMessageEnvelope, Protocol, SyncMessage};
 use yrs::encoding::read::Cursor;
@@ -18,10 +18,14 @@ pub(crate) struct AppliedFrame {
     pub(crate) persisted: Vec<Vec<u8>>,
     /// False when the frame pushed the document past its size limits.
     pub(crate) limits_ok: bool,
+    /// True when the empty/non-empty state changed in this frame.
+    pub(crate) text_changed: bool,
+    pub(crate) has_text: bool,
 }
 
 pub(crate) struct DraftRoom {
     draft: DraftDoc,
+    has_text: bool,
     tx: broadcast::Sender<Vec<u8>>,
     /// Pause doc-update broadcasting while an inbound update is validated.
     broadcast_paused: Arc<AtomicBool>,
@@ -31,12 +35,14 @@ pub(crate) struct DraftRoom {
 
 impl DraftRoom {
     pub(crate) fn new(mut draft: DraftDoc) -> Self {
+        let has_text = !draft.text().trim().is_empty();
         let (tx, _) = broadcast::channel(512);
         let broadcast_paused = Arc::new(AtomicBool::new(false));
         let doc_sub = forward_document_updates(&draft, tx.clone(), broadcast_paused.clone());
         let awareness_sub = forward_awareness(&mut draft, tx.clone());
         Self {
             draft,
+            has_text,
             tx,
             broadcast_paused,
             _doc_sub: doc_sub,
@@ -61,12 +67,18 @@ impl DraftRoom {
         self.draft.encode_full()
     }
 
+    pub(crate) fn has_text(&self) -> bool {
+        self.has_text
+    }
+
     pub(crate) fn peek_draft(&self) -> (String, Vec<String>) {
         (self.draft.text(), self.draft.authors())
     }
 
     pub(crate) fn take_draft(&mut self) -> (String, Vec<String>) {
-        self.draft.take()
+        let taken = self.draft.take();
+        self.has_text = false;
+        taken
     }
 
     /// Apply an inbound sync frame. Doc updates are validated before they are
@@ -76,7 +88,21 @@ impl DraftRoom {
     pub(crate) fn apply(&mut self, bytes: &[u8]) -> AppliedFrame {
         self.broadcast_paused.store(true, Ordering::SeqCst);
         let (direct, persisted) = self.apply_inner(bytes);
-        let limits_ok = self.draft.limits_ok();
+        // Awareness frames change no document text. Skip the (potentially
+        // expensive) text walk for cursor updates; only real doc updates can
+        // move the size or empty/non-empty state.
+        let (limits_ok, has_text, text_changed) = if persisted.is_empty() {
+            (true, self.has_text, false)
+        } else {
+            let text = self.draft.text();
+            let has_text = !text.trim().is_empty();
+            (
+                text.len() <= MAX_THREAD_DRAFT_BYTES,
+                has_text,
+                has_text != self.has_text,
+            )
+        };
+        self.has_text = has_text;
         if limits_ok {
             for update in &persisted {
                 broadcast_update(&self.tx, update);
@@ -88,12 +114,16 @@ impl DraftRoom {
                 direct,
                 persisted,
                 limits_ok,
+                text_changed,
+                has_text,
             }
         } else {
             AppliedFrame {
                 direct: Vec::new(),
                 persisted: Vec::new(),
                 limits_ok,
+                text_changed,
+                has_text,
             }
         }
     }

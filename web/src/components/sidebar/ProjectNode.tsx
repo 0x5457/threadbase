@@ -19,6 +19,7 @@ import {
   IconFolder,
   IconGitBranch,
   IconMessage,
+  IconPencil,
   IconPin,
   IconPinFilled,
   IconPlus,
@@ -122,8 +123,18 @@ const ThreadRow = memo(function ThreadRow({
           thread.pendingApprovals ||
           thread.status === "running" ||
           thread.worktreePath ||
+          thread.hasDraft ||
           subagents.length ? (
             <Group gap={5} wrap="nowrap">
+              {thread.hasDraft ? (
+                <span
+                  className="thread-draft-mark"
+                  title="Draft saved"
+                  aria-label="Draft saved"
+                >
+                  <IconPencil size={11} stroke={1.5} />
+                </span>
+              ) : null}
               {thread.worktreePath ? (
                 <span
                   className="thread-worktree-mark"

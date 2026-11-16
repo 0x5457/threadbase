@@ -2,6 +2,8 @@
 import type { ProjectId } from "./ProjectId";
 import type { ThreadId } from "./ThreadId";
 import type { ThreadStatus } from "./ThreadStatus";
+import type { TmuxLinkDto } from "./TmuxLinkDto";
+import type { UserBrief } from "./UserBrief";
 import type { WorkbenchShellSummaryDto } from "./WorkbenchShellSummaryDto";
 
 /**
@@ -27,6 +29,10 @@ export type SessionSummaryDto = {
   pinned: boolean;
   pendingApprovals: number;
   /**
+   * A non-empty collaborative composer draft exists for this thread.
+   */
+  hasDraft: boolean;
+  /**
    * Present when the thread's private workbench shell is running.
    */
   terminal: WorkbenchShellSummaryDto | null;
@@ -40,15 +46,28 @@ export type SessionSummaryDto = {
   name: string;
   cwd: string | null;
   command: string | null;
+  /**
+   * The registered project that contains the live cwd, when there is one.
+   */
+  projectId: ProjectId | null;
+  projectName: string | null;
+  /**
+   * The thread this tmux session was turned into, when linked.
+   */
+  link: TmuxLinkDto | null;
   windows: number;
   /**
    * tmux clients, including local terminals.
    */
   attached: number;
   /**
-   * Browsers attached through threadbase.
+   * Visible browsers attached through threadbase.
    */
-  viewers: number;
+  viewers: Array<UserBrief>;
+  /**
+   * The visible browser holding the keyboard, when somebody is driving.
+   */
+  controller: UserBrief | null;
   createdAt: number;
   activityAt: number;
 };

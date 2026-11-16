@@ -17,7 +17,7 @@ use rand::TryRng;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use threadbase_shared::now_ms;
 use tokio::sync::{broadcast, mpsc, OnceCell};
@@ -102,6 +102,10 @@ pub enum TerminalError {
 #[derive(Debug, Clone)]
 pub enum RoomEvent {
     Control(Option<String>),
+    /// Somebody attached or detached; the receiver reloads the visible
+    /// viewer profiles. The event carries no payload so hidden-presence
+    /// filtering stays in one place.
+    Viewers,
 }
 
 /// Which tmux server a room belongs to. Workbench sessions live on the private
@@ -180,6 +184,39 @@ pub struct HostServer {
     pub error: Option<String>,
 }
 
+/// Workbench rooms are private to a thread and keep the classic one-driver
+/// rule with read-only tmux clients for watchers. Host rooms are exclusive too,
+/// but every attached browser gets a writable tmux client so a watcher can take
+/// the keyboard without reconnecting; the server still forwards input only for
+/// the current controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoomMode {
+    Workbench,
+    Host,
+}
+
+impl RoomMode {
+    #[must_use]
+    pub fn allows_takeover(self) -> bool {
+        matches!(self, Self::Host)
+    }
+
+    /// Workbench watchers attach with `tmux attach -r`; host watchers need a
+    /// writable client so an explicit takeover can promote them in place.
+    #[must_use]
+    pub fn read_only_watchers(self) -> bool {
+        matches!(self, Self::Workbench)
+    }
+}
+
+#[derive(Debug, Default)]
+struct RoomState {
+    controller: Option<String>,
+    /// User id to number of attached browsers. A user with two tabs counts
+    /// twice in the cap but once in the viewer list.
+    viewers: HashMap<String, u32>,
+}
+
 /// One shared terminal: a tmux session plus the browsers attached to it.
 pub struct Room {
     /// Registry key and the id sent to the browser.
@@ -190,9 +227,8 @@ pub struct Room {
     pub tmux_id: String,
     pub thread_id: Option<String>,
     pub cwd: PathBuf,
-    shared: bool,
-    controller: Mutex<Option<String>>,
-    viewers: AtomicU32,
+    mode: RoomMode,
+    state: Mutex<RoomState>,
     events: broadcast::Sender<RoomEvent>,
 }
 
@@ -203,7 +239,7 @@ impl Room {
         tmux_id: String,
         thread_id: Option<String>,
         cwd: PathBuf,
-        shared: bool,
+        mode: RoomMode,
     ) -> Self {
         let (events, _) = broadcast::channel(16);
         Self {
@@ -213,72 +249,114 @@ impl Room {
             tmux_id,
             thread_id,
             cwd,
-            shared,
-            controller: Mutex::new(None),
-            viewers: AtomicU32::new(0),
+            mode,
+            state: Mutex::new(RoomState::default()),
             events,
         }
     }
 
     #[must_use]
-    pub fn shared(&self) -> bool {
-        self.shared
+    pub fn mode(&self) -> RoomMode {
+        self.mode
+    }
+
+    #[must_use]
+    pub fn allows_takeover(&self) -> bool {
+        self.mode.allows_takeover()
+    }
+
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, RoomState>, TerminalError> {
+        self.state
+            .lock()
+            .map_err(|_| TerminalError::Pty("terminal state poisoned".into()))
     }
 
     #[must_use]
     pub fn controller(&self) -> Option<String> {
-        if self.shared {
-            return None;
-        }
-        self.controller.lock().ok().and_then(|slot| slot.clone())
+        self.lock_state()
+            .ok()
+            .and_then(|state| state.controller.clone())
     }
 
     #[must_use]
     pub fn viewers(&self) -> u32 {
-        self.viewers.load(Ordering::Relaxed)
+        self.lock_state()
+            .map(|state| state.viewers.values().sum())
+            .unwrap_or(0)
+    }
+
+    /// Unique attached users, sorted for a stable avatar order.
+    #[must_use]
+    pub fn viewer_ids(&self) -> Vec<String> {
+        let Ok(state) = self.lock_state() else {
+            return Vec::new();
+        };
+        let mut ids: Vec<String> = state.viewers.keys().cloned().collect();
+        ids.sort();
+        ids
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<RoomEvent> {
         self.events.subscribe()
     }
 
-    /// Claim the keyboard when nobody holds it; otherwise watch. Shared rooms
-    /// (host tmux servers) let every writable client drive simultaneously.
+    /// Claim the keyboard when nobody holds it; otherwise watch. Host rooms use
+    /// the same rule, then let a watcher call [`Room::takeover`].
     pub fn claim(&self, user: &str, may_drive: bool) -> Result<Role, TerminalError> {
-        let mut controller = self
-            .controller
-            .lock()
-            .map_err(|_| TerminalError::Pty("terminal state poisoned".into()))?;
-        let viewers = self.viewers.fetch_add(1, Ordering::Relaxed) + 1;
-        if viewers > MAX_VIEWERS + 1 {
-            self.viewers.fetch_sub(1, Ordering::Relaxed);
+        let mut state = self.lock_state()?;
+        let viewers: u32 = state.viewers.values().sum();
+        if viewers > MAX_VIEWERS {
             return Err(TerminalError::TooManyViewers);
         }
-        if self.shared {
-            return Ok(if may_drive {
-                Role::Controller
-            } else {
-                Role::Watcher
-            });
-        }
-        if may_drive && controller.is_none() {
-            *controller = Some(user.to_owned());
+        *state.viewers.entry(user.to_owned()).or_insert(0) += 1;
+        if may_drive && state.controller.is_none() {
+            state.controller = Some(user.to_owned());
+            let _ = self.events.send(RoomEvent::Viewers);
             let _ = self.events.send(RoomEvent::Control(Some(user.to_owned())));
             return Ok(Role::Controller);
         }
+        let _ = self.events.send(RoomEvent::Viewers);
         Ok(Role::Watcher)
     }
 
-    pub fn release(&self, user: &str, role: Role) {
-        self.viewers.fetch_sub(1, Ordering::Relaxed);
-        if self.shared || role != Role::Controller {
-            return;
+    /// Move the keyboard to a watcher without reconnecting. Only host rooms
+    /// allow this; workbench viewers keep their read-only tmux client.
+    pub fn takeover(&self, user: &str) -> bool {
+        if !self.mode.allows_takeover() {
+            return false;
         }
-        let Ok(mut controller) = self.controller.lock() else {
+        let Ok(mut state) = self.lock_state() else {
+            return false;
+        };
+        if !state.viewers.contains_key(user) {
+            return false;
+        }
+        if state.controller.as_deref() == Some(user) {
+            return true;
+        }
+        state.controller = Some(user.to_owned());
+        let _ = self.events.send(RoomEvent::Control(Some(user.to_owned())));
+        true
+    }
+
+    pub fn release(&self, user: &str, role: Role) {
+        let Ok(mut state) = self.lock_state() else {
             return;
         };
-        if controller.as_deref() == Some(user) {
-            *controller = None;
+        let remove = match state.viewers.get_mut(user) {
+            Some(count) if *count > 1 => {
+                *count -= 1;
+                false
+            }
+            Some(_) => true,
+            None => false,
+        };
+        if remove {
+            state.viewers.remove(user);
+        }
+        let _ = self.events.send(RoomEvent::Viewers);
+        if role == Role::Controller && state.controller.as_deref() == Some(user) {
+            state.controller = None;
             let _ = self.events.send(RoomEvent::Control(None));
         }
     }
@@ -333,7 +411,7 @@ impl TerminalHub {
         tmux_id: &str,
         thread_id: Option<&str>,
         cwd: &Path,
-        shared: bool,
+        mode: RoomMode,
     ) -> Arc<Room> {
         let key = target.key();
         let mut rooms = self.rooms.lock().expect("terminal registry poisoned");
@@ -346,7 +424,7 @@ impl TerminalHub {
                     tmux_id.to_owned(),
                     thread_id.map(str::to_owned),
                     cwd.to_path_buf(),
-                    shared,
+                    mode,
                 ))
             })
             .clone()
@@ -586,13 +664,12 @@ impl TerminalHub {
             id,
             thread_id,
             cwd,
-            false,
+            RoomMode::Workbench,
         ))
     }
 
-    /// Adopt an existing host session. The room is shared: every writable
-    /// browser gets a writable tmux client, just like `tmux attach` in another
-    /// terminal.
+    /// Adopt an existing host session. The room allows an explicit takeover,
+    /// so watchers get a writable tmux client and the server gates input.
     pub async fn ensure_host(&self, socket: &str, id: &str) -> Result<Arc<Room>, TerminalError> {
         if socket == self.socket || !is_socket_name(socket) || !is_host_session_id(id) {
             return Err(TerminalError::NotFound);
@@ -609,7 +686,7 @@ impl TerminalHub {
             id,
             None,
             Path::new(&cwd),
-            true,
+            RoomMode::Host,
         ))
     }
 
@@ -630,12 +707,19 @@ impl TerminalHub {
             id,
             thread_id,
             cwd,
-            false,
+            RoomMode::Workbench,
         )
     }
 
     pub fn adopt_host(&self, socket: &str, id: &str, cwd: &Path) -> Arc<Room> {
-        self.room_or_create(SessionRef::host(socket, id), socket, id, None, cwd, true)
+        self.room_or_create(
+            SessionRef::host(socket, id),
+            socket,
+            id,
+            None,
+            cwd,
+            RoomMode::Host,
+        )
     }
 
     /// Where the shell currently is, for the drawer header.
@@ -919,9 +1003,10 @@ pub fn attach(room: &Room, cols: u16, rows: u16, role: Role) -> Result<Attachmen
 
     let mut command = CommandBuilder::new("tmux");
     command.args(["-L", &room.socket, "attach"]);
-    if role == Role::Watcher {
-        // tmux drops keystrokes from a read-only client, which is the entire
-        // server-side enforcement of "everyone else only watches".
+    if role == Role::Watcher && room.mode().read_only_watchers() {
+        // Workbench watchers are read-only at the tmux layer. Host watchers
+        // keep a writable client so a takeover can promote them in place; the
+        // server still drops their input until they hold the keyboard.
         command.arg("-r");
     }
     command.args(["-t", &room.tmux_id]);
@@ -1059,7 +1144,7 @@ mod tests {
         assert!(!is_driver(&[], "0x5459"));
     }
 
-    fn room(shared: bool) -> Room {
+    fn room(mode: RoomMode) -> Room {
         let target = SessionRef::workbench("t-1");
         Room::new(
             target,
@@ -1067,7 +1152,7 @@ mod tests {
             "t-1".to_owned(),
             None,
             PathBuf::from("/tmp"),
-            shared,
+            mode,
         )
     }
 
@@ -1152,7 +1237,7 @@ mod tests {
 
     #[test]
     fn the_first_driver_keeps_the_keyboard() {
-        let room = room(false);
+        let room = room(RoomMode::Workbench);
         assert_eq!(room.claim("u1", true), Ok(Role::Controller));
         assert_eq!(room.claim("u2", true), Ok(Role::Watcher));
         assert_eq!(room.controller().as_deref(), Some("u1"));
@@ -1162,19 +1247,50 @@ mod tests {
     }
 
     #[test]
-    fn shared_rooms_let_every_member_drive() {
-        let room = room(true);
+    fn host_rooms_promote_a_watcher_without_reattaching() {
+        let room = room(RoomMode::Host);
         assert_eq!(room.claim("u1", true), Ok(Role::Controller));
-        assert_eq!(room.claim("u2", true), Ok(Role::Controller));
-        assert_eq!(room.claim("u3", false), Ok(Role::Watcher));
+        assert_eq!(room.claim("u2", true), Ok(Role::Watcher));
+        assert_eq!(room.controller().as_deref(), Some("u1"));
+        assert!(room.takeover("u2"));
+        assert_eq!(room.controller().as_deref(), Some("u2"));
+        // Taking over twice is a no-op, not an error.
+        assert!(room.takeover("u2"));
+        // A user who is not attached cannot take the keyboard.
+        assert!(!room.takeover("u3"));
+        room.release("u2", Role::Controller);
         assert_eq!(room.controller(), None);
-        room.release("u1", Role::Controller);
+        assert!(room.takeover("u1"));
+    }
+
+    #[test]
+    fn workbench_rooms_never_take_over() {
+        let room = room(RoomMode::Workbench);
+        assert_eq!(room.claim("u1", true), Ok(Role::Controller));
+        assert_eq!(room.claim("u2", true), Ok(Role::Watcher));
+        assert!(!room.takeover("u2"));
+        assert_eq!(room.controller().as_deref(), Some("u1"));
+    }
+
+    #[test]
+    fn viewer_ids_are_unique_and_drop_with_the_last_tab() {
+        let room = room(RoomMode::Host);
+        assert_eq!(room.claim("u1", true), Ok(Role::Controller));
+        assert_eq!(room.claim("u1", true), Ok(Role::Watcher));
+        assert_eq!(room.claim("u2", false), Ok(Role::Watcher));
+        assert_eq!(room.viewers(), 3);
+        assert_eq!(room.viewer_ids(), ["u1", "u2"]);
+        room.release("u1", Role::Watcher);
         assert_eq!(room.viewers(), 2);
+        assert_eq!(room.viewer_ids(), ["u1", "u2"]);
+        room.release("u1", Role::Controller);
+        assert_eq!(room.viewers(), 1);
+        assert_eq!(room.viewer_ids(), ["u2"]);
     }
 
     #[test]
     fn watchers_are_capped() {
-        let room = room(false);
+        let room = room(RoomMode::Workbench);
         assert_eq!(room.claim("driver", true), Ok(Role::Controller));
         for index in 0..MAX_VIEWERS {
             assert_eq!(room.claim(&format!("w{index}"), true), Ok(Role::Watcher));
