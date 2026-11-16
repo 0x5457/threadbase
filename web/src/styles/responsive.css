@@ -685,6 +685,17 @@
   background: var(--selected);
 }
 
+/* A prompt is long-pressable across the whole bubble on touch. Its action
+   sheet carries Edit and Copy, so skip the native selection callout that would
+   otherwise win the gesture. Agent output stays selectable. */
+@media (pointer: coarse) {
+  .message-user {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
 /* ── inbox swipe reveal ───────────────────────────────────── */
 
 .inbox-row-shell {

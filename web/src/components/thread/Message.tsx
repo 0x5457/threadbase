@@ -72,13 +72,20 @@ export const Message = memo(function Message({
     [item.streaming, text],
   );
 
+  // A reader long-presses the words, not the avatar. Agent output keeps native
+  // text selection; a prompt gets the whole-bubble action sheet so Edit is
+  // reachable on a phone.
   return (
     <div
       className={`block message-block ${
         agent ? "message-agent" : "message-user"
       }${continued ? " message-continued" : ""}`}
+      {...(!agent ? press : {})}
+      onContextMenu={
+        agent ? undefined : (event) => event.preventDefault()
+      }
     >
-      <div className="block-gutter" {...press}>
+      <div className="block-gutter" {...(agent ? press : {})}>
         {continued ? null : (
           <>
             <Avatar
