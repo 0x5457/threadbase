@@ -136,6 +136,41 @@ impl AcpHarness {
             .send_notification(CancelNotification::new(AcpSessionId::new(session)))
             .map_err(|error| HarnessError::Protocol(error.to_string()))
     }
+
+    /// Push the launch-time model and effort onto the session that was created
+    /// or resumed.
+    ///
+    /// Both `session/new` and `session/load` hand back a session running the
+    /// agent's own default model. A thread only keeps its adapter while it is
+    /// busy — the idle reaper stops it — so without this the thread's choice
+    /// applies to the first session and every later resume quietly falls back
+    /// to that default: a thread pinned to `opencode-go/...` then runs, and
+    /// bills, whatever the agent happens to prefer.
+    ///
+    /// A rejected value is a warning, not a launch failure: the thread stays
+    /// usable and the transcript says which setting was ignored.
+    async fn apply_launch_config(&mut self) {
+        let (model, effort) = (self.model.clone(), self.effort.clone());
+        let mut requested = Vec::new();
+        if let Some(model) = &model {
+            requested.push(format!("model {model}"));
+        }
+        if let Some(effort) = &effort {
+            requested.push(format!("effort {effort}"));
+        }
+        if requested.is_empty() {
+            return;
+        }
+        if let Err(error) = self.set_config(model.as_deref(), effort.as_deref()).await {
+            self.bus.send(RawAgentEvent::Notice {
+                level: "warning".to_owned(),
+                message: format!(
+                    "The thread's {} could not be applied ({error}); the agent is running with its own default settings.",
+                    requested.join(" and ")
+                ),
+            });
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -221,8 +256,11 @@ impl Harness for AcpHarness {
                     async move |request: RequestPermissionRequest, responder, _connection| {
                         let (request_id, previous) = {
                             let mut state = lock_state(&permission_state);
-                            state.request_seq += 1;
-                            let request_id = format!("perm-{}", state.request_seq);
+                            // Approval ids are primary keys in the thread log, so
+                            // they have to be unique across every thread and every
+                            // adapter process. A per-session counter reused `perm-1`
+                            // in each thread and the second insert failed.
+                            let request_id = format!("perm-{}", ulid::Ulid::new());
                             let previous = state
                                 .tools
                                 .get(&request.tool_call.tool_call_id.0.to_string())
@@ -255,8 +293,7 @@ impl Harness for AcpHarness {
                     async move |request: CreateElicitationRequest, responder, _connection| {
                         let request_id = {
                             let mut state = lock_state(&elicitation_state);
-                            state.request_seq += 1;
-                            let request_id = format!("elicit-{}", state.request_seq);
+                            let request_id = format!("elicit-{}", ulid::Ulid::new());
                             state
                                 .elicitations
                                 .insert(request_id.clone(), PendingElicitation { responder });
@@ -434,65 +471,10 @@ impl Harness for AcpHarness {
             .await
             .map_err(|error| HarnessError::Protocol(error.to_string()))?;
         let session = SessionId(response.session_id.0.to_string());
-        {
-            let mut state = lock_state(&self.state);
-            state.config_options = response.config_options.clone().unwrap_or_default();
-        }
+        lock_state(&self.state).config_options = response.config_options.unwrap_or_default();
         reset_session(&mut lock_state(&self.state), &session.0);
         self.session = Some(session.clone());
-        if let (Some(model), Some(option)) = (
-            self.model.as_deref(),
-            response.config_options.as_ref().and_then(|options| {
-                options
-                    .iter()
-                    .find(|option| {
-                        matches!(option.category, Some(SessionConfigOptionCategory::Model))
-                    })
-                    .map(|option| option.id.clone())
-            }),
-        ) {
-            connection
-                .send_request(SetSessionConfigOptionRequest::new(
-                    AcpSessionId::new(session.0.as_str()),
-                    option,
-                    model,
-                ))
-                .block_task()
-                .await
-                .map_err(|error| HarnessError::Protocol(error.to_string()))?;
-        } else if self.model.is_some() {
-            self.bus.send(RawAgentEvent::Notice {
-                message: "agent did not advertise a model configuration option".into(),
-            });
-        }
-        if let (Some(effort), Some(option)) = (
-            self.effort.as_deref(),
-            response.config_options.as_ref().and_then(|options| {
-                options
-                    .iter()
-                    .find(|option| {
-                        matches!(
-                            option.category,
-                            Some(SessionConfigOptionCategory::ThoughtLevel)
-                        )
-                    })
-                    .map(|option| option.id.clone())
-            }),
-        ) {
-            connection
-                .send_request(SetSessionConfigOptionRequest::new(
-                    AcpSessionId::new(session.0.as_str()),
-                    option,
-                    effort,
-                ))
-                .block_task()
-                .await
-                .map_err(|error| HarnessError::Protocol(error.to_string()))?;
-        } else if self.effort.is_some() {
-            self.bus.send(RawAgentEvent::Notice {
-                message: "agent did not advertise an effort configuration option".into(),
-            });
-        }
+        self.apply_launch_config().await;
         Ok(session)
     }
 
@@ -526,6 +508,7 @@ impl Harness for AcpHarness {
             lock_state(&self.state).config_options = options;
         }
         self.session = Some(id.clone());
+        self.apply_launch_config().await;
         Ok(())
     }
 
@@ -605,6 +588,7 @@ impl Harness for AcpHarness {
                 requests.push((id, value));
             } else {
                 self.bus.send(RawAgentEvent::Notice {
+                    level: "warning".to_owned(),
                     message: "agent did not advertise a model configuration option".into(),
                 });
             }
@@ -614,6 +598,7 @@ impl Harness for AcpHarness {
                 requests.push((id, value));
             } else {
                 self.bus.send(RawAgentEvent::Notice {
+                    level: "warning".to_owned(),
                     message: "agent did not advertise an effort configuration option".into(),
                 });
             }
@@ -831,6 +816,7 @@ impl Harness for AcpHarness {
         };
         if let SteeringOutcome::Failed { reason } = &outcome {
             self.bus.send(RawAgentEvent::Notice {
+                level: "warning".to_owned(),
                 message: match reason {
                     Some(reason) => format!("steering failed: {reason}"),
                     None => "steering failed".to_owned(),
@@ -858,7 +844,6 @@ struct HarnessState {
     /// by a `config_option_update` notification, so they are shared state.
     config_options: Vec<agent_client_protocol::v1::schema::SessionConfigOption>,
     turn_seq: u64,
-    request_seq: u64,
     running_turn: Option<String>,
     /// Set while `session/load` replays stored history so replayed output is
     /// not mistaken for live output. Cleared by the first `prompt` or a new
@@ -1138,7 +1123,10 @@ fn handle_session_notification(
                 Some(description) => format!("{}: {description}", notice.title),
                 None => notice.title,
             };
-            bus.send(RawAgentEvent::Notice { message });
+            bus.send(RawAgentEvent::Notice {
+                level: "info".to_owned(),
+                message,
+            });
         }
         SessionUpdate::SubagentUpdate(update) => {
             handle_subagent_update(state, bus, &origin, &update);

@@ -94,21 +94,28 @@ fn map_terminal_error(error: TerminalError) -> ServerError {
     }
 }
 
+/// The directory a thread's shell starts in. It follows the agent: a thread
+/// with its own worktree opens there, and a thread created without one
+/// (`worktree: false`) opens at the project checkout the agent also runs in.
 async fn thread_cwd(state: &AppState, thread_id: &str) -> Result<PathBuf, ServerError> {
-    let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT worktree_path FROM threads WHERE id = ?")
-            .bind(thread_id)
-            .fetch_optional(&state.pool)
-            .await?;
-    let Some((worktree,)) = row else {
+    let row: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT t.worktree_path, p.path
+           FROM threads t
+           JOIN projects p ON p.id = t.project_id
+          WHERE t.id = ?",
+    )
+    .bind(thread_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((worktree, project)) = row else {
         return Err(ServerError(ApiError::not_found("thread not found")));
     };
-    let Some(worktree) = worktree.filter(|path| !path.trim().is_empty()) else {
-        return Err(ServerError(ApiError::conflict(
-            "this thread has no workspace yet",
-        )));
-    };
-    let path = PathBuf::from(worktree);
+    // Deliberately no fallback past this point: a worktree that went missing is
+    // an error, not an invitation to type into the shared checkout.
+    let cwd = worktree
+        .filter(|path| !path.trim().is_empty())
+        .unwrap_or(project);
+    let path = PathBuf::from(cwd);
     if !path.is_dir() {
         return Err(ServerError(ApiError::conflict(
             "this thread's workspace directory is gone",

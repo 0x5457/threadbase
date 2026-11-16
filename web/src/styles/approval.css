@@ -61,48 +61,6 @@
   gap: 4px;
 }
 
-.tool-details {
-  margin-top: 0;
-  border: 0;
-  background: transparent;
-  font-size: var(--text-sm);
-}
-
-.tool-details summary {
-  display: flex;
-  width: fit-content;
-  height: 24px;
-  align-items: center;
-  gap: 4px;
-  padding: 0 6px 0 2px;
-  border-radius: var(--radius-sm);
-  color: var(--ink-muted);
-  cursor: pointer;
-  list-style: none;
-}
-
-.tool-details summary:hover {
-  background: color-mix(in srgb, var(--ink) 5%, transparent);
-  color: var(--ink);
-}
-
-.tool-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.tool-details .cmd {
-  max-height: 200px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  margin-top: 4px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
-  /* Detail payloads are read, not copied to a terminal: wrap them instead of
-     hiding the tail behind a horizontal scrollbar. */
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
 .message-block {
   position: relative;
 }

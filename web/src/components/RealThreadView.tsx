@@ -13,6 +13,8 @@ import {
   IconArrowDown,
   IconChevronDown,
   IconCopy,
+  IconDots,
+  IconLoader2,
   IconMessagePlus,
   IconRefresh,
 } from "@tabler/icons-react";
@@ -77,11 +79,13 @@ import { Tool } from "./thread/Tool";
 /// its padding and the text-width setting keep applying.
 
 /// A row is either a single reducer item or a run of consecutive tool calls,
-/// which Delta-style collapses into one "ran N tools" line.
+/// which the transcript folds into one quiet tree.
 type ToolItem = Extract<ViewItem, { kind: "tool" }>;
 
-/** Tools rendered inline before a run collapses the rest behind a toggle. */
-const PREVIEW_TOOLS = 3;
+/** Tool rows rendered before a long run folds its tail away. Ten commands
+ *  say what the agent did without turning a fifty-command turn into a wall. */
+const PREVIEW_TOOLS = 10;
+
 /** Stable empty list: a fresh `[]` per row would break memoized rows. */
 const NO_COMMENTS: Comment[] = [];
 type TimelineRowItem =
@@ -131,10 +135,11 @@ function TimelineRowImpl({
   onComment: (messageId: string) => void;
   onMessageLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
 }) {
-  const toolRow = (tool: ToolItem) => (
+  const toolRow = (tool: ToolItem, nested = false) => (
     <Fragment key={tool.call.id}>
       <Tool
         item={tool}
+        nested={nested}
         expanded={expanded.has(`d:${tool.call.id}`)}
         onToggleExpanded={() => onToggleExpanded(`d:${tool.call.id}`)}
       />
@@ -153,10 +158,9 @@ function TimelineRowImpl({
     </Fragment>
   );
 
-  // A run shows its opening tools inline: a collapsed summary alone said that
-  // the agent ran tools, never what it was doing. The rest stays one click away.
-  // Total tool time says more than the count alone; wall-clock spans would
-  // include user idle time between turns.
+  // A run shows every tool it ran under one summary so the tree reads as a
+  // sequence of actions. Total tool time says more than the count alone;
+  // wall-clock spans would include user idle time between turns.
   const toolDuration = (tools: ToolItem[]) =>
     tools.reduce(
       (total, tool) =>
@@ -176,79 +180,117 @@ function TimelineRowImpl({
         .filter((path): path is string => Boolean(path)),
     ).size;
 
-  const groupTools = (tools: ToolItem[], key: string) => {
-    const preview = tools.slice(0, PREVIEW_TOOLS);
-    const rest = tools.slice(PREVIEW_TOOLS);
-    const open = expanded.has(`g:${key}`);
+  const groupRows = (id: string, tools: ToolItem[]) => {
+    const open = expanded.has(`g:${id}`);
+    const shown = open ? tools : tools.slice(0, PREVIEW_TOOLS);
+    const rest = tools.length - shown.length;
     return (
       <>
-        {preview.map(toolRow)}
-        {rest.length > 0 ? (
-          <details
-            className="run-more"
-            open={open}
-            onToggle={(event) => {
-              // Keep the open state in React so a row that Virtuoso unmounts
-              // does not silently collapse and shift the scroll height.
-              if (event.currentTarget.open !== open) onToggleExpanded(`g:${key}`);
-            }}
+        {shown.map((tool) => toolRow(tool, true))}
+        {rest > 0 ? (
+          <button
+            type="button"
+            className="tool-row tool-more-row"
+            aria-expanded={false}
+            onClick={() => onToggleExpanded(`g:${id}`)}
           >
-            <summary>
-              <span>
-                {rest.length} more {rest.length === 1 ? "tool" : "tools"}
+            <span className="tool-icon" aria-hidden>
+              <IconDots size={15} stroke={1.5} />
+            </span>
+            <span className="tool-text">
+              <span className="tool-verb">
+                {rest} more {rest === 1 ? "tool" : "tools"}
               </span>
-              <IconChevronDown size={11} stroke={1.5} className="chevron" />
-            </summary>
-            {open ? <div className="run-body">{rest.map(toolRow)}</div> : null}
-          </details>
+            </span>
+            <span className="tool-end">
+              <IconChevronDown
+                size={12}
+                stroke={1.5}
+                className="tool-chevron"
+                aria-hidden
+              />
+            </span>
+          </button>
         ) : null}
       </>
+    );
+  };
+
+  /** One quiet summary line; the tool rows below carry the detail. */
+  const toolSummary = (tools: ToolItem[]) => {
+    const files = toolFileCount(tools);
+    const elapsed = toolDuration(tools);
+    return [
+      `${tools.length} ${tools.length === 1 ? "tool" : "tools"}`,
+      elapsed > 0 ? formatDuration(elapsed) : null,
+      files > 0 ? `${files} ${files === 1 ? "file" : "files"}` : null,
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join(" · ");
+  };
+
+  const groupHead = (
+    kind: "run" | "tools",
+    id: string,
+    label: string,
+    tools: ToolItem[],
+    title?: string,
+  ) => {
+    // Collapsed is tracked as presence in the shared set; groups start open.
+    const collapsed = expanded.has(`c:${id}`);
+    const busy = tools.some(
+      (tool) =>
+        tool.call.status === "pending" || tool.call.status === "in_progress",
+    );
+    const failed = tools.some((tool) => tool.call.status === "failed");
+    return (
+      <div className={kind === "run" ? "run" : "tool-group"}>
+        <button
+          type="button"
+          className="run-head"
+          aria-expanded={!collapsed}
+          title={title || undefined}
+          onClick={() => onToggleExpanded(`c:${id}`)}
+        >
+          <span>{label}</span>
+          {busy ? (
+            <IconLoader2 size={12} stroke={1.75} className="tool-spinner" />
+          ) : null}
+          {failed ? (
+            <IconAlertCircle size={12} stroke={1.5} className="run-head-failed" />
+          ) : null}
+          <IconChevronDown
+            size={12}
+            stroke={1.5}
+            className="chevron"
+            aria-hidden
+          />
+        </button>
+        {collapsed ? null : (
+          <div className="run-body">{groupRows(id, tools)}</div>
+        )}
+      </div>
     );
   };
 
   if (item.kind === "run") {
     const count = item.thinking.count;
     const thought = count > 1 ? `Thought ${count} times` : "Thought once";
-    const elapsed = toolDuration(item.tools);
-    const files = toolFileCount(item.tools);
-    const ran = ` · ran ${item.tools.length} ${
-      item.tools.length === 1 ? "tool" : "tools"
-    }${elapsed > 0 ? ` · ${formatDuration(elapsed)}` : ""}${
-      files > 0 ? ` · ${files} ${files === 1 ? "file" : "files"}` : ""
-    }`;
-    return (
-      <div className="run">
-        <div
-          className="run-head"
-          title={item.thinking.text.trim().slice(0, 240)}
-        >
-          <span>
-            {thought}
-            {ran}
-          </span>
-        </div>
-        {groupTools(item.tools, item.id)}
-      </div>
+    return groupHead(
+      "run",
+      `run:${item.id}`,
+      `${thought} · ${toolSummary(item.tools)}`,
+      item.tools,
+      item.thinking.text.trim().slice(0, 240),
     );
   }
 
   if (item.kind === "tools" && item.tools.length > 1) {
-    const files = toolFileCount(item.tools);
-    return (
-      <div className="tool-group">
-        <div className="run-head">
-          <span>
-            ran {item.tools.length} tools
-            {toolDuration(item.tools) > 0
-              ? ` · ${formatDuration(toolDuration(item.tools))}`
-              : ""}
-            {files > 0
-              ? ` · ${files} ${files === 1 ? "file" : "files"}`
-              : ""}
-          </span>
-        </div>
-        {groupTools(item.tools, item.id)}
-      </div>
+    return groupHead(
+      "tools",
+      `tools:${item.id}`,
+      toolSummary(item.tools),
+      item.tools,
     );
   }
 

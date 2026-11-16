@@ -30,6 +30,12 @@
   }
 }
 
+@keyframes tool-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .timeline-doc > * {
   animation: timeline-enter var(--motion-base) var(--ease-out) both;
 }

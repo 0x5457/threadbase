@@ -856,6 +856,23 @@ pub struct GoalDto {
     pub tokens_used: u64,
     pub active_seconds: u64,
     pub tasks: Vec<GoalTaskDto>,
+    /// The completion gate: the newest audit verdict for this goal, from the
+    /// adapter's ledger. A goal with every task `complete` still reads `active`
+    /// while it waits for the auditor or reworks a rejection, so this is what
+    /// tells "done" apart from "still going".
+    pub audit: Option<GoalAuditDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GoalAuditDto {
+    /// `approved`, `disapproved` or `error`.
+    pub verdict: String,
+    /// ISO-8601 timestamp from the adapter's ledger.
+    pub at: Option<String>,
+    /// First meaningful line of the auditor's report.
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

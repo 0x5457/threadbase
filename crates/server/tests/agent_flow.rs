@@ -240,6 +240,133 @@ async fn wait_for_after(
     );
 }
 
+/// Regression: pi reports an upstream model failure (a provider 402, an expired
+/// key) as an empty assistant message and still answers the prompt with
+/// `end_turn`, so the thread looked alive but never replied: nothing was
+/// written to the transcript and the status went straight back to idle.
+#[tokio::test]
+async fn a_turn_without_output_is_reported_as_a_failure() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    fixture
+        .state
+        .agents
+        .ensure_started(thread_id)
+        .await
+        .unwrap();
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "silent", None)
+        .await
+        .unwrap();
+
+    let event = wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(
+            event,
+            ThreadEvent::TurnError { .. } | ThreadEvent::TurnEnded { .. }
+        )
+    })
+    .await;
+    let ThreadEvent::TurnError { message, .. } = event else {
+        panic!("a turn that produced nothing must not end as a success: {event:?}");
+    };
+    assert!(
+        message.contains("without any output"),
+        "unexpected message: {message}"
+    );
+    assert_eq!(
+        threads::status(&fixture.state.pool, thread_id)
+            .await
+            .unwrap(),
+        ThreadStatus::Error
+    );
+
+    // The thread stays usable: the next prompt runs again.
+    let after = max_seq(&fixture.state.pool, thread_id).await;
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "hello", None)
+        .await
+        .unwrap();
+    wait_for_after(&fixture.state.pool, thread_id, after, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+}
+
+/// Regression: the adapter named permission requests with a per-session counter
+/// (`perm-1`, `perm-2`, …) while `approvals.id` is a primary key shared by every
+/// thread. The second thread to hit the counter collided, the insert failed, the
+/// request was never answered and the agent waited on it until the user
+/// cancelled. One thread sitting in `running` forever was the only symptom.
+#[tokio::test]
+async fn approval_ids_stay_unique_across_threads() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let second = threads::create(
+        &fixture.state.pool,
+        &fixture.state.projection,
+        fixture.data.path(),
+        &fixture.user,
+        fixture.project.id.as_str(),
+        &CreateThreadRequest {
+            title: Some("Second thread".into()),
+            agent: Some("codex".into()),
+            model: None,
+            effort: None,
+            base_branch: Some("main".into()),
+            initial_prompt: None,
+            worktree: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let mut ids = Vec::new();
+    for thread_id in [fixture.thread.id.as_str(), second.id.as_str()] {
+        let before = max_seq(&fixture.state.pool, thread_id).await;
+        fixture
+            .state
+            .agents
+            .ensure_started(thread_id)
+            .await
+            .unwrap();
+        fixture
+            .state
+            .agents
+            .send(thread_id, &fixture.user, "permission", None)
+            .await
+            .unwrap();
+        let event = wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+            matches!(event, ThreadEvent::PermissionRequested { .. })
+        })
+        .await;
+        let ThreadEvent::PermissionRequested { approval } = event else {
+            unreachable!("filtered for a permission request");
+        };
+        fixture
+            .state
+            .agents
+            .decide(thread_id, approval.id.as_str(), ApprovalDecision::AllowOnce)
+            .await
+            .unwrap();
+        ids.push(approval.id.as_str().to_owned());
+    }
+    assert_ne!(
+        ids[0], ids[1],
+        "approval ids are global primary keys: {ids:?}"
+    );
+}
+
 #[tokio::test]
 async fn fake_agent_streams_tools_and_permissions() {
     let Some(fixture) = fixture().await else {

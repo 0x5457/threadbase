@@ -36,14 +36,18 @@ struct TestHarness {
 }
 
 async fn start(subagents: bool) -> TestHarness {
+    start_with(subagents, None, None).await
+}
+
+async fn start_with(subagents: bool, model: Option<&str>, effort: Option<&str>) -> TestHarness {
     let dir = tempfile::tempdir().expect("temp directory");
     let journal = dir.path().join("journal.jsonl");
     let ctx = LaunchCtx {
         thread_id: "thread-1".to_owned(),
         cwd: dir.path().to_path_buf(),
         agent: "fake".to_owned(),
-        model: None,
-        effort: None,
+        model: model.map(str::to_owned),
+        effort: effort.map(str::to_owned),
         subagents,
         env: vec![(
             "FAKE_AGENT_JOURNAL".to_owned(),
@@ -415,6 +419,80 @@ async fn load_session_restores_config_options() {
             .iter()
             .any(|option| option.category == "thought_level"),
         "effort/thinking select must survive the resume too: {resumed:?}"
+    );
+
+    test.harness.shutdown().await.expect("shutdown");
+}
+
+/// Count the config pushes the adapter received. Each `set_config` sends one
+/// request per setting, so a model+effort thread produces two per session.
+fn config_pushes(test: &TestHarness) -> usize {
+    journal_entries(&test.journal)
+        .iter()
+        .filter(|entry| {
+            received(entry).get("method").and_then(Value::as_str)
+                == Some("session/set_config_option")
+        })
+        .count()
+}
+
+fn config_value(test: &TestHarness, category: &str) -> String {
+    test.harness
+        .config_options()
+        .into_iter()
+        .find(|option| option.category == category)
+        .unwrap_or_else(|| panic!("missing {category} option"))
+        .current_value
+}
+
+/// Regression: only `session/new` applied the thread's model and effort, so a
+/// resumed thread ran on the agent's own default model. Threads lose their
+/// adapter whenever they go idle, which means in practice every turn after the
+/// first ran — and billed — a model the user never picked.
+#[tokio::test]
+async fn load_session_reapplies_the_thread_model_and_effort() {
+    let mut test = start_with(true, Some("fake-model-a"), Some("low")).await;
+    let session = new_session(&mut test).await;
+    assert_eq!(config_pushes(&test), 2, "session/new applies both settings");
+    assert_eq!(config_value(&test, "model"), "fake-model-a");
+    assert_eq!(config_value(&test, "thought_level"), "low");
+
+    // The adapter now announces its own defaults again, like a process that was
+    // spawned for this turn only.
+    test.harness
+        .load_session(&threadbase_agent::SessionId(session))
+        .await
+        .expect("load session");
+
+    assert_eq!(
+        config_pushes(&test),
+        4,
+        "the resume must push model and effort again"
+    );
+    assert_eq!(config_value(&test, "model"), "fake-model-a");
+    assert_eq!(config_value(&test, "thought_level"), "low");
+
+    test.harness.shutdown().await.expect("shutdown");
+}
+
+/// A rejected model must not wedge the thread: the session still opens and the
+/// transcript says the setting was ignored.
+#[tokio::test]
+async fn a_rejected_model_is_a_warning_not_a_failed_launch() {
+    let mut test = start_with(true, Some("rejected"), None).await;
+    new_session(&mut test).await;
+
+    let RawAgentEvent::Notice { level, message } = expect_event(&mut test.events, |event| {
+        matches!(event, RawAgentEvent::Notice { .. })
+    })
+    .await
+    else {
+        unreachable!("filtered for a notice");
+    };
+    assert_eq!(level, "warning");
+    assert!(
+        message.contains("model rejected") && message.contains("default settings"),
+        "unexpected notice: {message}"
     );
 
     test.harness.shutdown().await.expect("shutdown");

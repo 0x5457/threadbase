@@ -75,7 +75,7 @@ fn prompt_text(params: &Value) -> String {
 
 /// Session configuration the fixture advertises in `session/new` and
 /// `session/load`: one model select and one thinking-level select.
-fn config_options(current_model: &str) -> Value {
+fn config_options(current_model: &str, current_effort: &str) -> Value {
     json!([
         {
             "type": "select",
@@ -93,7 +93,7 @@ fn config_options(current_model: &str) -> Value {
             "id": "thought_level",
             "category": "thought_level",
             "name": "Thinking",
-            "currentValue": "high",
+            "currentValue": current_effort,
             "options": [
                 {"value": "low", "name": "Low"},
                 {"value": "high", "name": "High"},
@@ -122,6 +122,11 @@ struct Fixture {
     journal: Option<File>,
     next_request_id: u64,
     root_session: String,
+    /// What the adapter claims to be running. `session/set_config_option`
+    /// updates it, and a resumed session starts over from the agent's own
+    /// defaults — exactly like a real adapter spawned for a new turn.
+    current_model: String,
+    current_effort: String,
 }
 
 impl Fixture {
@@ -132,7 +137,13 @@ impl Fixture {
             journal,
             next_request_id: 1_000,
             root_session: "sess-1".to_owned(),
+            current_model: "fake-model-a".to_owned(),
+            current_effort: "high".to_owned(),
         }
+    }
+
+    fn config(&self) -> Value {
+        config_options(&self.current_model, &self.current_effort)
     }
 
     fn journal_received(&mut self, message: &Value) {
@@ -262,14 +273,18 @@ impl Fixture {
                     }),
                 )
             }
-            (Some("session/new"), Some(id)) => self.respond(
-                out,
-                &id,
-                json!({
-                    "sessionId": self.root_session,
-                    "configOptions": config_options("fake-model-a"),
-                }),
-            ),
+            (Some("session/new"), Some(id)) => {
+                self.current_model = "fake-model-a".to_owned();
+                self.current_effort = "high".to_owned();
+                self.respond(
+                    out,
+                    &id,
+                    json!({
+                        "sessionId": self.root_session,
+                        "configOptions": self.config(),
+                    }),
+                )
+            }
             (Some("session/load"), Some(id)) => {
                 let session = params
                     .get("sessionId")
@@ -281,13 +296,42 @@ impl Fixture {
                     return Ok(());
                 }
                 // A resumed session re-announces its configuration, exactly
-                // like the real adapters do.
-                self.respond(
-                    out,
-                    &id,
-                    json!({"configOptions": config_options("fake-model-b")}),
-                )?;
+                // like the real adapters do: a freshly spawned process starts
+                // on the agent's own defaults again.
+                self.current_model = "fake-model-b".to_owned();
+                self.current_effort = "high".to_owned();
+                self.respond(out, &id, json!({"configOptions": self.config()}))?;
                 self.chunk(out, &session, "replayed")
+            }
+            (Some("session/set_config_option"), Some(id)) => {
+                let option = params
+                    .get("configId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let value = params
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                // `fake-model-a` stands for a value the adapter can apply and
+                // `rejected` for one it refuses, like a real `set_model` error.
+                if value == "rejected" {
+                    return self.respond_error(out, &id, -32602, "Unknown modelId: rejected");
+                }
+                match option.as_str() {
+                    "model" => self.current_model = value,
+                    "thought_level" => self.current_effort = value,
+                    other => {
+                        return self.respond_error(
+                            out,
+                            &id,
+                            -32602,
+                            &format!("Unknown config option: {other}"),
+                        )
+                    }
+                }
+                self.respond(out, &id, json!({"configOptions": self.config()}))
             }
             (Some("session/prompt"), Some(id)) => self.prompt(reader, out, &id, &params),
             (Some("_session/steering"), Some(id)) => {
@@ -348,7 +392,11 @@ impl Fixture {
                 self.chunk(out, &session, &format!("images:{}", prompt_images(params)))?;
                 self.respond(out, id, json!({"stopReason": "end_turn"}))
             }
-            _ => self.respond(out, id, json!({"stopReason": "end_turn"})),
+            "silent" => self.respond(out, id, json!({"stopReason": "end_turn"})),
+            _ => {
+                self.chunk(out, &session, "ok")?;
+                self.respond(out, id, json!({"stopReason": "end_turn"}))
+            }
         }
     }
 

@@ -5,6 +5,7 @@ use crate::auth::CurrentUser;
 use crate::authz;
 use crate::diff;
 use crate::error::ServerError;
+use crate::events::EventMeta;
 use crate::projects;
 use crate::threads;
 use axum::extract::{Path, Query, State};
@@ -17,9 +18,9 @@ use threadbase_shared::api::{
     ThreadState, UpdateProjectRequest, UpdateThreadRequest,
 };
 use threadbase_shared::{
-    ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse, OkResponse,
-    OlderEventsDto, ProjectResponse, ProjectsResponse, ThreadHistoryResponse, ThreadId,
-    ThreadResponse, ThreadsResponse,
+    Actor, ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse,
+    OkResponse, OlderEventsDto, ProjectResponse, ProjectsResponse, ThreadEvent,
+    ThreadHistoryResponse, ThreadId, ThreadResponse, ThreadsResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -334,8 +335,27 @@ async fn update_thread(
             .map(str::trim)
             .filter(|value| !value.is_empty());
         if model.is_some() || effort.is_some() {
+            // A thread that is idle has no adapter: the stored value is applied
+            // when the next session starts, so silence is correct there. A live
+            // adapter that refuses the value must not be quiet — that is how a
+            // thread ends up running a different model than the one the picker
+            // shows.
             if let Err(error) = state.agents.set_config(&thread_id, model, effort).await {
                 tracing::warn!(thread_id, %error, "could not apply model/effort to agent");
+                let _ = state
+                    .events
+                    .append(
+                        &ThreadId::from(thread_id.clone()),
+                        Actor::system(),
+                        ThreadEvent::SystemNotice {
+                            level: "warning".to_owned(),
+                            message: format!(
+                                "The running agent rejected the new model/effort ({error}). The choice is saved and applied again when the session restarts."
+                            ),
+                        },
+                        EventMeta::default(),
+                    )
+                    .await;
             }
         }
     }

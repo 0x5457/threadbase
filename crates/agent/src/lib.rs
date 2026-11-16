@@ -187,6 +187,8 @@ pub enum RawAgentEvent {
         signal: Option<String>,
     },
     Notice {
+        /// `info` or `warning`; rendered as a system notice in the transcript.
+        level: String,
         message: String,
     },
     /// Adapter stderr: diagnostics for the agent log, not conversation output.

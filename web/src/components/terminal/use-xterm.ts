@@ -133,6 +133,20 @@ export function useXterm({ disabled, onData, onResize }: Options) {
       terminal.attachCustomKeyEventHandler((event) => {
         if (event.type !== "keydown") return true;
         const modifier = event.ctrlKey || event.metaKey;
+        // Enter is sent here rather than left to xterm: a soft keyboard can
+        // still insert the newline into the helper textarea after the keydown
+        // was cancelled, and xterm flushes that leftover later as a second
+        // Enter. Sending the CR and emptying the textarea leaves nothing to
+        // flush. Composing keys, and IME text still waiting in the textarea,
+        // stay with xterm so a commit is never swallowed.
+        const pending = textarea?.value.replace(/[\r\n]+/g, "") ?? "";
+        if (event.key === "Enter" && !event.isComposing && !pending) {
+          event.preventDefault();
+          if (textarea) textarea.value = "";
+          if (terminal.options.scrollOnUserInput) terminal.scrollToBottom();
+          if (!terminal.options.disableStdin) dataRef.current("\r");
+          return false;
+        }
         if (modifier && event.shiftKey && event.key.toLowerCase() === "c") {
           const selection = terminal.getSelection();
           if (selection) void navigator.clipboard.writeText(selection);

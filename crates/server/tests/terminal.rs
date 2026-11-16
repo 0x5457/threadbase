@@ -26,14 +26,19 @@ struct Fixture {
     addr: String,
     pool: SqlitePool,
     _data: TempDir,
+    /// The project checkout, shared by threads created without a worktree.
+    project: TempDir,
     worktree: TempDir,
     thread_id: String,
+    /// A thread created with `worktree: false`: its shell opens at the project.
+    bare_thread_id: String,
     admin: String,
     member: String,
     read_only: String,
 }
 
 async fn fixture(terminal: bool) -> Fixture {
+    let project = tempfile::tempdir().unwrap();
     let worktree = tempfile::tempdir().unwrap();
     let pool = db::connect_memory().await.unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -73,7 +78,7 @@ async fn fixture(terminal: bool) -> Fixture {
          VALUES(?, 'repo', ?, 'main', ?, ?, ?)",
     )
     .bind(&project_id)
-    .bind(worktree.path().to_string_lossy().to_string())
+    .bind(project.path().to_string_lossy().to_string())
     .bind(&admin)
     .bind(now)
     .bind(now)
@@ -94,14 +99,32 @@ async fn fixture(terminal: bool) -> Fixture {
     .await
     .unwrap();
 
+    // Same project, no worktree: `worktree: false` threads run the agent at the
+    // project checkout, so their shell has to start there too.
+    let bare_thread_id = ulid::Ulid::new().to_string();
+    sqlx::query(
+        "INSERT INTO threads(id, project_id, title, status, agent, branch, base_branch, worktree_path, created_by, created_at, updated_at)
+         VALUES(?, ?, 'Shared checkout', 'idle', 'codex', 'main', 'main', NULL, ?, ?, ?)",
+    )
+    .bind(&bare_thread_id)
+    .bind(&project_id)
+    .bind(&admin)
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
     Fixture {
         socket,
         app,
         addr,
         pool,
         _data: dir,
+        project,
         worktree,
         thread_id,
+        bare_thread_id,
         admin,
         member,
         read_only,
@@ -370,6 +393,40 @@ async fn members_may_watch_but_not_open_a_shell() {
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_thread_without_a_worktree_opens_at_the_project_checkout() {
+    if !tmux_available() {
+        return;
+    }
+    let fixture = fixture(true).await;
+    let session = format!("t-{}", fixture.bare_thread_id);
+    let (status, body) = fixture
+        .call(
+            Method::POST,
+            "/api/terminal/sessions",
+            &fixture.admin,
+            Some(json!({ "threadId": fixture.bare_thread_id })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["session"]["id"], session);
+    assert_eq!(
+        body["session"]["cwd"],
+        fixture.project.path().to_string_lossy().as_ref()
+    );
+    let _ = fixture
+        .call(
+            Method::DELETE,
+            &format!("/api/terminal/sessions/{session}"),
+            &fixture.admin,
+            None,
+        )
+        .await;
+    let _ = std::process::Command::new("tmux")
+        .args(["-L", &fixture.socket, "kill-server"])
+        .status();
 }
 
 #[tokio::test]

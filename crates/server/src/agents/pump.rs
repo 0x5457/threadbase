@@ -59,6 +59,12 @@ pub(crate) fn spawn(
                 },
                 None => events.recv().await,
             };
+            // Any adapter output means the session is alive, including turns an
+            // extension starts on its own (a goal continuation has no client
+            // prompt). The idle reaper must not read that silence as idle.
+            if let Some(session) = pump.session.upgrade() {
+                session.touch();
+            }
             match received {
                 Ok(RawAgentEvent::AgentThoughtChunk { text }) => {
                     let message_id = pump.thinking_id().await;
@@ -105,6 +111,49 @@ fn truncate_summary(message: &str) -> String {
     format!("The agent stopped with an error: {text}")
 }
 
+/// Events that put a row in the transcript. `AgentThoughtChunk` is folded and
+/// flushed separately, so it is counted there instead.
+fn is_visible(event: &RawAgentEvent) -> bool {
+    matches!(
+        event,
+        RawAgentEvent::AgentMessageChunk { .. }
+            | RawAgentEvent::ToolCall { .. }
+            | RawAgentEvent::ToolCallUpdate { .. }
+            | RawAgentEvent::Plan { .. }
+            | RawAgentEvent::PermissionRequest { .. }
+            | RawAgentEvent::ElicitationRequest { .. }
+            | RawAgentEvent::Subagent { .. }
+            | RawAgentEvent::AgentMessage { .. }
+    )
+}
+
+/// Stop reasons that mean the turn did not end normally, even with output.
+fn is_stop_error(stop_reason: &str) -> bool {
+    matches!(stop_reason, "error" | "refusal")
+}
+
+fn stop_failure_message(stop_reason: &str, silent: bool) -> String {
+    if silent {
+        format!(
+            "The agent ended the turn without any output. The model request most likely failed upstream — check the thread's model, the provider quota and the agent's login. (stop reason: {stop_reason})"
+        )
+    } else {
+        format!("The agent stopped before finishing the turn. (stop reason: {stop_reason})")
+    }
+}
+
+/// A turn still counts as finished for these, but the transcript has to say what
+/// was cut short.
+fn stop_reason_notice(stop_reason: &str) -> Option<&'static str> {
+    match stop_reason {
+        "max_tokens" => Some("The reply was cut off: the model hit its output token limit."),
+        "max_turn_requests" => {
+            Some("The turn stopped at the agent's request limit; send another message to continue.")
+        }
+        _ => None,
+    }
+}
+
 /// Append a text delta to a buffer that may receive either incremental chunks
 /// or cumulative snapshots, mirroring the rule used by the web reducer and the
 /// cold-page fold.
@@ -124,6 +173,7 @@ async fn flush_thought(pump: &Pump, thought: &mut Option<(MessageId, String)>) {
     if text.is_empty() {
         return;
     }
+    pump.run.lock().await.saw_output = true;
     if let Err(error) = pump
         .append(ThreadEvent::ThinkingDelta { message_id, text })
         .await
@@ -155,6 +205,9 @@ impl Pump {
     }
 
     async fn handle(&self, event: RawAgentEvent) -> Result<(), ServerError> {
+        if is_visible(&event) {
+            self.run.lock().await.saw_output = true;
+        }
         match event {
             RawAgentEvent::AgentMessageChunk { text } => {
                 let message_id = {
@@ -195,7 +248,8 @@ impl Pump {
             RawAgentEvent::PermissionRequest { request } => self.permission(request).await,
             RawAgentEvent::ElicitationRequest { request } => {
                 let elicitation = elicitation_dto(request, &self.thread_id, &self.agent);
-                elicitations::create(
+                let elicitation_id = elicitation.id.clone();
+                match elicitations::create(
                     &self.inner.pool,
                     &self.inner.projection,
                     &self.inner.events,
@@ -203,8 +257,31 @@ impl Pump {
                     Actor::agent("Threadbase agent"),
                     EventMeta::default(),
                 )
-                .await?;
-                self.transition(ThreadAction::ElicitationPending).await
+                .await
+                {
+                    Ok(_) => self.transition(ThreadAction::ElicitationPending).await,
+                    Err(error) => {
+                        // Same rule as a permission request: never leave the
+                        // agent waiting on a question the transcript cannot show.
+                        tracing::warn!(%error, thread_id = %self.thread_id, "could not record an elicitation");
+                        let _ = self
+                            .manager
+                            .respond_elicitation(
+                                &self.thread_id,
+                                elicitation_id.as_str(),
+                                threadbase_shared::ElicitationAction::Cancel,
+                                None,
+                            )
+                            .await;
+                        self.append(ThreadEvent::SystemNotice {
+                            level: "warning".to_owned(),
+                            message: format!(
+                                "A question from the agent could not be recorded ({error}); it was cancelled so the turn could continue."
+                            ),
+                        })
+                        .await
+                    }
+                }
             }
             RawAgentEvent::Subagent { event } => self.subagent(event).await,
             RawAgentEvent::AgentMessage {
@@ -292,12 +369,9 @@ impl Pump {
                     .await;
                 Ok(())
             }
-            RawAgentEvent::Notice { message } => {
-                self.append(ThreadEvent::SystemNotice {
-                    level: "info".into(),
-                    message,
-                })
-                .await
+            RawAgentEvent::Notice { level, message } => {
+                self.append(ThreadEvent::SystemNotice { level, message })
+                    .await
             }
             RawAgentEvent::AgentLog { level, text } => {
                 self.append(ThreadEvent::AgentLog { level, text }).await
@@ -314,12 +388,13 @@ impl Pump {
             .iter()
             .map(|option| approval_option(&option.id, &option.kind, &option.label))
             .collect();
-        let approval = approvals::create(
+        let request_id = request.id.clone();
+        let approval = match approvals::create(
             &self.inner.pool,
             &self.inner.projection,
             &self.inner.events,
             approvals::NewApproval {
-                id: request.id.clone(),
+                id: request_id.clone(),
                 thread_id: self.thread_id.clone(),
                 subagent_id: None,
                 turn_id: self.run.lock().await.turn_id.clone().map(|id| id.0),
@@ -336,7 +411,29 @@ impl Pump {
             Actor::agent("Threadbase agent"),
             EventMeta::default(),
         )
-        .await?;
+        .await
+        {
+            Ok(approval) => approval,
+            Err(error) => {
+                // Nothing in the transcript can ask the user, and an agent that
+                // is never answered waits forever: deny the tool so the turn
+                // continues, and say why. A stalled thread used to be the only
+                // symptom of an approval that failed to record.
+                tracing::warn!(%error, thread_id = %self.thread_id, "could not record a permission request");
+                let _ = self
+                    .manager
+                    .decide(&self.thread_id, request_id.as_str(), ApprovalDecision::Deny)
+                    .await;
+                self.append(ThreadEvent::SystemNotice {
+                    level: "warning".to_owned(),
+                    message: format!(
+                        "A tool permission request could not be recorded ({error}); the tool was denied so the turn could continue."
+                    ),
+                })
+                .await?;
+                return Ok(());
+            }
+        };
         self.transition(ThreadAction::ApprovalPending).await?;
         self.try_auto_rule(&approval).await
     }
@@ -401,13 +498,14 @@ impl Pump {
 
     async fn finish_turn(&self, stop_reason: String) -> Result<(), ServerError> {
         self.inner.clear_turn(&self.thread_id).await;
-        let (turn_id, message_id, text) = {
+        let (turn_id, message_id, text, silent) = {
             let mut run = self.run.lock().await;
             run.thinking_id = None;
             (
                 run.turn_id.take(),
                 run.agent_message_id.take(),
                 std::mem::take(&mut run.agent_text),
+                !std::mem::take(&mut run.saw_output),
             )
         };
         if let Some(message_id) = message_id {
@@ -417,21 +515,62 @@ impl Pump {
                     .await?;
             }
         }
-        if let Some(turn_id) = turn_id {
-            self.append(ThreadEvent::TurnEnded {
-                turn_id,
-                stop_reason,
-            })
-            .await?;
+        // Adapters report `end_turn` even for a turn that died upstream: pi
+        // turns a provider error (a 402, an expired key) into an empty
+        // assistant message and never fails the prompt. Ending "successfully"
+        // with nothing to show left the thread looking hung, so a turn that
+        // produced nothing at all is reported as a failure instead.
+        let failure = (stop_reason != "cancelled" && (silent || is_stop_error(&stop_reason)))
+            .then(|| stop_failure_message(&stop_reason, silent));
+        match (&failure, turn_id) {
+            (Some(message), Some(turn_id)) => {
+                self.append(ThreadEvent::TurnError {
+                    turn_id: Some(turn_id),
+                    message: message.clone(),
+                })
+                .await?;
+            }
+            (Some(message), None) => {
+                self.append(ThreadEvent::SystemNotice {
+                    level: "error".to_owned(),
+                    message: message.clone(),
+                })
+                .await?;
+            }
+            (None, turn_id) => {
+                if let Some(notice) = stop_reason_notice(&stop_reason) {
+                    self.append(ThreadEvent::SystemNotice {
+                        level: "warning".to_owned(),
+                        message: notice.to_owned(),
+                    })
+                    .await?;
+                }
+                if let Some(turn_id) = turn_id {
+                    self.append(ThreadEvent::TurnEnded {
+                        turn_id,
+                        stop_reason,
+                    })
+                    .await?;
+                }
+            }
         }
         sqlx::query("UPDATE threads SET current_turn_id = NULL, updated_at = ? WHERE id = ?")
             .bind(now_ms())
             .bind(&self.thread_id)
             .execute(&self.inner.pool)
             .await?;
-        self.transition(ThreadAction::TurnEnded).await?;
-        self.notify("completed", "The agent finished its turn.", true)
-            .await;
+        match failure {
+            Some(message) => {
+                self.transition(ThreadAction::TurnError).await?;
+                self.notify("error", &truncate_summary(&message), false)
+                    .await;
+            }
+            None => {
+                self.transition(ThreadAction::TurnEnded).await?;
+                self.notify("completed", "The agent finished its turn.", true)
+                    .await;
+            }
+        }
         // A finished turn proves the adapter is healthy; forget earlier crashes.
         self.inner.restarts.lock().await.remove(&self.thread_id);
         let _ = self.inner.queue_tx.send(self.thread_id.clone());

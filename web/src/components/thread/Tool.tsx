@@ -1,21 +1,33 @@
-import { Group, Text } from "@mantine/core";
-import { IconChevronDown } from "@tabler/icons-react";
+import {
+  IconArrowRight,
+  IconBrain,
+  IconCheck,
+  IconChevronDown,
+  IconFileText,
+  IconLoader2,
+  IconPencil,
+  IconSearch,
+  IconTerminal2,
+  IconTool,
+  IconTrash,
+  IconWorld,
+  IconX,
+} from "@tabler/icons-react";
+import type { TablerIcon } from "@tabler/icons-react";
 import type { ToolCallData } from "../../api";
 import type { ToolKind } from "../../api/types/ToolKind";
 import type { ViewItem } from "../../lib/thread-events";
-import { countLines, exceedsDiffBudget, budgetLabel } from "../../lib/diff-size";
+import { budgetLabel, countLines, exceedsDiffBudget } from "../../lib/diff-size";
 import { ImageLightbox } from "./ImageLightbox";
-import { StatusDot } from "./StatusDot";
-import { describeTitle, formatDuration } from "./format";
-import { Suspense, lazy, memo, useState } from "react";
+import { formatDuration } from "./format";
+import { Suspense, lazy, memo, useMemo, useState } from "react";
 
 /**
  * Pierre's diff renderer drags in the tree-sitter grammar and highlight stack
  * (about 200 KB gzipped, several hundred milliseconds of parse work on a
  * phone). It used to be a static import here, so *opening a thread* paid for
  * it even though most tool rows are shell commands. Loading it on the first
- * row that actually shows a diff keeps the transcript's first paint cheap; the
- * plain patch below is already on hand and reads fine until it arrives.
+ * row that actually shows a diff keeps the transcript's first paint cheap.
  */
 const DiffView = lazy(async () => {
   const module = await import("../DiffView");
@@ -23,35 +35,83 @@ const DiffView = lazy(async () => {
 });
 
 function DiffFallback({ patch }: { patch: string }) {
-  return <pre className="cmd tool-diff-fallback">{patch}</pre>;
+  return <pre className="tool-card-fallback">{patch}</pre>;
 }
 
-/** Short verb per tool kind: the head names the action, the preview the content. */
-const VERBS: Record<ToolKind, string> = {
+/** Kind glyphs: the row's verb is text, the glyph is the shortcut. */
+const KIND_ICONS: Record<ToolKind, TablerIcon> = {
+  read: IconFileText,
+  edit: IconPencil,
+  delete: IconTrash,
+  move: IconArrowRight,
+  search: IconSearch,
+  execute: IconTerminal2,
+  think: IconBrain,
+  fetch: IconWorld,
+  other: IconTool,
+};
+
+/** Short verb per kind. Shell commands carry no verb: the command is the verb. */
+const VERBS: Partial<Record<ToolKind, string>> = {
   read: "Read",
-  edit: "Edit",
+  edit: "Edited",
+  delete: "Deleted",
+  move: "Moved",
+  think: "Thought",
+};
+
+/** File tools read as filenames; commands and queries stay monospace. */
+const FILE_KINDS = new Set<ToolKind>(["read", "edit", "delete", "move"]);
+
+const CARD_LABELS: Record<ToolKind, string> = {
+  read: "Read",
+  edit: "Diff",
   delete: "Delete",
   move: "Move",
   search: "Search",
   execute: "Shell",
-  think: "Think",
+  think: "Thought",
   fetch: "Fetch",
   other: "Tool",
 };
 
-type PreviewLine = { text: string; tone?: "add" | "del" };
-
-const PREVIEW_LINES = 3;
-const EDIT_LINES = 2;
-const DIFF_PREVIEW_LINES = 4;
-const PREVIEW_CHARS = 160;
-
-function clip(text: string) {
-  return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
+function basename(path: string) {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] || path;
 }
 
-/** Mini diff from the edit tool's `{path, edits:[{oldText,newText}]}` input. */
-function editPreview(input: string | null): { lines: PreviewLine[]; hidden: number } | null {
+/** A single line that says what the tool did, without opening it. */
+function describeCall(call: ToolCallData): {
+  verb: string | null;
+  target: string;
+  full: string;
+} {
+  const path = call.locations[0]?.path ?? null;
+  const title = call.title.replace(/\s+/g, " ").trim();
+  const verb = VERBS[call.kind] ?? null;
+  // A location on a shell/search call is a file it touched, not the thing the
+  // row is about; only file tools take their target from `locations`.
+  if (FILE_KINDS.has(call.kind) && path) {
+    return { verb, target: basename(path), full: path };
+  }
+  const firstLine = call.title.split("\n").find((line) => line.trim() !== "");
+  return {
+    verb,
+    target: firstLine?.trim() || title || CARD_LABELS[call.kind],
+    full: call.title,
+  };
+}
+
+type OutputBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; mimeType: string; data: string };
+
+type EditHunk = { removed: string[]; added: string[] };
+
+/** Line slices that actually changed, not the whole old/new blocks. Adapters
+ *  often send an edit as `{oldText,newText}` with unchanged context; showing
+ *  all of it as -/+ lines would overstate the change. */
+function editHunks(input: string | null): EditHunk[] | null {
   if (!input) return null;
   let parsed: { edits?: Array<{ oldText?: string; newText?: string }> };
   try {
@@ -59,95 +119,59 @@ function editPreview(input: string | null): { lines: PreviewLine[]; hidden: numb
   } catch {
     return null;
   }
-  const first = parsed.edits?.[0];
-  if (!first) return null;
-  const removed = (first.oldText ?? "").split("\n").filter((line) => line.trim() !== "");
-  const added = (first.newText ?? "").split("\n").filter((line) => line.trim() !== "");
-  const lines: PreviewLine[] = [
-    ...removed
-      .slice(0, EDIT_LINES)
-      .map((line) => ({ text: clip(`- ${line.trimEnd()}`), tone: "del" as const })),
-    ...added
-      .slice(0, EDIT_LINES)
-      .map((line) => ({ text: clip(`+ ${line.trimEnd()}`), tone: "add" as const })),
-  ];
-  if (lines.length === 0) return null;
-  const hidden =
-    Math.max(0, removed.length - EDIT_LINES) +
-    Math.max(0, added.length - EDIT_LINES) +
-    Math.max(0, (parsed.edits?.length ?? 1) - 1);
-  return { lines, hidden };
+  if (!Array.isArray(parsed.edits)) return null;
+  const lines = (text: string | undefined) =>
+    text === undefined || text === "" ? [] : text.split("\n");
+  const hunks: EditHunk[] = [];
+  for (const edit of parsed.edits) {
+    const oldLines = lines(edit.oldText);
+    const newLines = lines(edit.newText);
+    let prefix = 0;
+    while (
+      prefix < oldLines.length &&
+      prefix < newLines.length &&
+      oldLines[prefix] === newLines[prefix]
+    ) {
+      prefix += 1;
+    }
+    let suffix = 0;
+    while (
+      suffix < oldLines.length - prefix &&
+      suffix < newLines.length - prefix &&
+      oldLines[oldLines.length - 1 - suffix] ===
+        newLines[newLines.length - 1 - suffix]
+    ) {
+      suffix += 1;
+    }
+    const removed = oldLines.slice(prefix, oldLines.length - suffix);
+    const added = newLines.slice(prefix, newLines.length - suffix);
+    if (removed.length > 0 || added.length > 0) hunks.push({ removed, added });
+  }
+  return hunks;
 }
 
-/** The opening lines of whatever the tool acts on, so a collapsed run still
- *  says what the agent is doing instead of only that it did something. */
-function toolPreview(call: ToolCallData): { lines: PreviewLine[]; hidden: number } | null {
-  if (call.kind === "edit") {
-    const diff = editPreview(call.input);
-    if (diff) return diff;
-  }
-  if (call.kind === "execute") {
-    const lines = call.title
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter((line) => line.trim() !== "");
-    if (lines.length === 0) return null;
-    return {
-      lines: lines.slice(0, PREVIEW_LINES).map((text) => ({ text: clip(text) })),
-      hidden: Math.max(0, lines.length - PREVIEW_LINES),
-    };
-  }
-  // Read/other keep the head path; only surface input when it adds context.
-  if (call.kind === "read" || !call.input) return null;
-  const lines = call.input
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim() !== "");
-  if (lines.length === 0) return null;
-  return {
-    lines: lines.slice(0, PREVIEW_LINES).map((text) => ({ text: clip(text) })),
-    hidden: Math.max(0, lines.length - PREVIEW_LINES),
-  };
-}
+/** Per-side cap: a generated-file edit can carry thousands of lines. */
+const HUNK_LINES = 400;
 
-/** First lines of a real patch: hunks folded into a few +/- lines, the full
- *  diff stays behind the toggle. */
-function diffTextPreview(patch: string): { lines: PreviewLine[]; hidden: number } | null {
-  const rows = patch
-    .split("\n")
-    .filter(
-      (line) =>
-        line.trim() !== "" &&
-        !line.startsWith("@@") &&
-        !line.startsWith("--- ") &&
-        !line.startsWith("+++ ") &&
-        !line.startsWith("diff ") &&
-        !line.startsWith("index ") &&
-        !line.startsWith("\\"),
-    );
-  if (rows.length === 0) return null;
-  // Changed lines say more than context: show those first, context only when
-  // the patch has no +/- rows at all.
-  const changed = rows.filter(
-    (line) => line.startsWith("+") || line.startsWith("-"),
+function HunkLines({ lines, tone }: { lines: string[]; tone: "add" | "del" }) {
+  const shown = lines.slice(0, HUNK_LINES);
+  return (
+    <>
+      {shown.map((line, index) => (
+        // A hunk is a fixed snapshot for this render and never reorders.
+        // react-doctor-disable-next-line react-doctor/no-array-index-as-key
+        <div key={`${tone}:${index}:${line}`} className={`tool-edit-line ${tone}`}>
+          {tone === "add" ? "+" : "−"} {line}
+        </div>
+      ))}
+      {lines.length > shown.length ? (
+        <div className="tool-edit-line more">
+          … {lines.length - shown.length} more lines
+        </div>
+      ) : null}
+    </>
   );
-  const shown = changed.length > 0 ? changed : rows;
-  return {
-    lines: shown.slice(0, DIFF_PREVIEW_LINES).map((line) => ({
-      text: clip(line),
-      tone: line.startsWith("+")
-        ? ("add" as const)
-        : line.startsWith("-")
-          ? ("del" as const)
-          : undefined,
-    })),
-    hidden: Math.max(0, shown.length - DIFF_PREVIEW_LINES),
-  };
 }
-
-type OutputBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; mimeType: string; data: string };
 
 /** Unwrap ACP tool content: text blocks and images, instead of raw JSON/base64. */
 function parseOutput(raw: string | null | undefined): OutputBlock[] | null {
@@ -178,39 +202,118 @@ function parseOutput(raw: string | null | undefined): OutputBlock[] | null {
   return blocks.length > 0 ? blocks : null;
 }
 
-/** Section label: "Details" hides what the tool actually returned. */
-const DETAIL_LABELS: Partial<Record<ToolKind, string>> = {
-  read: "Contents",
-  search: "Results",
-  execute: "Output",
-  fetch: "Response",
-};
+function running(status: ToolCallData["status"]) {
+  return status === "pending" || status === "in_progress";
+}
 
-/** The truncation row is the obvious place to ask for more: make it open the
- *  same details body as the label below it instead of being inert text. */
-function MoreLines({
-  hidden,
-  canExpand,
-  expanded,
-  onExpand,
+function StatusMark({ status }: { status: ToolCallData["status"] }) {
+  if (running(status)) {
+    return <IconLoader2 size={12} stroke={1.75} className="tool-spinner" />;
+  }
+  if (status === "failed") {
+    return <span className="tool-failed">failed</span>;
+  }
+  return null;
+}
+
+function ToolCard({
+  call,
+  patch,
+  patchTooLarge,
+  outputText,
+  outputParsed,
+  outputLineCount,
+  edits,
+  add,
+  del,
 }: {
-  hidden: number;
-  canExpand: boolean;
-  expanded: boolean;
-  onExpand: () => void;
+  call: ToolCallData;
+  patch: string | null;
+  patchTooLarge: boolean;
+  outputText: string;
+  outputParsed: boolean;
+  outputLineCount: number;
+  edits: EditHunk[] | null;
+  add: number;
+  del: number;
 }) {
-  const label = `… ${hidden} more ${hidden === 1 ? "line" : "lines"}`;
-  if (expanded) return null;
-  if (!canExpand) return <div className="tool-line more">{label}</div>;
+  const duration = Math.max(0, call.updatedAt - call.createdAt);
+  const rawOutput = call.output ?? "";
+  const meta = [
+    add || del ? `+${add} −${del}` : null,
+    outputLineCount > 0
+      ? outputLineCount > 4_000
+        ? "4,000+ lines"
+        : `${outputLineCount} ${outputLineCount === 1 ? "line" : "lines"}`
+      : null,
+    duration > 0 ? formatDuration(duration) : null,
+  ].filter((part): part is string => Boolean(part));
+  const label = patch || edits?.length ? "Diff" : CARD_LABELS[call.kind];
+  const command = call.kind === "execute" ? call.title : null;
+  const body = patch ? (
+    patchTooLarge ? (
+      <p className="tool-card-empty">
+        This diff is too large to show inline ({budgetLabel()}). Open the file in
+        your editor to review it.
+      </p>
+    ) : (
+      <div className="tool-card-diff">
+        <Suspense fallback={<DiffFallback patch={patch} />}>
+          <DiffView patch={patch} />
+        </Suspense>
+      </div>
+    )
+  ) : edits && edits.length > 0 ? (
+    <div className="tool-edits">
+      {edits.map((hunk, index) => (
+        // Hunks are a fixed snapshot for this render and never reorder.
+        // react-doctor-disable-next-line react-doctor/no-array-index-as-key
+        <div key={index} className="tool-edit">
+          <HunkLines lines={hunk.removed} tone="del" />
+          <HunkLines lines={hunk.added} tone="add" />
+        </div>
+      ))}
+    </div>
+  ) : outputText ? (
+    <pre className="tool-card-output">{outputText}</pre>
+  ) : rawOutput.trim() !== "" && !outputParsed ? (
+    <pre className="tool-card-output">{rawOutput}</pre>
+  ) : call.input ? (
+    <pre className="tool-card-output">{call.input}</pre>
+  ) : running(call.status) ? (
+    <p className="tool-card-empty">Waiting for output…</p>
+  ) : (
+    <p className="tool-card-empty">No output.</p>
+  );
+
   return (
-    <button
-      type="button"
-      className="tool-line more tool-more"
-      aria-expanded={false}
-      onClick={onExpand}
-    >
-      {label}
-    </button>
+    <div className="tool-card">
+      <div className="tool-card-head">
+        <span className="tool-card-kind">{label}</span>
+        {meta.length ? (
+          <span className="tool-card-meta">{meta.join(" · ")}</span>
+        ) : null}
+      </div>
+      {command ? (
+        <pre className="tool-card-command">
+          <span aria-hidden>$</span> {command}
+        </pre>
+      ) : null}
+      {body}
+      {running(call.status) ? (
+        <div className="tool-card-foot">
+          <IconLoader2 size={12} stroke={1.75} className="tool-spinner" /> Running
+        </div>
+      ) : call.status === "failed" ? (
+        <div className="tool-card-foot is-failed">
+          <IconX size={12} stroke={2} /> Failed
+        </div>
+      ) : call.kind === "execute" ? (
+        <div className="tool-card-foot">
+          <IconCheck size={12} stroke={2} /> Success
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -218,210 +321,166 @@ export const Tool = memo(function Tool({
   item,
   expanded,
   onToggleExpanded,
+  nested = false,
 }: {
   item: Extract<ViewItem, { kind: "tool" }>;
-  /** The details body is open; kept in React so unmounting keeps it open. */
+  /** The details card is open; kept in React so unmounting keeps it open. */
   expanded: boolean;
   onToggleExpanded: () => void;
+  /** Rendered inside a run: the group supplies the rail and the indent. */
+  nested?: boolean;
 }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   const call: ToolCallData = item.call;
-  const path = call.locations[0]?.path;
   const patch = call.diff?.patch ?? null;
-  // A tool can write a whole generated file. Splitting that patch to count
-  // lines allocates a half-million-element array on every render, and the
-  // renderer would then mount the entire file as DOM.
+  // A tool can write a whole generated file. Handing that patch to the diff
+  // renderer would mount the entire file as DOM.
   const patchTooLarge = patch !== null && exceedsDiffBudget(patch);
-  // Short edits show the real diff inline, the way the edit tool used to read.
-  // Long ones keep a changed-lines preview and a "Full diff" toggle.
-  const inlineDiff = Boolean(
-    patch &&
-      !patchTooLarge &&
-      call.kind === "edit" &&
-      countLines(patch, 60) <= 60,
+  const edits = useMemo(
+    () => (!patch && call.kind === "edit" ? editHunks(call.input) : null),
+    [patch, call.kind, call.input],
   );
-  const preview = inlineDiff
-    ? null
-    : patch
-      ? patchTooLarge
-        ? null
-        : diffTextPreview(patch)
-      : toolPreview(call);
-  const output = parseOutput(call.output);
-  const outputImages = output?.filter(
-    (block): block is Extract<OutputBlock, { type: "image" }> =>
-      block.type === "image",
-  ) ?? [];
-  const outputText = output
-    ?.filter((block): block is Extract<OutputBlock, { type: "text" }> => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
-  const detailsLabel = patch
-    ? "Full diff"
-    : (DETAIL_LABELS[call.kind] ?? "Details");
-  // Shell tools stream stdout/stderr into `output`; show its opening lines
-  // under the command so a run is readable without opening the full output.
-  const rawOutput = call.output ?? "";
-  const duration = Math.max(0, item.ts - item.startedAt);
-  const outputLineCount = rawOutput.trim() === "" ? 0 : rawOutput.split("\n").length;
-  const metrics: string[] = [];
-  if (call.diff && (call.diff.additions || call.diff.deletions)) {
-    metrics.push(`+${call.diff.additions} −${call.diff.deletions}`);
-  }
-  if (outputLineCount > 0) {
-    metrics.push(
-      outputLineCount === 1 ? "1 line" : `${outputLineCount} lines`,
-    );
-  }
-  const outputLines =
-    call.kind === "execute" && output === null && rawOutput.trim() !== ""
-      ? rawOutput.split("\n")
-      : [];
-  // Image results are the content: no input JSON toggle to open.
+  const editStats = edits?.reduce(
+    (total, hunk) => ({
+      add: total.add + hunk.added.length,
+      del: total.del + hunk.removed.length,
+    }),
+    { add: 0, del: 0 },
+  );
+  const output = useMemo(() => parseOutput(call.output), [call.output]);
+  const outputText =
+    output
+      ?.filter(
+        (block): block is Extract<OutputBlock, { type: "text" }> =>
+          block.type === "text",
+      )
+      .map((block) => block.text)
+      .join("\n") ?? "";
+  const outputImages =
+    output?.filter(
+      (block): block is Extract<OutputBlock, { type: "image" }> =>
+        block.type === "image",
+    ) ?? [];
+  // ACP content is counted as text; shell stdout is counted raw.
+  const countedOutput =
+    outputText || (output === null ? (call.output ?? "") : "");
+  const outputLineCount =
+    countedOutput.trim() === "" ? 0 : countLines(countedOutput, 4_000);
+  // Image results are the content: they stay visible under the row, while the
+  // card carries any text or input the tool returned.
   const hasDetails = Boolean(
-    patch
-      ? !inlineDiff
-      : outputImages.length === 0 && (call.input || call.output),
+    patch ||
+      edits?.length ||
+      outputText ||
+      call.input ||
+      (!output && (call.output ?? "").trim() !== ""),
   );
-  return (
-    <div className="block">
-      <div className="block-gutter" />
-      <div className="block-body">
-        <Group gap={6} className="tool-head" wrap="nowrap">
-          <Text size="sm" title={call.title}>
-            <span className="verb">{VERBS[call.kind] ?? describeTitle(call.title)}</span>
-            {path ? (
-              <>
-                {" "}
-                <span className="path">{path}</span>
-              </>
-            ) : null}
-          </Text>
-          <StatusDot status={call.status} label={call.status.replaceAll("_", " ")} />
-          {call.status !== "pending" && duration > 0 ? (
-            <Text size="xs" className="tool-duration">
-              {formatDuration(duration)}
-            </Text>
-          ) : null}
-          {metrics.length ? (
-            <Text size="xs" className="tool-metric" title={metrics.join(" · ")}>
-              {metrics.join(" · ")}
-            </Text>
-          ) : null}
-        </Group>
-        {patchTooLarge && !expanded ? (
-          <Text size="xs" c="dimmed" className="tool-metric">
-            Diff is too large to show ({budgetLabel()})
-          </Text>
+  const { verb, target, full } = describeCall(call);
+  const Icon = KIND_ICONS[call.kind] ?? IconTool;
+  const add = call.diff?.additions ?? editStats?.add ?? 0;
+  const del = call.diff?.deletions ?? editStats?.del ?? 0;
+  const isFile = FILE_KINDS.has(call.kind);
+
+  const rowContent = (
+    <>
+      <span className="tool-icon" aria-hidden>
+        <Icon size={15} stroke={1.5} />
+      </span>
+      <span className="tool-text">
+        {verb ? <span className="tool-verb">{verb}</span> : null}
+        <span
+          className={isFile ? "tool-target is-file" : "tool-target"}
+          title={full}
+        >
+          {target}
+        </span>
+        {add || del ? (
+          <span className="tool-diff-stats">
+            {add ? <span className="add">+{add}</span> : null}
+            {del ? <span className="del">−{del}</span> : null}
+          </span>
         ) : null}
-        {inlineDiff && patch ? (
-          <Suspense fallback={<DiffFallback patch={patch} />}>
-            <DiffView patch={patch} />
-          </Suspense>
-        ) : null}
-        {preview ? (
-          <div className="tool-lines">
-            {preview.lines.map((line, index) => (
-              <div
-                // Output lines are a fixed snapshot for this render and never
-                // reorder, so position is the stable identity here.
-                // react-doctor-disable-next-line react-doctor/no-array-index-as-key
-                key={`${index}:${line.text}`}
-                className={line.tone ? `tool-line ${line.tone}` : "tool-line"}
-              >
-                {line.text}
-              </div>
-            ))}
-            {preview.hidden > 0 ? (
-              <MoreLines
-                hidden={preview.hidden}
-                canExpand={hasDetails}
-                expanded={expanded}
-                onExpand={onToggleExpanded}
-              />
-            ) : null}
-          </div>
-        ) : null}
-        {outputLines.length > 0 ? (
-          <div className="tool-lines tool-output">
-            {outputLines.slice(0, 3).map((line, index) => (
-              <div key={index} className="tool-line">
-                {clip(line)}
-              </div>
-            ))}
-            {outputLines.length > 3 ? (
-              <MoreLines
-                hidden={outputLines.length - 3}
-                canExpand={hasDetails}
-                expanded={expanded}
-                onExpand={onToggleExpanded}
-              />
-            ) : null}
-          </div>
-        ) : null}
-        {outputImages.length > 0 ? (
-          <>
-            <div className="tool-images">
-              {outputImages.map((image, index) => {
-                const src = `data:${image.mimeType};base64,${image.data}`;
-                return (
-                  <button
-                    type="button"
-                    // Tool output images are a fixed, non-reorderable snapshot.
-                    // react-doctor-disable-next-line react-doctor/no-array-index-as-key
-                    key={`${image.mimeType}:${index}`}
-                    className="tool-image"
-                    onClick={() => setLightbox(src)}
-                    title={`${image.mimeType} · ${Math.round((image.data.length * 3) / 4 / 1024)} KB`}
-                  >
-                    <img src={src} alt="" loading="lazy" />
-                  </button>
-                );
-              })}
-            </div>
-            {outputText ? (
-              <div className="tool-caption">{outputText}</div>
-            ) : null}
-          </>
-        ) : null}
+      </span>
+      <span className="tool-end">
+        <StatusMark status={call.status} />
         {hasDetails ? (
-          <details
-            className="tool-details"
-            open={expanded}
-            onToggle={(event) => {
-              if (event.currentTarget.open !== expanded) onToggleExpanded();
-            }}
-          >
-            <summary>
-              {detailsLabel}{" "}
-              <IconChevronDown size={11} stroke={1.5} className="chevron" />
-            </summary>
-            {expanded ? (
-              <>
-                {patch ? (
-                  <Suspense fallback={<DiffFallback patch={patch} />}>
-                    <DiffView patch={patch} />
-                  </Suspense>
-                ) : null}
-                {!call.diff?.patch && outputText ? (
-                  <pre className="cmd">{outputText}</pre>
-                ) : null}
-                {!call.diff?.patch && !output ? (
-                  <>
-                    {call.input ? <pre className="cmd">{call.input}</pre> : null}
-                    {call.output ? (
-                      <pre className="cmd">{call.output}</pre>
-                    ) : null}
-                  </>
-                ) : null}
-              </>
-            ) : null}
-          </details>
+          <IconChevronDown
+            size={12}
+            stroke={1.5}
+            className="tool-chevron"
+            aria-hidden
+          />
         ) : null}
-        {lightbox ? (
-          <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
-        ) : null}
-      </div>
+      </span>
+    </>
+  );
+
+  const row = hasDetails ? (
+    <button
+      type="button"
+      className={`tool-row${call.status === "failed" ? " is-failed" : ""}`}
+      aria-expanded={expanded}
+      onClick={onToggleExpanded}
+    >
+      {rowContent}
+    </button>
+  ) : (
+    <div className={`tool-row${call.status === "failed" ? " is-failed" : ""}`}>
+      {rowContent}
+    </div>
+  );
+
+  const content = (
+    <>
+      {row}
+      {outputImages.length > 0 ? (
+        <div className="tool-images">
+          {outputImages.map((image, index) => {
+            const src = `data:${image.mimeType};base64,${image.data}`;
+            return (
+              <button
+                type="button"
+                // Tool output images are a fixed, non-reorderable snapshot.
+                // react-doctor-disable-next-line react-doctor/no-array-index-as-key
+                key={`${image.mimeType}:${index}`}
+                className="tool-image"
+                aria-label={`Preview image output (${image.mimeType})`}
+                onClick={() => setLightbox(src)}
+                title={`${image.mimeType} · ${Math.round((image.data.length * 3) / 4 / 1024)} KB`}
+              >
+                <img src={src} alt="" loading="lazy" />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {expanded && hasDetails ? (
+        <ToolCard
+          call={call}
+          patch={patch}
+          patchTooLarge={patchTooLarge}
+          outputText={outputText}
+          outputParsed={output !== null}
+          outputLineCount={outputLineCount}
+          edits={edits}
+          add={add}
+          del={del}
+        />
+      ) : null}
+      {lightbox ? (
+        <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
+      ) : null}
+    </>
+  );
+
+  if (nested) {
+    return <div className="tool-call">{content}</div>;
+  }
+
+  return (
+    <div className="block tool-block">
+      <div className="block-gutter" />
+      <div className="block-body">{content}</div>
     </div>
   );
 });

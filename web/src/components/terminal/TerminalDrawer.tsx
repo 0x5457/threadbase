@@ -65,6 +65,8 @@ const KEY_BAR = [
 
 const MIN_HEIGHT = 160;
 const MAX_HEIGHT = 720;
+/** A lone LF this soon after a CR is the same Enter, not a second one. */
+const LEFTOVER_NEWLINE_MS = 200;
 
 /**
  * Admins create, everyone else attaches to a shell that already exists. Keeping
@@ -140,10 +142,26 @@ export function TerminalDrawer({
 
   const socketRef = useRef<WebSocket | null>(null);
   const sendRef = useRef<(message: unknown) => void>(() => {});
+  // When the last CR went out, so a leftover LF can be recognised below.
+  const lastCarriageReturn = useRef(0);
 
   const send = useCallback((message: unknown) => sendRef.current(message), []);
   const onData = useCallback(
-    (data: string) => send({ type: "input", data }),
+    (data: string) => {
+      // A keyboard Enter is always a CR. A lone LF arriving right behind one is
+      // the newline a soft keyboard or an IME left in xterm's helper textarea,
+      // which xterm flushes as a second Enter — one keypress, two newlines at
+      // the prompt. CR frames are never touched, so key repeat still works.
+      if (data === "\r") {
+        lastCarriageReturn.current = performance.now();
+      } else if (
+        data === "\n" &&
+        performance.now() - lastCarriageReturn.current < LEFTOVER_NEWLINE_MS
+      ) {
+        return;
+      }
+      send({ type: "input", data });
+    },
     [send],
   );
   const onResize = useCallback(

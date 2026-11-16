@@ -254,9 +254,12 @@
     grid-template-columns: 46px minmax(0, 1fr);
   }
 
-  .run-head,
-  .run-more > summary {
+  .run-head {
     padding-left: 48px;
+  }
+
+  .run-body {
+    margin-left: 48px;
   }
 
   /* The under-avatar time needs more than this gutter at the smallest text
@@ -469,9 +472,12 @@
     grid-template-columns: 58px minmax(0, 1fr);
   }
 
-  .run-head,
-  .run-more > summary {
+  .run-head {
     padding-left: 60px;
+  }
+
+  .run-body {
+    margin-left: 60px;
   }
 
   .comment-row {
@@ -803,5 +809,22 @@
 
   .subagent-scroll-wrap {
     height: auto;
+  }
+}
+
+/* Tool rows become the primary tap target on a touch screen; give them the
+   same breathing room as the rest of the touch surface and keep the detail
+   affordance visible without hover. */
+@media (any-pointer: coarse) {
+  .tool-row {
+    min-height: 34px;
+  }
+
+  .run-head {
+    height: 34px;
+  }
+
+  .tool-chevron {
+    opacity: 0.5;
   }
 }

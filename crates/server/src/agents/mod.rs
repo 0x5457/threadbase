@@ -115,6 +115,19 @@ impl AgentManager {
         self.shutdown_session(thread_id).await;
     }
 
+    /// Whether this session's workspace holds a goal it keeps working on
+    /// without prompts. Errors read as "no goal": never keep a session alive
+    /// because a database read failed.
+    async fn runs_autonomous_goal(&self, thread_id: &str) -> bool {
+        match bindings::load(&self.inner.pool, thread_id).await {
+            Ok(Some(binding)) => crate::goals::runs_autonomously(
+                std::path::Path::new(&binding.cwd),
+                binding.session_id.as_deref(),
+            ),
+            _ => false,
+        }
+    }
+
     /// Shut down adapters that have been idle past the configured TTL. ACP
     /// session ids live in the binding, so the next prompt transparently
     /// resumes the conversation.
@@ -158,7 +171,8 @@ impl AgentManager {
                     .await
                     .map(|count| count > 0)
                     .unwrap_or(true)
-                || has_queued_input(&self.inner.pool, &thread_id).await;
+                || has_queued_input(&self.inner.pool, &thread_id).await
+                || self.runs_autonomous_goal(&thread_id).await;
             if busy {
                 claim.release().await;
                 continue;
@@ -793,18 +807,28 @@ impl AgentManager {
         Ok(harness.config_options())
     }
 
+    /// Apply model/effort to the live adapter and report whether one was
+    /// there to receive it. An idle thread has no adapter: the stored value is
+    /// the source of truth and `start_session` applies it, so a missing or
+    /// stopped session is a no-op rather than an error.
     pub async fn set_config(
         &self,
         thread_id: &str,
         model: Option<&str>,
         effort: Option<&str>,
-    ) -> Result<(), ServerError> {
-        let session = self.session(thread_id).await?;
+    ) -> Result<bool, ServerError> {
+        let Some(session) = self.inner.session(thread_id).await else {
+            return Ok(false);
+        };
+        if session.is_stopped() {
+            return Ok(false);
+        }
         let mut harness = session.harness.lock().await;
         harness
             .set_config(model, effort)
             .await
-            .map_err(mapping::agent_error)
+            .map_err(mapping::agent_error)?;
+        Ok(true)
     }
 
     pub async fn cancel(&self, thread_id: &str) -> Result<(), ServerError> {

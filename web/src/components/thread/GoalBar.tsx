@@ -38,6 +38,35 @@ function label(status: string) {
   return status.replaceAll("_", " ");
 }
 
+/**
+ * What the bar says while a goal is not `complete`.
+ *
+ * The adapter's own status is `active` even after every task is done: completion
+ * is gated by a separate audit, and a rejected audit sends the agent back to
+ * work. Without that context an all-checks-green goal reads as "stuck", so say
+ * which stage it is in.
+ */
+function stage(goal: GoalDto, done: number): string | null {
+  if (goal.status === "complete") return null;
+  const verdict = goal.audit?.verdict;
+  const allDone = goal.tasks.length > 0 && done >= goal.tasks.length;
+  if (!allDone) {
+    // Auto-continue work runs outside a turn, so the thread reads `idle` while
+    // the agent is still going. Say it here rather than leave the bar mute.
+    return goal.status === "active" ? "working" : null;
+  }
+  switch (verdict) {
+    case "disapproved":
+      return "audit rejected · reworking";
+    case "error":
+      return "audit failed · retrying";
+    case "approved":
+      return "audit passed · completing";
+    default:
+      return "tasks done · awaiting audit";
+  }
+}
+
 function taskMark(task: GoalTaskDto) {
   if (task.status === "complete") return "✓";
   if (task.status === "skipped") return "–";
@@ -104,6 +133,8 @@ export const GoalBar = memo(function GoalBar({
   const skipped = goal.tasks.filter((task) => task.status === "skipped").length;
   const paused = goal.status === "paused";
   const finished = goal.status === "complete";
+  const auditStage = stage(goal, done);
+  const auditAt = goal.audit?.at ? new Date(goal.audit.at).toLocaleString() : null;
 
   return (
     <div className="goal-bar">
@@ -124,8 +155,8 @@ export const GoalBar = memo(function GoalBar({
           </Text>
         </UnstyledButton>
         <Group gap={8} className="goal-bar-meta" wrap="nowrap">
-          <Text size="xs" c="dimmed">
-            {label(goal.status)}
+          <Text size="xs" c="dimmed" title={auditAt ?? undefined}>
+            {auditStage ?? label(goal.status)}
           </Text>
           {goal.tasks.length > 0 ? (
             <Tooltip
@@ -202,6 +233,13 @@ export const GoalBar = memo(function GoalBar({
             <Text size="xs" c="dimmed" className="goal-task-detail">
               Continues automatically while active.{" "}
               {goal.updatedAt ? `Updated ${new Date(goal.updatedAt).toLocaleString()}.` : ""}
+            </Text>
+          ) : null}
+          {goal.audit ? (
+            <Text size="xs" c="dimmed" className="goal-task-detail">
+              {`Completion audit: ${goal.audit.verdict}`}
+              {auditAt ? ` · ${auditAt}` : ""}
+              {goal.audit.summary ? ` — ${goal.audit.summary}` : ""}
             </Text>
           ) : null}
         </div>

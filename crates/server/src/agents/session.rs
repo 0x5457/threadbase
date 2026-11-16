@@ -292,6 +292,9 @@ pub(crate) struct RunState {
     pub(crate) agent_message_id: Option<MessageId>,
     pub(crate) thinking_id: Option<MessageId>,
     pub(crate) agent_text: String,
+    /// Something reached the transcript during this turn. A turn that ends with
+    /// `end_turn` and nothing to show for it died upstream.
+    pub(crate) saw_output: bool,
 }
 
 impl RunState {

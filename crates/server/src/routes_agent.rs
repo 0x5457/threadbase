@@ -179,25 +179,28 @@ async fn agent_config(
 /// Goal progress the adapter keeps in this thread's workspace.
 ///
 /// Adapters without goal support answer `{"goal": null}` rather than 404: the
-/// UI asks once per thread and simply renders nothing.
+/// UI asks once per thread and simply renders nothing. A goal belongs to the
+/// session that drives it, so a thread sharing the workspace directory with the
+/// owner reports nothing instead of the owner's goal.
 async fn goal(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(thread_id): Path<String>,
 ) -> Result<Json<ThreadGoalResponse>, ServerError> {
     authz::require_read(&state.pool, &thread_id, &user).await?;
-    let cwd = match crate::bindings::load(&state.pool, &thread_id).await? {
-        Some(binding) => Some(binding.cwd),
-        None => {
+    let (cwd, session) = match crate::bindings::load(&state.pool, &thread_id).await? {
+        Some(binding) => (Some(binding.cwd), binding.session_id),
+        None => (
             crate::threads::load_row(&state.pool, &thread_id)
                 .await?
-                .worktree_path
-        }
+                .worktree_path,
+            None,
+        ),
     };
     let goal = cwd
         .as_deref()
         .map(std::path::Path::new)
-        .and_then(crate::goals::read);
+        .and_then(|cwd| crate::goals::read(cwd, session.as_deref()));
     Ok(Json(ThreadGoalResponse { goal }))
 }
 
