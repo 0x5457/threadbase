@@ -1,14 +1,16 @@
 //! Web terminal plumbing: tmux sessions, pty clients and attach tickets.
 //!
-//! A terminal session is a tmux session on a private socket, not a child of the
-//! server. That buys three things for free: the shell survives a page reload or
-//! a server restart, scrollback lives in tmux (nothing is written to disk), and
+//! Workbench sessions live on a private socket, not as children of the server.
+//! That buys three things for free: the shell survives a page reload or a
+//! server restart, scrollback lives in tmux (nothing is written to disk), and
 //! several browsers can attach to the same shell.
 //!
-//! Exactly one attached browser *drives*: it gets a read/write tmux client.
-//! Everyone else attaches with `tmux attach -r`, so read-only is enforced by
-//! tmux itself rather than by the frontend. The tmux client in turn runs inside
-//! a pty, because `tmux attach` insists on a real terminal.
+//! A workbench room has exactly one driving browser: it gets a read/write tmux
+//! client, everyone else attaches with `tmux attach -r`, so read-only is
+//! enforced by tmux itself rather than by the frontend. Host rooms point at the
+//! machine user's own tmux servers and are shared, like several local `tmux
+//! attach` clients. The tmux client in turn runs inside a pty, because `tmux
+//! attach` insists on a real terminal.
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use rand::TryRng;
@@ -102,8 +104,50 @@ pub enum RoomEvent {
     Control(Option<String>),
 }
 
+/// Which tmux server a room belongs to. Workbench sessions live on the private
+/// socket and keep their one-driver rule; host sessions are ordinary tmux
+/// sessions and may be driven by every member at once, like `tmux attach` from
+/// several terminals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionRef {
+    Workbench(String),
+    Host { socket: String, id: String },
+}
+
+impl SessionRef {
+    #[must_use]
+    pub fn workbench(id: impl Into<String>) -> Self {
+        Self::Workbench(id.into())
+    }
+
+    #[must_use]
+    pub fn host(socket: impl Into<String>, id: impl Into<String>) -> Self {
+        Self::Host {
+            socket: socket.into(),
+            id: id.into(),
+        }
+    }
+
+    /// Registry key. Workbench keys stay the tmux session name; host keys add
+    /// the socket because `$0` is only unique within one tmux server.
+    #[must_use]
+    pub fn key(&self) -> String {
+        match self {
+            Self::Workbench(id) => id.clone(),
+            Self::Host { socket, id } => format!("host:{socket}:{id}"),
+        }
+    }
+
+    #[must_use]
+    pub fn is_host(&self) -> bool {
+        matches!(self, Self::Host { .. })
+    }
+}
+
+/// One attach ticket. It names the exact tmux session, so the WebSocket route
+/// does not have to repeat a user-controlled path segment.
 struct Ticket {
-    session: String,
+    target: SessionRef,
     user: String,
     expires_at: i64,
     /// Set when the caller may not take the keyboard, e.g. a phone that can
@@ -111,23 +155,65 @@ struct Ticket {
     watch_only: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TicketGrant {
+    pub target: SessionRef,
+    pub watch_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostSession {
+    pub id: String,
+    pub name: String,
+    pub windows: u32,
+    pub attached: u32,
+    pub created_at: i64,
+    pub activity_at: i64,
+    pub cwd: Option<String>,
+    pub command: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostServer {
+    pub socket: String,
+    pub sessions: Vec<HostSession>,
+    pub error: Option<String>,
+}
+
 /// One shared terminal: a tmux session plus the browsers attached to it.
 pub struct Room {
-    pub id: String,
+    /// Registry key and the id sent to the browser.
+    pub key: String,
+    pub target: SessionRef,
+    /// Socket and session id used for every tmux command on this room.
+    pub socket: String,
+    pub tmux_id: String,
     pub thread_id: Option<String>,
     pub cwd: PathBuf,
+    shared: bool,
     controller: Mutex<Option<String>>,
     viewers: AtomicU32,
     events: broadcast::Sender<RoomEvent>,
 }
 
 impl Room {
-    fn new(id: String, thread_id: Option<String>, cwd: PathBuf) -> Self {
+    fn new(
+        target: SessionRef,
+        socket: String,
+        tmux_id: String,
+        thread_id: Option<String>,
+        cwd: PathBuf,
+        shared: bool,
+    ) -> Self {
         let (events, _) = broadcast::channel(16);
         Self {
-            id,
+            key: target.key(),
+            target,
+            socket,
+            tmux_id,
             thread_id,
             cwd,
+            shared,
             controller: Mutex::new(None),
             viewers: AtomicU32::new(0),
             events,
@@ -135,7 +221,15 @@ impl Room {
     }
 
     #[must_use]
+    pub fn shared(&self) -> bool {
+        self.shared
+    }
+
+    #[must_use]
     pub fn controller(&self) -> Option<String> {
+        if self.shared {
+            return None;
+        }
         self.controller.lock().ok().and_then(|slot| slot.clone())
     }
 
@@ -148,29 +242,36 @@ impl Room {
         self.events.subscribe()
     }
 
-    /// Claim the keyboard when nobody holds it; otherwise watch.
+    /// Claim the keyboard when nobody holds it; otherwise watch. Shared rooms
+    /// (host tmux servers) let every writable client drive simultaneously.
     pub fn claim(&self, user: &str, may_drive: bool) -> Result<Role, TerminalError> {
         let mut controller = self
             .controller
             .lock()
             .map_err(|_| TerminalError::Pty("terminal state poisoned".into()))?;
-        if may_drive && controller.is_none() {
-            *controller = Some(user.to_owned());
-            self.viewers.fetch_add(1, Ordering::Relaxed);
-            let _ = self.events.send(RoomEvent::Control(Some(user.to_owned())));
-            return Ok(Role::Controller);
-        }
         let viewers = self.viewers.fetch_add(1, Ordering::Relaxed) + 1;
         if viewers > MAX_VIEWERS + 1 {
             self.viewers.fetch_sub(1, Ordering::Relaxed);
             return Err(TerminalError::TooManyViewers);
+        }
+        if self.shared {
+            return Ok(if may_drive {
+                Role::Controller
+            } else {
+                Role::Watcher
+            });
+        }
+        if may_drive && controller.is_none() {
+            *controller = Some(user.to_owned());
+            let _ = self.events.send(RoomEvent::Control(Some(user.to_owned())));
+            return Ok(Role::Controller);
         }
         Ok(Role::Watcher)
     }
 
     pub fn release(&self, user: &str, role: Role) {
         self.viewers.fetch_sub(1, Ordering::Relaxed);
-        if role != Role::Controller {
+        if self.shared || role != Role::Controller {
             return;
         }
         let Ok(mut controller) = self.controller.lock() else {
@@ -225,28 +326,40 @@ impl TerminalHub {
         self.rooms.lock().ok()?.get(id).cloned()
     }
 
-    fn room_or_create(&self, id: &str, thread_id: Option<&str>, cwd: &Path) -> Arc<Room> {
+    fn room_or_create(
+        &self,
+        target: SessionRef,
+        socket: &str,
+        tmux_id: &str,
+        thread_id: Option<&str>,
+        cwd: &Path,
+        shared: bool,
+    ) -> Arc<Room> {
+        let key = target.key();
         let mut rooms = self.rooms.lock().expect("terminal registry poisoned");
         rooms
-            .entry(id.to_owned())
+            .entry(key)
             .or_insert_with(|| {
                 Arc::new(Room::new(
-                    id.to_owned(),
+                    target,
+                    socket.to_owned(),
+                    tmux_id.to_owned(),
                     thread_id.map(str::to_owned),
                     cwd.to_path_buf(),
+                    shared,
                 ))
             })
             .clone()
     }
 
-    fn forget(&self, id: &str) {
+    fn forget(&self, key: &str) {
         if let Ok(mut rooms) = self.rooms.lock() {
-            rooms.remove(id);
+            rooms.remove(key);
         }
     }
 
     /// Mint a single-use ticket bound to one user and one session.
-    pub fn ticket(&self, session: &str, user: &str, watch_only: bool) -> String {
+    pub fn ticket(&self, target: SessionRef, user: &str, watch_only: bool) -> String {
         let token = random_token();
         if let Ok(mut tickets) = self.tickets.lock() {
             let now = now_ms();
@@ -256,7 +369,7 @@ impl TerminalHub {
             tickets.insert(
                 token.clone(),
                 Ticket {
-                    session: session.to_owned(),
+                    target,
                     user: user.to_owned(),
                     expires_at: now + TICKET_TTL_MS,
                     watch_only,
@@ -266,15 +379,18 @@ impl TerminalHub {
         token
     }
 
-    /// Consume a ticket, returning whether the caller asked to watch only. It is
-    /// removed even when it does not match, so a wrong guess cannot be retried
-    /// against the same token.
-    pub fn take_ticket(&self, token: &str, session: &str, user: &str) -> Option<bool> {
+    /// Consume a ticket. It is removed even when the user does not match, so a
+    /// wrong guess cannot be retried against the same token.
+    pub fn take_ticket(&self, token: &str, user: &str) -> Option<TicketGrant> {
         let mut tickets = self.tickets.lock().ok()?;
         let ticket = tickets.remove(token)?;
-        let valid =
-            ticket.session == session && ticket.user == user && ticket.expires_at > now_ms();
-        valid.then_some(ticket.watch_only)
+        if ticket.user != user || ticket.expires_at <= now_ms() {
+            return None;
+        }
+        Some(TicketGrant {
+            target: ticket.target,
+            watch_only: ticket.watch_only,
+        })
     }
 
     /// Apply the options to a server this process did not start.
@@ -300,10 +416,28 @@ impl TerminalHub {
     }
 
     async fn tmux(&self, args: &[&str]) -> Result<String, TerminalError> {
+        self.tmux_command(&self.socket, args, true).await
+    }
+
+    /// Run against a host server without the workbench config file: those
+    /// options (status off, window-size manual, ...) belong only to the private
+    /// socket and must never leak into the user's own tmux server.
+    async fn host_tmux(&self, socket: &str, args: &[&str]) -> Result<String, TerminalError> {
+        self.tmux_command(socket, args, false).await
+    }
+
+    async fn tmux_command(
+        &self,
+        socket: &str,
+        args: &[&str],
+        with_conf: bool,
+    ) -> Result<String, TerminalError> {
         let mut command = tokio::process::Command::new("tmux");
-        command.arg("-L").arg(&self.socket);
-        if let Some(conf) = &self.conf {
-            command.arg("-f").arg(conf);
+        command.arg("-L").arg(socket);
+        if with_conf {
+            if let Some(conf) = &self.conf {
+                command.arg("-f").arg(conf);
+            }
         }
         command.args(args);
         command.stdin(std::process::Stdio::null());
@@ -342,8 +476,68 @@ impl TerminalHub {
         }
     }
 
+    /// Sessions on the configured host sockets. The private workbench socket is
+    /// skipped even if it was configured: its one-driver rule must not be
+    /// bypassed by the host route.
+    pub async fn host_sessions(&self, sockets: &[String]) -> Vec<HostServer> {
+        let mut servers = Vec::new();
+        for socket in sockets {
+            if socket == &self.socket || !is_socket_name(socket) {
+                continue;
+            }
+            let server = match self.list_host(socket).await {
+                Ok(sessions) => HostServer {
+                    socket: socket.clone(),
+                    sessions,
+                    error: None,
+                },
+                // A socket with no server is an empty server, not an error.
+                Err(error) if no_server(&error) => HostServer {
+                    socket: socket.clone(),
+                    sessions: Vec::new(),
+                    error: None,
+                },
+                Err(error) => HostServer {
+                    socket: socket.clone(),
+                    sessions: Vec::new(),
+                    error: Some(error.to_string()),
+                },
+            };
+            servers.push(server);
+        }
+        servers
+    }
+
+    pub async fn host_session(&self, socket: &str, id: &str) -> Option<HostSession> {
+        self.list_host(socket)
+            .await
+            .ok()?
+            .into_iter()
+            .find(|session| session.id == id)
+    }
+
+    async fn list_host(&self, socket: &str) -> Result<Vec<HostSession>, TerminalError> {
+        let listed = self
+            .host_tmux(socket, &["list-sessions", "-F", HOST_SESSION_FORMAT])
+            .await?;
+        let mut sessions = parse_host_sessions(&listed);
+        if let Ok(panes) = self
+            .host_tmux(socket, &["list-panes", "-a", "-F", HOST_PANE_FORMAT])
+            .await
+        {
+            apply_host_panes(&mut sessions, &panes);
+        }
+        Ok(sessions)
+    }
+
     async fn alive(&self, id: &str) -> bool {
         self.tmux(&["has-session", "-t", id]).await.is_ok()
+    }
+
+    async fn host_alive(&self, socket: &str, id: &str) -> bool {
+        self.host_tmux(socket, &["has-session", "-t", id])
+            .await
+            .is_ok()
     }
 
     /// Create the tmux session when it does not exist yet.
@@ -386,44 +580,188 @@ impl TerminalHub {
             }
         }
         self.configure().await?;
-        Ok(self.room_or_create(id, thread_id, cwd))
+        Ok(self.room_or_create(
+            SessionRef::workbench(id),
+            &self.socket,
+            id,
+            thread_id,
+            cwd,
+            false,
+        ))
     }
 
-    pub async fn attach_room(&self, id: &str) -> Result<Arc<Room>, TerminalError> {
-        let room = self.room(id).ok_or(TerminalError::NotFound)?;
-        self.configure().await?;
+    /// Adopt an existing host session. The room is shared: every writable
+    /// browser gets a writable tmux client, just like `tmux attach` in another
+    /// terminal.
+    pub async fn ensure_host(&self, socket: &str, id: &str) -> Result<Arc<Room>, TerminalError> {
+        if socket == self.socket || !is_socket_name(socket) || !is_host_session_id(id) {
+            return Err(TerminalError::NotFound);
+        }
+        let Some(cwd) = self.host_current_path(socket, id).await else {
+            return Err(TerminalError::NotFound);
+        };
+        if !self.host_alive(socket, id).await {
+            return Err(TerminalError::NotFound);
+        }
+        Ok(self.room_or_create(
+            SessionRef::host(socket, id),
+            socket,
+            id,
+            None,
+            Path::new(&cwd),
+            true,
+        ))
+    }
+
+    pub async fn attach_room(&self, target: &SessionRef) -> Result<Arc<Room>, TerminalError> {
+        let room = self.room(&target.key()).ok_or(TerminalError::NotFound)?;
+        if !target.is_host() {
+            self.configure().await?;
+        }
         Ok(room)
     }
 
     /// Re-register a tmux session that this process did not create, which is
     /// what happens after a server restart while the shell kept running.
     pub fn adopt(&self, id: &str, thread_id: Option<&str>, cwd: &Path) -> Arc<Room> {
-        self.room_or_create(id, thread_id, cwd)
+        self.room_or_create(
+            SessionRef::workbench(id),
+            &self.socket,
+            id,
+            thread_id,
+            cwd,
+            false,
+        )
+    }
+
+    pub fn adopt_host(&self, socket: &str, id: &str, cwd: &Path) -> Arc<Room> {
+        self.room_or_create(SessionRef::host(socket, id), socket, id, None, cwd, true)
     }
 
     /// Where the shell currently is, for the drawer header.
-    pub async fn current_path(&self, id: &str) -> Option<String> {
-        self.tmux(&["display-message", "-p", "-t", id, "#{pane_current_path}"])
-            .await
-            .ok()
-            .filter(|path| !path.is_empty())
+    pub async fn current_path(&self, target: &SessionRef) -> Option<String> {
+        match target {
+            SessionRef::Workbench(id) => self
+                .tmux(&["display-message", "-p", "-t", id, "#{pane_current_path}"])
+                .await
+                .ok()
+                .filter(|path| !path.is_empty()),
+            SessionRef::Host { socket, id } => self.host_current_path(socket, id).await,
+        }
     }
 
-    pub async fn kill(&self, id: &str) -> Result<(), TerminalError> {
+    pub async fn host_current_path(&self, socket: &str, id: &str) -> Option<String> {
+        self.host_tmux(
+            socket,
+            &["display-message", "-p", "-t", id, "#{pane_current_path}"],
+        )
+        .await
+        .ok()
+        .filter(|path| !path.is_empty())
+    }
+
+    pub async fn kill(&self, target: &SessionRef) -> Result<(), TerminalError> {
+        let SessionRef::Workbench(id) = target else {
+            // Host sessions belong to the user, not to threadbase. Closing the
+            // browser must never kill their shell.
+            return Err(TerminalError::NotFound);
+        };
         let _ = self.tmux(&["kill-session", "-t", id]).await;
-        self.forget(id);
+        self.forget(&target.key());
         Ok(())
     }
 
     /// Keep the tmux window at the driver's size. Watchers render a crop of it,
-    /// so a smaller or larger watcher cannot reflow the driver's terminal.
-    pub async fn resize_window(&self, id: &str, cols: u16, rows: u16) {
+    /// so a smaller or larger watcher cannot reflow the driver's terminal. Host
+    /// rooms are shared and left to tmux's own window-size policy.
+    pub async fn resize_window(&self, socket: &str, id: &str, cols: u16, rows: u16) {
         let cols = cols.clamp(MIN_COLS, MAX_COLS).to_string();
         let rows = rows.clamp(MIN_ROWS, MAX_ROWS).to_string();
         let _ = self
-            .tmux(&["resize-window", "-t", id, "-x", &cols, "-y", &rows])
+            .tmux_command(
+                socket,
+                &["resize-window", "-t", id, "-x", &cols, "-y", &rows],
+                true,
+            )
             .await;
     }
+}
+
+/// Session fields, with the free-form name last so `splitn` can keep tabs in
+/// it. Timestamps are Unix seconds; the wire format uses milliseconds.
+const HOST_SESSION_FORMAT: &str = "#{session_id}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{session_activity}\t#{session_name}";
+/// Only the active pane of the active window describes a session's current
+/// command and directory. The path is last for the same reason as the name.
+const HOST_PANE_FORMAT: &str = "#{session_id}\t#{window_active}\t#{pane_active}\t#{pane_current_command}\t#{pane_current_path}";
+
+fn parse_host_sessions(listed: &str) -> Vec<HostSession> {
+    listed
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(6, '\t');
+            let id = fields.next()?.trim();
+            if !is_host_session_id(id) {
+                return None;
+            }
+            let windows = fields.next()?.trim().parse().unwrap_or(0);
+            let attached = fields.next()?.trim().parse().unwrap_or(0);
+            let created = fields.next()?.trim().parse::<i64>().unwrap_or(0);
+            let activity = fields.next()?.trim().parse::<i64>().unwrap_or(0);
+            let name = fields.next()?.to_owned();
+            Some(HostSession {
+                id: id.to_owned(),
+                name,
+                windows,
+                attached,
+                created_at: created.saturating_mul(1000),
+                activity_at: activity.saturating_mul(1000),
+                cwd: None,
+                command: None,
+            })
+        })
+        .collect()
+}
+
+fn apply_host_panes(sessions: &mut [HostSession], listed: &str) {
+    let mut active: HashMap<String, (String, String)> = HashMap::new();
+    for line in listed.lines() {
+        let mut fields = line.splitn(5, '\t');
+        let Some(id) = fields.next() else { continue };
+        if !is_host_session_id(id) {
+            continue;
+        }
+        let Some(window_active) = fields.next() else {
+            continue;
+        };
+        let Some(pane_active) = fields.next() else {
+            continue;
+        };
+        if window_active != "1" || pane_active != "1" {
+            continue;
+        }
+        let Some(command) = fields.next() else {
+            continue;
+        };
+        let Some(path) = fields.next() else {
+            continue;
+        };
+        active.insert(id.to_owned(), (command.to_owned(), path.to_owned()));
+    }
+    for session in sessions {
+        if let Some((command, path)) = active.remove(&session.id) {
+            session.command = Some(command);
+            session.cwd = Some(path);
+        }
+    }
+}
+
+fn no_server(error: &TerminalError) -> bool {
+    let TerminalError::Tmux(message) = error else {
+        return false;
+    };
+    message.contains("no server running")
+        || message.contains("error connecting to")
+        || message.contains("No such file or directory")
 }
 
 /// The shell path lands in a tmux config file, so anything exotic falls back
@@ -499,6 +837,29 @@ pub fn is_session_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
+/// tmux's stable session id (`$0`, `$12`, ...). A name would also match tmux's
+/// target grammar, so host sessions are always addressed by id.
+#[must_use]
+pub fn is_host_session_id(id: &str) -> bool {
+    id.len() > 1
+        && id.len() <= 16
+        && id.starts_with('$')
+        && id[1..].bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// `-L` names become file names in the tmux socket directory; keeping them to
+/// a small alphabet also keeps the room key unambiguous.
+#[must_use]
+pub fn is_socket_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
 fn random_token() -> String {
     let mut bytes = [0u8; 24];
     rand::rngs::SysRng
@@ -543,14 +904,7 @@ impl Drop for Attachment {
 }
 
 /// Spawn a tmux client inside a fresh pty.
-pub fn attach(
-    id: &str,
-    socket: &str,
-    cwd: &Path,
-    cols: u16,
-    rows: u16,
-    role: Role,
-) -> Result<Attachment, TerminalError> {
+pub fn attach(room: &Room, cols: u16, rows: u16, role: Role) -> Result<Attachment, TerminalError> {
     let cols = cols.clamp(MIN_COLS, MAX_COLS);
     let rows = rows.clamp(MIN_ROWS, MAX_ROWS);
     let pty = native_pty_system();
@@ -564,13 +918,20 @@ pub fn attach(
         .map_err(|error| TerminalError::Pty(error.to_string()))?;
 
     let mut command = CommandBuilder::new("tmux");
-    command.args(["-L", socket, "attach"]);
+    command.args(["-L", &room.socket, "attach"]);
     if role == Role::Watcher {
         // tmux drops keystrokes from a read-only client, which is the entire
         // server-side enforcement of "everyone else only watches".
         command.arg("-r");
     }
-    command.args(["-t", id]);
+    command.args(["-t", &room.tmux_id]);
+    // A pane's directory can disappear while the shell keeps running; the
+    // client must still attach, so fall back instead of failing to spawn.
+    let cwd = if room.cwd.is_dir() {
+        room.cwd.clone()
+    } else {
+        std::env::temp_dir()
+    };
     command.cwd(cwd);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
@@ -698,28 +1059,100 @@ mod tests {
         assert!(!is_driver(&[], "0x5459"));
     }
 
+    fn room(shared: bool) -> Room {
+        let target = SessionRef::workbench("t-1");
+        Room::new(
+            target,
+            "tb-test".to_owned(),
+            "t-1".to_owned(),
+            None,
+            PathBuf::from("/tmp"),
+            shared,
+        )
+    }
+
     #[test]
-    fn tickets_are_single_use_and_bound_to_user_and_session() {
+    fn host_session_ids_are_strict_and_socket_names_are_safe() {
+        assert!(is_host_session_id("$0"));
+        assert!(is_host_session_id("$123"));
+        assert!(!is_host_session_id("$x"));
+        assert!(!is_host_session_id("$1:2"));
+        assert!(!is_host_session_id("0"));
+        assert!(!is_host_session_id(""));
+        assert!(is_socket_name("default"));
+        assert!(is_socket_name("work-1.2"));
+        assert!(!is_socket_name("../evil"));
+        assert!(!is_socket_name("a:b"));
+        assert!(!is_socket_name(""));
+        assert!(!is_socket_name("."));
+        assert!(!is_socket_name(".."));
+    }
+
+    #[test]
+    fn host_sessions_parse_by_id_and_keep_the_name_last() {
+        let sessions = parse_host_sessions(
+            "$0\t2\t1\t1700000000\t1700000010\tapi server\n$4\t1\t0\t1700000005\t1700000006\twith\ttab",
+        );
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].id, "$0");
+        assert_eq!(sessions[0].name, "api server");
+        assert_eq!(sessions[0].windows, 2);
+        assert_eq!(sessions[0].attached, 1);
+        assert_eq!(sessions[0].created_at, 1_700_000_000_000);
+        assert_eq!(sessions[1].name, "with\ttab");
+
+        let mut sessions = sessions;
+        apply_host_panes(
+            &mut sessions,
+            "$0\t1\t0\tbash\t/tmp/inactive\n$0\t1\t1\tnode\t/tmp/active\n$4\t0\t1\tvim\t/tmp/other",
+        );
+        assert_eq!(sessions[0].command.as_deref(), Some("node"));
+        assert_eq!(sessions[0].cwd.as_deref(), Some("/tmp/active"));
+        assert_eq!(sessions[1].command, None);
+    }
+
+    #[test]
+    fn tickets_are_single_use_and_bound_to_user_and_target() {
         let dir = tempfile::tempdir().unwrap();
         let hub = TerminalHub::new(dir.path(), "/bin/bash", "tb-test");
+        let target = SessionRef::workbench("t-1");
 
-        let token = hub.ticket("t-1", "u1", false);
-        assert_eq!(hub.take_ticket(&token, "t-1", "u2"), None);
-        assert_eq!(hub.take_ticket(&token, "t-1", "u1"), None);
+        let token = hub.ticket(target.clone(), "u1", false);
+        assert_eq!(hub.take_ticket(&token, "u2"), None);
+        assert_eq!(hub.take_ticket(&token, "u1"), None);
 
-        let token = hub.ticket("t-1", "u1", false);
-        assert_eq!(hub.take_ticket(&token, "t-2", "u1"), None);
+        let token = hub.ticket(target.clone(), "u1", false);
+        assert_eq!(
+            hub.take_ticket(&token, "u1"),
+            Some(TicketGrant {
+                target: target.clone(),
+                watch_only: false,
+            })
+        );
 
-        let token = hub.ticket("t-1", "u1", false);
-        assert_eq!(hub.take_ticket(&token, "t-1", "u1"), Some(false));
+        let token = hub.ticket(target.clone(), "u1", true);
+        assert_eq!(
+            hub.take_ticket(&token, "u1"),
+            Some(TicketGrant {
+                target: target.clone(),
+                watch_only: true,
+            })
+        );
 
-        let token = hub.ticket("t-1", "u1", true);
-        assert_eq!(hub.take_ticket(&token, "t-1", "u1"), Some(true));
+        let host = SessionRef::host("default", "$3");
+        let token = hub.ticket(host.clone(), "u1", false);
+        assert_eq!(
+            hub.take_ticket(&token, "u1"),
+            Some(TicketGrant {
+                target: host,
+                watch_only: false,
+            })
+        );
     }
 
     #[test]
     fn the_first_driver_keeps_the_keyboard() {
-        let room = Room::new("t-1".into(), None, PathBuf::from("/tmp"));
+        let room = room(false);
         assert_eq!(room.claim("u1", true), Ok(Role::Controller));
         assert_eq!(room.claim("u2", true), Ok(Role::Watcher));
         assert_eq!(room.controller().as_deref(), Some("u1"));
@@ -729,8 +1162,19 @@ mod tests {
     }
 
     #[test]
+    fn shared_rooms_let_every_member_drive() {
+        let room = room(true);
+        assert_eq!(room.claim("u1", true), Ok(Role::Controller));
+        assert_eq!(room.claim("u2", true), Ok(Role::Controller));
+        assert_eq!(room.claim("u3", false), Ok(Role::Watcher));
+        assert_eq!(room.controller(), None);
+        room.release("u1", Role::Controller);
+        assert_eq!(room.viewers(), 2);
+    }
+
+    #[test]
     fn watchers_are_capped() {
-        let room = Room::new("t-1".into(), None, PathBuf::from("/tmp"));
+        let room = room(false);
         assert_eq!(room.claim("driver", true), Ok(Role::Controller));
         for index in 0..MAX_VIEWERS {
             assert_eq!(room.claim(&format!("w{index}"), true), Ok(Role::Watcher));

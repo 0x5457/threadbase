@@ -16,6 +16,7 @@ import {
   IconDots,
   IconLoader2,
   IconMessagePlus,
+  IconPencil,
   IconRefresh,
 } from "@tabler/icons-react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,7 +25,9 @@ import { readPick, rememberPick } from "../lib/model-prefs";
 import {
   Fragment,
   forwardRef,
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -34,10 +37,12 @@ import {
 import type { ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import {
+  cancelThread,
   createComment,
   decideApproval,
   deleteComment,
   dropQueueItem,
+  editThreadMessage,
   getMe,
   getState,
   getThreadBundle,
@@ -63,12 +68,13 @@ import type { LivePanel } from "../lib/live/types";
 import { type ViewItem } from "../lib/thread-events";
 import { ActionSheet } from "./ActionSheet";
 import { AgentLog } from "./AgentLog";
-import { Composer } from "./Composer";
+import { ComposerSkeleton } from "./composer/ComposerSkeleton";
 import { ApprovalCard } from "./thread/ApprovalCard";
 import { CommentCard, CommentDraft } from "./thread/CommentCard";
 import { CommentThread } from "./thread/CommentThread";
 import { ElicitationCard } from "./thread/ElicitationCard";
 import { EmptyThread } from "./thread/EmptyThread";
+import { EditMessageDialog } from "./thread/EditMessageDialog";
 import { Message, Notice, Thinking } from "./thread/Message";
 import { formatDuration, timeOf } from "./thread/format";
 import { GoalBar } from "./thread/GoalBar";
@@ -114,6 +120,7 @@ function TimelineRowImpl({
   expanded,
   onToggleExpanded,
   onComment,
+  onEditMessage,
   onMessageLongPress,
   continued = false,
 }: {
@@ -133,6 +140,7 @@ function TimelineRowImpl({
   editing: string | null;
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
+  onEditMessage: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onMessageLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
 }) {
   const toolRow = (tool: ToolItem, nested = false) => (
@@ -319,6 +327,7 @@ function TimelineRowImpl({
           active={active}
           continued={continued}
           onComment={onComment}
+          onEdit={onEditMessage}
           onLongPress={onMessageLongPress}
         />
         {thread}
@@ -391,9 +400,17 @@ const TimelineRow = memo(
       prev.editing === next.editing &&
       prev.editor === next.editor &&
       prev.onComment === next.onComment &&
+      prev.onEditMessage === next.onEditMessage &&
       prev.onMessageLongPress === next.onMessageLongPress
     );
   },
+);
+
+// Tiptap, the CRDT draft provider and the suggestion stack are the composer's
+// dependencies. Keeping them in a separate chunk lets the transcript paint
+// while the editor downloads behind its reserved space.
+const Composer = lazy(() =>
+  import("./Composer").then((module) => ({ default: module.Composer })),
 );
 
 const TimelineList = forwardRef<HTMLDivElement, { style?: React.CSSProperties; children?: React.ReactNode }>(
@@ -430,6 +447,11 @@ export const RealThreadView = memo(function RealThreadView({
     ViewItem,
     { kind: "message" }
   > | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Extract<
+    ViewItem,
+    { kind: "message" }
+  > | null>(null);
+  const [stopping, setStopping] = useState(false);
   // A long session can hold thousands of blocks; Virtuoso mounts only what is
   // visible, so a 10k-event transcript costs the same as a short one.
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -470,7 +492,10 @@ export const RealThreadView = memo(function RealThreadView({
     queryKey: ["thread", threadId, "meta"],
     queryFn: () => getThreadBundle(threadId, { changes: false }),
     staleTime: 2_000,
-    refetchInterval: 4_000,
+    // The live socket carries events and thread state; this poll only picks
+    // up cross-device approvals/comments/queue changes. Eight seconds keeps
+    // those responsive without re-downloading the bundle every four.
+    refetchInterval: 8_000,
     refetchIntervalInBackground: false,
     placeholderData: keepPreviousData,
   });
@@ -741,7 +766,9 @@ export const RealThreadView = memo(function RealThreadView({
   });
   const goal = goalQuery.data?.goal ?? null;
   const [goalBusy, setGoalBusy] = useState(false);
-  const threadStatus = bundle?.thread.status;
+  // The event stream carries the status change before the 4s bundle poll does;
+  // the poll stays as the cold-start fallback.
+  const threadStatus = live.threadState?.status ?? bundle?.thread.status;
 
   useEffect(() => {
     // A turn can create, complete or block a goal; re-read once it settles.
@@ -755,6 +782,41 @@ export const RealThreadView = memo(function RealThreadView({
       color: "red",
     });
   }, []);
+
+  const openMessageEdit = useCallback(
+    (item: Extract<ViewItem, { kind: "message" }>) => {
+      setMessageSheet(null);
+      setEditingMessage(item);
+    },
+    [],
+  );
+
+  const saveMessageEdit = useCallback(
+    async (text: string) => {
+      if (!editingMessage) return;
+      try {
+        await editThreadMessage(threadId, editingMessage.id, text);
+        setEditingMessage(null);
+        refresh();
+      } catch (cause) {
+        reportFailure(cause, "Could not edit the message");
+        throw cause;
+      }
+    },
+    [editingMessage, refresh, reportFailure, threadId],
+  );
+
+  const stopTurn = useCallback(async () => {
+    setStopping(true);
+    try {
+      await cancelThread(threadId);
+      refresh();
+    } catch (cause) {
+      reportFailure(cause, "Could not stop the agent");
+    } finally {
+      setStopping(false);
+    }
+  }, [refresh, reportFailure, threadId]);
 
   /** Poll the goal endpoint until the adapter records `status`, or give up. */
   const settleGoal = useCallback(
@@ -807,6 +869,7 @@ export const RealThreadView = memo(function RealThreadView({
   const actions =
     live.threadState?.allowedActions ?? bundle?.thread.allowedActions;
   const archived = threadCan(actions, "unarchive");
+  const canStop = threadCan(actions, "cancel");
   const writable = canWrite && !setupActive && !archived;
   const retrySetup = useCallback(() => {
     void retryThreadSetup(threadId)
@@ -1153,7 +1216,7 @@ export const RealThreadView = memo(function RealThreadView({
 
   if (
     !live.error &&
-    live.events.length === 0 &&
+    !live.hasEvents &&
     (bundleQuery.isPending || live.phase === "loading")
   ) {
     // Slow links should see the shape of a transcript instead of a bare spinner.
@@ -1267,7 +1330,7 @@ export const RealThreadView = memo(function RealThreadView({
               <TimelineRow
                 item={item}
                 continued={continued}
-                active={bundle?.thread.status === "running"}
+                active={threadStatus === "running"}
                 commentsForTool={commentsForTool}
                 comments={commentsFor(
                   item.kind === "message" ? "message" : "tool_call",
@@ -1292,6 +1355,7 @@ export const RealThreadView = memo(function RealThreadView({
                 expanded={expandedRows}
                 onToggleExpanded={toggleExpandedRow}
                 onComment={commentOnMessage}
+                onEditMessage={openMessageEdit}
                 onMessageLongPress={openMessageSheet}
             />
             );
@@ -1327,6 +1391,15 @@ export const RealThreadView = memo(function RealThreadView({
         actions={
           messageSheet
             ? [
+                ...(messageSheet.role === "user"
+                  ? [
+                      {
+                        label: "Edit message",
+                        icon: <IconPencil size={17} stroke={1.5} />,
+                        onSelect: () => openMessageEdit(messageSheet),
+                      },
+                    ]
+                  : []),
                 {
                   label: "Comment on message",
                   icon: <IconMessagePlus size={17} stroke={1.5} />,
@@ -1356,6 +1429,11 @@ export const RealThreadView = memo(function RealThreadView({
             : []
         }
       />
+      <EditMessageDialog
+        message={editingMessage}
+        onClose={() => setEditingMessage(null)}
+        onSave={saveMessageEdit}
+      />
       <div className="composer-stack">
         <AgentLog lines={diagnostics} />
         {goal ? (
@@ -1375,22 +1453,31 @@ export const RealThreadView = memo(function RealThreadView({
           onEdit={edit}
           onReorder={reorder}
         />
-        <Composer
-          threadId={threadId}
-          canWrite={writable}
-          projectId={bundle?.project.id}
-          agentName={bundle?.thread.agent}
-          modelName={bundle?.thread.model}
-          effort={bundle?.thread.effort}
-          sendWithModifier={stateQuery.data?.settings.sendWithModifier ?? false}
-          onModelChange={handleModelChange}
-          onEffortChange={handleEffortChange}
-          onSent={refresh}
-          usage={usage}
-          watching={watching}
-          terminalUsers={terminalUsers}
-          onThreadComment={openThreadComment}
-        />
+        <Suspense
+          fallback={<ComposerSkeleton agent={bundle?.thread.agent} />}
+        >
+          <Composer
+            threadId={threadId}
+            canWrite={writable}
+            projectId={bundle?.project.id}
+            agentName={bundle?.thread.agent}
+            modelName={bundle?.thread.model}
+            effort={bundle?.thread.effort}
+            sendWithModifier={
+              stateQuery.data?.settings.sendWithModifier ?? false
+            }
+            onModelChange={handleModelChange}
+            onEffortChange={handleEffortChange}
+            onSent={refresh}
+            usage={usage}
+            watching={watching}
+            terminalUsers={terminalUsers}
+            onThreadComment={openThreadComment}
+            running={canStop}
+            stopping={stopping}
+            onStop={() => void stopTurn()}
+          />
+        </Suspense>
       </div>
     </>
   );

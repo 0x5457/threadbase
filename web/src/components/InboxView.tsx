@@ -3,7 +3,6 @@ import {
   Button,
   Group,
   Loader,
-  ScrollArea,
   SegmentedControl,
   Text,
   UnstyledButton,
@@ -21,7 +20,7 @@ import {
   IconInbox,
   IconMessage,
 } from "@tabler/icons-react";
-import { Fragment, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
   listInbox,
   markAllInboxRead,
@@ -30,6 +29,7 @@ import {
 } from "../api";
 import { pathFor } from "../lib/router";
 import { useLongPress } from "../lib/use-long-press";
+import { Virtuoso } from "react-virtuoso";
 import { ActionSheet, type ActionSheetAction } from "./ActionSheet";
 import { EmptyState } from "./EmptyState";
 
@@ -86,7 +86,7 @@ function dayLabel(ts: number) {
 
 const SWIPE_ACTION_WIDTH = 84;
 
-function InboxRow({
+const InboxRow = memo(function InboxRow({
   item,
   onOpen,
   onLongPress,
@@ -258,9 +258,9 @@ function InboxRow({
       </UnstyledButton>
     </div>
   );
-}
+});
 
-export function InboxView({
+export const InboxView = memo(function InboxView({
   onOpenThread,
 }: {
   onOpenThread: (item: InboxItem) => void;
@@ -276,30 +276,41 @@ export function InboxView({
       last.hasMore && last.items.length > 0
         ? last.items[last.items.length - 1]?.id
         : undefined,
-    refetchInterval: 5_000,
+    // TanStack refetches every loaded page on each tick. Only the first page
+    // needs a timer: after the user walks into older pages the list is a
+    // reading surface, and the unread badge (updated by the live socket)
+    // already signals new activity. The filter switch still refetches.
+    refetchInterval: (query) =>
+      (query.state.data?.pages.length ?? 0) <= 1 ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
   const pages = inbox.data?.pages ?? [];
-  const items = pages.flatMap((page) => page.items);
+  const items = useMemo(
+    () => pages.flatMap((page) => page.items),
+    [pages],
+  );
   const unread = pages[0]?.unread ?? 0;
 
-  const markRead = (item: InboxItem) => {
-    void markInboxRead(item.threadId)
-      .then(() => {
-        void queryClient.invalidateQueries({ queryKey: ["inbox"] });
-        void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
-        notifications.show({ message: "Marked read", color: "teal" });
-      })
-      .catch((cause: unknown) =>
-        notifications.show({
-          message:
-            cause instanceof Error ? cause.message : "Could not mark read",
-          color: "red",
-        }),
-      );
-  };
+  const markRead = useCallback(
+    (item: InboxItem) => {
+      void markInboxRead(item.threadId)
+        .then(() => {
+          void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+          void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
+          notifications.show({ message: "Marked read", color: "teal" });
+        })
+        .catch((cause: unknown) =>
+          notifications.show({
+            message:
+              cause instanceof Error ? cause.message : "Could not mark read",
+            color: "red",
+          }),
+        );
+    },
+    [queryClient],
+  );
 
-  const copyLink = (item: InboxItem) => {
+  const copyLink = useCallback((item: InboxItem) => {
     const url = `${window.location.origin}${pathFor({
       kind: "thread",
       projectId: item.projectId,
@@ -311,7 +322,25 @@ export function InboxView({
       .catch(() =>
         notifications.show({ message: "Could not copy link", color: "red" }),
       );
-  };
+  }, []);
+
+  // Day separators are rows too, so Virtuoso can mount only the visible
+  // window of a long inbox instead of hundreds of rows at once.
+  const listRows = useMemo(() => {
+    const rows: Array<
+      { kind: "day"; id: string; day: string } | { kind: "item"; item: InboxItem }
+    > = [];
+    let previousDay = "";
+    for (const item of items) {
+      const day = dayLabel(item.createdAt);
+      if (day !== previousDay) {
+        rows.push({ kind: "day", id: `day:${rows.length}:${day}`, day });
+        previousDay = day;
+      }
+      rows.push({ kind: "item", item });
+    }
+    return rows;
+  }, [items]);
 
   const sheetActions: ActionSheetAction[] = sheetItem
     ? [
@@ -398,12 +427,12 @@ export function InboxView({
           </Group>
         </Group>
       </div>
-      <ScrollArea className="inbox-scroll" type="hover">
-        {inbox.isPending ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-          </Group>
-        ) : items.length === 0 ? (
+      {inbox.isPending ? (
+        <Group className="inbox-scroll" justify="center" py="xl">
+          <Loader size="sm" />
+        </Group>
+      ) : items.length === 0 ? (
+        <div className="inbox-scroll">
           <EmptyState
             icon={<IconInbox size={16} stroke={1.5} />}
             title={
@@ -430,42 +459,48 @@ export function InboxView({
               ? "Approvals, questions and mentions that need you will land here."
               : "Notifications from every thread show up here."}
           </EmptyState>
-        ) : (
-          <>
-            {items.map((item, index) => {
-              const day = dayLabel(item.createdAt);
-              const previous = items[index - 1];
-              const newDay =
-                !previous || dayLabel(previous.createdAt) !== day;
-              return (
-                <Fragment key={item.id}>
-                  {newDay ? <div className="inbox-day">{day}</div> : null}
-                  <InboxRow
-                    item={item}
-                    onOpen={onOpenThread}
-                    onLongPress={setSheetItem}
-                    onMarkRead={markRead}
-                    onCopyLink={copyLink}
-                  />
-                </Fragment>
-              );
-            })}
-            {inbox.hasNextPage ? (
-              <Group justify="center" py="sm">
-                <Button
-                  variant="subtle"
-                  size="compact-sm"
-                  color="gray"
-                  loading={inbox.isFetchingNextPage}
-                  onClick={() => void inbox.fetchNextPage()}
-                >
-                  Load earlier notifications
-                </Button>
-              </Group>
-            ) : null}
-          </>
-        )}
-      </ScrollArea>
+        </div>
+      ) : (
+        <div className="inbox-scroll">
+          <Virtuoso
+            style={{ height: "100%" }}
+            data={listRows}
+            increaseViewportBy={300}
+            computeItemKey={(_, row) =>
+              row.kind === "day" ? row.id : row.item.id
+            }
+            itemContent={(_, row) =>
+              row.kind === "day" ? (
+                <div className="inbox-day">{row.day}</div>
+              ) : (
+                <InboxRow
+                  item={row.item}
+                  onOpen={onOpenThread}
+                  onLongPress={setSheetItem}
+                  onMarkRead={markRead}
+                  onCopyLink={copyLink}
+                />
+              )
+            }
+            components={{
+              Footer: () =>
+                inbox.hasNextPage ? (
+                  <Group justify="center" py="sm">
+                    <Button
+                      variant="subtle"
+                      size="compact-sm"
+                      color="gray"
+                      loading={inbox.isFetchingNextPage}
+                      onClick={() => void inbox.fetchNextPage()}
+                    >
+                      Load earlier notifications
+                    </Button>
+                  </Group>
+                ) : null,
+            }}
+          />
+        </div>
+      )}
 
       <ActionSheet
         opened={sheetItem !== null}
@@ -480,4 +515,4 @@ export function InboxView({
       />
     </div>
   );
-}
+});

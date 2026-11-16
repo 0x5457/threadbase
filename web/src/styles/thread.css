@@ -187,18 +187,16 @@
   box-shadow: inset 2px 0 0 var(--brand);
 }
 
-/* Day separators make a long notification list scannable; they stick to the
-   top so the current day stays named while scrolling. */
+/* Day separators make a long notification list scannable. The list is
+   virtualized, so this is a normal row rather than a sticky overlay: a
+   sticky header inside a virtualized item would only stick within its own
+   30px box, and the blur cost was not buying anything. */
 .inbox-day {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   display: flex;
   height: 30px;
   align-items: center;
   padding: 0 24px;
-  background: color-mix(in srgb, var(--paper) 94%, transparent);
-  backdrop-filter: blur(6px);
+  background: var(--paper);
   box-shadow: inset 0 -1px 0 var(--line-soft);
   color: var(--ink-muted);
   font-size: var(--text-xs);
@@ -305,6 +303,14 @@
   font-size: var(--text-read);
   line-height: 1.65;
   letter-spacing: 0.005em;
+}
+
+/* Streaming agent text is rendered plain until the turn ends: preserving
+   whitespace is cheap, while parsing Markdown on every token batch is not. */
+.prose-stream {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .prose p {

@@ -182,8 +182,22 @@ impl EventStore {
         };
         // A cold page may have dropped its oldest turns to fit the wire
         // budget, so its first seq (not the thread's oldest) is the cursor the
-        // client needs for "load earlier".
-        let oldest_seq = events.first().map(|event| event.seq).unwrap_or(oldest);
+        // client needs for "load earlier". After a rewind the surviving log
+        // starts mid-sequence with nothing before it: report 0 so the client
+        // does not offer an empty "load earlier" row.
+        let first_seq = events.first().map(|event| event.seq).unwrap_or(0);
+        let has_before: bool = if first_seq == 0 {
+            false
+        } else {
+            sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM events WHERE thread_id = ? AND seq < ?)",
+            )
+            .bind(thread_id.as_str())
+            .bind(i64::try_from(first_seq).unwrap_or(i64::MAX))
+            .fetch_one(&self.pool)
+            .await?
+        };
+        let oldest_seq = if has_before { first_seq } else { 0 };
         Ok(EventsPageDto {
             thread_id: thread_id.clone(),
             events,
@@ -311,6 +325,54 @@ impl EventStore {
                 .fetch_one(&self.pool)
                 .await?;
         Ok(u64::try_from(last).unwrap_or(0))
+    }
+
+    /// The turn that produced one user prompt. Message ids are stable across
+    /// compaction; the `TurnStarted` row is the anchor a rewind truncates to.
+    pub async fn turn_started(
+        &self,
+        thread_id: &ThreadId,
+        message_id: &str,
+    ) -> Result<Option<EventEnvelope>, EventStoreError> {
+        let row = sqlx::query_as::<_, EventRow>(
+            "SELECT * FROM events
+              WHERE thread_id = ? AND kind = 'turn_started'
+                AND json_extract(payload_json, '$.messageId') = ?
+              ORDER BY seq ASC LIMIT 1",
+        )
+        .bind(thread_id.as_str())
+        .bind(message_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(EventRow::into_envelope).transpose()
+    }
+
+    /// Delete one thread's event tail and return the removed rows. The per-thread
+    /// counter is deliberately left alone: seqs are never reused, so a client
+    /// holding a removed event cannot mistake a new one for it.
+    pub async fn truncate_from(
+        &self,
+        thread_id: &ThreadId,
+        seq: u64,
+    ) -> Result<Vec<EventEnvelope>, EventStoreError> {
+        let _guard = self.append_locks.lock(thread_id.as_str()).await;
+        let rows = sqlx::query_as::<_, EventRow>(
+            "SELECT * FROM events WHERE thread_id = ? AND seq >= ? ORDER BY seq ASC",
+        )
+        .bind(thread_id.as_str())
+        .bind(i64::try_from(seq).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await?;
+        let events = rows
+            .into_iter()
+            .map(EventRow::into_envelope)
+            .collect::<Result<Vec<_>, _>>()?;
+        sqlx::query("DELETE FROM events WHERE thread_id = ? AND seq >= ?")
+            .bind(thread_id.as_str())
+            .bind(i64::try_from(seq).unwrap_or(i64::MAX))
+            .execute(&self.pool)
+            .await?;
+        Ok(events)
     }
 }
 

@@ -10,4 +10,10 @@ export type StateResponse = {
    * when this is false.
    */
   terminal: boolean;
+  /**
+   * Host tmux sessions are a second opt-in. When true, every member may
+   * list and attach to the configured tmux servers outside the private
+   * socket.
+   */
+  terminalHost: boolean;
 };

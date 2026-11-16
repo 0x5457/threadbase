@@ -23,6 +23,10 @@ pub(crate) struct Session {
     pub(crate) harness: Mutex<Box<dyn Harness>>,
     turn: Mutex<TurnSlot>,
     pub(crate) run: Arc<Mutex<RunState>>,
+    /// Signalled by the pump task when its event stream closes. A rewind waits
+    /// for this before deleting the tail, so a late `PromptDone` from the old
+    /// adapter cannot land after the cut and resurrect part of the turn.
+    pub(crate) pump_done: Arc<tokio::sync::Notify>,
     /// Set once the adapter is gone or being torn down, so a process exit is
     /// not mistaken for a crash and a dead session is never reused.
     stopped: AtomicBool,
@@ -41,6 +45,7 @@ impl Session {
             harness: Mutex::new(harness),
             turn: Mutex::new(TurnSlot::default()),
             run,
+            pump_done: Arc::new(tokio::sync::Notify::new()),
             stopped: AtomicBool::new(false),
             last_used_ms: AtomicI64::new(now_ms()),
         }

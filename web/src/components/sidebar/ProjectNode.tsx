@@ -9,8 +9,7 @@ import {
   Text,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useMediaQuery } from "@mantine/hooks";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   IconArrowUpRight,
   IconChevronDown,
@@ -27,9 +26,8 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useNavigate } from "react-router";
-import { Fragment, useState } from "react";
+import { Fragment, memo, useCallback, useState } from "react";
 import {
-  listThreads,
   updateThread,
   type Project,
   type Subagent,
@@ -85,7 +83,7 @@ function orderedSubagents(
   return ordered;
 }
 
-function ThreadRow({
+const ThreadRow = memo(function ThreadRow({
   thread,
   selected,
   selectedSubagentId,
@@ -190,10 +188,13 @@ function ThreadRow({
       ) : null}
     </Fragment>
   );
-}
+});
 
-export function ProjectNode({
+export const ProjectNode = memo(function ProjectNode({
+  phone,
   project,
+  threads,
+  threadsLoading,
   selectedThreadId,
   selectedSubagentId,
   activeProjectId,
@@ -204,7 +205,12 @@ export function ProjectNode({
   onNewThread,
   onSettings,
 }: {
+  /** Phone viewport: expand the project in place instead of navigating. */
+  phone: boolean;
   project: Project;
+  /** Threads for this project, filtered from the shell's shared thread list. */
+  threads: ThreadSummary[];
+  threadsLoading: boolean;
   selectedThreadId: string | null;
   selectedSubagentId: string | null;
   activeProjectId: string | null;
@@ -216,11 +222,11 @@ export function ProjectNode({
   onSettings: (project: Project) => void;
 }) {
   const active = activeProjectId === project.id;
-  // On a phone the nav is the thread browser, not a route picker: expanding a
-  // project must not navigate away from the current screen, otherwise the
-  // drawer's history entry points at the old route.
-  const phone = useMediaQuery("(max-width: 47.99em)");
   const [opened, setOpened] = useState(active);
+  // The active project is always expanded so its threads explain the current
+  // route; the query has to follow the same state or a deep link paints an
+  // open project with no rows.
+  const expanded = opened || active;
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [projectSheet, setProjectSheet] = useState(false);
@@ -233,7 +239,6 @@ export function ProjectNode({
   const pinThread = async (thread: ThreadSummary) => {
     try {
       await updateThread(thread.id, { pinned: !thread.pinned });
-      void queryClient.invalidateQueries({ queryKey: ["threads", project.id] });
       void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
       notifications.show({
@@ -279,14 +284,20 @@ export function ProjectNode({
       setRemoving(false);
     }
   };
-  const threads = useQuery({
-    queryKey: ["threads", project.id],
-    queryFn: () => listThreads(project.id),
-    enabled: opened,
-    staleTime: 5_000,
-    refetchInterval: opened ? 5_000 : false,
-    refetchIntervalInBackground: false,
-  });
+  const openThread = useCallback(
+    (next: ThreadSummary) => {
+      onSelectThread(next);
+      onNavigate();
+    },
+    [onNavigate, onSelectThread],
+  );
+  const openSubagent = useCallback(
+    (next: ThreadSummary, subagent: Subagent) => {
+      onSelectSubagent(next, subagent);
+      onNavigate();
+    },
+    [onNavigate, onSelectSubagent],
+  );
 
   return (
     <div className="side-project">
@@ -297,7 +308,7 @@ export function ProjectNode({
           label={project.name}
           title={project.path}
           leftSection={<IconFolder size={13} stroke={1.5} />}
-          opened={opened || active}
+          opened={expanded}
           onChange={(next) => {
             setOpened(next);
             if (next && !phone) onProjectOpen(project.id);
@@ -305,36 +316,43 @@ export function ProjectNode({
           childrenOffset={12}
           {...projectPress}
         >
-          {threads.isPending ? (
-            <NavLink
-              component="button"
-              className="side-nav"
-              label="Loading…"
-              disabled
-            />
-          ) : null}
-          {threads.data?.threads.map((thread) => (
-            <ThreadRow
-              key={thread.id}
-              thread={thread}
-              selected={thread.id === selectedThreadId}
-              selectedSubagentId={selectedSubagentId}
-              onOpen={(next) => {
-                onSelectThread(next);
-                onNavigate();
-              }}
-              onSelectSubagent={(next, subagent) => {
-                onSelectSubagent(next, subagent);
-                onNavigate();
-              }}
-              onLongPress={setThreadSheet}
-            />
-          ))}
-          {threads.data && threads.data.threads.length === 0 ? (
-            <Text size="xs" c="dimmed" pl={10} py={4}>
-              No threads yet
-            </Text>
-          ) : null}
+          {expanded ? (
+            <>
+              {threadsLoading && threads.length === 0 ? (
+                <NavLink
+                  component="button"
+                  className="side-nav"
+                  label="Loading…"
+                  disabled
+                />
+              ) : null}
+              {threads.map((thread) => (
+                <ThreadRow
+                  key={thread.id}
+                  thread={thread}
+                  selected={thread.id === selectedThreadId}
+                  // A subagent can only be selected through its parent thread,
+                  // so the other rows keep the same prop and skip their render.
+                  selectedSubagentId={
+                    thread.id === selectedThreadId ? selectedSubagentId : null
+                  }
+                  onOpen={openThread}
+                  onSelectSubagent={openSubagent}
+                  onLongPress={setThreadSheet}
+                />
+              ))}
+              {!threadsLoading && threads.length === 0 ? (
+                <Text size="xs" c="dimmed" pl={10} py={4}>
+                  No threads yet
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            // Mantine only treats the row as expandable when `children` is
+            // present; keep a placeholder while collapsed, and mount the rows
+            // only for the project the user actually opened.
+            <span />
+          )}
         </NavLink>
         <Menu position="bottom-end" width={180} shadow="md">
           <Menu.Target>
@@ -465,4 +483,4 @@ export function ProjectNode({
       </div>
     </div>
   );
-}
+});

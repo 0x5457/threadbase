@@ -36,6 +36,12 @@ pub struct Config {
     /// `THREADBASE_TERMINAL=1` turns on the browser terminal. A shell over HTTP
     /// is remote code execution by design, so it stays off unless asked for.
     pub terminal: bool,
+    /// `THREADBASE_TERMINAL_HOST=1` also lists and attaches to the tmux
+    /// servers outside the private socket. Every member gets a shell as the
+    /// service account, so this is a separate opt-in from `terminal`.
+    pub terminal_host: bool,
+    /// Named tmux sockets to expose as host terminals (`-L` names).
+    pub terminal_host_sockets: Vec<String>,
     /// Non-admin GitHub logins that may drive the browser terminal.
     pub terminal_drivers: Vec<String>,
     /// Login shell started by tmux; `$SHELL` when it looks like a path.
@@ -70,6 +76,8 @@ impl Default for Config {
             cookie_secure: false,
             log_json: false,
             terminal: false,
+            terminal_host: false,
+            terminal_host_sockets: Vec::new(),
             terminal_drivers: Vec::new(),
             terminal_shell: "/bin/bash".to_owned(),
             terminal_socket: crate::terminal::SOCKET.to_owned(),
@@ -153,6 +161,16 @@ impl Config {
         let terminal = std::env::var("THREADBASE_TERMINAL")
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
+        let terminal_host = std::env::var("THREADBASE_TERMINAL_HOST")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        let mut terminal_host_sockets = list_env("THREADBASE_TERMINAL_HOST_SOCKETS");
+        if terminal_host && terminal_host_sockets.is_empty() {
+            terminal_host_sockets.push("default".to_owned());
+        }
+        let mut seen = std::collections::HashSet::new();
+        terminal_host_sockets
+            .retain(|name| crate::terminal::is_socket_name(name) && seen.insert(name.clone()));
         let terminal_drivers = list_env("THREADBASE_TERMINAL_DRIVERS");
         let terminal_shell = non_empty("THREADBASE_TERMINAL_SHELL")
             .or_else(|| non_empty("SHELL"))
@@ -183,6 +201,8 @@ impl Config {
             cookie_secure,
             log_json,
             terminal,
+            terminal_host,
+            terminal_host_sockets,
             terminal_drivers,
             terminal_shell,
             terminal_socket,

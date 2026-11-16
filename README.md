@@ -175,6 +175,37 @@ THREADBASE_TERMINAL=1 cargo run -p threadbase
 - **前端**：xterm.js 懒加载；按键条补上浏览器吞掉的键（Ctrl+C/D/L/Z/R、Esc、Tab、方向键）；`Ctrl+Shift+C/V` 复制粘贴，多行粘贴先确认。
 - **手机**：抽屉是全屏，点终端即聚焦并唤起软键盘（helper textarea 被放到视口内 1×1、16px 字号，否则 iOS 不给键盘还会连带缩放页面）；键盘弹出时 `interactive-widget=resizes-content` 会让布局收缩，ResizeObserver 重新 fit 并把新尺寸同步给 tmux。ticket 仍支持 `watchOnly`（服务端拒绝 drive），只是界面不再强制手机只读。
 
+### 宿主机 tmux（第二个开关）
+
+上面的 workbench 终端只碰私有 socket。想在 Threadbase 里看并接管这台机器上原本的 tmux 会话，再打开一个开关：
+
+```bash
+THREADBASE_TERMINAL=1 \
+THREADBASE_TERMINAL_HOST=1 \
+THREADBASE_TERMINAL_HOST_SOCKETS=default,work \
+cargo run -p threadbase
+```
+
+- `THREADBASE_TERMINAL_HOST_SOCKETS` 是 `tmux -L` 的 socket 名，逗号分隔；不写默认只有 `default`（普通 `tmux` 用的那个）。私有 `THREADBASE_TERMINAL_SOCKET` 永远会被排除，否则可以从宿主机入口绕过 workbench 的只读策略。
+- 顶部栏的 Sessions 图标、左栏 Sessions、或命令面板的 “Go to Sessions” 打开统一列表；点任意一行就在底部抽屉里 attach。抽屉标题是 `tmux · <name>`，不会杀掉宿主机会话，关闭只是 detach。终端抽屉头部的列表按钮打开快速切换器。
+- 权限：所有 `member` 和 admin 都能看、能接管（可写 tmux client）；`read_only` 和待接受邀请仍然拿不到 shell。workbench 线程终端的规则不变（member 默认只看）。
+- 目标一律用 tmux 的 `$N` session id，不用名字；名字可以包含 `:`、`.` 等 target 语法字符，只用于展示。
+- 多个浏览器可以同时 attach，和在本机另开一个 `tmux attach` 一样是共享的；本地已经 attach 的客户端也可以继续输入。
+- **窗口尺寸**：tmux 默认 `window-size latest`，浏览器抽屉的 pty 尺寸会成为最新 client 的尺寸，可能让你本机终端短暂重排。介意的话在 `~/.tmux.conf` 用 `set -g window-size largest` 或 `manual`；Threadbase 不会改宿主机的 tmux 全局选项。
+- **安全边界**：这个开关等价于“把服务账号在这台机器上的交互式 shell，以可写方式给所有 member”。只对可信团队打开，隧道入口建议再加 Tailscale ACL；不想给了就删掉 `THREADBASE_TERMINAL_HOST` 并重启。宿主机会话的内容不写日志、不落盘。
+
+### Sessions 视图
+
+`sessions` 页面把 thread 和 tmux session 放在同一个“现在能打开什么”的列表里：
+
+- 左边栏的 **Sessions**、顶部栏的列表图标或命令面板都能打开。
+- 支持搜索、`All / Threads / Tmux` 过滤；排序是 pinned → 正在运行 → 最近活动。
+- thread 行打开 transcript；如果该 thread 的私有 workbench shell 还活着，行内会显示 shell 状态和一个终端按钮。member 默认只能 watch，admin/driver 可以 drive。
+- tmux 行直接打开底部抽屉，并标记 `shared`：所有 member 都能 attach、能写；旁边的 `N here` 是 Threadbase 内的浏览器数，`N attached` 是 tmux 自己的 client 数（包含本机终端）。
+- **深链**：`/sessions?session=tmux:<socket>:<$N>` 可以直接分享并在打开时 attach；关掉抽屉会移除 query，路径保持不变。
+- 快速切换器：终端抽屉头部的列表按钮打开；桌面是居中 modal，手机是底部 sheet，支持搜索、方向键和 Enter。
+- 这只是读模型，不新建 session 表：thread 仍然存在 SQLite，tmux 仍然是从 tmux 实时读取的运行时对象。`GET /api/sessions` 负责组合、排序和标记 partial failure（某个 tmux socket 读不到时返回 `warnings`，其余照常显示）。
+
 ### 本机开发
 
 `pnpm --dir web dev` 的请求来自回环但没有会话 Cookie，需要显式打开开发身份：

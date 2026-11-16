@@ -25,6 +25,7 @@ pub(crate) fn spawn(
     run: Arc<Mutex<RunState>>,
     mut events: broadcast::Receiver<RawAgentEvent>,
     session: Weak<Session>,
+    pump_done: Arc<tokio::sync::Notify>,
 ) {
     let pump = Pump {
         inner: manager.inner.clone(),
@@ -99,6 +100,9 @@ pub(crate) fn spawn(
                 }
             }
         }
+        // `notify_one` stores a permit when the wait has not started yet, so a
+        // rewind that arrives after shutdown still observes a completed pump.
+        pump_done.notify_one();
     });
 }
 

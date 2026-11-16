@@ -7,6 +7,7 @@ import { useEditor, type Extension } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useRef, useState } from "react";
 import type { WebsocketProvider } from "y-websocket";
+import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 import { notifications } from "@mantine/notifications";
 import {
@@ -21,12 +22,15 @@ interface UseComposerEditorOptions {
   writable: boolean;
   /** Shared draft document; null in the design-preview composer. */
   document: Y.Doc | null;
-  /** Draft awareness channel; null until the socket connects. */
-  provider: WebsocketProvider | null;
+  /** Stable draft awareness, created with the document before the socket. */
+  awareness: Awareness | null;
   userId: string | null;
   userName: string | null;
   setDraftEditing: (active: boolean) => void;
   suggestionExtension: Extension;
+  /** Focus the editor as soon as it exists (the composer was tapped while it
+   *  was still deferred). */
+  autoFocus?: boolean;
 }
 
 /**
@@ -39,11 +43,12 @@ export function useComposerEditor({
   agent,
   writable,
   document,
-  provider,
+  awareness,
   userId,
   userName,
   setDraftEditing,
   suggestionExtension,
+  autoFocus = false,
 }: UseComposerEditorOptions) {
   const [hasText, setHasText] = useState(false);
   const lastAuthorship = useRef(0);
@@ -67,10 +72,12 @@ export function useComposerEditor({
         ...(document
           ? [Collaboration.configure({ document, field: DRAFT_FIELD })]
           : []),
-        ...(document && provider && userName
+        ...(document && awareness && userName
           ? [
               CollaborationCaret.configure({
-                provider,
+                // The caret extension only reads `awareness`; the Yjs socket
+                // provider attaches to the same instance when it connects.
+                provider: { awareness } as unknown as WebsocketProvider,
                 user: { name: userName, color: accent ?? "#74ade8" },
               }),
             ]
@@ -88,6 +95,7 @@ export function useComposerEditor({
       },
       // Viewers keep a read-only editor; `editable` is re-applied below because
       // the Tiptap React binding pins it to the instance's current value.
+      autofocus: autoFocus ? "end" : false,
       editable: writable,
       onUpdate: ({ editor: current, transaction }) => {
         const text = current.getText();
@@ -119,7 +127,7 @@ export function useComposerEditor({
       onFocus: () => setDraftEditing(true),
       onBlur: () => setDraftEditing(false),
     },
-    [document, provider],
+    [document, awareness],
   );
 
   useEffect(() => {

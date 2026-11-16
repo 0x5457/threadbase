@@ -75,6 +75,18 @@ pub async fn set_session(
     Ok(())
 }
 
+/// Forget the ACP session so the next prompt starts a new one. A rewound
+/// conversation cannot resume the old adapter context: it contains turns the
+/// transcript no longer has.
+pub async fn clear_session(pool: &SqlitePool, thread_id: &str) -> Result<(), ServerError> {
+    sqlx::query("UPDATE agent_bindings SET session_id = NULL, updated_at = ? WHERE thread_id = ?")
+        .bind(now_ms())
+        .bind(thread_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn agent(pool: &SqlitePool, thread_id: &str) -> Result<String, ServerError> {
     let agent: Option<String> =
         sqlx::query_scalar("SELECT agent FROM agent_bindings WHERE thread_id = ?")

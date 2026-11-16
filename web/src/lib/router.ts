@@ -7,6 +7,7 @@ import { useLocation, useParams } from "react-router";
 
 type Route =
   | { kind: "inbox" }
+  | { kind: "sessions" }
   | { kind: "settings" }
   | { kind: "project"; projectId: string }
   | { kind: "thread"; projectId: string; threadId: string }
@@ -22,6 +23,8 @@ export function pathFor(route: Route): string {
   switch (route.kind) {
     case "inbox":
       return "/inbox";
+    case "sessions":
+      return "/sessions";
     case "settings":
       return "/settings";
     case "project":
@@ -49,8 +52,8 @@ export function useRoute(): Route {
   }
   if (projectId && threadId) return { kind: "thread", projectId, threadId };
   if (projectId) return { kind: "project", projectId };
-  if (pathname.replace(/\/+$/, "") === "/settings") {
-    return { kind: "settings" };
-  }
+  const normalized = pathname.replace(/\/+$/, "");
+  if (normalized === "/sessions") return { kind: "sessions" };
+  if (normalized === "/settings") return { kind: "settings" };
   return { kind: "inbox" };
 }

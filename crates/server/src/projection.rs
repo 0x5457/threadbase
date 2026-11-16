@@ -88,6 +88,15 @@ impl Projection {
         let _ = self.tx.send(ServerWsMessage::ThreadState { state });
     }
 
+    /// Tell subscribed clients that the event tail was deleted and replaced.
+    /// They must drop their local log instead of merging the new branch into
+    /// the old one.
+    pub fn publish_rewound(&self, thread_id: &str) {
+        let _ = self.tx.send(ServerWsMessage::ThreadRewound {
+            thread_id: ThreadId::from(thread_id.to_owned()),
+        });
+    }
+
     /// Push one user's unread count. Sockets filter by user id, so a single
     /// broadcast channel can carry per-user badges without extra plumbing.
     pub fn publish_inbox_count(&self, user_id: &str, unread: u32) {

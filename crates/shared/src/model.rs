@@ -1145,6 +1145,9 @@ pub struct ChangesDto {
     pub files: Vec<FileChangeDto>,
     pub stats: ChangeStats,
     pub commit: Option<String>,
+    /// The worktree held more changed files than one page returns. `stats`
+    /// still counts all of them.
+    pub truncated: bool,
 }
 
 /// One commit in a thread's worktree history. The subject is git's own, but

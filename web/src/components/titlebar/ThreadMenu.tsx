@@ -111,7 +111,7 @@ export function ThreadMenu({
     mutationFn: () => cancelThread(threadId!),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
-      void queryClient.invalidateQueries({ queryKey: ["threads"] });
+      void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
     },
     onError: (cause) => {
       notifications.show({
@@ -125,7 +125,7 @@ export function ThreadMenu({
     mutationFn: () => restartThread(threadId!),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
-      void queryClient.invalidateQueries({ queryKey: ["threads"] });
+      void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
     },
     onError: (cause) => {
       notifications.show({

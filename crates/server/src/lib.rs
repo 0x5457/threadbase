@@ -46,6 +46,7 @@ pub mod routes_terminal;
 pub mod routes_workspace;
 pub mod search;
 pub mod service;
+pub mod sessions;
 pub mod settings;
 pub mod setup;
 pub mod skills;

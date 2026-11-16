@@ -127,7 +127,16 @@ export function extendThreadView(
     events[state.consumed - 1] === state.lastEvent;
 
   const start = canExtend ? state.consumed : 0;
-  let items = start === 0 ? [] : state.items.slice();
+  // Copy the block list lazily: a batch made only of subagent events advances
+  // the fold cursor without touching a single rendered row, so it should not
+  // allocate a new array (or invalidate every memoized row).
+  let items = start === 0 ? [] : state.items;
+  let itemsOwned = start === 0;
+  const ownItems = () => {
+    if (itemsOwned) return;
+    items = items.slice();
+    itemsOwned = true;
+  };
   let diagnostics = start === 0 ? [] : state.diagnostics;
   let usage = start === 0 ? null : state.usage;
   const messageRows = start === 0 ? new Map<string, number>() : state.messageRows;
@@ -148,6 +157,7 @@ export function extendThreadView(
   ) => {
     const existing = messageRows.get(id);
     if (existing === undefined) {
+      ownItems();
       messageRows.set(id, items.length);
       items.push({
         kind: "message",
@@ -166,6 +176,7 @@ export function extendThreadView(
     }
     const row = items[existing];
     if (row.kind !== "message") return;
+    ownItems();
     items[existing] = {
       ...row,
       text:
@@ -270,6 +281,7 @@ export function extendThreadView(
           // of repeating the same row for every internal step.
           const previous = items[items.length - 1];
           if (previous?.kind === "thinking") {
+            ownItems();
             thinkingRows.set(id, items.length - 1);
             items[items.length - 1] = {
               ...previous,
@@ -281,11 +293,13 @@ export function extendThreadView(
             };
             break;
           }
+          ownItems();
           thinkingRows.set(id, items.length);
           items.push({ kind: "thinking", id, text, ts: event.ts, count: 1, tools: 0 });
         } else {
           const row = items[existing];
           if (row.kind === "thinking") {
+            ownItems();
             items[existing] = {
               ...row,
               text:
@@ -304,22 +318,26 @@ export function extendThreadView(
         if (existing === undefined) {
           const lastItem = items[items.length - 1];
           if (lastItem?.kind === "thinking") {
+            ownItems();
             items[items.length - 1] = {
               ...lastItem,
               tools: lastItem.tools + 1,
             };
           }
+          ownItems();
           toolRows.set(call.id, items.length);
           items.push({ kind: "tool", call, ts: event.ts, startedAt: event.ts });
         } else {
           const row = items[existing];
           if (row.kind === "tool") {
+            ownItems();
             items[existing] = { ...row, call, ts: event.ts };
           }
         }
         break;
       }
       case "turn_error": {
+        ownItems();
         items.push({
           kind: "notice",
           level: "error",
@@ -329,6 +347,7 @@ export function extendThreadView(
         break;
       }
       case "process_exited": {
+        ownItems();
         items.push({
           kind: "notice",
           level: "error",
@@ -338,6 +357,7 @@ export function extendThreadView(
         break;
       }
       case "system_notice": {
+        ownItems();
         items.push({
           kind: "notice",
           level: payload.level === "error" ? "error" : "info",
@@ -348,6 +368,7 @@ export function extendThreadView(
       }
       case "agent_message": {
         const direction = payload.direction === "sent" ? "to" : "from";
+        ownItems();
         items.push({
           kind: "notice",
           level: "info",
@@ -361,6 +382,7 @@ export function extendThreadView(
         break;
       }
       case "turn_ended": {
+        if (streamingRows.size > 0) ownItems();
         for (const id of streamingRows) {
           const streamingIndex = messageRows.get(id);
           if (streamingIndex === undefined) continue;
@@ -372,6 +394,7 @@ export function extendThreadView(
         streamingRows.clear();
         const reason = String(payload.stopReason ?? "");
         if (reason && reason !== "end_turn") {
+          ownItems();
           items.push({
             kind: "turn",
             label: reason.replaceAll("_", " "),

@@ -4,13 +4,13 @@ import {
   Button,
   Group,
   Loader,
-  ScrollArea,
   Text,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import type { AnnotationSide, DiffLineAnnotation } from "@pierre/diffs/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Virtuoso } from "react-virtuoso";
 import { formatPatch, type StructuredPatch } from "diff";
 import {
   IconArrowLeft,
@@ -22,14 +22,7 @@ import {
   IconTextWrapDisabled,
   IconX,
 } from "@tabler/icons-react";
-import {
-  Fragment,
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   createComment,
   deleteComment,
@@ -52,6 +45,7 @@ import {
 } from "../lib/diff-wrap";
 import {
   exceedsLineBudget,
+  MAX_CHANGE_FILES,
   MAX_DIFF_LINES,
 } from "../lib/diff-size";
 import { CommentCard, CommentDraft } from "./thread/CommentCard";
@@ -149,6 +143,7 @@ function anchorSide(diff: FileDiff, hunkId: string, line: number, side: CommentS
 
 export const RealChangesPanel = memo(function RealChangesPanel({
   threadId,
+  active = true,
   commit,
   onClose,
   onShowFiles,
@@ -156,6 +151,12 @@ export const RealChangesPanel = memo(function RealChangesPanel({
   onShowCurrent,
 }: {
   threadId: string;
+  /**
+   * The Changes tab is the visible one. A hidden tab stays mounted (so its
+   * scroll and parsed diff survive a switch) but must not poll in the
+   * background.
+   */
+  active?: boolean;
   /** Non-null when the panel is showing one commit instead of the worktree. */
   commit?: CommitSummary | null;
   onClose?: () => void;
@@ -174,14 +175,16 @@ export const RealChangesPanel = memo(function RealChangesPanel({
     queryKey: ["thread", threadId],
     queryFn: () => getThreadBundle(threadId),
     staleTime: 2_000,
-    refetchInterval: commit ? false : 4_000,
+    // A full bundle runs a git diff on the server. Ten seconds is still live
+    // enough for a panel the user is staring at; hidden tabs do not poll.
+    refetchInterval: commit || !active ? false : 10_000,
     refetchIntervalInBackground: false,
-    enabled: !commit,
+    enabled: !commit && active,
   });
   const commitChanges = useQuery({
     queryKey: ["commit-changes", threadId, commit?.sha],
     queryFn: () => getCommitChanges(threadId, commit!.sha),
-    enabled: Boolean(commit),
+    enabled: Boolean(commit) && active,
     staleTime: Infinity,
   });
   const changes = commit ? commitChanges.data : bundle.data?.bundle.changes;
@@ -222,6 +225,7 @@ export const RealChangesPanel = memo(function RealChangesPanel({
             commit: baseline?.commit,
           }),
     enabled:
+      active &&
       selectedIsCurrent &&
       !selectedTooLarge &&
       (commit ? true : Boolean(baseline)),
@@ -432,6 +436,21 @@ export const RealChangesPanel = memo(function RealChangesPanel({
     [actOnComment, busyComment, commentTarget, saveComment],
   );
 
+  // The file list and its inline diff are one virtualized list: a worktree
+  // with thousands of untracked files used to mount one row per file before
+  // the first scroll.
+  const listRows = useMemo(() => {
+    const rows: Array<
+      | { kind: "file"; file: FileChange }
+      | { kind: "diff"; path: string }
+    > = [];
+    for (const file of changes?.files ?? []) {
+      rows.push({ kind: "file", file });
+      if (selected === file.path) rows.push({ kind: "diff", path: file.path });
+    }
+    return rows;
+  }, [changes?.files, selected]);
+
   return (
     <div className="changes">
       <div className="changes-head changes-head-stacked">
@@ -519,123 +538,133 @@ export const RealChangesPanel = memo(function RealChangesPanel({
               </Group>
               <span className="changes-meta-sep">·</span>
               <Text size="xs" c="dimmed">
-                {changes?.files.length ?? 0}{" "}
-                {(changes?.files.length ?? 0) === 1 ? "file" : "files"}
+                {changes?.stats.total ?? changes?.files.length ?? 0}{" "}
+                {(changes?.stats.total ?? changes?.files.length ?? 0) === 1
+                  ? "file"
+                  : "files"}
               </Text>
             </>
           )}
         </div>
       </div>
-      <ScrollArea className="changes-scroll" type="hover">
-        {loading ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-          </Group>
-        ) : loadError ? (
-          <Text size="sm" c="red" p="sm">
-            {loadError instanceof Error ? loadError.message : "Cannot load changes"}
-          </Text>
-        ) : changes && changes.files.length > 0 ? (
-          <>
-            <div className="changes-files">
-              {changes.files.map((file) => (
-                <Fragment key={file.path}>
-                  <FileRow
-                    file={file}
-                    active={selected === file.path}
-                    onClick={() =>
-                      setSelected((current) =>
-                        current === file.path ? null : file.path,
-                      )
-                    }
-                  />
-                  {selected === file.path ? (
-                    <div className="change-diff inline">
-                      <div className="change-diff-tools">
-                        {canComment ? (
-                          <Text size="xs" c="dimmed" className="diff-comment-hint">
-                            Click a line number to comment
-                          </Text>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="diff-wrap-toggle"
-                          aria-pressed={wrap}
-                          onClick={() => toggleDiffWrap(narrow)}
-                        >
-                          {wrap ? (
-                            <IconTextWrap size={13} stroke={1.5} />
-                          ) : (
-                            <IconTextWrapDisabled size={13} stroke={1.5} />
-                          )}
-                          {wrap ? "Wrap" : "Scroll"}
-                        </button>
-                      </div>
-                      {unattached.length > 0 ? (
-                        <div className="diff-file-comments">
-                          {unattached.map((comment) => (
-                            <CommentCard
-                              key={comment.id}
-                              comment={comment}
-                              busy={busyComment === comment.id}
-                              onResolve={() =>
-                                void actOnComment(comment, "resolve")
-                              }
-                              onSend={() => void actOnComment(comment, "send")}
-                              onDelete={() =>
-                                void actOnComment(comment, "delete")
-                              }
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                      {selectedTooLarge ? (
-                        <div className="diff-too-large">
-                          <Text size="sm" c="dimmed">
-                            {selectedLines.toLocaleString()} lines changed —
-                            too large to show here.
-                          </Text>
-                          <Text size="xs" c="dimmed">
-                            Diffs over {MAX_DIFF_LINES.toLocaleString()} lines
-                            open in your editor instead.
-                          </Text>
-                        </div>
-                      ) : diff.isPending ? (
-                        <Group justify="center" py="lg">
-                          <Loader size="xs" />
-                        </Group>
-                      ) : diff.isError ? (
-                        <Text size="sm" c="red" p="sm">
-                          {diff.error instanceof Error
-                            ? diff.error.message
-                            : "Cannot load diff"}
-                        </Text>
-                      ) : diff.data && diff.data.hunks.length === 0 ? (
-                        <Text size="sm" c="dimmed" ta="center" py="xl">
-                          No textual changes to show (binary file or
-                          metadata-only rename).
-                        </Text>
-                      ) : patch ? (
-                        <DiffView
-                          patch={patch}
-                          annotations={annotations}
-                          renderAnnotation={renderAnnotation}
-                          onLineNumberClick={openComment}
-                          commentable={canComment}
+      {loading ? (
+        <Group className="changes-scroll" justify="center" py="xl">
+          <Loader size="sm" />
+        </Group>
+      ) : loadError ? (
+        <Text size="sm" c="red" p="sm" className="changes-scroll">
+          {loadError instanceof Error ? loadError.message : "Cannot load changes"}
+        </Text>
+      ) : changes && changes.files.length > 0 ? (
+        <div className="changes-scroll changes-files">
+          <Virtuoso
+            style={{ height: "100%" }}
+            data={listRows}
+            increaseViewportBy={400}
+            computeItemKey={(_, row) =>
+              row.kind === "file" ? row.file.path : `diff:${row.path}`
+            }
+            components={{
+              Footer: () =>
+                changes?.truncated ? (
+                  <Text size="xs" c="dimmed" ta="center" py={8} px="sm">
+                    Showing the first {MAX_CHANGE_FILES.toLocaleString()} changed
+                    files; use Files to inspect the rest.
+                  </Text>
+                ) : null,
+            }}
+            itemContent={(_, row) =>
+              row.kind === "file" ? (
+                <FileRow
+                  file={row.file}
+                  active={selected === row.file.path}
+                  onClick={() =>
+                    setSelected((current) =>
+                      current === row.file.path ? null : row.file.path,
+                    )
+                  }
+                />
+              ) : (
+                <div className="change-diff inline">
+                  <div className="change-diff-tools">
+                    {canComment ? (
+                      <Text size="xs" c="dimmed" className="diff-comment-hint">
+                        Click a line number to comment
+                      </Text>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="diff-wrap-toggle"
+                      aria-pressed={wrap}
+                      onClick={() => toggleDiffWrap(narrow)}
+                    >
+                      {wrap ? (
+                        <IconTextWrap size={13} stroke={1.5} />
+                      ) : (
+                        <IconTextWrapDisabled size={13} stroke={1.5} />
+                      )}
+                      {wrap ? "Wrap" : "Scroll"}
+                    </button>
+                  </div>
+                  {unattached.length > 0 ? (
+                    <div className="diff-file-comments">
+                      {unattached.map((comment) => (
+                        <CommentCard
+                          key={comment.id}
+                          comment={comment}
+                          busy={busyComment === comment.id}
+                          onResolve={() => void actOnComment(comment, "resolve")}
+                          onSend={() => void actOnComment(comment, "send")}
+                          onDelete={() => void actOnComment(comment, "delete")}
                         />
-                      ) : null}
+                      ))}
                     </div>
                   ) : null}
-                </Fragment>
-              ))}
-            </div>
-          </>
-        ) : (
-          <Text size="sm" c="dimmed" ta="center" py="xl">
-            {commit ? "This commit has no changes" : "No changes yet"}
-          </Text>
-        )}
-      </ScrollArea>
+                  {selectedTooLarge ? (
+                    <div className="diff-too-large">
+                      <Text size="sm" c="dimmed">
+                        {selectedLines.toLocaleString()} lines changed — too
+                        large to show here.
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        Diffs over {MAX_DIFF_LINES.toLocaleString()} lines open
+                        in your editor instead.
+                      </Text>
+                    </div>
+                  ) : diff.isPending ? (
+                    <Group justify="center" py="lg">
+                      <Loader size="xs" />
+                    </Group>
+                  ) : diff.isError ? (
+                    <Text size="sm" c="red" p="sm">
+                      {diff.error instanceof Error
+                        ? diff.error.message
+                        : "Cannot load diff"}
+                    </Text>
+                  ) : diff.data && diff.data.hunks.length === 0 ? (
+                    <Text size="sm" c="dimmed" ta="center" py="xl">
+                      No textual changes to show (binary file or metadata-only
+                      rename).
+                    </Text>
+                  ) : patch ? (
+                    <DiffView
+                      patch={patch}
+                      annotations={annotations}
+                      renderAnnotation={renderAnnotation}
+                      onLineNumberClick={openComment}
+                      commentable={canComment}
+                    />
+                  ) : null}
+                </div>
+              )
+            }
+          />
+        </div>
+      ) : (
+        <Text size="sm" c="dimmed" ta="center" py="xl" className="changes-scroll">
+          {commit ? "This commit has no changes" : "No changes yet"}
+        </Text>
+      )}
     </div>
   );
 });

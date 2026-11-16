@@ -20,6 +20,9 @@ export const MAX_DIFF_LINES = 4_000;
 /** Patch bytes; protects against a few enormous lines with no newlines. */
 const MAX_DIFF_CHARS = 512 * 1024;
 
+/** Mirrors `MAX_CHANGE_FILES` on the server for the truncation notice. */
+export const MAX_CHANGE_FILES = 1_000;
+
 /**
  * Counts lines without splitting the string, stopping just past `limit`.
  * `split("\n")` on a 36 MB patch allocates a half-million-element array

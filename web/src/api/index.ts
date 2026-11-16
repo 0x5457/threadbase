@@ -6,6 +6,7 @@ export * from "./inbox";
 export * from "./projects";
 export * from "./push";
 export * from "./search";
+export * from "./sessions";
 export * from "./settings";
 export * from "./terminal";
 export * from "./threads";

@@ -1,9 +1,11 @@
 import "@xterm/xterm/css/xterm.css";
 import { ActionIcon, Button, Group, Text, Tooltip } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   IconKeyboard,
   IconKeyboardOff,
+  IconList,
   IconMaximize,
   IconMinimize,
   IconRefresh,
@@ -19,12 +21,14 @@ import {
 } from "react";
 import {
   ApiError,
+  attachHostTerminalSession,
   attachTerminalSession,
   createTerminalSession,
+  hostTerminalSocketUrl,
   killTerminalSession,
   listTerminalSessions,
   terminalSocketUrl,
-  type TerminalSession,
+  type TerminalTarget,
 } from "../../api";
 import { useXterm } from "./use-xterm";
 
@@ -41,6 +45,7 @@ type ServerMessage =
       cwd: string;
       controller: string | null;
       viewers: number;
+      shared: boolean;
     }
   | { type: "output"; data: string }
   | { type: "control"; controller: string | null }
@@ -73,9 +78,20 @@ const LEFTOVER_NEWLINE_MS = 200;
  * this in one place means the drawer does not need to know the caller's role.
  */
 async function openSession(
-  threadId: string | null,
+  target: TerminalTarget,
   size: { cols: number; rows: number },
 ) {
+  if (target.kind === "host") {
+    try {
+      return await attachHostTerminalSession(target.socket, target.id);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        throw new Error("That tmux session is gone. Pick another one.");
+      }
+      throw error;
+    }
+  }
+  const threadId = target.threadId;
   try {
     return await createTerminalSession({
       threadId,
@@ -114,28 +130,41 @@ function storedHeight(): number {
 }
 
 export function TerminalDrawer({
-  threadId,
+  target,
   fullscreen,
   onFullscreen,
   onClose,
+  onBrowse,
+  onOpenSessions,
 }: {
-  threadId: string | null;
+  target: TerminalTarget;
   fullscreen: boolean;
   onFullscreen: (value: boolean) => void;
   onClose: () => void;
+  /** Opens the compact session switcher. */
+  onBrowse?: () => void;
+  /** Opens the full Sessions surface; used when a host session disappears. */
+  onOpenSessions?: () => void;
 }) {
   const [height, setHeight] = useState(storedHeight);
   const [phase, setPhase] = useState<TerminalPhase>("connecting");
   const [role, setRole] = useState<"controller" | "watcher">("controller");
   // Only read from handlers (kill), so keep it out of the render state.
-  const sessionRef = useRef<TerminalSession | null>(null);
+  const sessionRef = useRef<{ id: string; kind: "workbench" | "host" } | null>(
+    null,
+  );
   const [controller, setController] = useState<string | null>(null);
   const [viewers, setViewers] = useState(0);
+  const [shared, setShared] = useState(false);
+  const [sessionName, setSessionName] = useState(
+    target.kind === "host" ? (target.name ?? target.id) : "",
+  );
   const [cwd, setCwd] = useState("");
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  const queryClient = useQueryClient();
   // Phones lay the drawer out full-screen; they drive the shell like any other
   // screen, which means the soft keyboard has to reach xterm's textarea.
   const phone = useMediaQuery("(max-width: 47.99em)");
@@ -184,13 +213,16 @@ export function TerminalDrawer({
 
     const connect = async () => {
       try {
-        const created = await openSession(threadId, size());
+        const created = await openSession(target, size());
         if (cancelled) return;
-        sessionRef.current = created.session;
-        setCwd(created.session.cwd);
+        sessionRef.current = { id: created.session.id, kind: target.kind };
+        if ("name" in created.session) setSessionName(created.session.name);
+        setCwd(created.session.cwd ?? "");
 
         const socket = new WebSocket(
-          terminalSocketUrl(created.session.id, created.ticket),
+          target.kind === "host"
+            ? hostTerminalSocketUrl(created.ticket)
+            : terminalSocketUrl(created.session.id, created.ticket),
         );
         socketRef.current = socket;
         socket.onopen = () => {
@@ -217,8 +249,10 @@ export function TerminalDrawer({
               setRole(message.role);
               setController(message.controller);
               setViewers(message.viewers);
+              setShared(message.shared);
               setCwd(message.cwd);
               setPhase("live");
+              void queryClient.invalidateQueries({ queryKey: ["sessions"] });
               break;
             case "output":
               write(message.data);
@@ -253,7 +287,7 @@ export function TerminalDrawer({
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [ready, threadId, attempt, size, write]);
+  }, [queryClient, ready, target, attempt, size, write]);
 
   // Drag the top edge to trade transcript space for terminal height.
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -302,7 +336,8 @@ export function TerminalDrawer({
 
   const kill = async () => {
     const session = sessionRef.current;
-    if (!session) {
+    if (!session || session.kind === "host") {
+      // Host sessions belong to the machine user; detach, never kill.
       onClose();
       return;
     }
@@ -315,10 +350,17 @@ export function TerminalDrawer({
   };
 
   const canDrive = role === "controller" && can("terminal", phase, "drive");
-  const watchNote =
-    controller === null
+  const watchNote = shared
+    ? "Watching this shared tmux session. Reopen it from the session list to type."
+    : controller === null
       ? "Watching: nobody is driving. Only an administrator can type in this shell."
       : `Watching: ${controller} is driving. The keyboard is off for you.`;
+  const title =
+    target.kind === "host"
+      ? `tmux · ${sessionName || target.id}`
+      : target.threadId
+        ? "terminal"
+        : "terminal · home";
 
   return (
     <section
@@ -351,8 +393,12 @@ export function TerminalDrawer({
       <div className="terminal-head">
         <IconTerminal2 size={13} stroke={1.5} className="terminal-icon" />
         <span className={`terminal-dot ${phase}`} aria-hidden />
-        <Text size="xs" className="terminal-title">
-          {threadId ? "terminal" : "terminal · home"}
+        <Text
+          size="xs"
+          className="terminal-title"
+          title={target.kind === "host" ? `${target.socket} ${target.id}` : undefined}
+        >
+          {title}
         </Text>
         <Text
           size="xs"
@@ -367,10 +413,25 @@ export function TerminalDrawer({
         </Text>
         <div className="terminal-head-gap" />
         {phase === "live" ? (
-          <Text size="xs" c="dimmed" className="terminal-role">
-            {role === "controller" ? "driving" : "watching"}
-            {viewers > 1 ? ` · ${viewers}` : ""}
-          </Text>
+          shared ? (
+            <Tooltip label="Every attached client can type at the same time">
+              <Text size="xs" c="dimmed" className="terminal-role">
+                shared{viewers > 1 ? ` · ${viewers}` : ""}
+              </Text>
+            </Tooltip>
+          ) : (
+            <Text size="xs" c="dimmed" className="terminal-role">
+              {role === "controller" ? "driving" : "watching"}
+              {viewers > 1 ? ` · ${viewers}` : ""}
+            </Text>
+          )
+        ) : null}
+        {onBrowse ? (
+          <Tooltip label="Switch session">
+            <ActionIcon aria-label="Switch session" onClick={onBrowse}>
+              <IconList size={14} stroke={1.5} />
+            </ActionIcon>
+          </Tooltip>
         ) : null}
         <Tooltip label={showKeys ? "Hide keys" : "Show keys"}>
           <ActionIcon
@@ -411,29 +472,51 @@ export function TerminalDrawer({
       {phase === "error" ? (
         <div className="terminal-notice" data-kind="error">
           <Text size="xs">{error ?? "The terminal is unavailable."}</Text>
-          <Button variant="light" size="compact-xs" onClick={reconnect}>
-            Retry
-          </Button>
+          <Group gap={6}>
+            <Button variant="light" size="compact-xs" onClick={reconnect}>
+              Retry
+            </Button>
+            {target.kind === "host" && onOpenSessions ? (
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                onClick={onOpenSessions}
+              >
+                Sessions
+              </Button>
+            ) : null}
+          </Group>
         </div>
       ) : null}
 
       {phase === "exited" ? (
         <div className="terminal-notice" data-kind="exited">
           <Text size="xs">
-            The shell exited{exitCode === null ? "" : ` (${exitCode})`}.
+            {target.kind === "host" ? "The tmux client" : "The shell"} exited
+            {exitCode === null ? "" : ` (${exitCode})`}.
           </Text>
           <Group gap={6}>
             <Button variant="light" size="compact-xs" onClick={reconnect}>
-              New session
+              {target.kind === "host" ? "Reconnect" : "New session"}
             </Button>
-            <Button
-              variant="subtle"
-              color="red"
-              size="compact-xs"
-              onClick={() => void kill()}
-            >
-              Close session
-            </Button>
+            {target.kind === "workbench" ? (
+              <Button
+                variant="subtle"
+                color="red"
+                size="compact-xs"
+                onClick={() => void kill()}
+              >
+                Close session
+              </Button>
+            ) : onOpenSessions ? (
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                onClick={onOpenSessions}
+              >
+                Sessions
+              </Button>
+            ) : null}
           </Group>
         </div>
       ) : null}
@@ -441,6 +524,14 @@ export function TerminalDrawer({
       {phase === "live" && role === "watcher" ? (
         <div className="terminal-notice" data-kind="watching">
           <Text size="xs">{watchNote}</Text>
+        </div>
+      ) : null}
+
+      {phase === "live" && shared && role === "controller" ? (
+        <div className="terminal-notice" data-kind="shared">
+          <Text size="xs">
+            Shared shell. Other clients can type at the same time.
+          </Text>
         </div>
       ) : null}
 
@@ -475,7 +566,7 @@ export function TerminalDrawer({
             </button>
           ))}
           <div className="terminal-head-gap" />
-          {role === "controller" ? (
+          {role === "controller" && target.kind === "workbench" ? (
             <button
               type="button"
               className="terminal-key terminal-key-danger"

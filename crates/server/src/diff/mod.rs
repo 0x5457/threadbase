@@ -32,6 +32,11 @@ pub struct ResolvedBaseline {
     pub label: String,
 }
 
+/// A worktree can contain thousands of untracked build artifacts. The panel
+/// is virtualized, but shipping an unbounded file list every poll is still a
+/// waste; stats keep counting everything.
+const MAX_CHANGE_FILES: usize = 1_000;
+
 pub async fn list(
     pool: &SqlitePool,
     row: &ThreadRow,
@@ -79,12 +84,14 @@ pub async fn list(
         seen: seen_count,
         total,
     };
+    let truncated = files.len() > MAX_CHANGE_FILES;
     Ok(ChangesDto {
         baseline: resolved.baseline,
         base_label: resolved.label,
-        files: files.into_values().collect(),
+        files: files.into_values().take(MAX_CHANGE_FILES).collect(),
         stats,
         commit: row.base_sha.clone(),
+        truncated,
     })
 }
 
@@ -198,6 +205,7 @@ pub async fn commit_changes(row: &ThreadRow, requested: &str) -> Result<ChangesD
     let parent = parent_reference(&worktree, &sha).await;
     let files = collect_files(&worktree, &parent, Some(&sha)).await?;
     let stats = stats_of(&files);
+    let truncated = files.len() > MAX_CHANGE_FILES;
     let short: String = sha.chars().take(8).collect();
     Ok(ChangesDto {
         baseline: BaselineDto {
@@ -205,9 +213,10 @@ pub async fn commit_changes(row: &ThreadRow, requested: &str) -> Result<ChangesD
             commit: Some(sha.clone()),
         },
         base_label: short,
-        files: files.into_values().collect(),
+        files: files.into_values().take(MAX_CHANGE_FILES).collect(),
         stats,
         commit: Some(sha),
+        truncated,
     })
 }
 

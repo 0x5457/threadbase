@@ -63,8 +63,17 @@
 }
 
 .terminal-title {
-  flex: none;
+  overflow: hidden;
+  flex: 0 1 auto;
+  max-width: 28ch;
   font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 47.99em) {
+  .terminal-title {
+    max-width: 16ch;
+  }
 }
 
 .terminal-head-gap {
@@ -116,6 +125,11 @@
 .terminal-notice[data-kind="error"],
 .terminal-notice[data-kind="exited"] {
   background: color-mix(in srgb, var(--brand) 8%, var(--chrome));
+}
+
+.terminal-notice[data-kind="shared"] {
+  background: color-mix(in srgb, var(--add) 7%, var(--chrome));
+  color: var(--ink-muted);
 }
 
 .terminal-body {
@@ -256,4 +270,68 @@
 .status-terminal:hover {
   background: var(--hover);
   color: var(--ink);
+}
+
+/* ── host tmux session picker ────────────────────────────── */
+
+.tmux-session-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tmux-session-row:hover {
+  border-color: var(--line);
+  background: var(--hover);
+}
+
+.tmux-session-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tmux-session-main .mantine-Text-root {
+  max-width: 100%;
+}
+
+.tmux-session-time {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* A phone header has to keep the session name readable: the path is already
+   available in the terminal prompt, and the secondary actions still fit. */
+@media (max-width: 47.99em) {
+  .terminal-head {
+    gap: 5px;
+    padding: 0 4px 0 8px;
+  }
+
+  .terminal-cwd {
+    display: none;
+  }
+
+  .terminal-title {
+    flex: 1 1 auto;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .terminal-role {
+    max-width: 9ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }

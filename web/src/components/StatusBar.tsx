@@ -36,7 +36,9 @@ export function StatusBar({
   const bundle = useQuery({
     queryKey: ["thread", thread?.id],
     queryFn: () => getThreadBundle(thread!.id),
-    enabled: Boolean(thread),
+    // Stats only exist for worktree threads; fetching a full bundle for a
+    // project-direct thread was a wasted git diff on every open.
+    enabled: Boolean(thread?.worktreePath),
     staleTime: 2_000,
     retry: false,
   });

@@ -215,6 +215,15 @@ pub struct SendMessageResponse {
     pub message_id: Option<String>,
 }
 
+/// Replace a user prompt and rewind the thread to it. Everything after the
+/// edited message is discarded and the agent starts a fresh ACP session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EditMessageRequest {
+    pub text: String,
+}
+
 /// Rewrite a message that is still waiting in the thread's input queue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -376,6 +385,8 @@ pub struct InboxPageDto {
 pub struct FilesResponseDto {
     pub path: String,
     pub entries: Vec<FileEntryDto>,
+    /// The directory held more entries than the server returns in one page.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -439,6 +450,12 @@ pub enum ServerWsMessage {
     ThreadState {
         state: ThreadState,
     },
+    /// The stored event tail was discarded and replaced. Clients drop their
+    /// local log and re-subscribe from the beginning instead of leaving rows
+    /// from the removed branch on screen.
+    ThreadRewound {
+        thread_id: ThreadId,
+    },
     InboxCount {
         user_id: crate::ids::UserId,
         unread: u32,
@@ -482,6 +499,10 @@ pub struct StateResponse {
     /// The browser terminal is opt-in per server; the UI hides its entry points
     /// when this is false.
     pub terminal: bool,
+    /// Host tmux sessions are a second opt-in. When true, every member may
+    /// list and attach to the configured tmux servers outside the private
+    /// socket.
+    pub terminal_host: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -635,6 +656,53 @@ pub struct TerminalSessionResponse {
 #[ts(export)]
 pub struct TerminalSessionsResponse {
     pub sessions: Vec<TerminalSessionDto>,
+}
+
+/// One session on a tmux server outside the private workbench socket.
+/// `id` is tmux's stable `$N` session id, which is also the only safe target
+/// for `attach`: names are free-form and can be parsed as target syntax.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HostTerminalSessionDto {
+    pub id: String,
+    pub name: String,
+    pub windows: u32,
+    /// Clients attached to the tmux session, including local terminals.
+    pub attached: u32,
+    pub created_at: i64,
+    pub activity_at: i64,
+    pub cwd: Option<String>,
+    pub command: Option<String>,
+    /// Browsers currently attached through threadbase.
+    pub viewers: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HostTerminalServerDto {
+    /// The `-L` socket name; the default server is `default`.
+    pub socket: String,
+    pub sessions: Vec<HostTerminalSessionDto>,
+    /// A broken or unreachable socket does not hide the others.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HostTerminalSessionsResponse {
+    pub servers: Vec<HostTerminalServerDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HostTerminalAttachResponse {
+    pub session: HostTerminalSessionDto,
+    /// Single-use ticket for `/ws/tmux`; it carries the socket and `$N` target.
+    pub ticket: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]

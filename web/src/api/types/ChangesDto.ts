@@ -9,4 +9,9 @@ export type ChangesDto = {
   files: Array<FileChangeDto>;
   stats: ChangeStats;
   commit: string | null;
+  /**
+   * The worktree held more changed files than one page returns. `stats`
+   * still counts all of them.
+   */
+  truncated: boolean;
 };

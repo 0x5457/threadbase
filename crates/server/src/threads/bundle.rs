@@ -72,5 +72,6 @@ fn empty_changes(row: &ThreadRow) -> ChangesDto {
             total: 0,
         },
         commit: row.base_sha.clone(),
+        truncated: false,
     }
 }

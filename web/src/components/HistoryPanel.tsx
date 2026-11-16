@@ -66,12 +66,15 @@ function HistoryRow({
  */
 export function HistoryPanel({
   threadId,
+  active = true,
   selectedSha,
   onSelect,
   onShowChanges,
   onClose,
 }: {
   threadId: string;
+  /** Hidden tabs stay mounted but must not keep polling. */
+  active?: boolean;
   selectedSha: string | null;
   onSelect: (entry: CommitSummary) => void;
   onShowChanges: () => void;
@@ -80,8 +83,9 @@ export function HistoryPanel({
   const history = useQuery({
     queryKey: ["thread-history", threadId],
     queryFn: () => getThreadHistory(threadId),
+    enabled: active,
     staleTime: 3_000,
-    refetchInterval: 5_000,
+    refetchInterval: active ? 5_000 : false,
     refetchIntervalInBackground: false,
   });
   const data = history.data?.history;

@@ -1,9 +1,11 @@
 import { ActionIcon, Loader } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { IconX } from "@tabler/icons-react";
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import type { Usage } from "../api/types/Usage";
 import { PickerAgentContext } from "../lib/model-prefs";
 import { ComposerInput } from "./composer/ComposerInput";
+import { ComposerSkeleton } from "./composer/ComposerSkeleton";
 import { ComposerToolbar } from "./composer/ComposerToolbar";
 import { useComposerEditor } from "./composer/useComposerEditor";
 import { useComposerImages } from "./composer/useComposerImages";
@@ -37,9 +39,83 @@ interface ComposerProps {
   terminalUsers?: string[];
   /** When false, plain Enter sends and Shift+Enter inserts a newline. */
   sendWithModifier?: boolean;
+  /** The agent is working: show a stop control next to the send button. */
+  running?: boolean;
+  stopping?: boolean;
+  onStop?: () => void;
 }
 
-export const Composer = memo(function Composer({
+/**
+ * The composer owns Tiptap, a CRDT provider and the agent-config queries. On a
+ * phone that stack is the most expensive part of opening a thread, so the
+ * transcript gets the first paint and the editor follows on the next idle
+ * slot (bounded at 800 ms). A tap in the reserved composer area mounts it
+ * immediately and focuses the editor.
+ */
+export const Composer = memo(function Composer(props: ComposerProps) {
+  // Only compact/touch clients pay the bill for this deferral. A desktop
+  // thread opens with a live editor in the first frame, as before. Read the
+  // media query synchronously: Mantine's default returns false until its
+  // effect runs, which would mount the editor before we know the client type.
+  const compact = useMediaQuery(
+    "(max-width: 74.99em), (pointer: coarse)",
+    undefined,
+    { getInitialValueInEffect: false },
+  );
+  const [ready, setReady] = useState(!compact);
+  const [focusOnMount, setFocusOnMount] = useState(false);
+
+  useEffect(() => {
+    if (!compact) {
+      setReady(true);
+      return;
+    }
+    if (ready) return;
+    let cancelled = false;
+    let timeout = 0;
+    let idle = 0;
+    const idleCapable = window as Window & {
+      requestIdleCallback?: (
+        callback: () => void,
+        options?: { timeout: number },
+      ) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const mount = () => {
+      if (!cancelled) setReady(true);
+    };
+    const frame = requestAnimationFrame(() => {
+      if (typeof idleCapable.requestIdleCallback === "function") {
+        idle = idleCapable.requestIdleCallback(mount, { timeout: 800 });
+      } else {
+        // Safari still has no requestIdleCallback.
+        timeout = window.setTimeout(mount, 300);
+      }
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      if (timeout) window.clearTimeout(timeout);
+      if (idle) idleCapable.cancelIdleCallback?.(idle);
+    };
+  }, [compact, ready]);
+
+  if (!ready) {
+    return (
+      <ComposerSkeleton
+        agent={props.agentName}
+        onActivate={() => {
+          setFocusOnMount(true);
+          setReady(true);
+        }}
+      />
+    );
+  }
+
+  return <ComposerBody {...props} autoFocus={focusOnMount} />;
+});
+
+const ComposerBody = memo(function ComposerBody({
   threadId,
   projectId,
   agentName,
@@ -57,7 +133,11 @@ export const Composer = memo(function Composer({
   userName,
   userColor,
   canWrite,
-}: ComposerProps) {
+  autoFocus = false,
+  running = false,
+  stopping = false,
+  onStop,
+}: ComposerProps & { autoFocus?: boolean }) {
   const session = useComposerSession({
     threadId,
     agentName,
@@ -80,11 +160,12 @@ export const Composer = memo(function Composer({
     agent: session.agent,
     writable: session.writable,
     document: session.draft.document,
-    provider: session.draft.provider,
+    awareness: session.draft.awareness,
     userId: session.currentUserId,
     userName: session.currentUserName,
     setDraftEditing: session.setDraftEditing,
     suggestionExtension: extension,
+    autoFocus,
   });
   const images = useComposerImages(threadId, session.writable);
 
@@ -210,6 +291,9 @@ export const Composer = memo(function Composer({
             sendBlocked={session.sendBlocked || images.uploading}
             sendLabel={session.sendLabel}
             sendWithModifier={sendWithModifier}
+            running={running}
+            stopping={stopping}
+            onStop={onStop}
             onSend={send}
           />
         </div>

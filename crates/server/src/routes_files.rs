@@ -12,6 +12,11 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use threadbase_shared::{ApiError, FileContentResponseDto, FileSearchResponse, FilesResponseDto};
 
+/// A directory listing is a page, not the whole filesystem. Huge generated
+/// folders otherwise ship megabytes of JSON and make the client freeze before
+/// virtualization can help.
+const MAX_DIRECTORY_ENTRIES: usize = 5_000;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/threads/{thread_id}/files", get(list_files))
@@ -37,9 +42,15 @@ async fn list_files(
             .ok_or_else(|| ServerError(ApiError::conflict("thread worktree is not available")))?,
     );
     let path = query.path.unwrap_or_default();
-    let entries = threadbase_workspace::files::list(&root, &path)
+    let mut entries = threadbase_workspace::files::list(&root, &path)
         .map_err(|error| ServerError(ApiError::validation(error.to_string())))?;
-    Ok(Json(FilesResponseDto { path, entries }))
+    let truncated = entries.len() > MAX_DIRECTORY_ENTRIES;
+    entries.truncate(MAX_DIRECTORY_ENTRIES);
+    Ok(Json(FilesResponseDto {
+        path,
+        entries,
+        truncated,
+    }))
 }
 
 #[derive(Debug, Deserialize)]

@@ -4,6 +4,7 @@ import {
   IconAt,
   IconCommand,
   IconEye,
+  IconPlayerStopFilled,
   IconTerminal2,
   IconMessagePlus,
 } from "@tabler/icons-react";
@@ -40,6 +41,9 @@ interface ComposerToolbarProps {
   sendBlocked: boolean;
   sendLabel: string;
   sendWithModifier: boolean;
+  running: boolean;
+  stopping: boolean;
+  onStop?: () => void;
   onSend: () => void;
 }
 
@@ -69,6 +73,9 @@ export function ComposerToolbar({
   sendBlocked,
   sendLabel,
   sendWithModifier,
+  running,
+  stopping,
+  onStop,
   onSend,
 }: ComposerToolbarProps) {
   return (
@@ -77,6 +84,7 @@ export function ComposerToolbar({
         <Tooltip label="Comment on thread">
           <ActionIcon
             aria-label="Comment on thread"
+            className="composer-insert-btn"
             size={22}
             onClick={onThreadComment}
           >
@@ -87,6 +95,7 @@ export function ComposerToolbar({
       <Tooltip label="Reference a file">
         <ActionIcon
           aria-label="Reference a file"
+          className="composer-insert-btn"
           size={22}
           onClick={() => onOpenTrigger("file")}
         >
@@ -96,6 +105,7 @@ export function ComposerToolbar({
       <Tooltip label="Slash commands and skills">
         <ActionIcon
           aria-label="Slash commands and skills"
+          className="composer-insert-btn"
           size={22}
           onClick={() => onOpenTrigger("command")}
         >
@@ -161,23 +171,41 @@ export function ComposerToolbar({
         onEffortChange={onEffortChange}
         onOpen={onConfigOpen}
       />
-      <Tooltip label={sendLabel}>
-        <Box component="span" style={{ display: "inline-flex" }}>
+      {running && onStop ? (
+        <Tooltip label="Stop the agent">
           <ActionIcon
-            aria-label="Send"
-            variant="filled"
-            color="brand"
+            aria-label="Stop the agent"
+            variant="light"
+            color="red"
             size={26}
             radius="xl"
-            disabled={!hasText || sending || sendBlocked || !writable}
-            loading={sending}
-            onClick={onSend}
-            className="send-btn"
+            loading={stopping}
+            onClick={onStop}
+            className="stop-btn"
           >
-            <IconArrowUp size={14} stroke={2} />
+            <IconPlayerStopFilled size={13} stroke={1.5} />
           </ActionIcon>
-        </Box>
-      </Tooltip>
+        </Tooltip>
+      ) : null}
+      {running && !hasText ? null : (
+        <Tooltip label={sendLabel}>
+          <Box component="span" style={{ display: "inline-flex" }}>
+            <ActionIcon
+              aria-label="Send"
+              variant="filled"
+              color="brand"
+              size={26}
+              radius="xl"
+              disabled={!hasText || sending || sendBlocked || !writable}
+              loading={sending}
+              onClick={onSend}
+              className="send-btn"
+            >
+              <IconArrowUp size={14} stroke={2} />
+            </ActionIcon>
+          </Box>
+        </Tooltip>
+      )}
     </div>
   );
 }

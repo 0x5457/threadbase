@@ -1,4 +1,5 @@
 import { WebsocketProvider } from "y-websocket";
+import { Awareness } from "y-protocols/awareness";
 import type { DraftPhase } from "../api/types/DraftPhase";
 import * as Y from "yjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -65,8 +66,11 @@ interface DraftSession {
   phase: DraftPhase;
   /** Shared CRDT document; bind the Tiptap collaboration extension to this. */
   document: Y.Doc | null;
-  /** Awareness source for collaboration carets; null while connecting. */
+  /** Socket provider; null while connecting. */
   provider: WebsocketProvider | null;
+  /** Stable awareness owned by the document, available before the socket
+   *  connects so the editor can be built once with collaborative carets. */
+  awareness: Awareness | null;
   /** Peers currently editing the draft. */
   remoteEditors: DraftEditor[];
   /** Publish focus/typing presence for this author. */
@@ -148,6 +152,14 @@ export function useDraftSession(
   user: DraftAuthor | null,
 ): DraftSession {
   const document = useMemo(() => (threadId ? new Y.Doc() : null), [threadId]);
+  // Awareness is part of the document, not the socket. Creating it here means
+  // the composer's Tiptap instance can bind carets on its first build; the
+  // provider attaches to the same awareness when the WebSocket opens instead
+  // of forcing a second editor construction.
+  const awareness = useMemo(
+    () => (document ? new Awareness(document) : null),
+    [document],
+  );
   const [provider, setProvider] = useState<WebsocketProvider | null>(null);
   const [state, setState] = useState<DraftSessionState>(IDLE_STATE);
   const editingRef = useRef<((active: boolean) => void) | null>(null);
@@ -155,17 +167,9 @@ export function useDraftSession(
   const userId = user?.id ?? null;
   const userName = user?.name ?? null;
 
-  // The document outlives provider reconnects but not a thread switch.
-  useEffect(
-    () => () => {
-      document?.destroy();
-    },
-    [document],
-  );
-
   useEffect(() => {
     editingRef.current = null;
-    if (!document || !threadId || !userId || !userName) {
+    if (!document || !awareness || !threadId || !userId || !userName) {
       setProvider(null);
       setState(IDLE_STATE);
       return;
@@ -178,6 +182,7 @@ export function useDraftSession(
 
     const next = new WebsocketProvider(draftSocketUrl(), threadId, document, {
       connect: true,
+      awareness,
     });
 
     const publish = () => {
@@ -226,7 +231,17 @@ export function useDraftSession(
       setProvider(null);
       setState(IDLE_STATE);
     };
-  }, [document, threadId, userId, userName]);
+  }, [awareness, document, threadId, userId, userName]);
+
+  // Registered after the provider effect so the socket releases its handlers
+  // before the document and awareness are destroyed.
+  useEffect(
+    () => () => {
+      awareness?.destroy();
+      document?.destroy();
+    },
+    [document, awareness],
+  );
 
   const setEditing = useCallback((active: boolean) => {
     editingRef.current?.(active);
@@ -235,6 +250,7 @@ export function useDraftSession(
   return {
     active: document !== null,
     document,
+    awareness,
     provider,
     setEditing,
     ...state,

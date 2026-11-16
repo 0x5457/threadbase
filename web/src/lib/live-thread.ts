@@ -15,11 +15,7 @@ import {
   extendThreadView,
   type ThreadViewState,
 } from "./thread-events";
-import {
-  DEFAULT_PANEL,
-  EMPTY_EVENTS,
-  EMPTY_PRESENCE,
-} from "./live/types";
+import { DEFAULT_PANEL, EMPTY_PRESENCE } from "./live/types";
 import type { LiveEventsPage, LiveThreadOptions, LiveThreadState } from "./live/types";
 import {
   HEARTBEAT_MS,
@@ -53,7 +49,7 @@ export function useLiveThread(
 ): LiveThreadState {
   const { projectId, hidden = false, onInboxCount, agentName = "Agent" } = options;
 
-  const [events, setEvents] = useState<ThreadEvent[]>([]);
+  const [hasEvents, setHasEvents] = useState(false);
   const [initialView] = useState(() => createThreadView(agentName));
   const [view, setView] = useState<ThreadViewState>(initialView);
   const [phase, setPhase] = useState<ConnectionPhase>("idle");
@@ -63,6 +59,10 @@ export function useLiveThread(
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const threadStateRevision = useRef(-1);
   const oldestRef = useRef(0);
+  // Whether any event has ever landed for this thread. The transcript skeleton
+  // only needs this boolean; keeping the whole ordered array in React state
+  // made every subagent event render the view even when nothing visible moved.
+  const hasEventsRef = useRef(false);
   const publishRef = useRef<((next: EventStore) => void) | null>(null);
   const loadingEarlier = useRef(false);
 
@@ -130,7 +130,8 @@ export function useLiveThread(
     if (threadId === null) {
       storeRef.current = emptyStore();
       resetView();
-      setEvents([]);
+      hasEventsRef.current = false;
+      setHasEvents(false);
       setPhase("idle");
       setError(null);
       setThreadState(null);
@@ -140,7 +141,8 @@ export function useLiveThread(
 
     storeRef.current = emptyStore();
     resetView();
-    setEvents([]);
+    hasEventsRef.current = false;
+    setHasEvents(false);
     setPhase("loading");
     setError(null);
     setHasEarlier(false);
@@ -163,14 +165,28 @@ export function useLiveThread(
     const publish = (next: EventStore) => {
       if (next === storeRef.current) return;
       storeRef.current = next;
-      setEvents(next.ordered);
+      if (!hasEventsRef.current && next.ordered.length > 0) {
+        hasEventsRef.current = true;
+        setHasEvents(true);
+      }
+      const previous = viewRef.current;
       const nextView = extendThreadView(
-        viewRef.current,
+        previous,
         next.ordered,
         agentNameRef.current,
       );
-      if (nextView === viewRef.current) return;
+      if (nextView === previous) return;
       viewRef.current = nextView;
+      // Subagent-only batches advance the fold cursor but do not change any
+      // rendered block; update the ref without re-rendering the transcript.
+      if (
+        nextView.items === previous.items &&
+        nextView.diagnostics === previous.diagnostics &&
+        nextView.usage === previous.usage &&
+        nextView.agentName === previous.agentName
+      ) {
+        return;
+      }
       setView(nextView);
     };
     publishRef.current = publish;
@@ -285,6 +301,24 @@ export function useLiveThread(
           if (snapshot.revision < threadStateRevision.current) return;
           threadStateRevision.current = snapshot.revision;
           setThreadState(snapshot);
+          return;
+        }
+        case "thread_rewound": {
+          if (asString(message.threadId) !== threadId) return;
+          // The server deleted the event tail under this conversation. Old
+          // rows in the store (and any deltas not flushed yet) belong to the
+          // discarded branch; rebuild from the new page instead of merging.
+          clearFlush();
+          storeRef.current = emptyStore();
+          const blank = createThreadView(agentNameRef.current);
+          viewRef.current = blank;
+          setView(blank);
+          hasEventsRef.current = false;
+          setHasEvents(false);
+          setHasEarlier(false);
+          oldestRef.current = 0;
+          setPhase("loading");
+          sendSubscribe();
           return;
         }
         case "pong": {
@@ -425,10 +459,10 @@ export function useLiveThread(
   }, [threadId]);
 
   return {
-    events:
-      threadId !== null && storeThreadRef.current === threadId
-        ? events
-        : EMPTY_EVENTS,
+    hasEvents:
+      threadId !== null &&
+      storeThreadRef.current === threadId &&
+      hasEvents,
     threadState,
     view,
     phase,

@@ -35,9 +35,15 @@ struct Fixture {
     admin: String,
     member: String,
     read_only: String,
+    /// Optional host tmux server, separate from the workbench socket.
+    host_socket: Option<String>,
 }
 
 async fn fixture(terminal: bool) -> Fixture {
+    fixture_with_host(terminal, None).await
+}
+
+async fn fixture_with_host(terminal: bool, host_socket: Option<&str>) -> Fixture {
     let project = tempfile::tempdir().unwrap();
     let worktree = tempfile::tempdir().unwrap();
     let pool = db::connect_memory().await.unwrap();
@@ -48,6 +54,8 @@ async fn fixture(terminal: bool) -> Fixture {
         db_path: dir.path().join("threadbase.db"),
         bind: "127.0.0.1:0".parse().unwrap(),
         terminal,
+        terminal_host: host_socket.is_some(),
+        terminal_host_sockets: host_socket.map(str::to_owned).into_iter().collect(),
         terminal_shell: "/bin/bash".to_owned(),
         terminal_socket: socket.clone(),
         ..Config::default()
@@ -128,6 +136,7 @@ async fn fixture(terminal: bool) -> Fixture {
         admin,
         member,
         read_only,
+        host_socket: host_socket.map(str::to_owned),
     }
 }
 
@@ -193,6 +202,23 @@ impl Fixture {
         )
         .into_client_request()
         .unwrap();
+        request.headers_mut().insert(
+            "cookie",
+            format!("{}={token}", auth_session::COOKIE).parse().unwrap(),
+        );
+        connect_async(request).await.unwrap().0
+    }
+
+    async fn connect_host(
+        &self,
+        user: &str,
+        ticket: &str,
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
+    {
+        let token = self.token(user).await;
+        let mut request = format!("ws://{}/ws/tmux?ticket={ticket}", self.addr)
+            .into_client_request()
+            .unwrap();
         request.headers_mut().insert(
             "cookie",
             format!("{}={token}", auth_session::COOKIE).parse().unwrap(),
@@ -616,4 +642,152 @@ async fn an_admin_drives_and_a_member_watches() {
     let _ = std::process::Command::new("tmux")
         .args(["-L", &fixture.socket, "kill-server"])
         .status();
+}
+
+#[tokio::test]
+async fn host_tmux_is_hidden_unless_its_opt_in_is_on() {
+    let fixture = fixture(true).await;
+    assert!(fixture.host_socket.is_none());
+    let (status, _) = fixture
+        .call(Method::GET, "/api/tmux/sessions", &fixture.member, None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn read_only_accounts_cannot_see_host_tmux_sessions() {
+    let socket = format!("tb-host-test-{}", ulid::Ulid::new());
+    let fixture = fixture_with_host(true, Some(&socket)).await;
+    assert_eq!(fixture.host_socket.as_deref(), Some(socket.as_str()));
+    let (status, _) = fixture
+        .call(Method::GET, "/api/tmux/sessions", &fixture.read_only, None)
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn members_list_and_drive_host_tmux_sessions() {
+    if !tmux_available() {
+        return;
+    }
+    let socket = format!("tb-host-test-{}", ulid::Ulid::new());
+    let fixture = fixture_with_host(true, Some(&socket)).await;
+    let project = fixture.project.path().to_string_lossy().into_owned();
+    let created = std::process::Command::new("tmux")
+        .args([
+            "-L",
+            &socket,
+            "new-session",
+            "-d",
+            "-s",
+            "work",
+            "-c",
+            &project,
+        ])
+        .status()
+        .unwrap();
+    assert!(created.success());
+
+    let (status, body) = fixture
+        .call(Method::GET, "/api/tmux/sessions", &fixture.member, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let server = &body["servers"][0];
+    assert_eq!(server["socket"], socket.as_str());
+    let session = &server["sessions"][0];
+    let id = session["id"].as_str().unwrap().to_owned();
+    assert!(id.starts_with('$'), "{id}");
+    assert_eq!(session["name"], "work");
+    assert_eq!(session["cwd"], project.as_str());
+
+    // Every member may drive a host session, and the room is shared: a second
+    // member is not demoted to a watcher.
+    let (status, body) = fixture
+        .call(
+            Method::POST,
+            &format!("/api/tmux/sessions/{socket}/{id}/attach"),
+            &fixture.member,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ticket = body["ticket"].as_str().unwrap().to_owned();
+    let mut member = fixture.connect_host(&fixture.member, &ticket).await;
+    let ready = next_json(&mut member).await;
+    assert_eq!(ready["type"], "ready");
+    assert_eq!(ready["role"], "controller");
+    assert_eq!(ready["shared"], true);
+
+    for ch in "echo host-round-trip\r".chars() {
+        member
+            .send(WsMessage::Text(
+                json!({ "type": "input", "data": ch.to_string() })
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let mut echoed = String::new();
+    for _ in 0..80 {
+        let message = next_json(&mut member).await;
+        if message["type"] == "output" {
+            echoed.push_str(message["data"].as_str().unwrap_or_default());
+        }
+        if echoed.matches("host-round-trip").count() >= 2 {
+            break;
+        }
+    }
+    assert!(
+        echoed.matches("host-round-trip").count() >= 2,
+        "host keystrokes did not arrive: {echoed:?}"
+    );
+
+    let (status, body) = fixture
+        .call(
+            Method::POST,
+            &format!("/api/tmux/sessions/{socket}/{id}/attach"),
+            &fixture.admin,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["ticket"].is_string());
+
+    drop(member);
+    let _ = std::process::Command::new("tmux")
+        .args(["-L", &socket, "kill-server"])
+        .status();
+}
+
+#[tokio::test]
+async fn a_missing_host_server_is_an_empty_group() {
+    let socket = format!("tb-host-empty-{}", ulid::Ulid::new());
+    let fixture = fixture_with_host(true, Some(&socket)).await;
+    let (status, body) = fixture
+        .call(Method::GET, "/api/tmux/sessions", &fixture.member, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let server = &body["servers"][0];
+    assert_eq!(server["socket"], socket.as_str());
+    assert_eq!(server["sessions"].as_array().unwrap().len(), 0);
+    assert!(server["error"].is_null());
+}
+
+#[tokio::test]
+async fn host_attach_rejects_sockets_outside_the_allowlist() {
+    let socket = format!("tb-host-test-{}", ulid::Ulid::new());
+    let fixture = fixture_with_host(true, Some(&socket)).await;
+    for target in ["other", fixture.socket.as_str()] {
+        let (status, _) = fixture
+            .call(
+                Method::POST,
+                &format!("/api/tmux/sessions/{target}/$0/attach"),
+                &fixture.member,
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "socket {target}");
+    }
 }

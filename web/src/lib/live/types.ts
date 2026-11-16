@@ -44,7 +44,8 @@ export interface LiveThreadOptions {
 }
 
 export interface LiveThreadState {
-  events: ThreadEvent[];
+  /** True once any event for this thread has arrived. */
+  hasEvents: boolean;
   /**
    * Latest server projection for this thread (status, allowed actions, pending
    * counts). Null until the first frame lands.
@@ -99,5 +100,3 @@ export const EMPTY_PRESENCE: LivePresence = {
   focuses: [],
   projectId: null,
 };
-
-export const EMPTY_EVENTS: ThreadEvent[] = [];

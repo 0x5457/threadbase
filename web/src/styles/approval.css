@@ -94,6 +94,11 @@
   right: 5px;
 }
 
+.message-user .msg-edit-btn {
+  top: 4px;
+  right: 29px;
+}
+
 .message-agent {
   margin-top: 16px;
 }
@@ -112,8 +117,18 @@
   color: var(--ink-muted);
 }
 
+.msg-edit-btn {
+  position: absolute;
+  top: -1px;
+  right: 24px;
+  display: none;
+  color: var(--ink-muted);
+}
+
 .message-block:hover .msg-comment-btn,
-.message-block:focus-within .msg-comment-btn {
+.message-block:focus-within .msg-comment-btn,
+.message-block:hover .msg-edit-btn,
+.message-block:focus-within .msg-edit-btn {
   display: grid;
 }
 

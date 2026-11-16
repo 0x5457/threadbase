@@ -231,33 +231,44 @@ pub async fn rebuild(pool: &SqlitePool) -> Result<(), ServerError> {
         .fetch_all(pool)
         .await?;
     for thread_id in &thread_ids {
-        index_thread(pool, thread_id).await?;
-        let rows: Vec<(i64, String)> = sqlx::query_as(
-            "SELECT ts, payload_json FROM events
-             WHERE thread_id = ? AND kind IN ('turn_started', 'message_completed')
-             ORDER BY seq ASC",
-        )
+        reindex_thread(pool, thread_id).await?;
+    }
+    Ok(())
+}
+
+/// Rebuild one thread's documents. Used after a rewind deleted part of its
+/// event log, where incremental removal would leave orphaned prompts behind.
+pub async fn reindex_thread(pool: &SqlitePool, thread_id: &str) -> Result<(), ServerError> {
+    sqlx::query("DELETE FROM search_fts WHERE thread_id = ?")
         .bind(thread_id)
-        .fetch_all(pool)
+        .execute(pool)
         .await?;
-        for (ts, payload) in rows {
-            if let Ok(event) = serde_json::from_str::<ThreadEvent>(&payload) {
-                index_event(pool, thread_id, &event, ts).await;
-            }
+    index_thread(pool, thread_id).await?;
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT ts, payload_json FROM events
+         WHERE thread_id = ? AND kind IN ('turn_started', 'message_completed')
+         ORDER BY seq ASC",
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await?;
+    for (ts, payload) in rows {
+        if let Ok(event) = serde_json::from_str::<ThreadEvent>(&payload) {
+            index_event(pool, thread_id, &event, ts).await;
         }
-        // Comments come from their live table, not events: a deleted comment
-        // has no tombstone event and must not be resurrected by a rebuild.
-        let comments: Vec<(String, String, String, i64)> = sqlx::query_as(
-            "SELECT c.id, COALESCE(u.display_name, u.username), c.body, c.updated_at
-             FROM comments c JOIN users u ON u.id = c.author_id
-             WHERE c.thread_id = ?",
-        )
-        .bind(thread_id)
-        .fetch_all(pool)
-        .await?;
-        for (comment_id, author, body, ts) in comments {
-            index_document(pool, thread_id, "comment", &comment_id, &author, &body, ts).await?;
-        }
+    }
+    // Comments come from their live table, not events: a deleted comment has
+    // no tombstone event and must not be resurrected by a rebuild.
+    let comments: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT c.id, COALESCE(u.display_name, u.username), c.body, c.updated_at
+         FROM comments c JOIN users u ON u.id = c.author_id
+         WHERE c.thread_id = ?",
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await?;
+    for (comment_id, author, body, ts) in comments {
+        index_document(pool, thread_id, "comment", &comment_id, &author, &body, ts).await?;
     }
     Ok(())
 }

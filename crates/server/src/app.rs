@@ -30,6 +30,11 @@ pub struct AppState {
 impl AppState {
     #[must_use]
     pub fn new(config: Config, pool: SqlitePool) -> Self {
+        if config.terminal_host {
+            tracing::warn!(
+                "THREADBASE_TERMINAL_HOST is on: every member can attach to the host's tmux sessions"
+            );
+        }
         let events = EventStore::new(pool.clone());
         let (state_tx, _) = broadcast::channel(256);
         let projection = Projection::new(pool.clone(), state_tx);

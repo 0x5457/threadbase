@@ -187,6 +187,18 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
                             break;
                         }
                     }
+                    Ok(ServerWsMessage::ThreadRewound { thread_id }) => {
+                        if !subscriptions.contains_key(thread_id.as_str()) {
+                            continue;
+                        }
+                        // The client re-subscribes from zero after this frame;
+                        // reset the cursor now so a lagged resync in between
+                        // cannot serve only the new branch on top of old rows.
+                        subscriptions.insert(thread_id.0.clone(), 0);
+                        if send_json(&mut sender, &ServerWsMessage::ThreadRewound { thread_id }).await.is_err() {
+                            break;
+                        }
+                    }
                     Ok(ServerWsMessage::InboxCount { user_id, unread }) => {
                         // The projection channel is global; only the owner's
                         // sockets see this count.

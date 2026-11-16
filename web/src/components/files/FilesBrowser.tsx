@@ -8,7 +8,8 @@ import {
 } from "@mantine/core";
 import { IconArrowsDiff, IconX } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { useState, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
+import { Virtuoso } from "react-virtuoso";
 import { listFiles } from "../../api";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { EntryRow } from "./EntryRow";
@@ -53,7 +54,10 @@ export function FilesBrowser({
       ]
     : pathCrumbs(path);
 
-  const entries = listing.data ? sortEntries(listing.data.entries) : [];
+  const entries = useMemo(
+    () => (listing.data ? sortEntries(listing.data.entries) : []),
+    [listing.data],
+  );
 
   return (
     <div className="changes">
@@ -87,42 +91,59 @@ export function FilesBrowser({
         ) : null}
       </div>
       <Breadcrumbs crumbs={crumbs} onNavigate={openDirectory} />
-      <ScrollArea className="changes-scroll" type="hover">
-        {openedFile ? (
+      {openedFile ? (
+        <ScrollArea className="changes-scroll" type="hover">
           <FilePreview
             threadId={threadId}
             path={openedFile}
             onBack={() => setOpenedFile(null)}
           />
-        ) : listing.isPending ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-          </Group>
-        ) : listing.isError ? (
-          <Text size="sm" c="red" p="sm">
-            {listing.error instanceof Error
-              ? listing.error.message
-              : "Cannot list this folder"}
-          </Text>
-        ) : entries.length === 0 ? (
-          <Text size="sm" c="dimmed" ta="center" py="xl">
-            This folder is empty
-          </Text>
-        ) : (
-          <div className="changes-files">
-            {entries.map((entry) => (
+        </ScrollArea>
+      ) : listing.isPending ? (
+        <Group className="changes-scroll" justify="center" py="xl">
+          <Loader size="sm" />
+        </Group>
+      ) : listing.isError ? (
+        <Text size="sm" c="red" p="sm" className="changes-scroll">
+          {listing.error instanceof Error
+            ? listing.error.message
+            : "Cannot list this folder"}
+        </Text>
+      ) : entries.length === 0 ? (
+        <Text size="sm" c="dimmed" ta="center" py="xl" className="changes-scroll">
+          This folder is empty
+        </Text>
+      ) : (
+        // A monorepo folder can hold thousands of entries; mounting every row
+        // froze the panel before the user could scroll. Virtuoso keeps only
+        // the visible window in the DOM.
+        <div className="changes-scroll changes-files">
+          <Virtuoso
+            style={{ height: "100%" }}
+            data={entries}
+            increaseViewportBy={300}
+            computeItemKey={(_, entry) => entry.path}
+            components={{
+              Header: () =>
+                listing.data?.truncated ? (
+                  <Text size="xs" c="dimmed" px="sm" py={6}>
+                    This folder has more than 5,000 entries; showing the first
+                    5,000.
+                  </Text>
+                ) : null,
+            }}
+            itemContent={(_, entry) => (
               <EntryRow
-                key={entry.path}
                 entry={entry}
                 onOpen={() => {
                   if (entry.isDir) openDirectory(entry.path);
                   else setOpenedFile(entry.path);
                 }}
               />
-            ))}
-          </div>
-        )}
-      </ScrollArea>
+            )}
+          />
+        </div>
+      )}
     </div>
   );
 }

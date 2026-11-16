@@ -13,12 +13,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconFolderPlus,
   IconInbox,
+  IconLayoutList,
   IconLogout,
   IconMessage,
   IconPlus,
   IconSettings,
 } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   getMe,
   logout,
@@ -34,11 +35,18 @@ import { ProjectSettingsModal } from "./ProjectSettingsModal";
 import { initials } from "../lib/initials";
 import { ProjectNode } from "./sidebar/ProjectNode";
 
+/** Stable empty list for projects without threads. */
+const EMPTY_THREADS: ThreadSummary[] = [];
+
 interface SidebarProps {
+  /** Phone viewport: project rows expand in place instead of navigating. */
+  phone: boolean;
   onNavigate: () => void;
   onOpenInbox: () => void;
+  onOpenSessions: () => void;
   onOpenSettings: () => void;
-  activeView: "inbox" | "thread" | "settings" | "project";
+  showSessions: boolean;
+  activeView: "inbox" | "sessions" | "thread" | "settings" | "project";
   selectedThreadId: string | null;
   selectedSubagentId: string | null;
   activeProjectId: string | null;
@@ -50,10 +58,13 @@ interface SidebarProps {
   onSelectProject: (projectId: string) => void;
 }
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
+  phone,
   onNavigate,
   onOpenInbox,
+  onOpenSessions,
   onOpenSettings,
+  showSessions,
   activeView,
   selectedThreadId,
   selectedSubagentId,
@@ -84,16 +95,43 @@ export function Sidebar({
     queryKey: ["threads-all"],
     queryFn: listAllThreads,
     retry: false,
-    staleTime: 5_000,
-    refetchInterval: 5_000,
-    refetchIntervalInBackground: false,
+    staleTime: 10_000,
   });
+  // One query already carries every thread; project lists are a view of it,
+  // not a second request per project. Per-project array identity is preserved
+  // so a status change in one project does not re-render the other projects.
+  const groupedThreadsRef = useRef<Map<string, ThreadSummary[]>>(new Map());
+  const threadsByProject = useMemo(() => {
+    const next = new Map<string, ThreadSummary[]>();
+    for (const thread of allThreads.data?.threads ?? []) {
+      const list = next.get(thread.projectId);
+      if (list) list.push(thread);
+      else next.set(thread.projectId, [thread]);
+    }
+    for (const [id, list] of next) {
+      const previous = groupedThreadsRef.current.get(id);
+      if (
+        previous &&
+        previous.length === list.length &&
+        previous.every((thread, index) => thread === list[index])
+      ) {
+        next.set(id, previous);
+      }
+    }
+    return next;
+  }, [allThreads.data]);
+  // Persist the identity map after render; mutating a ref inside `useMemo`
+  // makes render impure and was the last blocker in the React Doctor gate.
+  useEffect(() => {
+    groupedThreadsRef.current = threadsByProject;
+  }, [threadsByProject]);
+  // Shares the shell's cache entry and polling cadence: a second observer
+  // here used to force the whole tree to re-render every five seconds.
   const inbox = useQuery({
     queryKey: ["inbox-unread"],
-    queryFn: () => listInbox("unread"),
+    queryFn: () => listInbox("unread", undefined, 1),
     retry: false,
-    refetchInterval: 5_000,
-    refetchIntervalInBackground: false,
+    staleTime: 5_000,
   });
 
   const realProjects = useMemo(() => {
@@ -151,6 +189,20 @@ export function Sidebar({
             }
           />
 
+          {showSessions ? (
+            <NavLink
+              component="button"
+              className="side-nav"
+              label="Sessions"
+              active={activeView === "sessions"}
+              onClick={() => {
+                onOpenSessions();
+                onNavigate();
+              }}
+              leftSection={<IconLayoutList size={14} stroke={1.5} />}
+            />
+          ) : null}
+
           {pinned.length ? (
             <div className="section">
               <Group className="section-head" justify="space-between">
@@ -184,7 +236,10 @@ export function Sidebar({
             {realProjects.map((project) => (
               <ProjectNode
                 key={project.id}
+                phone={phone}
                 project={project}
+                threads={threadsByProject.get(project.id) ?? EMPTY_THREADS}
+                threadsLoading={allThreads.isLoading}
                 selectedThreadId={selectedThreadId}
                 selectedSubagentId={selectedSubagentId}
                 activeProjectId={activeProjectId}
@@ -257,9 +312,6 @@ export function Sidebar({
         project={newThreadProject}
         onClose={() => setNewThreadProject(null)}
         onCreated={(thread) => {
-          void queryClient.invalidateQueries({
-            queryKey: ["threads", thread.projectId],
-          });
           void queryClient.invalidateQueries({ queryKey: ["projects"] });
           void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
           onSelectThread(thread);
@@ -289,4 +341,4 @@ export function Sidebar({
       />
     </AppShell.Navbar>
   );
-}
+});

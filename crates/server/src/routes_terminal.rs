@@ -1,15 +1,18 @@
 //! Browser terminal endpoints: sessions, attach tickets and the data socket.
 //!
-//! Every shell is admin-driven and member-watchable. The POST endpoints exist
-//! for the same reason the rest of the API has them: a WebSocket upgrade cannot
-//! carry the `X-Requested-With` CSRF header, so a short-lived single-use ticket
-//! minted by a CSRF-guarded POST is the credential the socket presents.
+//! Workbench shells are admin-driven and member-watchable. Host tmux sessions
+//! are a separate, explicitly enabled feature: every member may list and attach
+//! to them, because they belong to the machine rather than to one thread. The
+//! POST endpoints exist for the same reason the rest of the API has them: a
+//! WebSocket upgrade cannot carry the `X-Requested-With` CSRF header, so a
+//! short-lived single-use ticket minted by a CSRF-guarded POST is the credential
+//! the socket presents.
 
 use crate::app::AppState;
 use crate::auth::{load_user_by_id, CurrentUser};
 use crate::authz;
 use crate::error::ServerError;
-use crate::terminal::{self, Access, Attachment, Role, TerminalError};
+use crate::terminal::{self, Access, Attachment, Role, SessionRef, TerminalError, TicketGrant};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::header::ORIGIN;
@@ -23,7 +26,9 @@ use std::path::{Path as FsPath, PathBuf};
 use std::time::Duration;
 use threadbase_shared::{
     ApiError, AttachTerminalSessionRequest, CreateTerminalSessionRequest, ErrorCode,
-    TerminalSessionDto, TerminalSessionResponse, TerminalSessionsResponse, UserId,
+    HostTerminalAttachResponse, HostTerminalServerDto, HostTerminalSessionDto,
+    HostTerminalSessionsResponse, TerminalSessionDto, TerminalSessionResponse,
+    TerminalSessionsResponse, UserAccess, UserId,
 };
 
 const DEFAULT_COLS: u16 = 120;
@@ -47,6 +52,12 @@ pub fn router() -> Router<AppState> {
             post(attach_ticket),
         )
         .route("/ws/terminal/{session_id}", get(socket))
+        .route("/api/tmux/sessions", get(list_host_sessions))
+        .route(
+            "/api/tmux/sessions/{socket}/{session_id}/attach",
+            post(attach_host_session),
+        )
+        .route("/ws/tmux", get(host_socket))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -75,6 +86,30 @@ fn gate(state: &AppState, user: &CurrentUser) -> Result<Access, ServerError> {
         ))),
         allowed => Ok(allowed),
     }
+}
+
+/// Host tmux is a second opt-in: every member gets a writable shell as the
+/// service account, so it is not implied by `THREADBASE_TERMINAL=1`.
+fn host_gate(state: &AppState, user: &CurrentUser) -> Result<(), ServerError> {
+    if !state.config.terminal || !state.config.terminal_host {
+        return Err(ServerError(ApiError::not_found("unknown endpoint")));
+    }
+    if user.is_admin() || matches!(user.user.access, UserAccess::Member) {
+        Ok(())
+    } else {
+        Err(ServerError(ApiError::forbidden(
+            "the terminal is not available for this account",
+        )))
+    }
+}
+
+fn origin_allowed(state: &AppState, headers: &HeaderMap) -> bool {
+    headers.get(ORIGIN).is_none_or(|origin| {
+        origin
+            .to_str()
+            .ok()
+            .is_some_and(|origin| crate::middleware::origin_allowed(&state.config, origin))
+    })
 }
 
 fn map_terminal_error(error: TerminalError) -> ServerError {
@@ -142,7 +177,7 @@ async fn session_dto(
     let cwd = match alive {
         true => state
             .terminal
-            .current_path(id)
+            .current_path(&SessionRef::workbench(id))
             .await
             .unwrap_or_else(|| fallback_cwd.to_owned()),
         false => fallback_cwd.to_owned(),
@@ -158,6 +193,36 @@ async fn session_dto(
             .map(UserId::from),
         viewers: room.as_ref().map_or(0, |room| room.viewers()),
     }
+}
+
+fn host_session_dto(
+    state: &AppState,
+    socket: &str,
+    session: terminal::HostSession,
+) -> HostTerminalSessionDto {
+    let key = SessionRef::host(socket, &session.id).key();
+    let viewers = state.terminal.room(&key).map_or(0, |room| room.viewers());
+    HostTerminalSessionDto {
+        id: session.id,
+        name: session.name,
+        windows: session.windows,
+        attached: session.attached,
+        created_at: session.created_at,
+        activity_at: session.activity_at,
+        cwd: session.cwd,
+        command: session.command,
+        viewers,
+    }
+}
+
+fn host_socket_allowed(state: &AppState, socket: &str) -> bool {
+    state
+        .config
+        .terminal_host_sockets
+        .iter()
+        .any(|allowed| allowed == socket)
+        && socket != state.config.terminal_socket
+        && terminal::is_socket_name(socket)
 }
 
 fn thread_of(id: &str) -> Option<String> {
@@ -231,9 +296,11 @@ async fn create_session(
         .await
         .map_err(map_terminal_error)?;
     let watch_only = request.watch_only.unwrap_or(false);
-    let ticket = state
-        .terminal
-        .ticket(&id, user.user.id.as_str(), watch_only);
+    let ticket = state.terminal.ticket(
+        SessionRef::workbench(&id),
+        user.user.id.as_str(),
+        watch_only,
+    );
     let session = session_dto(&state, &id, thread_id, &cwd.to_string_lossy(), true).await;
     Ok(Json(TerminalSessionResponse { session, ticket }))
 }
@@ -253,12 +320,13 @@ async fn attach_ticket(
     if let Some(thread_id) = thread_of(&session_id) {
         authz::require_read(&state.pool, &thread_id, &user).await?;
     }
-    let room = match state.terminal.attach_room(&session_id).await {
+    let target = SessionRef::workbench(&session_id);
+    let room = match state.terminal.attach_room(&target).await {
         Ok(room) => room,
         Err(_) => {
             // A tmux session can outlive the server process; adopt it again
             // from the shell's current directory instead of 404-ing.
-            let Some(cwd) = state.terminal.current_path(&session_id).await else {
+            let Some(cwd) = state.terminal.current_path(&target).await else {
                 return Err(ServerError(ApiError::not_found(
                     "terminal session not found",
                 )));
@@ -270,9 +338,11 @@ async fn attach_ticket(
         }
     };
     let watch_only = body.and_then(|Json(body)| body.watch_only).unwrap_or(false);
-    let ticket = state
-        .terminal
-        .ticket(&session_id, user.user.id.as_str(), watch_only);
+    let ticket = state.terminal.ticket(
+        SessionRef::workbench(&session_id),
+        user.user.id.as_str(),
+        watch_only,
+    );
     let session = session_dto(
         &state,
         &session_id,
@@ -304,7 +374,7 @@ async fn kill_session(
     }
     state
         .terminal
-        .kill(&session_id)
+        .kill(&SessionRef::workbench(&session_id))
         .await
         .map_err(map_terminal_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -326,6 +396,8 @@ enum ServerMessage {
         cwd: String,
         controller: Option<String>,
         viewers: u32,
+        /// Host rooms let every writable client type at once.
+        shared: bool,
     },
     Output {
         data: String,
@@ -361,13 +433,7 @@ async fn upgrade(
     user: CurrentUser,
 ) -> Result<Response, ServerError> {
     let _ = gate(&state, &user)?;
-    let origin_ok = headers.get(ORIGIN).is_none_or(|origin| {
-        origin
-            .to_str()
-            .ok()
-            .is_some_and(|origin| crate::middleware::origin_allowed(&state.config, origin))
-    });
-    if !origin_ok {
+    if !origin_allowed(&state, &headers) {
         return Err(ServerError(ApiError::forbidden("origin is not allowed")));
     }
     if !terminal::is_session_id(&session_id) || !owns_session(&user, &session_id) {
@@ -375,17 +441,25 @@ async fn upgrade(
             "terminal session not found",
         )));
     }
+    let target = SessionRef::workbench(&session_id);
     // The ticket proves this socket was authorised by a CSRF-guarded POST, and
     // carries whether the caller is allowed to type at all.
-    let Some(watch_only) =
-        state
-            .terminal
-            .take_ticket(&query.ticket, &session_id, user.user.id.as_str())
+    let Some(TicketGrant {
+        target: granted,
+        watch_only,
+    }) = state
+        .terminal
+        .take_ticket(&query.ticket, user.user.id.as_str())
     else {
         return Err(ServerError(ApiError::forbidden(
             "terminal ticket is invalid or expired",
         )));
     };
+    if granted != target {
+        return Err(ServerError(ApiError::forbidden(
+            "terminal ticket is invalid or expired",
+        )));
+    }
     // A revoked or downgraded account must not ride an old ticket, so the
     // decision is taken from the row as it is now, not from the cookie.
     let fresh = load_user_by_id(&state.pool, user.user.id.as_str())
@@ -402,7 +476,7 @@ async fn upgrade(
     }
     let room = state
         .terminal
-        .attach_room(&session_id)
+        .attach_room(&target)
         .await
         .map_err(map_terminal_error)?;
     let role = room
@@ -411,14 +485,140 @@ async fn upgrade(
             access == Access::Drive && !watch_only,
         )
         .map_err(map_terminal_error)?;
-    let attachment = match terminal::attach(
-        &session_id,
-        &state.config.terminal_socket,
-        &room.cwd,
-        DEFAULT_COLS,
-        DEFAULT_ROWS,
-        role,
-    ) {
+    let attachment = match terminal::attach(&room, DEFAULT_COLS, DEFAULT_ROWS, role) {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            room.release(user.user.id.as_str(), role);
+            return Err(map_terminal_error(error));
+        }
+    };
+    Ok(ws
+        .on_upgrade(move |socket| run(socket, state, room, attachment, role, user))
+        .into_response())
+}
+
+async fn list_host_sessions(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<HostTerminalSessionsResponse>, ServerError> {
+    host_gate(&state, &user)?;
+    let servers = state
+        .terminal
+        .host_sessions(&state.config.terminal_host_sockets)
+        .await;
+    let servers = servers
+        .into_iter()
+        .map(|server| {
+            let sessions = server
+                .sessions
+                .into_iter()
+                .map(|session| host_session_dto(&state, &server.socket, session))
+                .collect();
+            HostTerminalServerDto {
+                socket: server.socket,
+                sessions,
+                error: server.error,
+            }
+        })
+        .collect();
+    Ok(Json(HostTerminalSessionsResponse { servers }))
+}
+
+async fn attach_host_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((socket, session_id)): Path<(String, String)>,
+    body: Option<Json<AttachTerminalSessionRequest>>,
+) -> Result<Json<HostTerminalAttachResponse>, ServerError> {
+    host_gate(&state, &user)?;
+    if !host_socket_allowed(&state, &socket) || !terminal::is_host_session_id(&session_id) {
+        return Err(ServerError(ApiError::not_found("tmux session not found")));
+    }
+    state
+        .terminal
+        .ensure_host(&socket, &session_id)
+        .await
+        .map_err(map_terminal_error)?;
+    let Some(session) = state.terminal.host_session(&socket, &session_id).await else {
+        return Err(ServerError(ApiError::not_found("tmux session not found")));
+    };
+    let watch_only = body.and_then(|Json(body)| body.watch_only).unwrap_or(false);
+    let ticket = state.terminal.ticket(
+        SessionRef::host(&socket, &session_id),
+        user.user.id.as_str(),
+        watch_only,
+    );
+    let session = host_session_dto(&state, &socket, session);
+    Ok(Json(HostTerminalAttachResponse { session, ticket }))
+}
+
+async fn host_socket(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Query(query): Query<SocketQuery>,
+    user: CurrentUser,
+) -> Response {
+    match host_upgrade(ws, headers, state, query, user).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn host_upgrade(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    state: AppState,
+    query: SocketQuery,
+    user: CurrentUser,
+) -> Result<Response, ServerError> {
+    host_gate(&state, &user)?;
+    if !origin_allowed(&state, &headers) {
+        return Err(ServerError(ApiError::forbidden("origin is not allowed")));
+    }
+    let Some(TicketGrant { target, watch_only }) = state
+        .terminal
+        .take_ticket(&query.ticket, user.user.id.as_str())
+    else {
+        return Err(ServerError(ApiError::forbidden(
+            "terminal ticket is invalid or expired",
+        )));
+    };
+    let SessionRef::Host { socket, id } = target else {
+        return Err(ServerError(ApiError::forbidden(
+            "terminal ticket is invalid or expired",
+        )));
+    };
+    if !host_socket_allowed(&state, &socket) || !terminal::is_host_session_id(&id) {
+        return Err(ServerError(ApiError::not_found("tmux session not found")));
+    }
+    // The host gate is repeated against the current row: an account downgraded
+    // after the ticket was minted must not attach.
+    let fresh = load_user_by_id(&state.pool, user.user.id.as_str())
+        .await?
+        .ok_or_else(|| ServerError(ApiError::unauthorized("sign in again")))?;
+    if !(fresh.is_admin || matches!(fresh.access, UserAccess::Member)) {
+        return Err(ServerError(ApiError::forbidden(
+            "the terminal is not available for this account",
+        )));
+    }
+    let target = SessionRef::host(&socket, &id);
+    let room = match state.terminal.room(&target.key()) {
+        Some(room) => room,
+        None => {
+            let Some(cwd) = state.terminal.host_current_path(&socket, &id).await else {
+                return Err(ServerError(ApiError::not_found("tmux session not found")));
+            };
+            state.terminal.adopt_host(&socket, &id, FsPath::new(&cwd))
+        }
+    };
+    let Some(room) = (room.target == target).then_some(room) else {
+        return Err(ServerError(ApiError::not_found("tmux session not found")));
+    };
+    let role = room
+        .claim(user.user.id.as_str(), !watch_only)
+        .map_err(map_terminal_error)?;
+    let attachment = match terminal::attach(&room, DEFAULT_COLS, DEFAULT_ROWS, role) {
         Ok(attachment) => attachment,
         Err(error) => {
             room.release(user.user.id.as_str(), role);
@@ -449,10 +649,11 @@ async fn run(
 
     let ready = ServerMessage::Ready {
         role: role.as_str(),
-        session: room.id.clone(),
+        session: room.key.clone(),
         cwd: room.cwd.to_string_lossy().into_owned(),
         controller: room.controller(),
         viewers: room.viewers(),
+        shared: room.shared(),
     };
     if send(&mut sender, &ready).await.is_err() {
         room.release(&user_id, role);
@@ -489,7 +690,7 @@ async fn run(
             }
             incoming = receiver.next() => {
                 let Some(Ok(message)) = incoming else { break };
-                handle_client(&message, &attachment, role, &state, &room.id).await;
+                handle_client(&message, &attachment, role, &state, &room).await;
             }
             _ = ticker.tick() => {
                 flush(&mut sender, &mut pending, &attachment).await;
@@ -508,7 +709,7 @@ async fn handle_client(
     attachment: &Attachment,
     role: Role,
     state: &AppState,
-    session_id: &str,
+    room: &terminal::Room,
 ) {
     let Message::Text(text) = message else {
         return;
@@ -528,13 +729,20 @@ async fn handle_client(
             // Every client sizes its own pty so tmux crops instead of wrapping;
             // only the driver owns the shared window geometry.
             attachment.resize(cols, rows);
-            if role != Role::Controller {
+            // Host rooms are shared: every viewer sizes its own pty and tmux's
+            // window-size policy decides what the session window becomes. A
+            // workbench room keeps the exclusive driver's geometry.
+            if role != Role::Controller || room.shared() {
                 return;
             }
             let state = state.clone();
-            let session_id = session_id.to_owned();
+            let socket = room.socket.clone();
+            let session_id = room.tmux_id.clone();
             tokio::spawn(async move {
-                state.terminal.resize_window(&session_id, cols, rows).await;
+                state
+                    .terminal
+                    .resize_window(&socket, &session_id, cols, rows)
+                    .await;
             });
         }
     }

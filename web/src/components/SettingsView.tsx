@@ -14,7 +14,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { getMe, getState, updateSettings, type Settings } from "../api";
 import {
   currentPushState,
@@ -38,7 +38,7 @@ const baselines = [
   { value: "last_turn", label: "Last turn" },
 ];
 
-export function SettingsView() {
+export const SettingsView = memo(function SettingsView() {
   const queryClient = useQueryClient();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const me = useQuery({
@@ -104,7 +104,6 @@ export function SettingsView() {
       notifications.show({ message: "Settings saved", color: "teal" });
       void queryClient.invalidateQueries({ queryKey: ["state"] });
       void queryClient.invalidateQueries({ queryKey: ["thread"] });
-      void queryClient.invalidateQueries({ queryKey: ["threads"] });
       void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
       void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
@@ -381,4 +380,4 @@ export function SettingsView() {
       ) : null}
     </div>
   );
-}
+});

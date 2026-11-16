@@ -3,12 +3,13 @@ import {
   IconAlertCircle,
   IconClock,
   IconMessagePlus,
+  IconPencil,
 } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { ViewItem } from "../../lib/thread-events";
 import { useLongPress } from "../../lib/use-long-press";
 import { initials, timeOf } from "./format";
@@ -17,51 +18,17 @@ import { ImageLightbox } from "./ImageLightbox";
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const REHYPE_PLUGINS = [rehypeHighlight];
 
-/**
- * Streaming deltas arrive in 50 ms batches. Running the full markdown +
- * syntax-highlight pipeline on every batch costs ~15 ms for a 5 KB message
- * (measured here; several times worse on a phone), so a long answer pegs the
- * main thread while it types. Let the rendered text trail the wire by at most
- * this interval instead; the final text is rendered immediately once the
- * message stops streaming.
- */
-const STREAM_RENDER_MS = 250;
-
-function useStreamedText(text: string, streaming: boolean) {
-  const [rendered, setRendered] = useState(text);
-  const lastAt = useRef(0);
-
-  useEffect(() => {
-    if (!streaming) {
-      setRendered(text);
-      return;
-    }
-    const elapsed = performance.now() - lastAt.current;
-    if (elapsed >= STREAM_RENDER_MS) {
-      lastAt.current = performance.now();
-      setRendered(text);
-      return;
-    }
-    // Trailing throttle: keep only the latest chunk, not every one in between.
-    const timer = window.setTimeout(() => {
-      lastAt.current = performance.now();
-      setRendered(text);
-    }, STREAM_RENDER_MS - elapsed);
-    return () => window.clearTimeout(timer);
-  }, [text, streaming]);
-
-  return rendered;
-}
-
 export const Message = memo(function Message({
   item,
   onComment,
+  onEdit,
   onLongPress,
   active,
   continued = false,
 }: {
   item: Extract<ViewItem, { kind: "message" }>;
   onComment: (messageId: string) => void;
+  onEdit?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
   active: boolean;
   /** Same author as the row above: drop the repeated avatar and tighten up. */
@@ -76,24 +43,21 @@ export const Message = memo(function Message({
   // line inside the bubble; the prompt itself is already trimmed server-side.
   const text = agent ? item.text : item.text.replace(/^\n+|\n+$/g, "");
   const [lightbox, setLightbox] = useState<string | null>(null);
-  // Markdown parsing and highlighting are the expensive part of a streaming
-  // update, so they run on a throttled copy. Highlighting partial code fences
-  // is wasted work too: only completed messages get rehype-highlight.
-  const liveText = useStreamedText(text, item.streaming && agent);
-  const streamingText = item.streaming && agent ? liveText : text;
-  // ReactMarkdown re-runs its parse on every render, even when the text is
-  // identical. Keep the element so a parent render between throttled chunks
-  // (or a bundle poll) does not re-parse the whole message.
+  // Markdown + syntax highlighting is the expensive part of an agent
+  // message, and a streaming turn re-renders every token batch. Keep the
+  // streamed text plain and parse markdown once, when the message completes.
+  // The final render is the only one that pays the full pipeline.
   const markdown = useMemo(
-    () => (
-      <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={item.streaming ? undefined : REHYPE_PLUGINS}
-      >
-        {streamingText}
-      </ReactMarkdown>
-    ),
-    [streamingText, item.streaming],
+    () =>
+      item.streaming ? null : (
+        <ReactMarkdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
+        >
+          {text}
+        </ReactMarkdown>
+      ),
+    [item.streaming, text],
   );
 
   return (
@@ -123,6 +87,16 @@ export const Message = memo(function Message({
         )}
       </div>
       <div className="block-body">
+        {!agent && onEdit ? (
+          <ActionIcon
+            className="msg-edit-btn"
+            size={18}
+            aria-label="Edit message"
+            onClick={() => onEdit(item)}
+          >
+            <IconPencil size={12} stroke={1.5} />
+          </ActionIcon>
+        ) : null}
         <ActionIcon
           className="msg-comment-btn"
           size={18}
@@ -150,7 +124,15 @@ export const Message = memo(function Message({
           </div>
         ) : null}
         <div className={streaming ? "prose streaming" : "prose"}>
-          {agent ? markdown : <p>{text}</p>}
+          {agent ? (
+            item.streaming ? (
+              <p className="prose-stream">{text}</p>
+            ) : (
+              markdown
+            )
+          ) : (
+            <p>{text}</p>
+          )}
         </div>
         {lightbox ? (
           <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />

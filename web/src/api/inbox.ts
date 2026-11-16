@@ -8,9 +8,11 @@ export type InboxItem = InboxItemDto;
 export function listInbox(
   filter: "unread" | "all" = "unread",
   before?: string,
+  limit?: number,
 ) {
   const params = new URLSearchParams({ filter });
   if (before) params.set("before", before);
+  if (limit) params.set("limit", String(limit));
   return request<InboxPageDto>(`/api/inbox?${params.toString()}`);
 }
 

@@ -251,14 +251,20 @@
 }
 
 /* The three insert actions are the composer's only chrome; keep them quiet
-   but legible, and give the pointer a clear hover target. */
-.composer-tools .mantine-ActionIcon-root {
+   but legible, and give the pointer a clear hover target. Scope this to the
+   insert buttons: the send and stop buttons are filled Mantine controls and
+   must keep their own contrast colours. */
+.composer-tools .composer-insert-btn {
   color: var(--ink-muted);
 }
 
-.composer-tools .mantine-ActionIcon-root:hover:not(:disabled) {
+.composer-tools .composer-insert-btn:hover:not(:disabled) {
   background: var(--hover);
   color: var(--ink);
+}
+
+.composer-tools .stop-btn {
+  margin-left: 2px;
 }
 
 .composer-tools .spacer {

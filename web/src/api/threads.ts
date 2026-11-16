@@ -163,6 +163,23 @@ export function cancelThread(threadId: string) {
   return jsonRequest<OkResponse>(`/api/threads/${threadId}/cancel`, "POST");
 }
 
+/**
+ * Replace a user prompt and discard everything after it. The server restarts
+ * the agent in a fresh ACP session, so the edited turn runs against the
+ * remaining transcript with no memory of the removed branch.
+ */
+export function editThreadMessage(
+  threadId: string,
+  messageId: string,
+  text: string,
+) {
+  return jsonRequest<SendMessageResponse>(
+    `/api/threads/${threadId}/messages/${messageId}/edit`,
+    "POST",
+    { text },
+  );
+}
+
 /** Restart the adapter in a fresh ACP session. */
 export function restartThread(threadId: string) {
   return jsonRequest<OkResponse>(`/api/threads/${threadId}/restart`, "POST");

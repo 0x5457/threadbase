@@ -16,6 +16,7 @@ import {
   IconLayoutSidebarLeftExpand,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
+  IconLayoutList,
   IconMoon,
   IconSearch,
   IconSun,
@@ -55,6 +56,10 @@ interface TitleBarProps {
   canTerminal?: boolean;
   terminalOpen?: boolean;
   onToggleTerminal?: () => void;
+  /** The Sessions surface is available; its entry point is shown. */
+  canSessions?: boolean;
+  sessionsActive?: boolean;
+  onOpenSessions?: () => void;
   onToggleNavCollapsed: () => void;
   onOpenPalette: () => void;
   onOpenInbox: () => void;
@@ -94,6 +99,9 @@ export function TitleBar({
   canTerminal = false,
   terminalOpen = false,
   onToggleTerminal,
+  canSessions = false,
+  sessionsActive = false,
+  onOpenSessions,
   onOpenPalette,
   onOpenInbox,
   onOpenChanges,
@@ -301,6 +309,19 @@ export function TitleBar({
               onClick={onToggleTerminal}
             >
               <IconTerminal2 size={15} stroke={1.5} />
+            </ActionIcon>
+          </Tooltip>
+        ) : null}
+        {canSessions && onOpenSessions ? (
+          <Tooltip label="Sessions">
+            <ActionIcon
+              aria-label="Sessions"
+              aria-pressed={sessionsActive}
+              className="header-terminal"
+              data-active={sessionsActive ? "true" : undefined}
+              onClick={onOpenSessions}
+            >
+              <IconLayoutList size={15} stroke={1.5} />
             </ActionIcon>
           </Tooltip>
         ) : null}

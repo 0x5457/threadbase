@@ -98,6 +98,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      y-protocols:
+        specifier: 1.0.7
+        version: 1.0.7(yjs@13.6.33)
       y-websocket:
         specifier: 3.1.0
         version: 3.1.0(yjs@13.6.33)

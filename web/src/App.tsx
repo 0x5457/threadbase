@@ -16,6 +16,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconInbox,
+  IconLayoutList,
   IconMessage,
   IconMoon,
   IconSettings,
@@ -56,6 +57,7 @@ import {
   type CommitSummary,
   type InboxItem,
   type SearchHit,
+  type TerminalTarget,
   type ThreadSummary,
 } from "./api";
 import type { InboxPageDto } from "./api/types/InboxPageDto";
@@ -78,6 +80,7 @@ import { WorkspaceEmpty } from "./components/WorkspaceEmpty";
 import { useOverlayBack } from "./lib/overlay-back";
 import { whenIdle } from "./lib/idle";
 import { pathFor, useRoute } from "./lib/router";
+import { parseTmuxSession, withSessionParam } from "./lib/sessions";
 
 // The thread, settings and diff surfaces pull in the editor, CRDT, terminal
 // and highlighter stacks. Keeping them out of the shell chunk is what makes
@@ -112,8 +115,18 @@ const TerminalDrawer = lazy(() =>
     default: module.TerminalDrawer,
   })),
 );
+const SessionsView = lazy(() =>
+  import("./components/sessions/SessionsView").then((module) => ({
+    default: module.SessionsView,
+  })),
+);
+const SessionSwitcher = lazy(() =>
+  import("./components/sessions/SessionSwitcher").then((module) => ({
+    default: module.SessionSwitcher,
+  })),
+);
 
-type View = "inbox" | "thread" | "settings" | "project";
+type View = "inbox" | "sessions" | "thread" | "settings" | "project";
 
 /** Placeholder for a code-split surface that is still downloading. */
 function ChunkLoading() {
@@ -163,22 +176,51 @@ function Workspace() {
   // The URL owns navigation; everything below derives from it so reloads,
   // deep links and the back button behave the same as in-app clicks.
   const view: View =
-    route.kind === "settings"
-      ? "settings"
-      : route.kind === "project"
-        ? "project"
-        : route.kind === "thread" || route.kind === "subagent"
-          ? "thread"
-          : "inbox";
+    route.kind === "sessions"
+      ? "sessions"
+      : route.kind === "settings"
+        ? "settings"
+        : route.kind === "project"
+          ? "project"
+          : route.kind === "thread" || route.kind === "subagent"
+            ? "thread"
+            : "inbox";
   const routeThreadId =
     route.kind === "thread" || route.kind === "subagent" ? route.threadId : null;
-  const [selectedThread, setSelectedThread] = useState<ThreadSummary | null>(
-    null,
-  );
+  const [selectedThreadState, setSelectedThread] =
+    useState<ThreadSummary | null>(null);
+  const allThreads = useQuery({
+    queryKey: ["threads-all"],
+    queryFn: listAllThreads,
+    staleTime: 10_000,
+    // The sidebar is the only consumer that needs this without a live socket.
+    // Ten seconds keeps other threads' status marks fresh without rebuilding
+    // the tree on every 5 s tick.
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
+  });
+  // The URL is authoritative, so resolve the open thread during render from
+  // the freshest cached copy. Waiting for an effect made every back gesture
+  // paint the placeholder first (and, when the route and state disagreed,
+  // briefly mount the previous thread's transcript).
+  const selectedThread = useMemo(() => {
+    if (routeThreadId === null) return null;
+    const known =
+      selectedThreadState?.id === routeThreadId ? selectedThreadState : null;
+    const listed =
+      allThreads.data?.threads.find((thread) => thread.id === routeThreadId) ??
+      null;
+    if (known === null) return listed;
+    // Local patches (pin, rename, archive) carry a newer timestamp than the
+    // polled list; once the list catches up it wins again.
+    if (listed === null) return known;
+    return known.updatedAt >= listed.updatedAt ? known : listed;
+  }, [allThreads.data, routeThreadId, selectedThreadState]);
   const pendingInboxReads = useRef<Set<string>>(new Set());
   const [navOpened, nav] = useDisclosure(false);
-  // A phone mounts the nav drawer's contents on first open instead of building
-  // the tree behind it on every screen.
+  // A phone mounts the nav tree once — after the shell goes idle, or on the
+  // first open — instead of putting the whole project tree on the initial
+  // screen's critical path.
   const [navEverOpened, setNavEverOpened] = useState(false);
   useEffect(() => {
     if (navOpened) setNavEverOpened(true);
@@ -222,7 +264,23 @@ function Workspace() {
   // remounts it against that thread's shell.
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalFull, setTerminalFull] = useState(false);
+  const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
+  // A host tmux session is an overlay, so it lives in the query string rather
+  // than in component state: `?session=tmux:<socket>:<$N>` survives reloads,
+  // is shareable, and leaves the surface underneath untouched.
+  const tmuxRef = useMemo(
+    () => parseTmuxSession(location.search),
+    [location.search],
+  );
   const terminalThreadId = view === "thread" ? (selectedThread?.id ?? null) : null;
+  const terminalTarget = useMemo<TerminalTarget>(
+    () =>
+      tmuxRef
+        ? { kind: "host", socket: tmuxRef.socket, id: tmuxRef.id }
+        : { kind: "workbench", threadId: terminalThreadId },
+    [terminalThreadId, tmuxRef],
+  );
+  const terminalVisible = terminalOpen || tmuxRef !== null;
   // The server decides whether the feature exists at all; only administrators
   // can drive a shell. Entry points stay hidden otherwise.
   const stateQuery = useQuery({
@@ -237,13 +295,15 @@ function Workspace() {
       me.data &&
         (me.data.user.isAdmin || me.data.user.access === "member"),
     );
+  const hostTmuxEnabled =
+    terminalEnabled && Boolean(stateQuery.data?.terminalHost);
   // A shell that outlived the drawer: the status bar keeps it discoverable.
   const terminalSessions = useQuery({
     queryKey: ["terminal-sessions", terminalThreadId],
     queryFn: () => listTerminalSessions(terminalThreadId),
     enabled: terminalEnabled,
     staleTime: 5_000,
-    refetchInterval: terminalOpen ? false : 10_000,
+    refetchInterval: terminalVisible ? false : 10_000,
   });
   const liveTerminal =
     terminalSessions.data?.sessions.find(
@@ -278,11 +338,30 @@ function Workspace() {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
 
-  // Warm the thread chunk once the shell is idle. Opening a thread is the
-  // main next step from Inbox, and the editor/highlighter stack is heavy.
+  // Warm the two route chunks once the shell is idle. Opening a thread is the
+  // main next step from Inbox, and Settings is one tab away; neither should
+  // wait for a download on a phone.
   useEffect(() => {
-    return whenIdle(() => void import("./components/RealThreadView"));
+    const cancelThread = whenIdle(
+      () => void import("./components/RealThreadView"),
+    );
+    const cancelSettings = whenIdle(
+      () => void import("./components/SettingsView"),
+    );
+    return () => {
+      cancelThread();
+      cancelSettings();
+    };
   }, []);
+
+  // A phone builds the project tree the first time the drawer opens, which is
+  // why that tap used to cost a full React mount. Warm it while the shell is
+  // idle; the drawer stays hidden until it is opened, and the sidebar's
+  // queries are already cached by the shell.
+  useEffect(() => {
+    if (!phone || navEverOpened) return;
+    return whenIdle(() => setNavEverOpened(true));
+  }, [navEverOpened, phone]);
 
   // The diff stack is only reachable on the wide layout's aside; load it after
   // the transcript so opening a thread never waits for the highlighter.
@@ -291,11 +370,6 @@ function Workspace() {
     return whenIdle(() => void import("./components/RealChangesPanel"));
   }, [wide]);
 
-  const allThreads = useQuery({
-    queryKey: ["threads-all"],
-    queryFn: listAllThreads,
-    staleTime: 10_000,
-  });
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
@@ -303,8 +377,12 @@ function Workspace() {
   });
   const inboxUnread = useQuery({
     queryKey: ["inbox-unread"],
-    queryFn: () => listInbox("unread"),
+    queryFn: () => listInbox("unread", undefined, 1),
     staleTime: 5_000,
+    // The shell owns the badge's cadence; the sidebar and title bar share this
+    // observer instead of each scheduling their own timer.
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
   });
   const search = useQuery({
     queryKey: ["search", debouncedQuery],
@@ -314,13 +392,21 @@ function Workspace() {
   });
 
   /** History push guard: clicking the open thread twice must not stack
-   *  duplicate entries. */
+   *  duplicate entries. The refs keep `go` stable across navigations so the
+   *  memoized sidebar tree is not invalidated by every route change. */
+  const pathnameRef = useRef(location.pathname + location.search);
+  const navigateRef = useRef(navigate);
+  useEffect(() => {
+    pathnameRef.current = location.pathname + location.search;
+    navigateRef.current = navigate;
+  }, [location.pathname, location.search, navigate]);
   const go = useCallback(
     (path: string, options?: { replace?: boolean }) => {
-      if (path === location.pathname) return;
-      void navigate(path, options);
+      if (path === pathnameRef.current) return;
+      pathnameRef.current = path;
+      void navigateRef.current(path, options);
     },
-    [location.pathname, navigate],
+    [],
   );
 
   // Back closes the topmost overlay instead of leaving the screen behind it.
@@ -330,23 +416,11 @@ function Workspace() {
   useOverlayBack(renameOpened, rename.close);
   useOverlayBack(revertOpened, revert.close);
   useOverlayBack(reviewOpened, review.close);
+  useOverlayBack(sessionSwitcherOpen, () => setSessionSwitcherOpen(false));
   useOverlayBack(paletteOpened, () => {
     setPaletteOpened(false);
     spotlight.close();
   });
-
-  // Ctrl+` mirrors the editor panel shortcut. It stays live while the terminal
-  // has focus, which is the only way back out from a fullscreen shell.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "`" && event.ctrlKey && !event.metaKey && !event.altKey) {
-        event.preventDefault();
-        if (terminalEnabled) setTerminalOpen((open) => !open);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [terminalEnabled]);
 
   useEffect(() => {
     if (!navOpened) return;
@@ -521,19 +595,19 @@ function Workspace() {
   };
 
 
-  // A thread URL is authoritative: resolve it from the cached list, or fetch it
-  // directly so a deep link works before any list has loaded.
+  // A thread URL is authoritative: fetch the bundle directly when neither the
+  // list nor a previous open already resolved it, so a deep link works before
+  // any list has loaded.
   useEffect(() => {
     if (routeThreadId === null) {
-      if (selectedThread !== null) setSelectedThread(null);
+      if (selectedThreadState !== null) setSelectedThread(null);
       return;
     }
-    if (selectedThread?.id === routeThreadId) return;
-    const known = allThreads.data?.threads.find(
-      (thread) => thread.id === routeThreadId,
-    );
-    if (known) {
-      setSelectedThread(known);
+    if (selectedThreadState?.id === routeThreadId) return;
+    if (
+      allThreads.data?.threads.some((thread) => thread.id === routeThreadId)
+    ) {
+      // Render already resolves it from the list; no state copy needed.
       return;
     }
     let cancelled = false;
@@ -558,7 +632,14 @@ function Workspace() {
     return () => {
       cancelled = true;
     };
-  }, [routeThreadId, allThreads.data, selectedThread]);
+  }, [
+    allThreads.data,
+    go,
+    route.kind,
+    route.kind === "thread" ? route.projectId : null,
+    routeThreadId,
+    selectedThreadState,
+  ]);
 
   const subagentRoute = route.kind === "subagent";
   // Prefer the polling thread list: it carries fresher subagent statuses than
@@ -596,15 +677,17 @@ function Workspace() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [asideCollapsed, setAsideOpen, showAside]);
   const title =
-    view === "inbox"
-      ? "Inbox"
-      : view === "settings"
-        ? "Settings"
-        : selectedSubagent
-          ? [selectedSubagent.title, selectedSubagent.description]
-              .filter(Boolean)
-              .join(" · ")
-          : (selectedThread?.title ?? "Workspace");
+    view === "sessions"
+      ? "Sessions"
+      : view === "inbox"
+        ? "Inbox"
+        : view === "settings"
+          ? "Settings"
+          : selectedSubagent
+            ? [selectedSubagent.title, selectedSubagent.description]
+                .filter(Boolean)
+                .join(" · ")
+            : (selectedThread?.title ?? "Workspace");
   const participants =
     view === "thread" ? (selectedThread?.participants ?? []) : [];
 
@@ -636,6 +719,68 @@ function Workspace() {
     },
     [changes.close, go],
   );
+
+  const openThreadById = useCallback(
+    async (threadId: string, shell = false) => {
+      try {
+        const thread =
+          allThreads.data?.threads.find((entry) => entry.id === threadId) ??
+          (await getThread(threadId)).thread;
+        openThread(thread);
+        if (shell) setTerminalOpen(true);
+      } catch (cause) {
+        notifications.show({
+          message:
+            cause instanceof Error ? cause.message : "Could not open that thread",
+          color: "red",
+        });
+      }
+    },
+    [allThreads.data?.threads, openThread],
+  );
+
+  const openTmux = useCallback(
+    (socket: string, id: string) => {
+      setTerminalOpen(false);
+      setTerminalFull(false);
+      const search = withSessionParam(location.search, { socket, id });
+      void navigate(`${location.pathname}${search ? `?${search}` : ""}`);
+    },
+    [location.pathname, location.search, navigate],
+  );
+
+  const closeTmux = useCallback(() => {
+    setTerminalFull(false);
+    const search = withSessionParam(location.search, null);
+    void navigate(`${location.pathname}${search ? `?${search}` : ""}`, {
+      replace: true,
+    });
+  }, [location.pathname, location.search, navigate]);
+
+  const openSessions = useCallback(() => {
+    startTransition(() => {
+      setSelectedThread(null);
+      setOnlineUserIds([]);
+      changes.close();
+      nav.close();
+      go(pathFor({ kind: "sessions" }));
+    });
+  }, [changes.close, go, nav.close]);
+
+  // Ctrl+` mirrors the editor panel shortcut. It stays live while the terminal
+  // has focus, which is the only way back out from a fullscreen shell.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "`" && event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        if (!terminalEnabled) return;
+        if (tmuxRef) closeTmux();
+        else setTerminalOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeTmux, terminalEnabled, tmuxRef]);
 
   const openSearchHit = useCallback(
     async (hit: SearchHit) => {
@@ -697,7 +842,7 @@ function Workspace() {
 
   // Read bookkeeping runs in the background: the row leaves the unread cache
   // immediately, and a failed write puts it back and says why.
-  const markInboxItemRead = (threadId: string) => {
+  const markInboxItemRead = useCallback((threadId: string) => {
     if (pendingInboxReads.current.has(threadId)) return;
     pendingInboxReads.current.add(threadId);
     const snapshot = queryClient.getQueriesData<InboxPageDto>({
@@ -725,37 +870,45 @@ function Workspace() {
       .finally(() => {
         pendingInboxReads.current.delete(threadId);
       });
-  };
+  }, [queryClient]);
 
   // The click is one history push: `navigate` ignores an identical path, so a
   // double-click cannot stack the same thread URL. The route effect above
   // resolves the thread from cache or fetches it; the loader covers the gap.
-  const openInboxItem = (item: InboxItem) => {
-    if (selectedThread?.id !== item.threadId) {
-      setSelectedThread(
-        allThreads.data?.threads.find(
-          (thread) => thread.id === item.threadId,
-        ) ?? null,
+  const openInboxItem = useCallback(
+    (item: InboxItem) => {
+      if (selectedThread?.id !== item.threadId) {
+        setSelectedThread(
+          allThreads.data?.threads.find(
+            (thread) => thread.id === item.threadId,
+          ) ?? null,
+        );
+      }
+      setAsideTab("changes");
+      setOnlineUserIds([]);
+      changes.close();
+      go(
+        pathFor({
+          kind: "thread",
+          projectId: item.projectId,
+          threadId: item.threadId,
+        }),
       );
-    }
-    setAsideTab("changes");
-    setOnlineUserIds([]);
-    changes.close();
-    go(
-      pathFor({
-        kind: "thread",
-        projectId: item.projectId,
-        threadId: item.threadId,
-      }),
-    );
-    markInboxItemRead(item.threadId);
-  };
+      markInboxItemRead(item.threadId);
+    },
+    [
+      allThreads.data,
+      changes.close,
+      go,
+      markInboxItemRead,
+      selectedThread?.id,
+    ],
+  );
 
   const refreshThreadLists = (thread?: ThreadSummary) => {
     void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
     void queryClient.invalidateQueries({ queryKey: ["projects"] });
     if (thread) {
-      void queryClient.invalidateQueries({ queryKey: ["threads", thread.projectId] });
       void queryClient.invalidateQueries({ queryKey: ["thread", thread.id] });
       void queryClient.invalidateQueries({ queryKey: ["thread-events", thread.id] });
     }
@@ -854,10 +1007,33 @@ function Workspace() {
               id: "terminal",
               group: "Navigate",
               label: "Open terminal",
-              description: "A shell in this machine, shared with the thread",
+              description: "The current thread's shell, shared with the team",
               leftSection: <IconTerminal2 size={16} stroke={1.5} />,
               onClick: () => {
+                if (tmuxRef) closeTmux();
                 setTerminalOpen(true);
+                spotlight.close();
+              },
+            },
+            {
+              id: "sessions",
+              group: "Navigate",
+              label: "Go to Sessions",
+              description: "Threads and tmux shells on this machine",
+              leftSection: <IconLayoutList size={16} stroke={1.5} />,
+              onClick: () => {
+                openSessions();
+                spotlight.close();
+              },
+            },
+            {
+              id: "switch-session",
+              group: "Navigate",
+              label: "Switch session",
+              description: "Jump to a thread or tmux shell",
+              leftSection: <IconLayoutList size={16} stroke={1.5} />,
+              onClick: () => {
+                setSessionSwitcherOpen(true);
                 spotlight.close();
               },
             },
@@ -975,8 +1151,14 @@ function Workspace() {
           onToggleNav={toggleNav}
           onToggleNavCollapsed={toggleNavCollapsed}
           canTerminal={terminalEnabled}
-          terminalOpen={terminalOpen}
-          onToggleTerminal={() => setTerminalOpen((open) => !open)}
+          terminalOpen={terminalVisible}
+          onToggleTerminal={() => {
+            if (tmuxRef) closeTmux();
+            else setTerminalOpen((open) => !open);
+          }}
+          canSessions={terminalEnabled}
+          sessionsActive={view === "sessions"}
+          onOpenSessions={openSessions}
           onOpenPalette={() => spotlight.open()}
           onOpenInbox={openInbox}
           onOpenChanges={openChanges}
@@ -1036,14 +1218,17 @@ function Workspace() {
           }}
         />
         {/* Mantine keeps a collapsed navbar's children mounted, so on a phone
-            the whole project tree (and one thread query per project) was built
-            behind the closed drawer on every screen. Mount it on first open
-            instead; tablets and desktops always show it. */}
+            the whole project tree used to be built behind the closed drawer on
+            every screen. Mount it after idle (or on first open); tablets and
+            desktops always show it. */}
         {wide || tablet || navOpened || navEverOpened ? (
           <Sidebar
+            phone={phone}
             onNavigate={nav.close}
             onOpenInbox={openInbox}
+            onOpenSessions={openSessions}
             onOpenSettings={openSettings}
+            showSessions={terminalEnabled}
             activeView={view}
             selectedThreadId={selectedThread?.id ?? null}
             selectedSubagentId={subagentRoute ? route.subagentId : null}
@@ -1060,7 +1245,18 @@ function Workspace() {
           />
         ) : null}
         <AppShell.Main className="main">
-          {view === "inbox" ? (
+          {view === "sessions" ? (
+            <Suspense fallback={<ChunkLoading />}>
+              <SessionsView
+                hostEnabled={hostTmuxEnabled}
+                onOpenThread={(threadId) => void openThreadById(threadId)}
+                onOpenThreadShell={(threadId) =>
+                  void openThreadById(threadId, true)
+                }
+                onOpenTmux={openTmux}
+              />
+            </Suspense>
+          ) : view === "inbox" ? (
             <InboxView onOpenThread={openInboxItem} />
           ) : view === "settings" ? (
             <Suspense fallback={<ChunkLoading />}>
@@ -1099,7 +1295,7 @@ function Workspace() {
                 key={selectedThread.id}
                 threadId={selectedThread.id}
                 onPresence={setOnlineUserIds}
-                presencePanel={terminalOpen ? "terminal" : "transcript"}
+                presencePanel={terminalVisible ? "terminal" : "transcript"}
               />
             </Suspense>
           ) : route.kind === "thread" ? (
@@ -1107,20 +1303,38 @@ function Workspace() {
           ) : (
             <WorkspaceEmpty />
           )}
-          {terminalOpen ? (
+          {terminalVisible ? (
             <Suspense fallback={null}>
               <TerminalDrawer
-                key={terminalThreadId ?? "home"}
-                threadId={terminalThreadId}
+                key={
+                  terminalTarget.kind === "host"
+                    ? `host:${terminalTarget.socket}:${terminalTarget.id}`
+                    : `thread:${terminalTarget.threadId ?? "home"}`
+                }
+                target={terminalTarget}
                 fullscreen={terminalFull}
                 onFullscreen={setTerminalFull}
+                onBrowse={
+                  terminalEnabled
+                    ? () => setSessionSwitcherOpen(true)
+                    : undefined
+                }
+                onOpenSessions={openSessions}
                 onClose={() => {
-                  setTerminalOpen(false);
-                  setTerminalFull(false);
+                  if (tmuxRef) {
+                    closeTmux();
+                  } else {
+                    setTerminalOpen(false);
+                    setTerminalFull(false);
+                  }
                   // The shell outlives the drawer; refresh the status-bar chip
-                  // instead of waiting for the next poll.
+                  // and the Sessions surface instead of waiting for the next
+                  // poll.
                   void queryClient.invalidateQueries({
                     queryKey: ["terminal-sessions"],
+                  });
+                  void queryClient.invalidateQueries({
+                    queryKey: ["sessions"],
                   });
                 }}
               />
@@ -1148,6 +1362,7 @@ function Workspace() {
                   <RealChangesPanel
                     key={selectedThread.id}
                     threadId={selectedThread.id}
+                    active={asideTab === "changes"}
                     commit={viewCommit}
                     onShowCurrent={showChanges}
                     onShowFiles={showFiles}
@@ -1179,6 +1394,7 @@ function Workspace() {
                   >
                     <HistoryPanel
                       threadId={selectedThread.id}
+                      active={asideTab === "history"}
                       selectedSha={viewCommit?.sha ?? null}
                       onSelect={(entry) => {
                         setViewCommit(entry);
@@ -1211,7 +1427,7 @@ function Workspace() {
             thread={selectedThread ?? undefined}
             workspace={view !== "thread" || selectedThread === null}
             terminal={
-              terminalEnabled && liveTerminal && !terminalOpen
+              !terminalVisible && terminalEnabled && liveTerminal
                 ? { onClick: () => setTerminalOpen(true) }
                 : undefined
             }
@@ -1259,6 +1475,7 @@ function Workspace() {
                   <RealChangesPanel
                     key={selectedThread.id}
                     threadId={selectedThread.id}
+                    active={asideTab === "changes"}
                     commit={viewCommit}
                     onShowCurrent={showChanges}
                     onClose={changes.close}
@@ -1290,6 +1507,7 @@ function Workspace() {
                   >
                     <HistoryPanel
                       threadId={selectedThread.id}
+                      active={asideTab === "history"}
                       selectedSha={viewCommit?.sha ?? null}
                       onSelect={(entry) => {
                         setViewCommit(entry);
@@ -1324,6 +1542,18 @@ function Workspace() {
           if (selectedThread) refreshThreadLists(selectedThread);
         }}
       />
+
+      {terminalEnabled && sessionSwitcherOpen ? (
+        <Suspense fallback={null}>
+          <SessionSwitcher
+            opened
+            onClose={() => setSessionSwitcherOpen(false)}
+            onOpenThread={(threadId) => void openThreadById(threadId)}
+            onOpenThreadShell={(threadId) => void openThreadById(threadId, true)}
+            onOpenTmux={openTmux}
+          />
+        </Suspense>
+      ) : null}
 
       <MergeThreadDialog
         opened={mergeOpened}
@@ -1382,6 +1612,7 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/inbox" element={<Workspace />} />
+        <Route path="/sessions" element={<Workspace />} />
         <Route path="/settings" element={<Workspace />} />
         <Route path="/p/:projectId" element={<Workspace />} />
         <Route path="/p/:projectId/t/:threadId" element={<Workspace />} />

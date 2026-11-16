@@ -21,6 +21,7 @@ pub async fn update(
     user: &CurrentUser,
     patch: SettingsPatch,
     terminal: bool,
+    terminal_host: bool,
 ) -> Result<StateResponse, ServerError> {
     let mut settings = load(pool, user).await?;
     if let Some(theme) = patch.theme {
@@ -87,5 +88,6 @@ pub async fn update(
         settings,
         user: refreshed,
         terminal,
+        terminal_host,
     })
 }

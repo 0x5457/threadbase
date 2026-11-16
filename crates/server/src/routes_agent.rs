@@ -12,7 +12,7 @@ use axum::routing::{delete, get, post};
 use axum::Json;
 use axum::Router;
 use serde::Deserialize;
-use threadbase_shared::api::SendMessageRequest;
+use threadbase_shared::api::{EditMessageRequest, SendMessageRequest};
 use threadbase_shared::{
     ApiError, OkResponse, SendMessageResponse, SubagentLogResponse, ThreadGoalResponse, ThreadId,
 };
@@ -20,6 +20,10 @@ use threadbase_shared::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/threads/{thread_id}/messages", post(send_message))
+        .route(
+            "/api/threads/{thread_id}/messages/{message_id}/edit",
+            post(edit_message),
+        )
         .route("/api/threads/{thread_id}/cancel", post(cancel))
         .route("/api/threads/{thread_id}/agent-config", get(agent_config))
         .route("/api/threads/{thread_id}/goal", get(goal))
@@ -146,6 +150,27 @@ async fn send_message(
         )
         .await?;
     }
+    Ok(Json(response))
+}
+
+async fn edit_message(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, message_id)): Path<(String, String)>,
+    Json(request): Json<EditMessageRequest>,
+) -> Result<Json<SendMessageResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let text = request.text.trim();
+    if text.is_empty() {
+        return Err(ServerError(ApiError::validation("message cannot be empty")));
+    }
+    if text.len() > 64 * 1024 {
+        return Err(ServerError(ApiError::validation("message is too long")));
+    }
+    let response = state
+        .agents
+        .rewind_and_edit(&thread_id, &message_id, text, &user)
+        .await?;
     Ok(Json(response))
 }
 

@@ -509,6 +509,11 @@
     height: 36px;
   }
 
+  /* Phones have no hover row actions; editing lives in the long-press sheet. */
+  .msg-edit-btn {
+    display: none !important;
+  }
+
   .comment-menu {
     width: 36px;
     height: 36px;

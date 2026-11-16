@@ -799,6 +799,102 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
 }
 
 #[tokio::test]
+async fn editing_a_prompt_rewinds_the_tail_and_starts_a_new_session() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "stream", None)
+        .await
+        .unwrap();
+    let first = wait_for(&fixture.state.pool, thread_id, |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    })
+    .await;
+    let ThreadEvent::TurnStarted { message_id, .. } = &first else {
+        unreachable!();
+    };
+    let first_id = message_id.0.clone();
+    let first_seq: i64 = sqlx::query_scalar(
+        "SELECT seq FROM events WHERE thread_id = ? AND kind = 'turn_started' ORDER BY seq ASC LIMIT 1",
+    )
+    .bind(thread_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    wait_for(&fixture.state.pool, thread_id, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+
+    // A second turn is the branch the edit is supposed to remove.
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "slow", None)
+        .await
+        .unwrap();
+
+    let response = fixture
+        .state
+        .agents
+        .rewind_and_edit(thread_id, &first_id, "stream", &fixture.user)
+        .await
+        .unwrap();
+    assert_eq!(response.delivery, threadbase_shared::Delivery::Injected);
+    let new_id = response.message_id.expect("rewound prompt starts a turn");
+    assert_ne!(new_id, first_id);
+
+    let prompts: Vec<String> = sqlx::query_scalar(
+        "SELECT payload_json FROM events
+          WHERE thread_id = ? AND kind = 'turn_started' ORDER BY seq ASC",
+    )
+    .bind(thread_id)
+    .fetch_all(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        prompts.len(),
+        1,
+        "the discarded branch must leave no prompt"
+    );
+    let event: ThreadEvent = serde_json::from_str(&prompts[0]).unwrap();
+    let ThreadEvent::TurnStarted {
+        prompt, message_id, ..
+    } = event
+    else {
+        unreachable!();
+    };
+    assert_eq!(prompt, "stream");
+    assert_eq!(message_id.0, new_id);
+
+    let old_seq: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE thread_id = ? AND seq = ?")
+            .bind(thread_id)
+            .bind(first_seq)
+            .fetch_one(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(old_seq, 0);
+
+    // A fresh adapter process must have asked for a new session; resuming the
+    // old one would put the removed turns back into the model context.
+    let journal = std::fs::read_to_string(fixture.data.path().join("journal.log")).unwrap();
+    assert!(
+        journal.matches("\"method\":\"session/new\"").count() >= 2,
+        "expected a second session/new after the rewind"
+    );
+
+    wait_for_after(&fixture.state.pool, thread_id, first_seq, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn cancelling_a_turn_cancels_pending_elicitations() {
     let Some(fixture) = fixture().await else {
         return;
