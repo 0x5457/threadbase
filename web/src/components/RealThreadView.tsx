@@ -562,7 +562,11 @@ export const RealThreadView = memo(function RealThreadView({
     (elicitation) => elicitation.status === "pending",
   );
   const comments = bundle?.comments ?? [];
-  const queue = bundle?.queue ?? [];
+  // The live fold carries the queue snapshot the server pushes with every
+  // queue change; the 8 s bundle poll only fills in before that event lands
+  // (or while the socket is down).
+  const queue =
+    (live.phase === "live" ? live.view.queue : null) ?? bundle?.queue ?? [];
   const canWrite = bundle?.role === "owner" || bundle?.role === "editor";
 
   // The bundle refetches every 4 s. A fresh JSON object must not hand every

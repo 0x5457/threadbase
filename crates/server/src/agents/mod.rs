@@ -430,6 +430,9 @@ impl AgentManager {
         crate::search::reindex_thread(&self.inner.pool, thread_id).await?;
         self.inner.projection.publish_rewound(thread_id);
         self.inner.projection.publish(thread_id).await;
+        // The rewind superseded queued input, so subscribers need the new slot
+        // list; the events before the cut still describe the old queue.
+        let _ = crate::queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
         drop(start_guard);
 
         let author = user_brief(user);

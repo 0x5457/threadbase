@@ -1,3 +1,4 @@
+import type { QueueItemDto } from "../api/types/QueueItemDto";
 import type { ThreadEvent, ToolCallData } from "../api";
 import type { Usage } from "../api/types/Usage";
 import type { AttachmentDto } from "../api/types/AttachmentDto";
@@ -70,6 +71,12 @@ export interface ThreadViewState {
   items: ViewItem[];
   diagnostics: DiagnosticLine[];
   usage: Usage | null;
+  /**
+   * Latest queue snapshot pushed by the server, or null until the folded log
+   * contains a `queue_updated` event. The queue bar renders this instead of
+   * waiting for the next bundle poll.
+   */
+  queue: QueueItemDto[] | null;
   /** Fallback display name for agent messages; part of the fold identity. */
   agentName: string;
   /** Number of events folded so far. */
@@ -88,6 +95,7 @@ export function createThreadView(agentName = "Agent"): ThreadViewState {
     items: [],
     diagnostics: [],
     usage: null,
+    queue: null,
     agentName,
     consumed: 0,
     lastEvent: null,
@@ -139,6 +147,7 @@ export function extendThreadView(
   };
   let diagnostics = start === 0 ? [] : state.diagnostics;
   let usage = start === 0 ? null : state.usage;
+  let queue = start === 0 ? null : state.queue;
   const messageRows = start === 0 ? new Map<string, number>() : state.messageRows;
   const toolRows = start === 0 ? new Map<string, number>() : state.toolRows;
   const thinkingRows = start === 0 ? new Map<string, number>() : state.thinkingRows;
@@ -381,6 +390,10 @@ export function extendThreadView(
         usage = payload.usage;
         break;
       }
+      case "queue_updated": {
+        queue = payload.items;
+        break;
+      }
       case "turn_ended": {
         if (streamingRows.size > 0) ownItems();
         for (const id of streamingRows) {
@@ -412,6 +425,7 @@ export function extendThreadView(
     items,
     diagnostics,
     usage,
+    queue,
     agentName,
     consumed: events.length,
     lastEvent: last,

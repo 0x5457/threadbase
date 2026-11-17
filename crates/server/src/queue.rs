@@ -46,15 +46,17 @@ pub async fn list_for_thread(
     thread_id: &str,
 ) -> Result<Vec<QueueItemDto>, ServerError> {
     let rows = sqlx::query_as::<_, QueueRow>(&format!(
-        "{SELECT} WHERE q.thread_id = ? AND q.status IN (?, ?, ?)
+        "{SELECT} WHERE q.thread_id = ? AND q.status IN (?, ?)
          ORDER BY q.position ASC"
     ))
     .bind(thread_id)
     .bind(queue_status_str(QueueStatus::Queued))
-    .bind(queue_status_str(QueueStatus::Sending))
     .bind(queue_status_str(QueueStatus::Superseded))
     .fetch_all(pool)
     .await?;
+    // `sending` rows are already in the transcript: dispatch happens before the
+    // turn records its prompt, so keeping the row in the bar would show the same
+    // message twice until the adapter answers.
     // The restart continuation is internal plumbing: showing it in the queue
     // bar invites a user to steer or drop a prompt that is already being sent.
     Ok(rows
@@ -686,6 +688,35 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(turn_id.as_deref(), Some("turn-1"));
+    }
+
+    #[tokio::test]
+    async fn claimed_items_leave_the_visible_queue() {
+        let pool = db::connect_memory().await.unwrap();
+        let (user, _, thread) = seed_thread(&pool).await;
+        seed_item(
+            &pool,
+            thread.as_str(),
+            user.as_str(),
+            "q1",
+            QueueStatus::Queued,
+            1,
+        )
+        .await;
+        let projection = projection(&pool);
+        assert_eq!(
+            list_for_thread(&pool, thread.as_str()).await.unwrap().len(),
+            1
+        );
+        dispatch(&pool, &projection, thread.as_str(), "q1")
+            .await
+            .unwrap();
+        // The claimed prompt is written into the transcript next; keeping the
+        // row visible until the adapter answers shows the message twice.
+        assert!(list_for_thread(&pool, thread.as_str())
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

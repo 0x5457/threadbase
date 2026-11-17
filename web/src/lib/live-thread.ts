@@ -183,6 +183,7 @@ export function useLiveThread(
         nextView.items === previous.items &&
         nextView.diagnostics === previous.diagnostics &&
         nextView.usage === previous.usage &&
+        nextView.queue === previous.queue &&
         nextView.agentName === previous.agentName
       ) {
         return;

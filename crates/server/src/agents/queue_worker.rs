@@ -85,6 +85,11 @@ async fn process(manager: &AgentManager, thread_id: &str) -> Result<(), ServerEr
         claim.release().await;
         return Err(error);
     }
+    // Drop the row from every queue bar before the prompt reaches the
+    // transcript. Publishing after the turn starts leaves the message visible
+    // in the queue and in the thread for as long as the adapter takes to
+    // accept it.
+    let _ = queue::publish(&inner.pool, &inner.events, thread_id).await;
     let start = TurnStart {
         thread_id,
         author: &author,
@@ -104,12 +109,10 @@ async fn process(manager: &AgentManager, thread_id: &str) -> Result<(), ServerEr
                 Some(handle.turn_id.as_str()),
             )
             .await?;
-            let _ = queue::publish(&inner.pool, &inner.events, thread_id).await;
             Ok(())
         }
         Err(error) => {
             queue::fail(&inner.pool, &inner.projection, thread_id, &id).await?;
-            let _ = queue::publish(&inner.pool, &inner.events, thread_id).await;
             Err(error)
         }
     }

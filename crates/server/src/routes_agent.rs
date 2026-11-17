@@ -348,6 +348,10 @@ async fn steer_queue_item(
     // Claim the row before steering so the queue worker cannot also dispatch
     // it; a failed injection puts it back where it was.
     crate::queue::dispatch(&state.pool, &state.projection, &thread_id, &item_id).await?;
+    // Hide the claimed row now: the injected prompt is about to be appended to
+    // the transcript, and publishing only after the adapter answers shows the
+    // message in both places for that whole window.
+    let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
     match state
         .agents
         .steer_queued(&thread_id, &author, &item.text, &authors, &attachments)
@@ -356,7 +360,6 @@ async fn steer_queue_item(
         Ok(()) => {
             crate::queue::complete(&state.pool, &state.projection, &thread_id, &item_id, None)
                 .await?;
-            let _ = crate::queue::publish(&state.pool, &state.events, &thread_id).await;
             Ok(Json(OkResponse { ok: true }))
         }
         Err(error) if error.0.code == threadbase_shared::ErrorCode::Conflict => {
