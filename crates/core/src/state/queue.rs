@@ -1,13 +1,13 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::QueueStatus;
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueAction {
     Enqueue,
     Dispatch,
@@ -69,9 +69,47 @@ impl QueueMachine {
     }
 }
 
-impl QueueAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for QueueStatus {
+    fn all() -> &'static [Self] {
+        &[
+            Self::Queued,
+            Self::Sending,
+            Self::Sent,
+            Self::Superseded,
+            Self::Dropped,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Queued => "Queued",
+            Self::Sending => "Sending",
+            Self::Sent => "Sent",
+            Self::Superseded => "Superseded",
+            Self::Dropped => "Removed",
+        }
+    }
+
+    fn terminal(self) -> bool {
+        matches!(self, Self::Sent | Self::Superseded)
+    }
+}
+
+impl Actions for QueueAction {
+    type State = QueueStatus;
+
+    const ALL: &'static [Self] = &[
+        Self::Enqueue,
+        Self::Dispatch,
+        Self::PromptSucceeded,
+        Self::PromptFailed,
+        Self::Release,
+        Self::Supersede,
+        Self::Delete,
+        Self::Restore,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Enqueue => "enqueue",
             Self::Dispatch => "dispatch",
@@ -84,8 +122,7 @@ impl QueueAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Enqueue => "Queued",
             Self::Dispatch => "Dispatching",
@@ -98,16 +135,14 @@ impl QueueAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Delete | Self::Restore => ActionKind::Command,
             _ => ActionKind::Fact,
         }
     }
 
-    #[must_use]
-    pub fn commands(state: QueueStatus) -> &'static [Self] {
+    fn commands(state: QueueStatus) -> &'static [Self] {
         match state {
             QueueStatus::Queued => &[Self::Delete],
             QueueStatus::Dropped => &[Self::Restore],

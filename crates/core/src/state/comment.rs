@@ -1,13 +1,13 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::CommentStatus;
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Comment
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommentAction {
     CreatePending,
     CreateDelivered,
@@ -40,9 +40,35 @@ impl CommentMachine {
     }
 }
 
-impl CommentAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for CommentStatus {
+    fn all() -> &'static [Self] {
+        &[Self::Pending, Self::Delivered, Self::Resolved]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Delivered => "Delivered",
+            Self::Resolved => "Resolved",
+        }
+    }
+
+    fn terminal(self) -> bool {
+        matches!(self, Self::Resolved)
+    }
+}
+
+impl Actions for CommentAction {
+    type State = CommentStatus;
+
+    const ALL: &'static [Self] = &[
+        Self::CreatePending,
+        Self::CreateDelivered,
+        Self::Deliver,
+        Self::Resolve,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::CreatePending => "create_pending",
             Self::CreateDelivered => "create_delivered",
@@ -51,8 +77,7 @@ impl CommentAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::CreatePending => "Comment added",
             Self::CreateDelivered => "Comment added",
@@ -61,16 +86,14 @@ impl CommentAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Deliver | Self::Resolve => ActionKind::Command,
             _ => ActionKind::Fact,
         }
     }
 
-    #[must_use]
-    pub fn commands(state: CommentStatus) -> &'static [Self] {
+    fn commands(state: CommentStatus) -> &'static [Self] {
         match state {
             CommentStatus::Pending => &[Self::Deliver, Self::Resolve],
             CommentStatus::Delivered => &[Self::Resolve],

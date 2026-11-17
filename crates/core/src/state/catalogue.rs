@@ -1,52 +1,69 @@
-//! The published catalogue: every state, command and fact.
+//! The published catalogue: every machine, state, command and fact.
+//!
+//! Transitions stay authoritative; this file only decides *which* machines are
+//! published and in what order. State and action metadata is declared next to
+//! each machine ([`States`], [`Actions`]), and every `to` in the published
+//! graph is the result of calling the machine's own transition function, so
+//! the table the clients read cannot drift from the code that enforces it.
 
 use threadbase_shared::{MachineAction, MachineCommand, MachineSpec, MachineState, ThreadStatus};
 
 use super::*;
 
-// ---------------------------------------------------------------------------
-// Catalogue: states, commands and facts, published to every consumer
-// ---------------------------------------------------------------------------
-macro_rules! action {
-    ($action:expr) => {
-        MachineAction {
-            id: $action.id().to_owned(),
-            label: $action.label().to_owned(),
-            kind: $action.kind(),
-        }
-    };
-}
-
-/// `commands` pairs each command with the state it lands on; the catalogue
-/// test checks every pair against the machine's transition function.
-fn state(id: &str, label: &str, terminal: bool, commands: &[(&str, &str)]) -> MachineState {
-    MachineState {
-        id: id.to_owned(),
-        label: label.to_owned(),
-        terminal,
-        commands: commands
-            .iter()
-            .map(|(id, to)| MachineCommand {
-                id: (*id).to_owned(),
-                to: (*to).to_owned(),
-            })
-            .collect(),
-    }
-}
-fn spec(
-    id: &str,
-    title: &str,
-    summary: &str,
-    states: Vec<MachineState>,
-    actions: Vec<MachineAction>,
-) -> MachineSpec {
+/// Build one published machine.
+///
+/// # Panics
+///
+/// When a machine lists a command that its own transition rejects. That pair is
+/// a programming error: publishing it would offer clients a button that is
+/// guaranteed to return 409.
+fn spec<S, A>(
+    id: &'static str,
+    title: &'static str,
+    summary: &'static str,
+    transition: fn(S, &A) -> Result<S, TransitionError>,
+) -> MachineSpec
+where
+    S: States,
+    A: Actions<State = S>,
+{
     MachineSpec {
         id: id.to_owned(),
         title: title.to_owned(),
         summary: summary.to_owned(),
-        states,
-        actions,
+        states: S::all()
+            .iter()
+            .map(|&state| MachineState {
+                id: wire_id(state),
+                label: state.label().to_owned(),
+                terminal: state.terminal(),
+                commands: A::commands(state)
+                    .iter()
+                    .map(|action| MachineCommand {
+                        id: action.id().to_owned(),
+                        to: match transition(state, action) {
+                            Ok(next) => wire_id(next),
+                            Err(error) => panic!("{id}: published command is illegal: {error}"),
+                        },
+                    })
+                    .collect(),
+            })
+            .collect(),
+        actions: A::ALL
+            .iter()
+            .map(|action| MachineAction {
+                id: action.id().to_owned(),
+                label: action.label().to_owned(),
+                kind: action.kind(),
+            })
+            .collect(),
     }
+}
+
+/// The stored wire value of a state.
+fn wire_id<S: Into<&'static str>>(state: S) -> String {
+    let id: &'static str = state.into();
+    id.to_owned()
 }
 
 /// The whole lifecycle catalogue. `threadbase machines` and
@@ -56,390 +73,88 @@ fn spec(
 pub fn catalogue() -> Vec<MachineSpec> {
     vec![
         spec(
-            "thread",
+            ThreadMachine::ENTITY,
             "Thread",
             "A shared agent conversation: startup, turns, attention and archiving.",
-            vec![
-                state(
-                    "preparing",
-                    "Preparing",
-                    false,
-                    &[("restart", "preparing"), ("archive", "archived")],
-                ),
-                state(
-                    "idle",
-                    "Idle",
-                    false,
-                    &[
-                        ("prompt", "running"),
-                        ("restart", "preparing"),
-                        ("archive", "archived"),
-                    ],
-                ),
-                state(
-                    "running",
-                    "Running",
-                    false,
-                    &[
-                        ("prompt", "running"),
-                        ("cancel", "idle"),
-                        ("restart", "preparing"),
-                        ("archive", "archived"),
-                    ],
-                ),
-                state(
-                    "requires_action",
-                    "Needs you",
-                    false,
-                    &[
-                        ("prompt", "running"),
-                        ("cancel", "idle"),
-                        ("restart", "preparing"),
-                        ("archive", "archived"),
-                    ],
-                ),
-                state(
-                    "interrupted",
-                    "Interrupted",
-                    false,
-                    &[
-                        ("prompt", "running"),
-                        ("restart", "preparing"),
-                        ("archive", "archived"),
-                    ],
-                ),
-                state(
-                    "error",
-                    "Error",
-                    false,
-                    &[
-                        ("prompt", "running"),
-                        ("restart", "preparing"),
-                        ("archive", "archived"),
-                    ],
-                ),
-                state("archived", "Archived", false, &[("unarchive", "idle")]),
-            ],
-            vec![
-                action!(ThreadAction::Create),
-                action!(ThreadAction::Restart),
-                action!(ThreadAction::StartSucceeded),
-                action!(ThreadAction::StartFailed),
-                action!(ThreadAction::Prompt),
-                action!(ThreadAction::ApprovalPending),
-                action!(ThreadAction::ElicitationPending),
-                action!(ThreadAction::ApprovalResolved {
-                    turn_active: true,
-                    remaining_pending: 0,
-                }),
-                action!(ThreadAction::ElicitationResolved {
-                    turn_active: false,
-                    remaining_pending: 0,
-                }),
-                action!(ThreadAction::TurnEnded),
-                action!(ThreadAction::TurnError),
-                action!(ThreadAction::ProcessExited),
-                action!(ThreadAction::AgentFailed),
-                action!(ThreadAction::Cancel),
-                action!(ThreadAction::Archive),
-                action!(ThreadAction::Unarchive),
-            ],
+            ThreadMachine::transition,
         ),
         spec(
-            "setup",
+            SetupMachine::ENTITY,
             "Worktree setup",
             "The project's setup command for this worktree; it gates the agent.",
-            vec![
-                state("none", "Not configured", false, &[("start", "pending")]),
-                state("pending", "Queued", false, &[]),
-                state("running", "Running", false, &[]),
-                state("succeeded", "Succeeded", false, &[("start", "pending")]),
-                state("failed", "Failed", false, &[("start", "pending")]),
-            ],
-            vec![
-                action!(SetupAction::Start),
-                action!(SetupAction::Started),
-                action!(SetupAction::Finish),
-                action!(SetupAction::Fail),
-                action!(SetupAction::Interrupt),
-            ],
+            SetupMachine::transition,
         ),
         spec(
-            "approval",
+            ApprovalMachine::ENTITY,
             "Approval",
             "One agent permission request awaiting a human decision.",
-            vec![
-                state(
-                    "pending",
-                    "Pending",
-                    false,
-                    &[
-                        ("allow", "allowed"),
-                        ("deny", "denied"),
-                        ("cancel", "cancelled"),
-                    ],
-                ),
-                state("allowed", "Allowed", true, &[]),
-                state("denied", "Denied", true, &[]),
-                state("cancelled", "Cancelled", true, &[]),
-            ],
-            vec![
-                action!(ApprovalAction::Create),
-                action!(ApprovalAction::Allow),
-                action!(ApprovalAction::Deny),
-                action!(ApprovalAction::Cancel),
-            ],
+            ApprovalMachine::transition,
         ),
         spec(
-            "elicitation",
+            ElicitationMachine::ENTITY,
             "Question",
             "One agent question awaiting a structured answer.",
-            vec![
-                state(
-                    "pending",
-                    "Pending",
-                    false,
-                    &[
-                        ("accept", "accepted"),
-                        ("decline", "declined"),
-                        ("cancel", "cancelled"),
-                    ],
-                ),
-                state("accepted", "Answered", true, &[]),
-                state("declined", "Declined", true, &[]),
-                state("cancelled", "Cancelled", true, &[]),
-            ],
-            vec![
-                action!(ElicitationAction::Create),
-                action!(ElicitationAction::Accept),
-                action!(ElicitationAction::Decline),
-                action!(ElicitationAction::Cancel),
-            ],
+            ElicitationMachine::transition,
         ),
         spec(
-            "subagent",
+            SubagentMachine::ENTITY,
             "Subagent",
             "A delegation reported by the adapter; mirrored from tool calls when needed.",
-            vec![
-                state("idle", "Idle", false, &[("cancel", "cancelled")]),
-                state("running", "Running", false, &[("cancel", "cancelled")]),
-                state(
-                    "requires_action",
-                    "Needs input",
-                    false,
-                    &[("cancel", "cancelled")],
-                ),
-                state("cancelled", "Cancelled", true, &[]),
-                state("error", "Error", true, &[]),
-            ],
-            vec![
-                action!(SubagentAction::Create),
-                action!(SubagentAction::Run),
-                action!(SubagentAction::Idle),
-                action!(SubagentAction::RequireAction),
-                action!(SubagentAction::Resolve),
-                action!(SubagentAction::Fail),
-                action!(SubagentAction::Cancel),
-            ],
+            SubagentMachine::transition,
         ),
         spec(
-            "queue",
+            QueueMachine::ENTITY,
             "Queued input",
             "A message waiting for the thread's next turn or being delivered now.",
-            vec![
-                state("queued", "Queued", false, &[("delete", "dropped")]),
-                state("sending", "Sending", false, &[]),
-                state("sent", "Sent", true, &[]),
-                state("superseded", "Superseded", true, &[]),
-                state("dropped", "Removed", false, &[("restore", "queued")]),
-            ],
-            vec![
-                action!(QueueAction::Enqueue),
-                action!(QueueAction::Dispatch),
-                action!(QueueAction::PromptSucceeded),
-                action!(QueueAction::PromptFailed),
-                action!(QueueAction::Release),
-                action!(QueueAction::Supersede),
-                action!(QueueAction::Delete),
-                action!(QueueAction::Restore),
-            ],
+            QueueMachine::transition,
         ),
         spec(
-            "comment",
+            CommentMachine::ENTITY,
             "Comment",
             "A review note; pending comments are batched into the next prompt.",
-            vec![
-                state(
-                    "pending",
-                    "Pending",
-                    false,
-                    &[("deliver", "delivered"), ("resolve", "resolved")],
-                ),
-                state("delivered", "Delivered", false, &[("resolve", "resolved")]),
-                state("resolved", "Resolved", true, &[]),
-            ],
-            vec![
-                action!(CommentAction::CreatePending),
-                action!(CommentAction::CreateDelivered),
-                action!(CommentAction::Deliver),
-                action!(CommentAction::Resolve),
-            ],
+            CommentMachine::transition,
         ),
         spec(
-            "watch",
+            WatchMachine::ENTITY,
             "Watching",
             "One user's notification relationship with a thread.",
-            vec![
-                state(
-                    "not_watching",
-                    "Not watching",
-                    false,
-                    &[("watch", "watching")],
-                ),
-                state(
-                    "watching",
-                    "Watching",
-                    false,
-                    &[("mute", "muted"), ("unwatch", "not_watching")],
-                ),
-                state(
-                    "muted",
-                    "Muted",
-                    false,
-                    &[("unmute", "watching"), ("unwatch", "not_watching")],
-                ),
-            ],
-            vec![
-                action!(WatchAction::Watch),
-                action!(WatchAction::Mute),
-                action!(WatchAction::Unmute),
-                action!(WatchAction::Unwatch),
-            ],
+            WatchMachine::transition,
         ),
         spec(
-            "turn",
+            TurnMachine::ENTITY,
             "Turn",
             "The single in-memory turn slot that serialises prompts for one thread.",
-            vec![
-                state("empty", "Idle", false, &[]),
-                state("starting", "Starting", false, &[("cancel", "starting")]),
-                state("running", "Running", false, &[("cancel", "empty")]),
-            ],
-            vec![
-                action!(TurnAction::Claim),
-                action!(TurnAction::Abandon),
-                action!(TurnAction::Install),
-                action!(TurnAction::InstallAfterFinish),
-                action!(TurnAction::Complete),
-                action!(TurnAction::End),
-                action!(TurnAction::Cancel),
-                action!(TurnAction::Sync { running: true }),
-            ],
+            TurnMachine::transition,
         ),
         spec(
-            "auth_session",
+            AuthSessionMachine::ENTITY,
             "Sign-in session",
             "One browser session cookie; live until it expires or is revoked.",
-            vec![
-                state(
-                    "active",
-                    "Active",
-                    false,
-                    &[("touch", "active"), ("revoke", "revoked")],
-                ),
-                state("expired", "Expired", true, &[]),
-                state("revoked", "Revoked", true, &[]),
-            ],
-            vec![
-                action!(AuthSessionAction::Create),
-                action!(AuthSessionAction::Touch),
-                action!(AuthSessionAction::Revoke),
-                action!(AuthSessionAction::Expire),
-            ],
+            AuthSessionMachine::transition,
         ),
         spec(
-            "push",
+            PushMachine::ENTITY,
             "Web Push delivery",
             "One inbox row's delivery to browser push subscriptions, with retries.",
-            vec![
-                state("pending", "Pending", false, &[]),
-                state("sent", "Sent", true, &[]),
-                state("failed", "Failed", true, &[("retry", "pending")]),
-                state("skipped", "Skipped", true, &[("retry", "pending")]),
-            ],
-            vec![
-                action!(PushAction::Enqueue),
-                action!(PushAction::Deliver),
-                action!(PushAction::Fail),
-                action!(PushAction::GiveUp),
-                action!(PushAction::Skip),
-                action!(PushAction::Retry),
-            ],
+            PushMachine::transition,
         ),
         spec(
-            "connection",
+            ConnectionMachine::ENTITY,
             "Live connection",
             "The browser's WebSocket subscription to one thread's event stream.",
-            vec![
-                state("idle", "Idle", false, &[]),
-                state("loading", "Loading", false, &[]),
-                state("live", "Live", false, &[]),
-                state(
-                    "reconnecting",
-                    "Reconnecting",
-                    false,
-                    &[("retry", "loading")],
-                ),
-                state("failed", "Failed", false, &[("retry", "loading")]),
-            ],
-            vec![
-                action!(ConnectionAction::Connect),
-                action!(ConnectionAction::Opened),
-                action!(ConnectionAction::Ready),
-                action!(ConnectionAction::Lost),
-                action!(ConnectionAction::Fail),
-                action!(ConnectionAction::Retry),
-                action!(ConnectionAction::Close),
-            ],
+            ConnectionMachine::transition,
         ),
         spec(
-            "draft",
+            DraftMachine::ENTITY,
             "Shared draft",
             "The collaborative composer document; sending waits for the live phase.",
-            vec![
-                state("idle", "Idle", false, &[]),
-                state("connecting", "Connecting", false, &[]),
-                state("syncing", "Syncing", false, &[]),
-                state("live", "Live", false, &[]),
-                state("offline", "Offline", false, &[("retry", "connecting")]),
-            ],
-            vec![
-                action!(DraftAction::Connect),
-                action!(DraftAction::Connected),
-                action!(DraftAction::Synced),
-                action!(DraftAction::Lost),
-                action!(DraftAction::Close),
-                action!(DraftAction::Retry),
-            ],
+            DraftMachine::transition,
         ),
         spec(
-            "terminal",
+            TerminalMachine::ENTITY,
             "Terminal",
             "One browser's attachment to the thread's tmux session.",
-            vec![
-                state("connecting", "Connecting", false, &[]),
-                state("live", "Live", false, &[("drive", "live")]),
-                state("exited", "Exited", true, &[("reconnect", "connecting")]),
-                state("error", "Error", true, &[("reconnect", "connecting")]),
-            ],
-            vec![
-                action!(TerminalAction::Connect),
-                action!(TerminalAction::Attached),
-                action!(TerminalAction::Exit),
-                action!(TerminalAction::Fail),
-                action!(TerminalAction::Reconnect),
-                action!(TerminalAction::Drive),
-            ],
+            TerminalMachine::transition,
         ),
     ]
 }

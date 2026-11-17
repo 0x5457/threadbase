@@ -68,7 +68,7 @@ pub async fn set(
     let current = state(pool, thread_id, user_id).await?.state;
     let action = WatchMachine::action_for(current, request.state)
         .map_err(|error| ServerError(ApiError::validation(error.to_string())))?;
-    WatchMachine::transition(current, action)
+    WatchMachine::transition(current, &action)
         .map_err(|error| ServerError(ApiError::validation(error.to_string())))?;
     match request.state.muted_value() {
         None => {

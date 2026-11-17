@@ -1,7 +1,7 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::AuthSessionState;
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Auth session
@@ -58,18 +58,32 @@ impl AuthSessionMachine {
         };
         Ok(next)
     }
+}
 
-    pub fn commands(state: AuthSessionState) -> &'static [AuthSessionAction] {
-        match state {
-            AuthSessionState::Active => &[AuthSessionAction::Touch, AuthSessionAction::Revoke],
-            AuthSessionState::Expired | AuthSessionState::Revoked => &[],
+impl States for AuthSessionState {
+    fn all() -> &'static [Self] {
+        &[Self::Active, Self::Expired, Self::Revoked]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Expired => "Expired",
+            Self::Revoked => "Revoked",
         }
+    }
+
+    fn terminal(self) -> bool {
+        !matches!(self, Self::Active)
     }
 }
 
-impl AuthSessionAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl Actions for AuthSessionAction {
+    type State = AuthSessionState;
+
+    const ALL: &'static [Self] = &[Self::Create, Self::Touch, Self::Revoke, Self::Expire];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Create => "create",
             Self::Touch => "touch",
@@ -78,8 +92,7 @@ impl AuthSessionAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Create => "Signed in",
             Self::Touch => "Refresh session",
@@ -88,11 +101,17 @@ impl AuthSessionAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Touch | Self::Revoke => ActionKind::Command,
             _ => ActionKind::Fact,
+        }
+    }
+
+    fn commands(state: AuthSessionState) -> &'static [Self] {
+        match state {
+            AuthSessionState::Active => &[Self::Touch, Self::Revoke],
+            AuthSessionState::Expired | AuthSessionState::Revoked => &[],
         }
     }
 }

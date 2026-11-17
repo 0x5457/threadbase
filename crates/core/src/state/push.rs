@@ -1,7 +1,7 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::PushStatus;
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Push delivery
@@ -57,13 +57,6 @@ impl PushMachine {
         Ok(next)
     }
 
-    pub fn commands(state: PushStatus) -> &'static [PushAction] {
-        match state {
-            PushStatus::Failed | PushStatus::Skipped => &[PushAction::Retry],
-            _ => &[],
-        }
-    }
-
     pub fn is_terminal(state: PushStatus) -> bool {
         matches!(
             state,
@@ -72,9 +65,38 @@ impl PushMachine {
     }
 }
 
-impl PushAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for PushStatus {
+    fn all() -> &'static [Self] {
+        &[Self::Pending, Self::Sent, Self::Failed, Self::Skipped]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Sent => "Sent",
+            Self::Failed => "Failed",
+            Self::Skipped => "Skipped",
+        }
+    }
+
+    fn terminal(self) -> bool {
+        !matches!(self, Self::Pending)
+    }
+}
+
+impl Actions for PushAction {
+    type State = PushStatus;
+
+    const ALL: &'static [Self] = &[
+        Self::Enqueue,
+        Self::Deliver,
+        Self::Fail,
+        Self::GiveUp,
+        Self::Skip,
+        Self::Retry,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Enqueue => "enqueue",
             Self::Deliver => "deliver",
@@ -85,8 +107,7 @@ impl PushAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Enqueue => "Queued",
             Self::Deliver => "Delivered",
@@ -97,11 +118,17 @@ impl PushAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Retry => ActionKind::Command,
             _ => ActionKind::Fact,
+        }
+    }
+
+    fn commands(state: PushStatus) -> &'static [Self] {
+        match state {
+            PushStatus::Failed | PushStatus::Skipped => &[Self::Retry],
+            PushStatus::Pending | PushStatus::Sent => &[],
         }
     }
 }

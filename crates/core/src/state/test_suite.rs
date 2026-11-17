@@ -534,443 +534,29 @@ mod string_mapping_tests {
 mod machine_tests {
     use crate::state::*;
     use threadbase_shared::{
-        ActionKind, ApprovalStatus, AuthSessionState, CommentStatus, ConnectionPhase, DraftPhase,
-        ElicitationStatus, MachineSpec, PushStatus, QueueStatus, SetupStatus, SubagentStatus,
-        TerminalPhase, ThreadStatus, TurnState, WatchState,
+        ActionKind, AuthSessionState, ConnectionPhase, DraftPhase, PushStatus, SetupStatus,
+        TerminalPhase, TurnState, WatchState,
     };
 
-    fn machine<'a>(catalogue: &'a [MachineSpec], id: &str) -> &'a MachineSpec {
-        catalogue
-            .iter()
-            .find(|machine| machine.id == id)
-            .unwrap_or_else(|| panic!("missing machine {id}"))
-    }
-
-    /// The catalogue is what the web client and `threadbase machines` read, so
-    /// its per-state command lists and targets must be exactly the legal ones.
-    /// Labels and summary text may differ; legality and targets may not.
+    /// `spec` builds every published command by calling the machine's own
+    /// transition and panics when the pair is illegal, so building the
+    /// catalogue is itself the legality check. What remains here is the
+    /// contract with the UI: a command is always a command, never a fact.
     #[test]
-    fn catalogue_commands_match_the_machines() {
-        macro_rules! check {
-            ($machine:expr, $state:expr, $commands:expr, $next:expr) => {{
-                let expected: Vec<(String, String)> = $commands
-                    .iter()
-                    .map(|action| (action.id().to_owned(), $next(action).to_owned()))
-                    .collect();
-                let actual: Vec<(String, String)> = $machine
-                    .commands($state)
-                    .iter()
-                    .map(|command| (command.id.clone(), command.to.clone()))
-                    .collect();
-                assert_eq!(actual, expected, "{}/{}", $machine.id, $state);
-            }};
-        }
-
-        let catalogue = catalogue();
-        let thread = machine(&catalogue, "thread");
-        for status in [
-            ThreadStatus::Preparing,
-            ThreadStatus::Idle,
-            ThreadStatus::Running,
-            ThreadStatus::RequiresAction,
-            ThreadStatus::Interrupted,
-            ThreadStatus::Error,
-            ThreadStatus::Archived,
-        ] {
-            check!(
-                thread,
-                thread_status_str(status),
-                ThreadAction::commands(status),
-                |action| thread_status_str(
-                    ThreadMachine::transition(status, action).expect("legal command")
-                )
-            );
-            let expected: Vec<String> = ThreadAction::commands(status)
-                .iter()
-                .map(|action| action.id().to_owned())
-                .collect();
-            assert_eq!(thread_commands(status), expected);
-        }
-
-        let setup = machine(&catalogue, "setup");
-        for status in [
-            SetupStatus::None,
-            SetupStatus::Pending,
-            SetupStatus::Running,
-            SetupStatus::Succeeded,
-            SetupStatus::Failed,
-        ] {
-            check!(
-                setup,
-                setup_status_str(status),
-                SetupMachine::commands(status),
-                |action| setup_status_str(
-                    SetupMachine::transition(status, action).expect("legal command")
-                )
-            );
-        }
-
-        let approval = machine(&catalogue, "approval");
-        for status in [
-            ApprovalStatus::Pending,
-            ApprovalStatus::Allowed,
-            ApprovalStatus::Denied,
-            ApprovalStatus::Cancelled,
-        ] {
-            check!(
-                approval,
-                approval_status_str(status),
-                ApprovalAction::commands(status),
-                |action| approval_status_str(
-                    ApprovalMachine::transition(status, action).expect("legal command")
-                )
-            );
-        }
-
-        let elicitation = machine(&catalogue, "elicitation");
-        for status in [
-            ElicitationStatus::Pending,
-            ElicitationStatus::Accepted,
-            ElicitationStatus::Declined,
-            ElicitationStatus::Cancelled,
-        ] {
-            check!(
-                elicitation,
-                elicitation_status_str(status),
-                ElicitationAction::commands(status),
-                |action| elicitation_status_str(
-                    ElicitationMachine::transition(status, action).expect("legal command")
-                )
-            );
-        }
-
-        let subagent = machine(&catalogue, "subagent");
-        for status in [
-            SubagentStatus::Idle,
-            SubagentStatus::Running,
-            SubagentStatus::RequiresAction,
-            SubagentStatus::Cancelled,
-            SubagentStatus::Error,
-        ] {
-            check!(
-                subagent,
-                subagent_status_str(status),
-                SubagentAction::commands(status),
-                |action| subagent_status_str(
-                    SubagentMachine::transition(status, action).expect("legal command")
-                )
-            );
-        }
-
-        let queue = machine(&catalogue, "queue");
-        for status in [
-            QueueStatus::Queued,
-            QueueStatus::Sending,
-            QueueStatus::Sent,
-            QueueStatus::Superseded,
-            QueueStatus::Dropped,
-        ] {
-            check!(
-                queue,
-                queue_status_str(status),
-                QueueAction::commands(status),
-                |action| queue_status_str(
-                    QueueMachine::transition(status, action).expect("legal command")
-                )
-            );
-        }
-
-        let comment = machine(&catalogue, "comment");
-        for status in [
-            CommentStatus::Pending,
-            CommentStatus::Delivered,
-            CommentStatus::Resolved,
-        ] {
-            check!(
-                comment,
-                comment_status_str(status),
-                CommentAction::commands(status),
-                |action| comment_status_str(
-                    CommentMachine::transition(status, action).expect("legal command")
-                )
-            );
-        }
-
-        let watch = machine(&catalogue, "watch");
-        for status in [
-            WatchState::NotWatching,
-            WatchState::Watching,
-            WatchState::Muted,
-        ] {
-            check!(
-                watch,
-                status.as_str(),
-                WatchMachine::commands(status),
-                |action: &WatchAction| WatchMachine::transition(status, *action)
-                    .expect("legal command")
-                    .as_str()
-            );
-        }
-
-        let turn = machine(&catalogue, "turn");
-        for status in [TurnState::Empty, TurnState::Starting, TurnState::Running] {
-            check!(
-                turn,
-                status.as_str(),
-                TurnMachine::commands(status),
-                |action: &TurnAction| TurnMachine::transition(status, action)
-                    .expect("legal command")
-                    .as_str()
-            );
-        }
-
-        let session = machine(&catalogue, "auth_session");
-        for status in [
-            AuthSessionState::Active,
-            AuthSessionState::Expired,
-            AuthSessionState::Revoked,
-        ] {
-            check!(
-                session,
-                status.as_str(),
-                AuthSessionMachine::commands(status),
-                |action: &AuthSessionAction| AuthSessionMachine::transition(status, action)
-                    .expect("legal command")
-                    .as_str()
-            );
-        }
-
-        let push = machine(&catalogue, "push");
-        for status in [
-            PushStatus::Pending,
-            PushStatus::Sent,
-            PushStatus::Failed,
-            PushStatus::Skipped,
-        ] {
-            check!(
-                push,
-                status.as_str(),
-                PushMachine::commands(status),
-                |action: &PushAction| PushMachine::transition(status, action)
-                    .expect("legal command")
-                    .as_str()
-            );
-        }
-
-        let connection = machine(&catalogue, "connection");
-        for status in [
-            ConnectionPhase::Idle,
-            ConnectionPhase::Loading,
-            ConnectionPhase::Live,
-            ConnectionPhase::Reconnecting,
-            ConnectionPhase::Failed,
-        ] {
-            check!(
-                connection,
-                status.as_str(),
-                ConnectionMachine::commands(status),
-                |action: &ConnectionAction| ConnectionMachine::transition(status, action)
-                    .expect("legal command")
-                    .as_str()
-            );
-        }
-
-        let draft = machine(&catalogue, "draft");
-        for status in [
-            DraftPhase::Idle,
-            DraftPhase::Connecting,
-            DraftPhase::Syncing,
-            DraftPhase::Live,
-            DraftPhase::Offline,
-        ] {
-            check!(
-                draft,
-                status.as_str(),
-                DraftMachine::commands(status),
-                |action: &DraftAction| DraftMachine::transition(status, action)
-                    .expect("legal command")
-                    .as_str()
-            );
-        }
-
-        let terminal = machine(&catalogue, "terminal");
-        for status in [
-            TerminalPhase::Connecting,
-            TerminalPhase::Live,
-            TerminalPhase::Exited,
-            TerminalPhase::Error,
-        ] {
-            check!(
-                terminal,
-                status.as_str(),
-                TerminalMachine::commands(status),
-                |action: &TerminalAction| TerminalMachine::transition(status, action)
-                    .expect("legal command")
-                    .as_str()
-            );
-        }
-    }
-
-    /// Every catalogued command must be declared a command and must actually be
-    /// legal in the state that lists it, otherwise the UI renders a button that
-    /// is guaranteed to fail.
-    #[test]
-    fn every_catalogued_command_transitions() {
-        for machine in catalogue() {
-            for state in &machine.states {
+    fn catalogue_publishes_only_commands() {
+        for spec in catalogue() {
+            assert!(!spec.states.is_empty(), "{} has no states", spec.id);
+            for state in &spec.states {
                 for command in &state.commands {
-                    let action = machine
+                    let action = spec
                         .action(&command.id)
-                        .unwrap_or_else(|| panic!("{} has no action {}", machine.id, command.id));
+                        .unwrap_or_else(|| panic!("{} has no action {}", spec.id, command.id));
                     assert_eq!(
                         action.kind,
                         ActionKind::Command,
                         "{}/{} is a fact",
-                        machine.id,
+                        spec.id,
                         command.id
-                    );
-                }
-            }
-        }
-
-        for status in [
-            ThreadStatus::Preparing,
-            ThreadStatus::Idle,
-            ThreadStatus::Running,
-            ThreadStatus::RequiresAction,
-            ThreadStatus::Interrupted,
-            ThreadStatus::Error,
-            ThreadStatus::Archived,
-        ] {
-            for action in ThreadAction::commands(status) {
-                assert!(
-                    ThreadMachine::transition(status, action).is_ok(),
-                    "thread/{status:?} lists {action:?} but rejects it"
-                );
-            }
-        }
-        for status in [
-            SetupStatus::None,
-            SetupStatus::Pending,
-            SetupStatus::Running,
-            SetupStatus::Succeeded,
-            SetupStatus::Failed,
-        ] {
-            for action in SetupMachine::commands(status) {
-                assert!(
-                    SetupMachine::transition(status, action).is_ok(),
-                    "setup/{status} lists {action:?} but rejects it"
-                );
-            }
-        }
-        for action in ApprovalAction::commands(ApprovalStatus::Pending) {
-            assert!(ApprovalMachine::transition(ApprovalStatus::Pending, action).is_ok());
-        }
-        for action in ElicitationAction::commands(ElicitationStatus::Pending) {
-            assert!(ElicitationMachine::transition(ElicitationStatus::Pending, action).is_ok());
-        }
-        for status in [
-            SubagentStatus::Idle,
-            SubagentStatus::Running,
-            SubagentStatus::RequiresAction,
-        ] {
-            for action in SubagentAction::commands(status) {
-                assert!(SubagentMachine::transition(status, action).is_ok());
-            }
-        }
-        for status in [QueueStatus::Queued, QueueStatus::Dropped] {
-            for action in QueueAction::commands(status) {
-                assert!(QueueMachine::transition(status, action).is_ok());
-            }
-        }
-        for status in [CommentStatus::Pending, CommentStatus::Delivered] {
-            for action in CommentAction::commands(status) {
-                assert!(CommentMachine::transition(status, action).is_ok());
-            }
-        }
-        for status in [
-            WatchState::NotWatching,
-            WatchState::Watching,
-            WatchState::Muted,
-        ] {
-            for action in WatchMachine::commands(status) {
-                assert!(WatchMachine::transition(status, *action).is_ok());
-            }
-        }
-        for status in [TurnState::Empty, TurnState::Starting, TurnState::Running] {
-            for action in TurnMachine::commands(status) {
-                assert!(TurnMachine::transition(status, action).is_ok());
-            }
-        }
-        for status in [
-            AuthSessionState::Active,
-            AuthSessionState::Expired,
-            AuthSessionState::Revoked,
-        ] {
-            for action in AuthSessionMachine::commands(status) {
-                assert!(AuthSessionMachine::transition(status, action).is_ok());
-            }
-        }
-        for status in [
-            PushStatus::Pending,
-            PushStatus::Sent,
-            PushStatus::Failed,
-            PushStatus::Skipped,
-        ] {
-            for action in PushMachine::commands(status) {
-                assert!(PushMachine::transition(status, action).is_ok());
-            }
-        }
-        for status in [
-            ConnectionPhase::Idle,
-            ConnectionPhase::Loading,
-            ConnectionPhase::Live,
-            ConnectionPhase::Reconnecting,
-            ConnectionPhase::Failed,
-        ] {
-            for action in ConnectionMachine::commands(status) {
-                assert!(ConnectionMachine::transition(status, action).is_ok());
-            }
-        }
-        for status in [
-            DraftPhase::Idle,
-            DraftPhase::Connecting,
-            DraftPhase::Syncing,
-            DraftPhase::Live,
-            DraftPhase::Offline,
-        ] {
-            for action in DraftMachine::commands(status) {
-                assert!(DraftMachine::transition(status, action).is_ok());
-            }
-        }
-        for status in [
-            TerminalPhase::Connecting,
-            TerminalPhase::Live,
-            TerminalPhase::Exited,
-            TerminalPhase::Error,
-        ] {
-            for action in TerminalMachine::commands(status) {
-                assert!(TerminalMachine::transition(status, action).is_ok());
-            }
-        }
-    }
-
-    /// A fact is never invocable: it must not be reachable as a command.
-    #[test]
-    fn facts_are_never_commands() {
-        for machine in catalogue() {
-            let command_ids: Vec<&str> = machine
-                .states
-                .iter()
-                .flat_map(|state| state.commands.iter().map(|command| command.id.as_str()))
-                .collect();
-            for action in &machine.actions {
-                if action.kind == ActionKind::Fact {
-                    assert!(
-                        !command_ids.contains(&action.id.as_str()),
-                        "{}/{} is a fact but is offered as a command",
-                        machine.id,
-                        action.id
                     );
                 }
             }
@@ -1060,22 +646,22 @@ mod machine_tests {
     #[test]
     fn watch_is_one_value_not_two_flags() {
         assert_eq!(
-            WatchMachine::transition(WatchState::NotWatching, WatchAction::Watch).unwrap(),
+            WatchMachine::transition(WatchState::NotWatching, &WatchAction::Watch).unwrap(),
             WatchState::Watching
         );
         assert_eq!(
-            WatchMachine::transition(WatchState::Watching, WatchAction::Mute).unwrap(),
+            WatchMachine::transition(WatchState::Watching, &WatchAction::Mute).unwrap(),
             WatchState::Muted
         );
         // Muting an unwatched thread used to silently start watching. The
         // machine rejects it, so the UI has to offer "Watch thread" first.
-        assert!(WatchMachine::transition(WatchState::NotWatching, WatchAction::Mute).is_err());
+        assert!(WatchMachine::transition(WatchState::NotWatching, &WatchAction::Mute).is_err());
         assert_eq!(
-            WatchMachine::transition(WatchState::Muted, WatchAction::Unmute).unwrap(),
+            WatchMachine::transition(WatchState::Muted, &WatchAction::Unmute).unwrap(),
             WatchState::Watching
         );
         assert_eq!(
-            WatchMachine::transition(WatchState::Watching, WatchAction::Unwatch).unwrap(),
+            WatchMachine::transition(WatchState::Watching, &WatchAction::Unwatch).unwrap(),
             WatchState::NotWatching
         );
     }
@@ -1231,7 +817,7 @@ mod machine_tests {
         );
         assert!(PushMachine::is_terminal(PushStatus::Skipped));
         assert_eq!(
-            PushMachine::commands(PushStatus::Skipped),
+            PushAction::commands(PushStatus::Skipped),
             [PushAction::Retry]
         );
     }
@@ -1259,7 +845,7 @@ mod machine_tests {
             P::Loading
         );
         assert!(ConnectionMachine::transition(P::Live, &A::Connect).is_err());
-        assert_eq!(ConnectionMachine::commands(P::Reconnecting), [A::Retry]);
+        assert_eq!(ConnectionAction::commands(P::Reconnecting), [A::Retry]);
     }
 
     #[test]
@@ -1308,7 +894,7 @@ mod machine_tests {
         );
         assert!(TerminalMachine::transition(P::Exited, &A::Attached).is_err());
         assert_eq!(
-            TerminalMachine::commands(P::Exited),
+            TerminalAction::commands(P::Exited),
             [A::Reconnect],
             "a dead session can only be replaced"
         );

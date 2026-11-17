@@ -6,8 +6,8 @@
 export type MachineCommand = {
   id: string;
   /**
-   * State after the command. Believed by the same test that checks `id`
-   * against the transition functions, so the graph cannot drift.
+   * State after the command: the machine's own transition result, so the
+   * published graph cannot drift from the rules the server enforces.
    */
   to: string;
 };

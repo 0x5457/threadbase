@@ -1,13 +1,13 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::SetupStatus;
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupAction {
     /// Run the project's setup command in this thread's worktree.
     Start,
@@ -55,24 +55,45 @@ impl SetupMachine {
         Ok(next)
     }
 
-    /// Actions a caller may choose. `none` and a finished setup can run again.
-    pub fn commands(state: SetupStatus) -> &'static [SetupAction] {
-        match state {
-            SetupStatus::Pending | SetupStatus::Running => &[],
-            SetupStatus::None | SetupStatus::Succeeded | SetupStatus::Failed => {
-                &[SetupAction::Start]
-            }
-        }
-    }
-
     pub fn is_busy(state: SetupStatus) -> bool {
         matches!(state, SetupStatus::Pending | SetupStatus::Running)
     }
 }
 
-impl SetupAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for SetupStatus {
+    fn all() -> &'static [Self] {
+        &[
+            Self::None,
+            Self::Pending,
+            Self::Running,
+            Self::Succeeded,
+            Self::Failed,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "Not configured",
+            Self::Pending => "Queued",
+            Self::Running => "Running",
+            Self::Succeeded => "Succeeded",
+            Self::Failed => "Failed",
+        }
+    }
+}
+
+impl Actions for SetupAction {
+    type State = SetupStatus;
+
+    const ALL: &'static [Self] = &[
+        Self::Start,
+        Self::Started,
+        Self::Finish,
+        Self::Fail,
+        Self::Interrupt,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Start => "start",
             Self::Started => "started",
@@ -82,8 +103,7 @@ impl SetupAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Start => "Run setup",
             Self::Started => "Setup started",
@@ -93,11 +113,18 @@ impl SetupAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Start => ActionKind::Command,
             _ => ActionKind::Fact,
+        }
+    }
+
+    /// `none` and a finished setup can run again.
+    fn commands(state: SetupStatus) -> &'static [Self] {
+        match state {
+            SetupStatus::Pending | SetupStatus::Running => &[],
+            SetupStatus::None | SetupStatus::Succeeded | SetupStatus::Failed => &[Self::Start],
         }
     }
 }

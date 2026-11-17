@@ -1,7 +1,7 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::{ConnectionPhase, DraftPhase, TerminalPhase};
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Browser connection (live thread socket)
@@ -58,13 +58,6 @@ impl ConnectionMachine {
         };
         Ok(next)
     }
-
-    pub fn commands(state: ConnectionPhase) -> &'static [ConnectionAction] {
-        match state {
-            ConnectionPhase::Failed | ConnectionPhase::Reconnecting => &[ConnectionAction::Retry],
-            _ => &[],
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -116,13 +109,6 @@ impl DraftMachine {
             },
         };
         Ok(next)
-    }
-
-    pub fn commands(state: DraftPhase) -> &'static [DraftAction] {
-        match state {
-            DraftPhase::Offline => &[DraftAction::Retry],
-            _ => &[],
-        }
     }
 }
 
@@ -181,19 +167,44 @@ impl TerminalMachine {
         };
         Ok(next)
     }
+}
 
-    pub fn commands(state: TerminalPhase) -> &'static [TerminalAction] {
-        match state {
-            TerminalPhase::Connecting => &[],
-            TerminalPhase::Live => &[TerminalAction::Drive],
-            TerminalPhase::Exited | TerminalPhase::Error => &[TerminalAction::Reconnect],
+impl States for ConnectionPhase {
+    fn all() -> &'static [Self] {
+        &[
+            Self::Idle,
+            Self::Loading,
+            Self::Live,
+            Self::Reconnecting,
+            Self::Failed,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "Idle",
+            Self::Loading => "Loading",
+            Self::Live => "Live",
+            Self::Reconnecting => "Reconnecting",
+            Self::Failed => "Failed",
         }
     }
 }
 
-impl ConnectionAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl Actions for ConnectionAction {
+    type State = ConnectionPhase;
+
+    const ALL: &'static [Self] = &[
+        Self::Connect,
+        Self::Opened,
+        Self::Ready,
+        Self::Lost,
+        Self::Fail,
+        Self::Retry,
+        Self::Close,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Connect => "connect",
             Self::Opened => "opened",
@@ -205,8 +216,7 @@ impl ConnectionAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Connect => "Connect",
             Self::Opened => "Socket open",
@@ -218,18 +228,56 @@ impl ConnectionAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Retry => ActionKind::Command,
             _ => ActionKind::Fact,
         }
     }
+
+    fn commands(state: ConnectionPhase) -> &'static [Self] {
+        match state {
+            ConnectionPhase::Failed | ConnectionPhase::Reconnecting => &[Self::Retry],
+            ConnectionPhase::Idle | ConnectionPhase::Loading | ConnectionPhase::Live => &[],
+        }
+    }
 }
 
-impl DraftAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for DraftPhase {
+    fn all() -> &'static [Self] {
+        &[
+            Self::Idle,
+            Self::Connecting,
+            Self::Syncing,
+            Self::Live,
+            Self::Offline,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "Idle",
+            Self::Connecting => "Connecting",
+            Self::Syncing => "Syncing",
+            Self::Live => "Live",
+            Self::Offline => "Offline",
+        }
+    }
+}
+
+impl Actions for DraftAction {
+    type State = DraftPhase;
+
+    const ALL: &'static [Self] = &[
+        Self::Connect,
+        Self::Connected,
+        Self::Synced,
+        Self::Lost,
+        Self::Close,
+        Self::Retry,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Connect => "connect",
             Self::Connected => "connected",
@@ -240,8 +288,7 @@ impl DraftAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Connect => "Connect",
             Self::Connected => "Connected",
@@ -252,18 +299,55 @@ impl DraftAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Retry => ActionKind::Command,
             _ => ActionKind::Fact,
         }
     }
+
+    fn commands(state: DraftPhase) -> &'static [Self] {
+        match state {
+            DraftPhase::Offline => &[Self::Retry],
+            DraftPhase::Idle | DraftPhase::Connecting | DraftPhase::Syncing | DraftPhase::Live => {
+                &[]
+            }
+        }
+    }
 }
 
-impl TerminalAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for TerminalPhase {
+    fn all() -> &'static [Self] {
+        &[Self::Connecting, Self::Live, Self::Exited, Self::Error]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Connecting => "Connecting",
+            Self::Live => "Live",
+            Self::Exited => "Exited",
+            Self::Error => "Error",
+        }
+    }
+
+    fn terminal(self) -> bool {
+        matches!(self, Self::Exited | Self::Error)
+    }
+}
+
+impl Actions for TerminalAction {
+    type State = TerminalPhase;
+
+    const ALL: &'static [Self] = &[
+        Self::Connect,
+        Self::Attached,
+        Self::Exit,
+        Self::Fail,
+        Self::Reconnect,
+        Self::Drive,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Connect => "connect",
             Self::Attached => "attached",
@@ -274,8 +358,7 @@ impl TerminalAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Connect => "Connect",
             Self::Attached => "Attached",
@@ -286,11 +369,18 @@ impl TerminalAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Reconnect | Self::Drive => ActionKind::Command,
             _ => ActionKind::Fact,
+        }
+    }
+
+    fn commands(state: TerminalPhase) -> &'static [Self] {
+        match state {
+            TerminalPhase::Connecting => &[],
+            TerminalPhase::Live => &[Self::Drive],
+            TerminalPhase::Exited | TerminalPhase::Error => &[Self::Reconnect],
         }
     }
 }

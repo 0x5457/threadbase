@@ -5,7 +5,8 @@
 //! action targets the current state.
 //!
 //! The authoritative persistence stays in SQLite; these tables are the single
-//! source of truth for *which* transitions are legal. One file per machine.
+//! source of truth for *which* transitions are legal. One file per machine,
+//! alongside the metadata [`catalogue()`] publishes to clients.
 
 mod approval;
 mod auth;
@@ -38,6 +39,8 @@ pub use thread::*;
 pub use turn::*;
 pub use watch::*;
 
+use threadbase_shared::ActionKind;
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TransitionError {
     #[error("{entity}: illegal action {action} from {from}")]
@@ -66,4 +69,41 @@ fn guard(entity: &'static str, reason: impl Into<String>) -> TransitionError {
         entity,
         reason: reason.into(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Publication metadata
+// ---------------------------------------------------------------------------
+
+/// One status enum as the catalogue publishes it.
+///
+/// `Into<&'static str>` is the wire value (`strum::IntoStaticStr`), so a state
+/// can never be published under a name the database does not store.
+pub trait States: Copy + Into<&'static str> + 'static {
+    /// Every state, in display order.
+    fn all() -> &'static [Self];
+    /// Human label for banners, menus and tooltips.
+    fn label(self) -> &'static str;
+    /// Finished: the entity is done, and only a revival command leaves it.
+    fn terminal(self) -> bool {
+        false
+    }
+}
+
+/// One machine's action type: the metadata the catalogue publishes plus the
+/// commands a caller may invoke.
+pub trait Actions: Copy + 'static {
+    type State: States;
+
+    /// Every action, in display order. Parameterised actions carry the
+    /// canonical value the catalogue publishes.
+    const ALL: &'static [Self];
+
+    fn id(self) -> &'static str;
+    fn label(self) -> &'static str;
+    fn kind(self) -> ActionKind;
+
+    /// User-invocable actions from `state`, in display order. Facts are never
+    /// listed: nobody can invoke them.
+    fn commands(state: Self::State) -> &'static [Self];
 }

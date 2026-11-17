@@ -1,7 +1,7 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::WatchState;
 
-use super::{guard, illegal, TransitionError};
+use super::{guard, illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Watch
@@ -29,7 +29,7 @@ impl WatchMachine {
     /// reason about the order of `watching` and `muted` updates.
     pub fn transition(
         current: WatchState,
-        action: WatchAction,
+        action: &WatchAction,
     ) -> Result<WatchState, TransitionError> {
         let next = match action {
             WatchAction::Watch => WatchState::Watching,
@@ -64,19 +64,28 @@ impl WatchMachine {
         };
         Ok(action)
     }
+}
 
-    pub fn commands(state: WatchState) -> &'static [WatchAction] {
-        match state {
-            WatchState::NotWatching => &[WatchAction::Watch],
-            WatchState::Watching => &[WatchAction::Mute, WatchAction::Unwatch],
-            WatchState::Muted => &[WatchAction::Unmute, WatchAction::Unwatch],
+impl States for WatchState {
+    fn all() -> &'static [Self] {
+        &[Self::NotWatching, Self::Watching, Self::Muted]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::NotWatching => "Not watching",
+            Self::Watching => "Watching",
+            Self::Muted => "Muted",
         }
     }
 }
 
-impl WatchAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl Actions for WatchAction {
+    type State = WatchState;
+
+    const ALL: &'static [Self] = &[Self::Watch, Self::Mute, Self::Unmute, Self::Unwatch];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Watch => "watch",
             Self::Mute => "mute",
@@ -85,8 +94,7 @@ impl WatchAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Watch => "Watch thread",
             Self::Mute => "Mute notifications",
@@ -95,8 +103,15 @@ impl WatchAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         ActionKind::Command
+    }
+
+    fn commands(state: WatchState) -> &'static [Self] {
+        match state {
+            WatchState::NotWatching => &[Self::Watch],
+            WatchState::Watching => &[Self::Mute, Self::Unwatch],
+            WatchState::Muted => &[Self::Unmute, Self::Unwatch],
+        }
     }
 }

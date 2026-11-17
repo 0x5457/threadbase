@@ -7,7 +7,7 @@
 //! - `threadbase machines` and `GET /api/machines` let a person or an agent
 //!   ask what can happen without grepping three languages,
 //! - the catalogue is exported to `web/src/api/state-machines.json` by a test,
-//!   so drift is a failing test rather than a stale comment.
+//!   so the copy the UI imports is generated, never hand-edited.
 //!
 //! `commands` are the actions a caller may choose. Facts (adapter reports such
 //! as `turn_ended`) are deliberately excluded: nobody can invoke them, so they
@@ -49,8 +49,8 @@ pub struct MachineState {
 #[ts(export)]
 pub struct MachineCommand {
     pub id: String,
-    /// State after the command. Believed by the same test that checks `id`
-    /// against the transition functions, so the graph cannot drift.
+    /// State after the command: the machine's own transition result, so the
+    /// published graph cannot drift from the rules the server enforces.
     pub to: String,
 }
 

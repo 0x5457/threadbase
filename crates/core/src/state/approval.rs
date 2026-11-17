@@ -1,13 +1,13 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::{ApprovalStatus, ElicitationStatus};
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Approval
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalAction {
     Create,
     Allow,
@@ -47,7 +47,7 @@ impl ApprovalMachine {
 // Elicitation
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElicitationAction {
     Create,
     Accept,
@@ -83,9 +83,55 @@ impl ElicitationMachine {
     }
 }
 
-impl ApprovalAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for ApprovalStatus {
+    fn all() -> &'static [Self] {
+        &[Self::Pending, Self::Allowed, Self::Denied, Self::Cancelled]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Allowed => "Allowed",
+            Self::Denied => "Denied",
+            Self::Cancelled => "Cancelled",
+        }
+    }
+
+    fn terminal(self) -> bool {
+        !matches!(self, Self::Pending)
+    }
+}
+
+impl States for ElicitationStatus {
+    fn all() -> &'static [Self] {
+        &[
+            Self::Pending,
+            Self::Accepted,
+            Self::Declined,
+            Self::Cancelled,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Accepted => "Answered",
+            Self::Declined => "Declined",
+            Self::Cancelled => "Cancelled",
+        }
+    }
+
+    fn terminal(self) -> bool {
+        !matches!(self, Self::Pending)
+    }
+}
+
+impl Actions for ApprovalAction {
+    type State = ApprovalStatus;
+
+    const ALL: &'static [Self] = &[Self::Create, Self::Allow, Self::Deny, Self::Cancel];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Create => "create",
             Self::Allow => "allow",
@@ -94,8 +140,7 @@ impl ApprovalAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Create => "Requested",
             Self::Allow => "Allow",
@@ -104,26 +149,27 @@ impl ApprovalAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Create => ActionKind::Fact,
             _ => ActionKind::Command,
         }
     }
 
-    #[must_use]
-    pub fn commands(state: ApprovalStatus) -> &'static [Self] {
+    fn commands(state: ApprovalStatus) -> &'static [Self] {
         match state {
             ApprovalStatus::Pending => &[Self::Allow, Self::Deny, Self::Cancel],
-            _ => &[],
+            ApprovalStatus::Allowed | ApprovalStatus::Denied | ApprovalStatus::Cancelled => &[],
         }
     }
 }
 
-impl ElicitationAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl Actions for ElicitationAction {
+    type State = ElicitationStatus;
+
+    const ALL: &'static [Self] = &[Self::Create, Self::Accept, Self::Decline, Self::Cancel];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Create => "create",
             Self::Accept => "accept",
@@ -132,8 +178,7 @@ impl ElicitationAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Create => "Asked",
             Self::Accept => "Answer",
@@ -142,19 +187,19 @@ impl ElicitationAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Create => ActionKind::Fact,
             _ => ActionKind::Command,
         }
     }
 
-    #[must_use]
-    pub fn commands(state: ElicitationStatus) -> &'static [Self] {
+    fn commands(state: ElicitationStatus) -> &'static [Self] {
         match state {
             ElicitationStatus::Pending => &[Self::Accept, Self::Decline, Self::Cancel],
-            _ => &[],
+            ElicitationStatus::Accepted
+            | ElicitationStatus::Declined
+            | ElicitationStatus::Cancelled => &[],
         }
     }
 }

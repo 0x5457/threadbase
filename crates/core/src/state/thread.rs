@@ -1,7 +1,7 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::ThreadStatus;
 
-use super::{guard, illegal, TransitionError};
+use super::{guard, illegal, Actions, States, TransitionError};
 
 /// Resolve a `requires_action` thread after a pending item is resolved.
 fn resolve_wait(turn_active: bool, remaining_pending: u32) -> ThreadStatus {
@@ -18,7 +18,7 @@ fn resolve_wait(turn_active: bool, remaining_pending: u32) -> ThreadStatus {
 // Thread / turn
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadAction {
     Create,
     Restart,
@@ -140,9 +140,61 @@ impl ThreadMachine {
     }
 }
 
-impl ThreadAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for ThreadStatus {
+    fn all() -> &'static [Self] {
+        &[
+            Self::Preparing,
+            Self::Idle,
+            Self::Running,
+            Self::RequiresAction,
+            Self::Interrupted,
+            Self::Error,
+            Self::Archived,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Preparing => "Preparing",
+            Self::Idle => "Idle",
+            Self::Running => "Running",
+            Self::RequiresAction => "Needs you",
+            Self::Interrupted => "Interrupted",
+            Self::Error => "Error",
+            Self::Archived => "Archived",
+        }
+    }
+}
+
+impl Actions for ThreadAction {
+    type State = ThreadStatus;
+
+    const ALL: &'static [Self] = &[
+        Self::Create,
+        Self::Restart,
+        Self::StartSucceeded,
+        Self::StartFailed,
+        Self::Prompt,
+        Self::ApprovalPending,
+        Self::ElicitationPending,
+        Self::ApprovalResolved {
+            turn_active: true,
+            remaining_pending: 0,
+        },
+        Self::ElicitationResolved {
+            turn_active: false,
+            remaining_pending: 0,
+        },
+        Self::TurnEnded,
+        Self::TurnError,
+        Self::ProcessExited,
+        Self::AgentFailed,
+        Self::Cancel,
+        Self::Archive,
+        Self::Unarchive,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Create => "create",
             Self::Restart => "restart",
@@ -163,8 +215,7 @@ impl ThreadAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Create => "Create",
             Self::Restart => "Restart agent",
@@ -185,8 +236,7 @@ impl ThreadAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Restart | Self::Prompt | Self::Cancel | Self::Archive | Self::Unarchive => {
                 ActionKind::Command
@@ -195,9 +245,7 @@ impl ThreadAction {
         }
     }
 
-    /// Commands a caller may invoke from `state`, in display order.
-    #[must_use]
-    pub fn commands(state: ThreadStatus) -> &'static [Self] {
+    fn commands(state: ThreadStatus) -> &'static [Self] {
         match state {
             ThreadStatus::Preparing => &[Self::Restart, Self::Archive],
             ThreadStatus::Idle => &[Self::Prompt, Self::Restart, Self::Archive],

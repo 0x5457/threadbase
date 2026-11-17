@@ -1,13 +1,13 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::SubagentStatus;
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Subagent
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubagentAction {
     Create,
     Run,
@@ -76,9 +76,46 @@ impl SubagentMachine {
     }
 }
 
-impl SubagentAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl States for SubagentStatus {
+    fn all() -> &'static [Self] {
+        &[
+            Self::Idle,
+            Self::Running,
+            Self::RequiresAction,
+            Self::Cancelled,
+            Self::Error,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "Idle",
+            Self::Running => "Running",
+            Self::RequiresAction => "Needs input",
+            Self::Cancelled => "Cancelled",
+            Self::Error => "Error",
+        }
+    }
+
+    fn terminal(self) -> bool {
+        matches!(self, Self::Cancelled | Self::Error)
+    }
+}
+
+impl Actions for SubagentAction {
+    type State = SubagentStatus;
+
+    const ALL: &'static [Self] = &[
+        Self::Create,
+        Self::Run,
+        Self::Idle,
+        Self::RequireAction,
+        Self::Resolve,
+        Self::Fail,
+        Self::Cancel,
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Create => "create",
             Self::Run => "run",
@@ -90,8 +127,7 @@ impl SubagentAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Create => "Created",
             Self::Run => "Running",
@@ -103,16 +139,14 @@ impl SubagentAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Cancel => ActionKind::Command,
             _ => ActionKind::Fact,
         }
     }
 
-    #[must_use]
-    pub fn commands(state: SubagentStatus) -> &'static [Self] {
+    fn commands(state: SubagentStatus) -> &'static [Self] {
         match state {
             SubagentStatus::Idle | SubagentStatus::Running | SubagentStatus::RequiresAction => {
                 &[Self::Cancel]

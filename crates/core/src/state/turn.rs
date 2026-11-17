@@ -1,7 +1,7 @@
 use threadbase_shared::ActionKind;
 use threadbase_shared::TurnState;
 
-use super::{illegal, TransitionError};
+use super::{illegal, Actions, States, TransitionError};
 
 // ---------------------------------------------------------------------------
 // Turn (in-memory, one per thread)
@@ -80,20 +80,37 @@ impl TurnMachine {
         };
         Ok(next)
     }
+}
 
-    /// Commands a caller may invoke. Starting a turn is driven by the send
-    /// path, so cancellation is the only user choice here.
-    pub fn commands(state: TurnState) -> &'static [TurnAction] {
-        match state {
-            TurnState::Starting | TurnState::Running => &[TurnAction::Cancel],
-            TurnState::Empty => &[],
+impl States for TurnState {
+    fn all() -> &'static [Self] {
+        &[Self::Empty, Self::Starting, Self::Running]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Empty => "Idle",
+            Self::Starting => "Starting",
+            Self::Running => "Running",
         }
     }
 }
 
-impl TurnAction {
-    #[must_use]
-    pub fn id(&self) -> &'static str {
+impl Actions for TurnAction {
+    type State = TurnState;
+
+    const ALL: &'static [Self] = &[
+        Self::Claim,
+        Self::Abandon,
+        Self::Install,
+        Self::InstallAfterFinish,
+        Self::Complete,
+        Self::End,
+        Self::Cancel,
+        Self::Sync { running: true },
+    ];
+
+    fn id(self) -> &'static str {
         match self {
             Self::Claim => "claim",
             Self::Abandon => "abandon",
@@ -106,8 +123,7 @@ impl TurnAction {
         }
     }
 
-    #[must_use]
-    pub fn label(&self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Claim => "Start a turn",
             Self::Abandon => "Release the start",
@@ -120,11 +136,19 @@ impl TurnAction {
         }
     }
 
-    #[must_use]
-    pub fn kind(&self) -> ActionKind {
+    fn kind(self) -> ActionKind {
         match self {
             Self::Cancel => ActionKind::Command,
             _ => ActionKind::Fact,
+        }
+    }
+
+    /// Starting a turn is driven by the send path, so cancellation is the only
+    /// user choice here.
+    fn commands(state: TurnState) -> &'static [Self] {
+        match state {
+            TurnState::Starting | TurnState::Running => &[Self::Cancel],
+            TurnState::Empty => &[],
         }
     }
 }

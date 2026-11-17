@@ -285,7 +285,7 @@ server 按职责分模块：
 
 ## 生命周期状态机
 
-每个实体的合法状态、迁移和“当前能做什么”只有一处定义：`crates/core/src/state.rs`。服务端、前端和 agent 工具读同一个目录，不再各自比较状态字符串。
+每个实体的合法状态、迁移和“当前能做什么”只有一处定义：`crates/core/src/state/`。服务端、前端和 agent 工具读同一个目录，不再各自比较状态字符串。
 
 ```bash
 threadbase machines          # 人读的大纲
@@ -294,10 +294,10 @@ threadbase machines --json   # 与 GET /api/machines 完全相同
 
 - 覆盖 14 台机器：thread、setup、approval、elicitation、subagent、queue、comment、watch、turn、auth_session、push、connection、draft、terminal。前三组是服务端领域状态，`turn`/`auth_session`/`push` 是进程内与投递状态，`connection`/`draft`/`terminal` 是浏览器侧生命周期（类型由 Rust 生成，前端不再手写字符串联合）。
 - 每台机器区分**命令**与**事实**：命令是调用方可以主动执行的动作（`prompt`、`cancel`、`restore`），事实是适配器上报的事件（`turn_ended`、`process_exited`）。事实永远不会出现在按钮里。
-- 每条命令带目标状态（`cancel -> idle`），所以 `threadbase machines` 输出的是完整的迁移图；目标值由同一组测试对照 `transition()` 校验，写错就测试失败。
+- 每条命令带目标状态（`cancel -> idle`），所以 `threadbase machines` 输出的是完整的迁移图；目标值就是 `transition()` 的返回值，不另写一份表，所以图不会和规则漂移。
 - `ThreadDto.allowedActions` 与 `ThreadState.allowedActions` 由机器生成；前端通过 `web/src/lib/machine.ts` 的 `can()` / `threadCan()` 判断，所以按钮和服务端不会给出相反答案。
-- `crates/core/tests/state_machines.rs` 会把目录导出到 `web/src/api/state-machines.json`。改了迁移就必须同步更新目录，否则测试失败。
-- 新增一台机器：在 `crates/core/src/state/` 新建一个文件写 `XxxAction` 与 `XxxMachine`（`transition` + `commands`），在 `state/mod.rs` 声明并 `pub use`，在 `state/catalogue.rs` 的 `catalogue()` 加一条 `MachineSpec`，最后在 `web/src/lib/machine.ts` 的 `MachineId` 登记。一台机器一个文件，目录本身就是索引。
+- `crates/core/tests/state_machines.rs` 会把目录导出到 `web/src/api/state-machines.json`：内容不一致时写回，所以改动迁移后跑一次测试，前端读到的就是新图。
+- 新增一台机器：在 `crates/core/src/state/` 新建一个文件写 `XxxMachine`（`transition`），并为状态实现 `States`、为动作实现 `Actions`（`id`/`label`/`kind`/`commands` 与 `ALL`）；在 `state/mod.rs` 声明并 `pub use`，在 `state/catalogue.rs` 的 `catalogue()` 加一行 `spec(...)`，最后在 `web/src/lib/machine.ts` 的 `MachineId` 登记。一台机器一个文件，状态与动作的元数据就在机器旁边。
 
 状态只保留一种表示：
 
