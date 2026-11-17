@@ -40,6 +40,7 @@ portable-pty.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 rust-embed = "8.13"
+self-replace.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

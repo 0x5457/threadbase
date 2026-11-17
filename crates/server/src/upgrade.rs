@@ -2,36 +2,27 @@
 
 use anyhow::Context;
 use sha2::{Digest, Sha256};
-use std::io::Write;
-use std::path::Path;
 
 const DEFAULT_BASE: &str = "https://github.com/threadbase/threadbase/releases/latest/download";
 
-/// Downloads and verifies the published release binary for this platform.
-pub async fn download_release_binary() -> anyhow::Result<(String, Vec<u8>)> {
+/// Replace this binary with the published release for this platform.
+pub async fn run(check_only: bool) -> anyhow::Result<()> {
     let target = target_triple()?;
     let base = std::env::var("THREADBASE_RELEASE_BASE").unwrap_or_else(|_| DEFAULT_BASE.into());
     let base = base.trim_end_matches('/');
-    let binary_url = format!("{base}/threadbase-{target}");
-    let checksum_url = format!("{binary_url}.sha256");
     let client = reqwest::Client::builder()
         .user_agent("threadbase-upgrade")
         .build()?;
-    let checksum_text = client
-        .get(&checksum_url)
-        .send()
-        .await?
-        .error_for_status()
-        .context("download checksum")?
-        .text()
-        .await?;
-    let expected = checksum_text
-        .split_whitespace()
-        .next()
-        .context("checksum file is empty")?
-        .to_lowercase();
+
+    let expected = checksum(&client, &format!("{base}/threadbase-{target}.sha256")).await?;
+    println!("Latest target: {target}");
+    println!("SHA256: {expected}");
+    if check_only {
+        return Ok(());
+    }
+
     let bytes = client
-        .get(&binary_url)
+        .get(format!("{base}/threadbase-{target}"))
         .send()
         .await?
         .error_for_status()
@@ -42,67 +33,44 @@ pub async fn download_release_binary() -> anyhow::Result<(String, Vec<u8>)> {
     if actual != expected {
         anyhow::bail!("checksum mismatch: expected {expected}, got {actual}");
     }
-    Ok((target, bytes.to_vec()))
+    install(&bytes).await?;
+    println!("Upgraded {}", std::env::current_exe()?.display());
+    Ok(())
 }
 
-pub async fn run(check_only: bool) -> anyhow::Result<()> {
-    if check_only {
-        let target = target_triple()?;
-        let base = std::env::var("THREADBASE_RELEASE_BASE").unwrap_or_else(|_| DEFAULT_BASE.into());
-        let checksum_url = format!("{}/threadbase-{target}.sha256", base.trim_end_matches('/'));
-        let checksum_text = reqwest::Client::builder()
-            .user_agent("threadbase-upgrade")
-            .build()?
-            .get(&checksum_url)
-            .send()
-            .await?
-            .error_for_status()
-            .context("download checksum")?
-            .text()
-            .await?;
-        let expected = checksum_text
-            .split_whitespace()
-            .next()
-            .context("checksum file is empty")?
-            .to_lowercase();
-        println!("Latest target: {target}");
-        println!("SHA256: {expected}");
-        return Ok(());
-    }
-    let (target, bytes) = download_release_binary().await?;
-    println!("Latest target: {target}");
+/// Published digest: the first token of the `.sha256` sidecar.
+async fn checksum(client: &reqwest::Client, url: &str) -> anyhow::Result<String> {
+    let text = client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()
+        .context("download checksum")?
+        .text()
+        .await?;
+    let digest = text
+        .split_whitespace()
+        .next()
+        .context("checksum file is empty")?
+        .to_lowercase();
+    Ok(digest)
+}
+
+/// Stage the verified bytes beside the running binary and swap it in place.
+/// `self_replace` keeps the old file's permissions and mode, so the result is
+/// still executable, and it follows the install path when it is a symlink.
+async fn install(bytes: &[u8]) -> anyhow::Result<()> {
     let current = std::env::current_exe().context("resolve current binary")?;
-    let temp = current.with_extension("upgrade");
-    {
-        let mut file =
-            std::fs::File::create(&temp).with_context(|| format!("create {}", temp.display()))?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755))?;
-    }
-    replace(&temp, &current)?;
-    println!("Upgraded {}", current.display());
+    let staged = current.with_extension("upgrade");
+    tokio::fs::write(&staged, bytes)
+        .await
+        .with_context(|| format!("write {}", staged.display()))?;
+    self_replace::self_replace(&staged).context("replace the running binary")?;
+    let _ = std::fs::remove_file(&staged);
     Ok(())
 }
 
-fn replace(temp: &Path, current: &Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        std::fs::rename(temp, current)?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::copy(temp, current)?;
-        let _ = std::fs::remove_file(temp);
-    }
-    Ok(())
-}
-
-fn target_triple() -> anyhow::Result<String> {
+fn target_triple() -> anyhow::Result<&'static str> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
     Ok(match (os, arch) {
@@ -111,6 +79,5 @@ fn target_triple() -> anyhow::Result<String> {
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
         ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
         _ => anyhow::bail!("unsupported platform {os}/{arch}"),
-    }
-    .to_owned())
+    })
 }
