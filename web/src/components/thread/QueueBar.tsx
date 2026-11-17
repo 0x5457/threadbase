@@ -17,6 +17,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { QueueItem } from "../../api";
+import { isImeConfirming } from "../../lib/keyboard";
 import { can } from "../../lib/machine";
 
 const SWIPE_DROP = 64;
@@ -151,6 +152,8 @@ const QueueRow = memo(function QueueRow({
             onChange={(event) => setDraft(event.currentTarget.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
+                // A confirming Enter belongs to the IME, not to save.
+                if (isImeConfirming(event)) return;
                 event.preventDefault();
                 void saveEdit();
               } else if (event.key === "Escape") {

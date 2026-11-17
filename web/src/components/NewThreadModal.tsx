@@ -14,6 +14,7 @@ import { notifications } from "@mantine/notifications";
 import { IconAlertCircle, IconMessage } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { isImeConfirming } from "../lib/keyboard";
 import { readPick } from "../lib/model-prefs";
 import {
   createThread,
@@ -119,7 +120,9 @@ export function NewThreadModal({
           value={title}
           onChange={(event) => setTitle(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") void create();
+            if (event.key !== "Enter" || isImeConfirming(event)) return;
+            event.preventDefault();
+            void create();
           }}
           autoFocus
           data-autofocus

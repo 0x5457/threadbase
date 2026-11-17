@@ -7,6 +7,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import type { ThreadSummary } from "../api";
 import type { Usage } from "../api/types/Usage";
 import { attachmentSize, isTextLike } from "../lib/attachments";
+import { isImeConfirming } from "../lib/keyboard";
 import { PickerAgentContext } from "../lib/model-prefs";
 import { ComposerInput } from "./composer/ComposerInput";
 import { ComposerSkeleton } from "./composer/ComposerSkeleton";
@@ -285,7 +286,7 @@ const ComposerBody = memo(function ComposerBody({
             !event.shiftKey &&
             !event.metaKey &&
             !event.ctrlKey &&
-            !event.nativeEvent.isComposing &&
+            !isImeConfirming(event) &&
             !suggestionOpen
           ) {
             event.preventDefault();
@@ -294,7 +295,7 @@ const ComposerBody = memo(function ComposerBody({
           }
         }}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) return;
+          if (isImeConfirming(event)) return;
           if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
             event.preventDefault();
             send();

@@ -13,6 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { IconSearch, IconX } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listSessions, type SessionSummary } from "../../api";
+import { isImeConfirming } from "../../lib/keyboard";
 import { sessionKey, sessionMatches } from "../../lib/sessions";
 import { SheetGrabber } from "../SheetGrabber";
 import { SessionRow } from "./SessionRow";
@@ -74,6 +75,9 @@ function SwitcherBody({
       return;
     }
     if (event.key === "Enter") {
+      // The search box is free text: an IME commits its candidate with Enter,
+      // and preventing that default would swallow the composed word.
+      if (isImeConfirming(event)) return;
       event.preventDefault();
       const session = filtered[activeIndex < 0 ? 0 : activeIndex];
       if (session) open(session);

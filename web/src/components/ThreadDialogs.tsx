@@ -8,6 +8,7 @@ import {
   type MergeBackResponse,
   type ThreadSummary,
 } from "../api";
+import { isImeConfirming } from "../lib/keyboard";
 
 function failure(cause: unknown, fallback: string) {
   notifications.show({
@@ -57,7 +58,9 @@ export function RenameThreadDialog({
         value={title}
         onChange={(event) => setTitle(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter") void submit();
+          if (event.key !== "Enter" || isImeConfirming(event)) return;
+          event.preventDefault();
+          void submit();
         }}
         autoFocus
       />

@@ -32,6 +32,7 @@ import {
   type DirectoryListing,
   type Project,
 } from "../api";
+import { isImeConfirming } from "../lib/keyboard";
 
 interface AddProjectModalProps {
   opened: boolean;
@@ -181,7 +182,11 @@ export function AddProjectModal({
           value={pathInput}
           onChange={(event) => setPathInput(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") void load(pathInput);
+            // Enter is also how a CJK IME commits a candidate; submitting here
+            // would browse a half-typed path.
+            if (event.key !== "Enter" || isImeConfirming(event)) return;
+            event.preventDefault();
+            void load(pathInput);
           }}
           placeholder="/home/you/work/project"
           leftSection={<IconFolder size={14} stroke={1.5} />}
@@ -302,7 +307,9 @@ export function AddProjectModal({
             value={newName}
             onChange={(event) => setNewName(event.currentTarget.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void createNew();
+              if (event.key !== "Enter" || isImeConfirming(event)) return;
+              event.preventDefault();
+              void createNew();
             }}
             data-autofocus
             aria-label="Project name"
