@@ -1015,16 +1015,26 @@
   cursor: zoom-in;
 }
 
+/* The preview is a native modal dialog: the browser paints the backdrop,
+   contains focus and handles Escape, so there is no overlay element to style.
+   `margin: auto` centers it; the image alone decides the box size. */
 .image-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 6000;
-  display: grid;
-  place-items: center;
-  padding: 28px;
+  max-width: min(94vw, 1600px);
+  max-height: 92vh;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  cursor: zoom-out;
+}
+
+.image-lightbox::backdrop {
+  /* `::backdrop` is not a scroll container, so scroll gestures over it would
+     otherwise reach the page behind the top layer. */
+  overflow: hidden;
+  overscroll-behavior: contain;
   background: rgb(12 14 16 / 72%);
   backdrop-filter: blur(2px);
-  cursor: zoom-out;
 }
 
 .image-lightbox img {
