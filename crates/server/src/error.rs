@@ -56,12 +56,7 @@ impl From<sqlx::Error> for ServerError {
 
 impl From<crate::events::EventStoreError> for ServerError {
     fn from(value: crate::events::EventStoreError) -> Self {
-        match value {
-            crate::events::EventStoreError::Api(error) => Self(error),
-            other => {
-                tracing::error!(error = %other, "event store error");
-                Self(ApiError::new(ErrorCode::Internal, "event store error"))
-            }
-        }
+        tracing::error!(error = %value, "event store error");
+        Self(ApiError::new(ErrorCode::Internal, "event store error"))
     }
 }

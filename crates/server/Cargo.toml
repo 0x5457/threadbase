@@ -39,7 +39,8 @@ plist.workspace = true
 portable-pty.workspace = true
 rand.workspace = true
 reqwest.workspace = true
-rust-embed = "8.13"
+# Embedded in release builds; debug builds read web/dist from disk.
+rust-embed.workspace = true
 self-replace.workspace = true
 serde.workspace = true
 serde_json.workspace = true

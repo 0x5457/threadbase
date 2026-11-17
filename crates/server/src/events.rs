@@ -3,8 +3,8 @@
 use sqlx::{FromRow, SqlitePool};
 use threadbase_core::state::{delivery_str, parse_delivery};
 use threadbase_shared::{
-    now_ms, Actor, ActorKind, ApiError, Delivery, EventEnvelope, EventsPageDto, OlderEventsDto,
-    Origin, ThreadEvent, ThreadId,
+    now_ms, Actor, ActorKind, Delivery, EventEnvelope, EventsPageDto, OlderEventsDto, Origin,
+    ThreadEvent, ThreadId,
 };
 use tokio::sync::broadcast;
 
@@ -16,8 +16,6 @@ pub enum EventStoreError {
     Json(#[from] serde_json::Error),
     #[error("corrupt event row: {0}")]
     Corrupt(String),
-    #[error(transparent)]
-    Api(#[from] ApiError),
 }
 
 #[derive(Debug, Clone, Default)]
