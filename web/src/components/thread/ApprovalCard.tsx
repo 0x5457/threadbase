@@ -46,7 +46,7 @@ export function ApprovalCard({
   // approval sits right, regardless of the adapter's emission order.
   const rank = (kind: ApprovalOption["kind"]) =>
     kind === "deny" ? 0 : kind === "allow_once" ? 2 : 1;
-  const orderedOptions = [...options].sort((a, b) => rank(a.kind) - rank(b.kind));
+  const orderedOptions = options.toSorted((a, b) => rank(a.kind) - rank(b.kind));
   const fallbackDeny: ApprovalOption = {
     id: "deny",
     kind: "deny",

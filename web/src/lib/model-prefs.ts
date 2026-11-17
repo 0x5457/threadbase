@@ -42,7 +42,7 @@ export function groupByProvider<T extends { value: string }>(
 /** Idle-list provider order: alphabetical, with "Other" last. */
 export function sortByProvider<T extends { value: string }>(items: T[]): T[] {
   const last = (item: T) => (providerOf(item.value) === OTHER_GROUP ? 1 : 0);
-  return [...items].sort(
+  return items.toSorted(
     (left, right) =>
       last(left) - last(right) ||
       providerOf(left.value).localeCompare(providerOf(right.value)),
