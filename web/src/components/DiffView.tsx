@@ -1,5 +1,4 @@
 import { Text, useComputedColorScheme } from "@mantine/core";
-import { useMediaQuery } from "@mantine/hooks";
 import { PatchDiff } from "@pierre/diffs/react";
 import type {
   AnnotationSide,
@@ -8,7 +7,7 @@ import type {
 import { memo, useMemo, type ReactNode } from "react";
 import type { Comment } from "../api";
 import { budgetLabel, exceedsDiffBudget } from "../lib/diff-size";
-import { useEffectiveDiffWrap } from "../lib/diff-wrap";
+import { useDiffWrap } from "../lib/diff-wrap";
 
 /** Metadata carried by every line annotation in the changes panel. */
 export interface DiffCommentMeta {
@@ -39,8 +38,7 @@ export const DiffView = memo(function DiffView({
   commentable?: boolean;
 }) {
   const scheme = useComputedColorScheme("light");
-  const narrow = useMediaQuery("(max-width: 74.99em)");
-  const wrap = useEffectiveDiffWrap(narrow);
+  const { ref, wrap } = useDiffWrap<HTMLDivElement>();
 
   const options = useMemo(
     () => ({
@@ -78,7 +76,7 @@ export const DiffView = memo(function DiffView({
   }
 
   return (
-    <div className="diff-wrap">
+    <div className="diff-wrap" ref={ref}>
       <PatchDiff
         patch={patch}
         options={options}

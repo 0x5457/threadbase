@@ -6,7 +6,6 @@ import {
   Loader,
   Text,
 } from "@mantine/core";
-import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import type { AnnotationSide, DiffLineAnnotation } from "@pierre/diffs/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -41,7 +40,7 @@ import {
 } from "../api";
 import {
   toggleDiffWrap,
-  useEffectiveDiffWrap,
+  useDiffWrap,
 } from "../lib/diff-wrap";
 import {
   exceedsLineBudget,
@@ -167,8 +166,9 @@ export const RealChangesPanel = memo(function RealChangesPanel({
   const [selected, setSelected] = useState<string | null>(null);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [busyComment, setBusyComment] = useState<string | null>(null);
-  const narrow = useMediaQuery("(max-width: 74.99em)");
-  const wrap = useEffectiveDiffWrap(narrow);
+  // The panel is resizable, so "wrap automatically" has to follow this box, not
+  // the window; the toggle in the diff header must agree with what is painted.
+  const { ref: panelRef, narrow, wrap } = useDiffWrap<HTMLDivElement>();
   const queryClient = useQueryClient();
 
   const bundle = useQuery({
@@ -452,7 +452,7 @@ export const RealChangesPanel = memo(function RealChangesPanel({
   }, [changes?.files, selected]);
 
   return (
-    <div className="changes">
+    <div className="changes" ref={panelRef}>
       <div className="changes-head changes-head-stacked">
         <div className="changes-head-main">
           {commit ? (
