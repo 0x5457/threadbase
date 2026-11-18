@@ -206,16 +206,6 @@ pub fn cookie_header_at(
     cookie.build().to_string()
 }
 
-#[must_use]
-pub fn clear_cookie(name: &str, secure: bool) -> String {
-    clear_cookie_at(name, secure, "/")
-}
-
-#[must_use]
-pub fn clear_cookie_at(name: &str, secure: bool, path: &str) -> String {
-    cookie_header_at(name, "", secure, 0, path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,7 +241,6 @@ mod tests {
         assert!(!insecure.contains("Secure"));
         let secure = cookie_header(COOKIE, "t", true, 60);
         assert!(secure.contains("; Secure"));
-        assert!(clear_cookie(COOKIE, true).contains("Max-Age=0"));
     }
 
     #[tokio::test]

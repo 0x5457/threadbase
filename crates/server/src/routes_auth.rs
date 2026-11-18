@@ -1,5 +1,5 @@
-//! Authentication endpoints: status, the tailnet exchange, current user, logout
-//! and administrator user management.
+//! Authentication endpoints: status, the tailnet exchange, current user and
+//! administrator user management.
 //!
 //! Sign-in is one POST: `tailscale serve` proved who the browser is, and the
 //! server trades that for an `HttpOnly` session cookie. There is no password, no
@@ -10,7 +10,7 @@ use crate::auth::{self, CurrentUser};
 use crate::auth_session;
 use crate::error::ServerError;
 use axum::extract::{ConnectInfo, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
@@ -23,7 +23,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/status", get(status))
         .route("/api/auth/tailscale", post(tailscale_sign_in))
         .route("/api/auth/me", get(me))
-        .route("/api/auth/logout", post(logout))
         .route("/api/auth/users", get(list_users))
         .route("/api/auth/users/{user_id}", patch(update_user))
 }
@@ -126,23 +125,6 @@ async fn me(
     user: CurrentUser,
 ) -> Result<Json<AuthMeDto>, ServerError> {
     Ok(Json(auth::me(&state.pool, &user).await?))
-}
-
-/// Clears the session even when it already expired, so a stale cookie cannot
-/// trap the browser in a sign-in loop.
-async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(token) = auth_session::read_cookie(&headers, auth_session::COOKIE) {
-        if let Err(error) = auth_session::revoke(&state.pool, &token).await {
-            tracing::warn!(%error, "failed to revoke session");
-        }
-    }
-    let cleared = auth_session::clear_cookie(auth_session::COOKIE, state.config.cookie_secure);
-    let mut headers = HeaderMap::new();
-    headers.append(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&cleared).unwrap_or_else(|_| HeaderValue::from_static("")),
-    );
-    (StatusCode::NO_CONTENT, headers).into_response()
 }
 
 async fn list_users(

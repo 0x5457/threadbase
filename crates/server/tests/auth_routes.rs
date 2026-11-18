@@ -235,43 +235,6 @@ async fn only_the_first_identity_becomes_admin() {
 }
 
 #[tokio::test]
-async fn sessions_authenticate_and_logout_revokes_them() {
-    let (app, pool, _data) = test_app().await;
-    let user = auth::ensure_identity_user(
-        &pool,
-        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
-        &[],
-    )
-    .await
-    .unwrap();
-    let token = auth_session::create(&pool, user.id.as_str(), "tailscale", None, None, 3600)
-        .await
-        .unwrap();
-
-    let authed = with_session(request(Method::GET, "/api/auth/me", None), &token);
-    let response = app.clone().oneshot(authed).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = body_json(response).await;
-    assert_eq!(body["authMethod"], "tailscale");
-    assert_eq!(body["user"]["username"], "ada");
-
-    let logout = with_session(request(Method::POST, "/api/auth/logout", None), &token);
-    let response = app.clone().oneshot(logout).await.unwrap();
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    let cleared = response
-        .headers()
-        .get("set-cookie")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    assert!(cleared.contains("Max-Age=0"), "{cleared}");
-
-    let stale = with_session(request(Method::GET, "/api/auth/me", None), &token);
-    let response = app.oneshot(stale).await.unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
 async fn expired_session_cookie_is_rejected() {
     let (app, pool, _data) = test_app().await;
     let user = auth::ensure_identity_user(

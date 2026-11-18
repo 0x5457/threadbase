@@ -14,14 +14,12 @@ import {
   IconFolderPlus,
   IconInbox,
   IconLayoutList,
-  IconLogout,
   IconPlus,
   IconSettings,
 } from "@tabler/icons-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   getMe,
-  logout,
   listAllThreads,
   listInbox,
   listProjects,
@@ -325,17 +323,6 @@ export const Sidebar = memo(function Sidebar({
           }}
         >
           <IconSettings size={14} stroke={1.5} />
-        </ActionIcon>
-        <ActionIcon
-          aria-label="Sign out"
-          onClick={() => {
-            void logout().then(() => {
-              queryClient.clear();
-              window.location.href = "/";
-            });
-          }}
-        >
-          <IconLogout size={14} stroke={1.5} />
         </ActionIcon>
       </Group>
 

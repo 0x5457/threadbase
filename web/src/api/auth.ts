@@ -37,18 +37,3 @@ export function getAuthStatus() {
 export function signInWithTailscale() {
   return jsonRequest<Me>("/api/auth/tailscale", "POST", {});
 }
-
-/**
- * Revokes the server-side session. Uses a bare fetch because the endpoint
- * answers 204 with no body, which the JSON helper cannot parse.
- */
-export async function logout(): Promise<void> {
-  await fetch("/api/auth/logout", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "x-requested-with": "threadbase",
-      "content-type": "application/json",
-    },
-  });
-}

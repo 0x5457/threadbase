@@ -1,6 +1,5 @@
 import {
   Alert,
-  Box,
   Button,
   Center,
   Code,
@@ -14,7 +13,7 @@ import {
 import { IconLockAccess, IconShieldLock } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
-import { getAuthStatus, getMe, logout, signInWithTailscale } from "../api";
+import { getAuthStatus, getMe, signInWithTailscale } from "../api";
 
 /**
  * The server needs a session cookie, or a development identity on loopback, so
@@ -80,7 +79,7 @@ function AccessScreen({
         <Text size="sm" c="dimmed" ta="center">
           {pending
             ? "Your account is recognized, but an administrator has not approved it yet. You will get access as soon as they do."
-            : "An administrator removed your access to this workspace. Signing out clears the local session."}
+            : "An administrator removed your access to this workspace."}
         </Text>
         <Text size="sm">
           {user.displayName}{" "}
@@ -93,18 +92,6 @@ function AccessScreen({
             This page checks again automatically.
           </Text>
         ) : null}
-        <Box mt={4}>
-          <Button
-            variant="default"
-            onClick={() => {
-              void logout().then(() => {
-                window.location.href = "/";
-              });
-            }}
-          >
-            Sign out
-          </Button>
-        </Box>
       </Stack>
     </Center>
   );

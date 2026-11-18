@@ -219,11 +219,11 @@ fn matches_login(list: &[String], login: &str) -> bool {
 
 /// Endpoints a signed-in account can reach before it has been approved, and
 /// after its access has been revoked, so the shell can explain the state.
-const SELF_SERVICE_PATHS: [&str; 3] = ["/api/auth/me", "/api/auth/status", "/api/auth/logout"];
+const SELF_SERVICE_PATHS: [&str; 2] = ["/api/auth/me", "/api/auth/status"];
 
-/// Endpoints a read-only account may still write: personal preferences and
-/// signing out. Everything else that mutates state is refused.
-const READ_ONLY_WRITE_PATHS: [&str; 2] = ["/api/auth/logout", "/api/settings"];
+/// Endpoints a read-only account may still write: personal preferences. Every
+/// other mutating route is refused.
+const READ_ONLY_WRITE_PATHS: [&str; 1] = ["/api/settings"];
 
 /// Refuses requests that the account's access level does not permit.
 ///
