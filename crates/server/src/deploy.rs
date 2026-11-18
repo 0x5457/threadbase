@@ -174,21 +174,29 @@ pub fn install(staged: &Path, target: &Path, backups: &Path) -> Result<PathBuf, 
             source,
         })?;
     }
-    // Copy rather than rename: the staged path can be on another filesystem.
-    std::fs::copy(staged, target).map_err(|source| DeployError::Write {
-        path: target.to_path_buf(),
+    // Copy to a sibling file and rename it into place. Writing straight onto
+    // `target` fails with ETXTBSY while this very binary is running — the
+    // auto-deploy loop's whole situation on Linux — while a rename atomically
+    // swaps the name and leaves the running process on its own inode.
+    let temp = target.with_extension("incoming");
+    std::fs::copy(staged, &temp).map_err(|source| DeployError::Write {
+        path: temp.clone(),
         source,
     })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o755)).map_err(
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755)).map_err(
             |source| DeployError::Write {
-                path: target.to_path_buf(),
+                path: temp.clone(),
                 source,
             },
         )?;
     }
+    std::fs::rename(&temp, target).map_err(|source| DeployError::Write {
+        path: target.to_path_buf(),
+        source,
+    })?;
     // Rename the staged file so the same build cannot install twice.
     let consumed = staged.with_extension("installed");
     std::fs::rename(staged, &consumed).map_err(|source| DeployError::Write {
@@ -196,4 +204,24 @@ pub fn install(staged: &Path, target: &Path, backups: &Path) -> Result<PathBuf, 
         source,
     })?;
     Ok(backup)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_swaps_the_binary_and_consumes_the_staged_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let staged = dir.path().join("incoming");
+        let target = dir.path().join("threadbase");
+        std::fs::write(&staged, b"new").expect("write staged");
+        std::fs::write(&target, b"old").expect("write target");
+
+        let backup = install(&staged, &target, &dir.path().join("backups")).expect("install");
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"old");
+        assert!(!staged.exists(), "the staged file must not install twice");
+    }
 }
