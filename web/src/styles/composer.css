@@ -525,3 +525,8 @@
   color: var(--chrome);
 }
 
+
+.draft-sync-label {
+  flex: none;
+  white-space: nowrap;
+}

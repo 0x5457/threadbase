@@ -437,6 +437,13 @@ export function useLiveThread(
     [sendPresenceNow],
   );
 
+  const retry = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+    setError(null);
+    socket.reconnect(0, "manual retry");
+  }, []);
+
   const loadEarlier = useCallback(async () => {
     const before = oldestRef.current;
     if (!threadId || before <= 1 || loadingEarlier.current) return false;
@@ -471,6 +478,7 @@ export function useLiveThread(
     presence,
     hasEarlier,
     loadEarlier,
+    retry,
     sendPresence,
   };
 }

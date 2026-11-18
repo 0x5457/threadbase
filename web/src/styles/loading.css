@@ -1,0 +1,842 @@
+/* Loading, progress and failure surfaces. The shapes use the same raised tone
+   as the cards they replace, so content does not jump when it arrives. */
+
+:root {
+  --skeleton: #f0f0f2;
+  --skeleton-band: rgba(255, 255, 255, 0.78);
+}
+
+:root[data-mantine-color-scheme="dark"] {
+  --skeleton: rgba(255, 255, 255, 0.08);
+  --skeleton-band: rgba(255, 255, 255, 0.12);
+}
+
+.skeleton-bone {
+  display: block;
+  flex: none;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--skeleton);
+}
+
+.skeleton-bone.is-circle {
+  border-radius: 50%;
+}
+
+.skeleton-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.skeleton-region {
+  position: relative;
+  min-width: 0;
+}
+
+/* One band crosses the whole list, not each row independently. */
+.skeleton-band {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-band::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 320px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--skeleton-band),
+    transparent
+  );
+  content: "";
+  pointer-events: none;
+  transform: translateX(-320px);
+  animation: skeleton-band 1.2s linear infinite;
+}
+
+@keyframes skeleton-band {
+  to {
+    transform: translateX(100vw);
+  }
+}
+
+.skeleton-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 24px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.skeleton-row-avatar {
+  margin-top: 2px;
+}
+
+.skeleton-row-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 1px;
+}
+
+.skeleton-row > .skeleton-bone:last-child {
+  margin-top: 2px;
+}
+
+.sessions-scroll.skeleton-list {
+  flex: 1;
+  overflow: hidden;
+}
+
+.sessions-head .skeleton-bone {
+  margin-bottom: 8px;
+}
+
+.sessions-head .sessions-tools {
+  margin-top: 12px;
+}
+
+.changes-skeleton {
+  background: var(--paper);
+}
+
+.changes-skeleton-list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.skeleton-change-row {
+  min-height: 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+}
+
+.skeleton-change-row .skeleton-row-body {
+  gap: 0;
+}
+
+.skeleton-change-row .skeleton-row-body .skeleton-bone {
+  height: 11px;
+}
+
+/* The transcript skeleton uses the real block grid, so the first real row
+   starts at the same place the placeholder occupied. */
+.thread-skeleton {
+  min-height: 240px;
+}
+
+.thread-skeleton .block {
+  margin-bottom: 18px;
+}
+
+.thread-skeleton .block-body .skeleton-bone {
+  margin-bottom: 8px;
+}
+
+.shell-skeleton {
+  display: flex;
+  height: 100dvh;
+  flex-direction: column;
+  background: var(--chrome);
+}
+
+.shell-skeleton-head {
+  display: flex;
+  height: 38px;
+  flex: none;
+  align-items: center;
+  gap: 28px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome);
+}
+
+.shell-skeleton-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.shell-skeleton-nav {
+  display: flex;
+  width: 260px;
+  flex: none;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 16px;
+  border-right: 1px solid var(--line);
+  background: var(--chrome);
+}
+
+.shell-skeleton-main {
+  display: flex;
+  width: min(720px, 100%);
+  flex-direction: column;
+  gap: 22px;
+  margin: 0 auto;
+  padding: 34px 24px;
+  background: var(--paper);
+}
+
+.settings-view .settings-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.skeleton-card:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.skeleton-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.skeleton-card-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skeleton-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+}
+
+.skeleton-diff-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.skeleton-diff-add {
+  background: color-mix(in srgb, var(--add) 14%, var(--skeleton));
+}
+
+.skeleton-review-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.skeleton-review-section:last-child {
+  border-bottom: 0;
+}
+
+.skeleton-inbox-row {
+  min-height: 44px;
+  padding: 10px 24px;
+}
+
+.skeleton-file-row {
+  min-height: 29px;
+  align-items: center;
+  padding: 5px 10px;
+}
+
+.skeleton-file-row .skeleton-row-body {
+  gap: 0;
+}
+
+/* ── failures that stay in place ───────────────────────────── */
+
+.load-error {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--error) 22%, var(--line));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--error-bg) 42%, var(--paper));
+}
+
+.load-error.is-compact {
+  padding: 7px 9px;
+}
+
+.load-error-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--error);
+}
+
+.load-error-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.load-error-retry {
+  flex: none;
+}
+
+/* ── persistent progress ───────────────────────────────────── */
+
+.progress-stack {
+  position: fixed;
+  z-index: 600;
+  top: calc(48px + env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  display: flex;
+  width: min(344px, calc(100vw - 32px));
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.progress-stack > * {
+  pointer-events: auto;
+}
+
+.progress-card {
+  padding: 14px 16px 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--raised);
+  box-shadow:
+    0 10px 32px color-mix(in srgb, var(--ink) 12%, transparent),
+    0 2px 6px color-mix(in srgb, var(--ink) 6%, transparent);
+  cursor: default;
+  animation: progress-enter 420ms var(--ease-out) both;
+}
+
+.progress-card[tabindex="0"] {
+  cursor: pointer;
+}
+
+.progress-card[tabindex="0"]:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.progress-card-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.progress-card-tile {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  color: var(--brand);
+}
+
+.progress-card[data-status="done"] .progress-card-tile {
+  background: var(--add);
+  color: #fff;
+}
+
+.progress-card[data-status="failed"] .progress-card-tile {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+  color: var(--error);
+}
+
+.progress-card-pulse {
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--brand) 24%, transparent);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: icon-turn 0.9s linear infinite;
+}
+
+.progress-card-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 1px;
+}
+
+.progress-card-title,
+.progress-card-detail,
+.progress-card-stage {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.progress-card-title {
+  line-height: 1.25;
+}
+
+.progress-card-title-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.progress-card-title-button:hover .progress-card-title {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.progress-card-detail {
+  line-height: 1.35;
+}
+
+.progress-card-stage {
+  opacity: 0.8;
+}
+
+.progress-card-close {
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out;
+}
+
+.progress-card:hover .progress-card-close,
+.progress-card:focus-within .progress-card-close {
+  opacity: 1;
+}
+
+.progress-card-track {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
+.progress-card-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: inherit;
+  background: var(--brand);
+  transition: width 180ms ease-out;
+}
+
+.progress-card-track.is-indeterminate .progress-card-fill {
+  width: 34%;
+  animation: progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  from {
+    transform: translateX(-120%);
+  }
+
+  to {
+    transform: translateX(360%);
+  }
+}
+
+@keyframes progress-enter {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
+
+/* ── turn status, streaming text and action icons ─────────── */
+
+.turn-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0 10px;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.turn-status svg {
+  flex: none;
+  color: var(--ink-muted);
+}
+
+.stream-chunk {
+  animation: stream-in 200ms var(--ease-out) both;
+}
+
+@keyframes stream-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+
+  to {
+    opacity: 1;
+    filter: none;
+  }
+}
+
+.icon-turn {
+  animation: icon-turn 640ms linear infinite;
+  transform-origin: center;
+}
+
+@keyframes icon-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.status-stats {
+  min-width: 74px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+@media (max-width: 47.99em) {
+  .progress-stack {
+    top: calc(56px + env(safe-area-inset-top));
+    right: 12px;
+    left: 12px;
+    width: auto;
+    align-items: center;
+  }
+
+  .progress-card {
+    width: min(344px, 100%);
+  }
+
+  .progress-card-close {
+    opacity: 1;
+  }
+
+  .skeleton-row {
+    padding-right: max(14px, var(--safe-right));
+    padding-left: max(14px, var(--safe-left));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-band::after,
+  .progress-card-track.is-indeterminate .progress-card-fill {
+    display: none;
+  }
+
+  .stream-chunk {
+    animation: none;
+  }
+}
+
+/* ── surface-specific fit and finish ───────────────────────── */
+
+.thread-loading {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.thread-loading.is-quiet {
+  opacity: 0;
+}
+
+.thread-loading .thread-skeleton {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-error-state {
+  padding: 18px 24px;
+}
+
+.inbox-head-error {
+  padding: 8px 24px 0;
+}
+
+.sidebar-load-error {
+  margin: 4px 8px 8px;
+}
+
+.sidebar-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 10px 10px;
+}
+
+.sidebar-skeleton-project {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 2px 0 4px;
+}
+
+.sidebar-thread-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 7px 10px 7px 24px;
+}
+
+.picker-skeleton {
+  padding: 0;
+}
+
+.picker-skeleton .skeleton-row {
+  min-height: 34px;
+  padding: 8px 10px;
+}
+
+.skeleton-code-row {
+  min-height: 23px;
+  align-items: center;
+  padding: 4px 12px;
+}
+
+.skeleton-code-row .skeleton-row-body {
+  gap: 0;
+}
+
+.skeleton-code-row .skeleton-bone {
+  height: 10px;
+}
+
+.file-preview-skeleton {
+  padding: 8px 0;
+}
+
+.diff-loading-space {
+  min-height: 96px;
+}
+
+.history-skeleton {
+  padding: 0;
+}
+
+.skeleton-history-row {
+  min-height: 44px;
+  padding: 8px 10px;
+}
+
+.dialog-error {
+  margin-top: 10px;
+}
+
+.goal-bar-error {
+  padding: 2px 10px 4px;
+}
+
+.model-picker-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.model-picker-skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+@media (max-width: 47.99em) {
+  .msg-copy-btn {
+    top: 0;
+    right: auto;
+    left: -46px;
+    display: grid;
+    width: 36px;
+    height: 36px;
+  }
+
+  .msg-retry-btn {
+    top: 72px;
+    right: auto;
+    left: -46px;
+    display: grid;
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* Upload progress lives in the attachment tile, not in a page-wide overlay. */
+.composer-image-busy {
+  background: color-mix(in srgb, var(--paper) 72%, transparent);
+}
+
+.composer-upload-fill {
+  position: absolute;
+  right: auto;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 3px;
+  background: var(--brand);
+  transition: width 140ms linear;
+}
+
+.composer-image-busy .composer-upload-pct {
+  position: relative;
+  z-index: 1;
+  color: var(--ink);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-upload-inline {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+
+.composer-upload-track {
+  position: relative;
+  display: block;
+  width: 38px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+.composer-upload-track .composer-upload-fill {
+  top: 0;
+  height: 3px;
+}
+
+.composer-upload-pct {
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-image-retry,
+.composer-file-retry {
+  flex: none;
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.composer-image-retry {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+}
+
+.composer-file[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--error) 35%, var(--line));
+}
+
+.thread-connection-banner {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  left: 50%;
+  width: min(520px, calc(100% - 32px));
+  margin: 0;
+  transform: translateX(-50%);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.connection-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--line));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning-bg) 45%, var(--paper));
+}
+
+.status-files {
+  min-width: 52px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.status-error {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--error);
+}
+
+.settings-row-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.settings-row-skeleton-line {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.comment-saved {
+  animation: saved-fade 1.2s ease-out both;
+}
+
+.comment-error {
+  margin-top: 2px;
+}
+
+@keyframes saved-fade {
+  0% {
+    opacity: 0;
+  }
+
+  15%,
+  72% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}

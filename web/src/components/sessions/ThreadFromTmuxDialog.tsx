@@ -24,6 +24,7 @@ import {
   type TmuxSessionSummary,
 } from "../../api";
 import { readPick } from "../../lib/model-prefs";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 
 function defaultPrompt(session: TmuxSessionSummary) {
   return `Continue the work from the tmux session "${session.name}"${
@@ -55,6 +56,7 @@ export function ThreadFromTmuxDialog({
   const [prompt, setPrompt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const showSubmitting = useDelayedFlag(submitting, 300, 500);
   const stateQuery = useQuery({
     queryKey: ["state"],
     queryFn: getState,
@@ -123,6 +125,9 @@ export function ThreadFromTmuxDialog({
       size="md"
       centered
       fullScreen={phone}
+      closeOnClickOutside={!submitting}
+      closeOnEscape={!submitting}
+      withCloseButton={!submitting}
     >
       {session ? (
         <Stack gap="sm">
@@ -202,13 +207,19 @@ export function ThreadFromTmuxDialog({
               {error}
             </Alert>
           ) : null}
+          {showSubmitting ? (
+            <Text size="xs" c="dimmed" role="status">
+              Creating the branch and worktree…
+            </Text>
+          ) : null}
           <Group justify="flex-end" gap="xs" mt={4}>
-            <Button variant="default" onClick={onClose}>
+            <Button variant="default" onClick={onClose} disabled={submitting}>
               Cancel
             </Button>
             <Button
               color="dark"
-              loading={submitting}
+              loading={showSubmitting}
+              disabled={submitting}
               onClick={() => void create()}
             >
               Start thread

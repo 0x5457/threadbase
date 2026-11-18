@@ -11,6 +11,8 @@ import { useMediaQuery } from "@mantine/hooks";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import type { ViewItem } from "../../lib/thread-events";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
+import { LoadError } from "../loading/LoadError";
 
 /**
  * A prompt can be edited only by restarting from it: the adapter keeps its own
@@ -30,6 +32,8 @@ export function EditMessageDialog({
   const phone = useMediaQuery("(max-width: 47.99em)");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const showBusy = useDelayedFlag(busy, 300, 500);
 
   useEffect(() => {
     if (message) setText(message.text.replace(/^\n+|\n+$/g, ""));
@@ -43,11 +47,14 @@ export function EditMessageDialog({
   const save = async () => {
     if (!message || busy || trimmed.length === 0 || unchanged) return;
     setBusy(true);
+    setError(null);
     try {
       await onSave(trimmed);
-    } catch {
-      // The caller has already surfaced the server's message; keep the draft
-      // open so a transient failure does not throw the edit away.
+    } catch (cause) {
+      // Keep the draft open so a transient failure does not throw the edit away.
+      setError(
+        cause instanceof Error ? cause.message : "Could not edit the message",
+      );
     } finally {
       setBusy(false);
     }
@@ -88,13 +95,25 @@ export function EditMessageDialog({
             they are.
           </Text>
         </Alert>
+        {showBusy ? (
+          <Text size="xs" c="dimmed" role="status">
+            Rewinding the transcript and restarting the agent…
+          </Text>
+        ) : null}
+        {error ? (
+          <LoadError
+            title="Could not edit the message"
+            message={error}
+            compact
+          />
+        ) : null}
         <Group justify="flex-end" gap="xs">
           <Button variant="default" onClick={close} disabled={busy}>
             Cancel
           </Button>
           <Button
             onClick={() => void save()}
-            loading={busy}
+            loading={showBusy}
             disabled={busy || trimmed.length === 0 || unchanged}
           >
             Save &amp; restart

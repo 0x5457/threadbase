@@ -677,6 +677,11 @@
   color: var(--error);
 }
 
+.tool-done {
+  flex: none;
+  color: var(--add);
+}
+
 .tool-row.is-failed .tool-icon {
   color: var(--error);
 }
@@ -941,6 +946,11 @@
 .run-head-failed {
   flex: none;
   color: var(--error);
+}
+
+.run-head-done {
+  flex: none;
+  color: var(--add);
 }
 
 .run-head .tool-spinner {

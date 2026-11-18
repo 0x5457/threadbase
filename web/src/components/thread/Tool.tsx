@@ -213,7 +213,7 @@ function StatusMark({ status }: { status: ToolCallData["status"] }) {
   if (status === "failed") {
     return <span className="tool-failed">failed</span>;
   }
-  return null;
+  return <IconCheck size={12} stroke={2} className="tool-done" />;
 }
 
 function ToolCard({

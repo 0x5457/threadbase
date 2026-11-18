@@ -1,9 +1,7 @@
 import {
   AppShell,
   Button,
-  Center,
   Drawer,
-  Loader,
   useMantineColorScheme,
 } from "@mantine/core";
 import { useDebouncedValue, useDisclosure, useMediaQuery } from "@mantine/hooks";
@@ -76,8 +74,17 @@ import {
   RevertThreadDialog,
 } from "./components/ThreadDialogs";
 import { EmptyState } from "./components/EmptyState";
+import {
+  AsideSkeleton,
+  SessionsSkeleton,
+  SettingsSkeleton,
+  ThreadSkeleton,
+} from "./components/loading/Skeleton";
 import { WorkspaceEmpty } from "./components/WorkspaceEmpty";
 import { useOverlayBack } from "./lib/overlay-back";
+import { optimisticThreadPatch } from "./lib/thread-cache";
+import { useDelayedFlag } from "./lib/use-delayed-flag";
+import { useProgressJobs } from "./components/loading/Progress";
 import { whenIdle } from "./lib/idle";
 import { pathFor, useRoute } from "./lib/router";
 import { parseTmuxSession, withSessionParam } from "./lib/sessions";
@@ -122,15 +129,6 @@ const SessionSwitcher = lazy(() =>
 );
 
 type View = "inbox" | "sessions" | "thread" | "settings" | "project";
-
-/** Placeholder for a code-split surface that is still downloading. */
-function ChunkLoading() {
-  return (
-    <Center h="100%" py="xl">
-      <Loader size="sm" />
-    </Center>
-  );
-}
 
 function blurActiveInput() {
   const active = document.activeElement;
@@ -557,6 +555,7 @@ function Workspace() {
     enabled: paletteOpened && debouncedQuery.length >= 2,
     staleTime: 5_000,
   });
+  const showSearching = useDelayedFlag(search.isFetching, 300, 500);
 
   // Back closes the topmost overlay instead of leaving the screen behind it.
   useOverlayBack(navOpened, nav.close);
@@ -1020,6 +1019,11 @@ function Workspace() {
   );
 
   const place = useThreadPlacement();
+  const {
+    start: startJob,
+    finish: finishJob,
+    fail: failJob,
+  } = useProgressJobs();
 
   const refreshThreadLists = (thread?: ThreadSummary) => {
     void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
@@ -1028,16 +1032,6 @@ function Workspace() {
       void queryClient.invalidateQueries({ queryKey: ["thread", thread.id] });
       void queryClient.invalidateQueries({ queryKey: ["thread-events", thread.id] });
     }
-  };
-
-  const patchSelected = async (
-    patch: Parameters<typeof updateThread>[1],
-  ) => {
-    if (!selectedThread) return null;
-    const { thread } = await updateThread(selectedThread.id, patch);
-    setSelectedThread(thread);
-    refreshThreadLists(thread);
-    return thread;
   };
 
   const runAction = async (action: () => Promise<void>) => {
@@ -1190,51 +1184,134 @@ function Workspace() {
           }}
           onTogglePin={() => {
             if (!selectedThread) return;
-            void runAction(async () => {
-              await patchSelected({ pinned: !selectedThread.pinned });
-            });
+            const thread = selectedThread;
+            const pinned = !thread.pinned;
+            const rollback = optimisticThreadPatch(
+              queryClient,
+              thread.id,
+              { pinned },
+              thread,
+            );
+            void updateThread(thread.id, { pinned })
+              .then(({ thread: updated }) => {
+                setSelectedThread(updated);
+                refreshThreadLists(updated);
+              })
+              .catch((cause: unknown) => {
+                rollback();
+                notifications.show({
+                  message:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Could not update the thread",
+                  color: "red",
+                });
+              });
           }}
           onFork={() => {
             if (!selectedThread) return;
-            void runAction(async () => {
-              const { thread } = await forkThread(selectedThread.id);
-              openThread(thread);
-              refreshThreadLists(thread);
-              notifications.show({ message: "Thread forked", color: "teal" });
-            });
+            const source = selectedThread;
+            const run = () => {
+              const jobId = startJob({
+                key: `fork:${source.id}`,
+                title: `Forking ${source.title}`,
+                detail: "Creating a worktree and copying uncommitted changes",
+                stage: "This can take a few seconds.",
+                onRetry: () => run(),
+              });
+              void forkThread(source.id)
+                .then(({ thread }) => {
+                  finishJob(jobId, `Forked to ${thread.title}`, () =>
+                    openThread(thread),
+                  );
+                  openThread(thread);
+                  refreshThreadLists(thread);
+                })
+                .catch((cause: unknown) => {
+                  failJob(
+                    jobId,
+                    cause instanceof Error
+                      ? cause.message
+                      : "Could not fork the thread",
+                  );
+                });
+            };
+            run();
           }}
           onRevert={() => {
             if (selectedThread) revert.open();
           }}
           onArchive={(archived) => {
             if (!selectedThread) return;
-            void runAction(async () => {
-              await updateThread(selectedThread.id, { archived });
-              if (archived) openInbox();
-              refreshThreadLists(selectedThread);
-              notifications.show({
-                color: "teal",
-                message: (
-                  <span className="undo-toast">
-                    {archived ? "Thread archived" : "Thread unarchived"}
-                    <button
-                      type="button"
-                      className="undo-toast-action"
-                      onClick={() => {
-                        void runAction(async () => {
-                          await updateThread(selectedThread.id, {
+            const thread = selectedThread;
+            const rollback = optimisticThreadPatch(
+              queryClient,
+              thread.id,
+              archived
+                ? { archivedAt: Date.now(), status: "archived", pinned: false }
+                : { archivedAt: null, status: "idle" },
+              thread,
+            );
+            if (archived) openInbox();
+            void updateThread(thread.id, { archived })
+              .then(({ thread: updated }) => {
+                if (!archived) setSelectedThread(updated);
+                refreshThreadLists(updated);
+                notifications.show({
+                  color: "teal",
+                  message: (
+                    <span className="undo-toast">
+                      {archived ? "Thread archived" : "Thread unarchived"}
+                      <button
+                        type="button"
+                        className="undo-toast-action"
+                        onClick={() => {
+                          const undo = optimisticThreadPatch(
+                            queryClient,
+                            thread.id,
+                            archived
+                              ? { archivedAt: null, status: "idle" }
+                              : {
+                                  archivedAt: Date.now(),
+                                  status: "archived",
+                                  pinned: false,
+                                },
+                            thread,
+                          );
+                          void updateThread(thread.id, {
                             archived: !archived,
-                          });
-                          refreshThreadLists(selectedThread);
-                        });
-                      }}
-                    >
-                      Undo
-                    </button>
-                  </span>
-                ),
+                          })
+                            .then(({ thread: restored }) => {
+                              refreshThreadLists(restored);
+                            })
+                            .catch((cause: unknown) => {
+                              undo();
+                              notifications.show({
+                                message:
+                                  cause instanceof Error
+                                    ? cause.message
+                                    : "Could not undo the archive",
+                                color: "red",
+                              });
+                            });
+                        }}
+                      >
+                        Undo
+                      </button>
+                    </span>
+                  ),
+                });
+              })
+              .catch((cause: unknown) => {
+                rollback();
+                notifications.show({
+                  message:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Could not archive the thread",
+                  color: "red",
+                });
               });
-            });
           }}
           onPlacement={(action) => {
             if (!selectedThread) return;
@@ -1270,7 +1347,7 @@ function Workspace() {
         ) : null}
         <AppShell.Main className="main">
           {view === "sessions" ? (
-            <Suspense fallback={<ChunkLoading />}>
+            <Suspense fallback={<SessionsSkeleton />}>
               <SessionsView
                 hostEnabled={hostTmuxEnabled}
                 onOpenThread={(threadId) => void openThreadById(threadId)}
@@ -1283,11 +1360,11 @@ function Workspace() {
           ) : view === "inbox" ? (
             <InboxView onOpenThread={openInboxItem} />
           ) : view === "settings" ? (
-            <Suspense fallback={<ChunkLoading />}>
+            <Suspense fallback={<SettingsSkeleton />}>
               <SettingsView />
             </Suspense>
           ) : selectedThread && subagentRoute ? (
-            <Suspense fallback={<EmptyState loading title="Opening subagent" />}>
+            <Suspense fallback={<ThreadSkeleton />}>
               {selectedSubagent ? (
                 <SubagentThreadView
                   key={`${selectedThread.id}:${selectedSubagent.id}`}
@@ -1314,7 +1391,7 @@ function Workspace() {
               )}
             </Suspense>
           ) : selectedThread ? (
-            <Suspense fallback={<EmptyState loading title="Opening thread" />}>
+            <Suspense fallback={<ThreadSkeleton />}>
               <RealThreadView
                 key={selectedThread.id}
                 threadId={selectedThread.id}
@@ -1323,7 +1400,7 @@ function Workspace() {
               />
             </Suspense>
           ) : route.kind === "thread" ? (
-            <EmptyState loading title="Opening thread" />
+            <ThreadSkeleton />
           ) : (
             <WorkspaceEmpty />
           )}
@@ -1374,7 +1451,7 @@ function Workspace() {
                 invisible work that froze the tab outright when the file was
                 large. Mount the panels only while the aside is on screen. */}
             {selectedThread && hasWorktree && !asideCollapsed ? (
-              <Suspense fallback={<ChunkLoading />}>
+              <Suspense fallback={<AsideSkeleton />}>
                 <AsidePanels
                   key={selectedThread.id}
                   threadId={selectedThread.id}
@@ -1452,7 +1529,7 @@ function Workspace() {
           <div className="sheet-stack">
             {phone ? <SheetGrabber onClose={changes.close} /> : null}
             {selectedThread ? (
-              <Suspense fallback={<ChunkLoading />}>
+              <Suspense fallback={<AsideSkeleton />}>
                 <AsidePanels
                   key={selectedThread.id}
                   threadId={selectedThread.id}
@@ -1538,9 +1615,13 @@ function Workspace() {
         filter={(_query, actions) => actions}
         highlightQuery
         nothingFound={
-          paletteQuery.trim().length >= 2 && search.isFetching
-            ? "Searching…"
-            : "Nothing here."
+          search.isError
+            ? "Search is unavailable right now."
+            : paletteQuery.trim().length >= 2 &&
+                search.isFetching &&
+                showSearching
+              ? "Searching…"
+              : "Nothing here."
         }
         onSpotlightOpen={() => {
           setPaletteOpened(true);

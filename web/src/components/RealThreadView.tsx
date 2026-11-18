@@ -4,7 +4,6 @@ import {
   Group,
   Loader,
   Modal,
-  Skeleton,
   Stack,
   Text,
   UnstyledButton,
@@ -14,6 +13,7 @@ import {
   IconAlertCircle,
   IconArrowBackUp,
   IconArrowDown,
+  IconCheck,
   IconChevronDown,
   IconCopy,
   IconDots,
@@ -73,6 +73,15 @@ import { type ViewItem } from "../lib/thread-events";
 import { ActionSheet } from "./ActionSheet";
 import { AgentLog } from "./AgentLog";
 import { ComposerSkeleton } from "./composer/ComposerSkeleton";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { useElapsed } from "../lib/use-elapsed";
+import {
+  insertOptimisticComment,
+  removeOptimisticComment,
+  replaceOptimisticComment,
+} from "../lib/comment-cache";
+import { ThreadSkeleton } from "./loading/Skeleton";
+import { LoadError } from "./loading/LoadError";
 import { ApprovalCard } from "./thread/ApprovalCard";
 import { CommentCard, CommentDraft } from "./thread/CommentCard";
 import { CommentThread } from "./thread/CommentThread";
@@ -95,6 +104,92 @@ type ToolItem = Extract<ViewItem, { kind: "tool" }>;
 /** Tool rows rendered before a long run folds its tail away. Ten commands
  *  say what the agent did without turning a fifty-command turn into a wall. */
 const PREVIEW_TOOLS = 10;
+
+/** The turn has started but no tool or token has arrived yet. */
+function TurnStatus({
+  agent,
+  preparing,
+}: {
+  agent: string;
+  preparing: boolean;
+}) {
+  return (
+    <div className="block turn-status-block">
+      <div className="block-gutter" />
+      <div className="block-body">
+        <div className="turn-status" role="status" aria-live="polite">
+          <IconLoader2 size={13} className="tool-spinner" />
+          <span>
+            {preparing
+              ? `Starting ${agent}…`
+              : `Working with ${agent}…`}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Worktree setup outlives the request that started it; say how long it has
+ *  been running instead of leaving an anonymous spinner above the transcript. */
+function SetupBanner({
+  active,
+  error,
+  onRetry,
+}: {
+  active: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  const startedAt = useRef(active ? Date.now() : 0);
+  const [mounted] = useState(() => Date.now());
+  useEffect(() => {
+    if (active && startedAt.current === 0) startedAt.current = Date.now();
+    if (!active) startedAt.current = 0;
+  }, [active]);
+  const elapsed = useElapsed(startedAt.current || mounted, active);
+  const showStage = useDelayedFlag(active, 300, 500);
+
+  if (!active) {
+    return (
+      <Alert
+        className="setup-banner setup-banner-failed"
+        icon={<IconAlertCircle size={14} />}
+        color="red"
+        title="Worktree setup failed"
+      >
+        <Group justify="space-between" gap="sm" wrap="nowrap">
+          <Text size="xs" className="setup-error">
+            {error || "The setup command did not finish successfully."}
+          </Text>
+          <Button
+            size="compact-xs"
+            variant="default"
+            leftSection={<IconRefresh size={12} />}
+            onClick={onRetry}
+          >
+            Retry setup
+          </Button>
+        </Group>
+      </Alert>
+    );
+  }
+
+  return (
+    <div className="setup-banner" role="status" aria-live="polite">
+      {showStage ? (
+        <>
+          <Loader size={12} />
+          <Text size="xs" c="dimmed">
+            Setting up the worktree
+            {elapsed > 0 ? ` · ${formatDuration(elapsed * 1000)}` : ""}
+            {elapsed >= 10 ? " · taking longer than usual" : ""}
+          </Text>
+        </>
+      ) : null}
+    </div>
+  );
+}
 
 /** Stable empty list: a fresh `[]` per row would break memoized rows. */
 const NO_COMMENTS: Comment[] = [];
@@ -127,12 +222,17 @@ function TimelineRowImpl({
   onEditMessage,
   onRewindMessage,
   onMessageLongPress,
+  onRetryNotice,
+  onRetryMessage,
   continued = false,
+  tail = false,
 }: {
   item: TimelineRowItem;
   active: boolean;
   /** Same author as the row above; the avatar gutter collapses. */
   continued?: boolean;
+  /** The last visible row; only its live state turns into a spinner. */
+  tail?: boolean;
   /** Group/row keys whose collapsible body is open; survives virtualization. */
   expanded: Set<string>;
   onToggleExpanded: (key: string) => void;
@@ -148,6 +248,8 @@ function TimelineRowImpl({
   onEditMessage?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onRewindMessage?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onMessageLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
+  onRetryNotice?: () => void;
+  onRetryMessage?: () => void;
 }) {
   const toolRow = (tool: ToolItem, nested = false) => (
     <Fragment key={tool.call.id}>
@@ -272,6 +374,8 @@ function TimelineRowImpl({
           ) : null}
           {failed ? (
             <IconAlertCircle size={12} stroke={1.5} className="run-head-failed" />
+          ) : !busy ? (
+            <IconCheck size={12} stroke={2} className="run-head-done" />
           ) : null}
           <IconChevronDown
             size={12}
@@ -335,6 +439,7 @@ function TimelineRowImpl({
           onComment={onComment}
           onEdit={onEditMessage}
           onRewind={onRewindMessage}
+          onRetry={onRetryMessage}
           onLongPress={onMessageLongPress}
         />
         {thread}
@@ -343,7 +448,14 @@ function TimelineRowImpl({
   }
   switch (item.kind) {
     case "thinking":
-      return <Thinking count={item.count} tools={item.tools} text={item.text} />;
+      return (
+        <Thinking
+          count={item.count}
+          tools={item.tools}
+          text={item.text}
+          active={active && tail}
+        />
+      );
     case "tools":
       return (
         <>
@@ -358,7 +470,7 @@ function TimelineRowImpl({
         </>
       );
     case "notice":
-      return <Notice item={item} />;
+      return <Notice item={item} onRetry={onRetryNotice} />;
     case "turn":
       return <div className="turn-gap">{item.label}</div>;
     default:
@@ -409,7 +521,10 @@ const TimelineRow = memo(
       prev.onComment === next.onComment &&
       prev.onEditMessage === next.onEditMessage &&
       prev.onRewindMessage === next.onRewindMessage &&
-      prev.onMessageLongPress === next.onMessageLongPress
+      prev.onMessageLongPress === next.onMessageLongPress &&
+      prev.onRetryNotice === next.onRetryNotice &&
+      prev.onRetryMessage === next.onRetryMessage &&
+      prev.tail === next.tail
     );
   },
 );
@@ -447,9 +562,35 @@ export const RealThreadView = memo(function RealThreadView({
 }) {
   const queryClient = useQueryClient();
   const [deciding, setDeciding] = useState<string | null>(null);
+  const [decidingOption, setDecidingOption] = useState<string | null>(null);
   const [responding, setResponding] = useState<string | null>(null);
+  const [respondingAction, setRespondingAction] = useState<
+    "accept" | "decline" | null
+  >(null);
+  const [actionError, setActionError] = useState<{
+    kind: "approval" | "elicitation";
+    id: string;
+    message: string;
+  } | null>(null);
   const [queueBusy, setQueueBusy] = useState<string | null>(null);
+  const [droppedQueueIds, setDroppedQueueIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [queueError, setQueueError] = useState<{
+    message: string;
+    onRetry: () => void;
+  } | null>(null);
   const [commentBusy, setCommentBusy] = useState<string | null>(null);
+  const [commentActionError, setCommentActionError] = useState<{
+    id: string;
+    message: string;
+  } | null>(null);
+  const [optimisticComments, setOptimisticComments] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [savedComments, setSavedComments] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [commentFor, setCommentFor] = useState<string | null>(null);
   const [messageSheet, setMessageSheet] = useState<Extract<
     ViewItem,
@@ -463,7 +604,14 @@ export const RealThreadView = memo(function RealThreadView({
     ViewItem,
     { kind: "message" }
   > | null>(null);
+  const [retryTarget, setRetryTarget] = useState<Extract<
+    ViewItem,
+    { kind: "message" }
+  > | null>(null);
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const [rewindBusy, setRewindBusy] = useState(false);
+  const [rewindError, setRewindError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   // A long session can hold thousands of blocks; Virtuoso mounts only what is
   // visible, so a 10k-event transcript costs the same as a short one.
@@ -478,6 +626,7 @@ export const RealThreadView = memo(function RealThreadView({
   // prepended; the absolute indices only ever grow downwards.
   const [firstItemIndex, setFirstItemIndex] = useState(1_000_000);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const showLoadingEarlier = useDelayedFlag(loadingEarlier, 300, 500);
   const pendingEarlier = useRef<{ before: number } | null>(null);
   // Expansion lives in React state: Virtuoso unmounts off-screen rows, and DOM
   // `<details>` state would collapse with them, shifting the scroll height.
@@ -580,7 +729,25 @@ export const RealThreadView = memo(function RealThreadView({
   // (or while the socket is down).
   const queue =
     (live.phase === "live" ? live.view.queue : null) ?? bundle?.queue ?? [];
+  const visibleQueue = useMemo(
+    () => queue.filter((item) => !droppedQueueIds.has(item.id)),
+    [droppedQueueIds, queue],
+  );
   const canWrite = bundle?.role === "owner" || bundle?.role === "editor";
+  const currentAuthor = useMemo(() => {
+    const user = me.data?.user;
+    if (!user) return null;
+    const participant = bundle?.thread.participants.find(
+      (entry) => entry.user.id === user.id,
+    )?.user;
+    return {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      color: participant?.color ?? "#878a98",
+    };
+  }, [bundle?.thread.participants, me.data?.user]);
 
   // The bundle refetches every 4 s. A fresh JSON object must not hand every
   // visible row a new comment lookup: that invalidates TimelineRow's memo and
@@ -895,9 +1062,36 @@ export const RealThreadView = memo(function RealThreadView({
   });
   const goal = goalQuery.data?.goal ?? null;
   const [goalBusy, setGoalBusy] = useState(false);
+  const [goalCommand, setGoalCommand] = useState<string | null>(null);
+  const [goalError, setGoalError] = useState<string | null>(null);
   // The event stream carries the status change before the 4s bundle poll does;
   // the poll stays as the cold-start fallback.
   const threadStatus = live.threadState?.status ?? bundle?.thread.status;
+  const setupStatus = bundle?.thread.setupStatus ?? "none";
+  const setupActive = setupStatus === "pending" || setupStatus === "running";
+  const lastUserPrompt = useMemo(() => {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item.kind === "message" && item.role === "user") return item;
+    }
+    return null;
+  }, [items]);
+  const hasActiveStep = items.some(
+    (item) =>
+      (item.kind === "tool" &&
+        (item.call.status === "pending" ||
+          item.call.status === "in_progress")) ||
+      (item.kind === "message" && item.streaming && item.text.trim() !== ""),
+  );
+  const lastItem = items[items.length - 1];
+  const showTurnStatus = useDelayedFlag(
+    (threadStatus === "running" || threadStatus === "preparing") &&
+      !setupActive &&
+      !hasActiveStep &&
+      lastItem?.kind !== "thinking",
+    300,
+    500,
+  );
 
   useEffect(() => {
     // A turn can create, complete or block a goal; re-read once it settles.
@@ -911,6 +1105,62 @@ export const RealThreadView = memo(function RealThreadView({
       color: "red",
     });
   }, []);
+
+  const retryOutput = useMemo(() => {
+    let agent: Extract<ViewItem, { kind: "message" }> | null = null;
+    let user: Extract<ViewItem, { kind: "message" }> | null = null;
+    let agentIndex = -1;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item.kind !== "message") continue;
+      if (item.role === "agent" && agent === null) {
+        agent = item;
+        agentIndex = index;
+        continue;
+      }
+      if (item.role === "user") {
+        user = item;
+        break;
+      }
+    }
+    if (!agent || !user || agentIndex < 0) return null;
+    for (let index = agentIndex + 1; index < items.length; index += 1) {
+      const item = items[index];
+      if (item.kind === "message" && item.role === "user") return null;
+    }
+    return { agent, user };
+  }, [items]);
+  const retryAnswer = useCallback(async () => {
+    if (!retryTarget) return;
+    setRetryBusy(true);
+    setRetryError(null);
+    try {
+      await editThreadMessage(threadId, retryTarget.id, retryTarget.text);
+      setRetryTarget(null);
+      refresh();
+    } catch (cause) {
+      setRetryError(
+        cause instanceof Error ? cause.message : "Could not retry the answer",
+      );
+    } finally {
+      setRetryBusy(false);
+    }
+  }, [refresh, retryTarget, threadId]);
+  const showRetryBusy = useDelayedFlag(retryBusy, 300, 500);
+
+  const retryPrompt = useCallback(() => {
+    if (!lastUserPrompt) return;
+    void sendMessage(
+      threadId,
+      lastUserPrompt.text,
+      undefined,
+      lastUserPrompt.attachments.map((attachment) => attachment.id),
+    )
+      .then(() => refresh())
+      .catch((cause: unknown) =>
+        reportFailure(cause, "Could not retry the prompt"),
+      );
+  }, [lastUserPrompt, refresh, reportFailure, threadId]);
 
   const openMessageEdit = useCallback(
     (item: Extract<ViewItem, { kind: "message" }>) => {
@@ -931,16 +1181,20 @@ export const RealThreadView = memo(function RealThreadView({
   const confirmRewind = useCallback(async () => {
     if (!rewinding) return;
     setRewindBusy(true);
+    setRewindError(null);
     try {
       await rewindThread(threadId, rewinding.id);
       setRewinding(null);
       refresh();
     } catch (cause) {
-      reportFailure(cause, "Could not rewind the thread");
+      setRewindError(
+        cause instanceof Error ? cause.message : "Could not rewind the thread",
+      );
     } finally {
       setRewindBusy(false);
     }
-  }, [refresh, reportFailure, rewinding, threadId]);
+  }, [refresh, rewinding, threadId]);
+  const showRewindBusy = useDelayedFlag(rewindBusy, 300, 500);
 
   const saveMessageEdit = useCallback(
     async (text: string) => {
@@ -950,11 +1204,10 @@ export const RealThreadView = memo(function RealThreadView({
         setEditingMessage(null);
         refresh();
       } catch (cause) {
-        reportFailure(cause, "Could not edit the message");
         throw cause;
       }
     },
-    [editingMessage, refresh, reportFailure, threadId],
+    [editingMessage, refresh, threadId],
   );
 
   const stopTurn = useCallback(async () => {
@@ -985,6 +1238,8 @@ export const RealThreadView = memo(function RealThreadView({
   const runGoalCommand = useCallback(
     async (command: string, interrupt = false) => {
       setGoalBusy(true);
+      setGoalCommand(command);
+      setGoalError(null);
       try {
         // A busy adapter would queue the command behind the running turn, so
         // pausing stops the turn first: "pause" has to mean "stop now".
@@ -1004,16 +1259,19 @@ export const RealThreadView = memo(function RealThreadView({
         }
         refresh();
       } catch (cause) {
-        reportFailure(cause, "Could not run the goal command");
+        setGoalError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not run the goal command",
+        );
       } finally {
         setGoalBusy(false);
+        setGoalCommand(null);
       }
     },
-    [refresh, reportFailure, settleGoal, threadId, threadStatus],
+    [refresh, settleGoal, threadId, threadStatus],
   );
 
-  const setupStatus = bundle?.thread.setupStatus ?? "none";
-  const setupActive = setupStatus === "pending" || setupStatus === "running";
   // `unarchive` is legal only while the thread is archived, so it doubles as
   // the machine's answer to "is input frozen here?". Prompting itself may
   // degrade to queueing (a busy adapter), so it is not the right gate.
@@ -1027,36 +1285,14 @@ export const RealThreadView = memo(function RealThreadView({
       .then(() => refresh())
       .catch((cause: unknown) => reportFailure(cause, "Could not start setup"));
   }, [refresh, reportFailure, threadId]);
-  const setupBanner = setupActive ? (
-    <div className="setup-banner" role="status">
-      <Loader size={12} />
-      <Text size="xs" c="dimmed">
-        Setting up the worktree — the agent starts after it finishes.
-      </Text>
-    </div>
-  ) : setupStatus === "failed" ? (
-    <Alert
-      className="setup-banner setup-banner-failed"
-      icon={<IconAlertCircle size={14} />}
-      color="red"
-      title="Worktree setup failed"
-    >
-      <Group justify="space-between" gap="sm" wrap="nowrap">
-        <Text size="xs" className="setup-error">
-          {bundle?.thread.setupError ||
-            "The setup command did not finish successfully."}
-        </Text>
-        <Button
-          size="compact-xs"
-          variant="default"
-          leftSection={<IconRefresh size={12} />}
-          onClick={retrySetup}
-        >
-          Retry setup
-        </Button>
-      </Group>
-    </Alert>
-  ) : null;
+  const setupBanner =
+    setupActive || setupStatus === "failed" ? (
+      <SetupBanner
+        active={setupActive}
+        error={bundle?.thread.setupError ?? null}
+        onRetry={retrySetup}
+      />
+    ) : null;
 
   const applyConfig = useCallback(
     (patch: { model?: string; effort?: string }, failure: string) => {
@@ -1104,14 +1340,22 @@ export const RealThreadView = memo(function RealThreadView({
     option: Approval["options"][number],
   ) => {
     if (readOnlyAccount) return;
+    setActionError(null);
     setDeciding(approval.id);
+    setDecidingOption(option.id);
     try {
       await decideApproval(approval.id, option.kind, undefined, option.id);
       refresh();
     } catch (cause) {
-      reportFailure(cause, "Could not record decision");
+      setActionError({
+        kind: "approval",
+        id: approval.id,
+        message:
+          cause instanceof Error ? cause.message : "Could not record decision",
+      });
     } finally {
       setDeciding(null);
+      setDecidingOption(null);
     }
   };
 
@@ -1121,7 +1365,9 @@ export const RealThreadView = memo(function RealThreadView({
     values: Record<string, string>,
   ) => {
     if (readOnlyAccount) return;
+    setActionError(null);
     setResponding(elicitation.id);
+    setRespondingAction(action);
     try {
       await respondElicitation(
         elicitation.id,
@@ -1130,14 +1376,24 @@ export const RealThreadView = memo(function RealThreadView({
       );
       refresh();
     } catch (cause) {
-      reportFailure(cause, "Could not respond");
+      setActionError({
+        kind: "elicitation",
+        id: elicitation.id,
+        message: cause instanceof Error ? cause.message : "Could not respond",
+      });
     } finally {
       setResponding(null);
+      setRespondingAction(null);
     }
   };
 
   const restore = useCallback(
     async (itemId: string) => {
+      setDroppedQueueIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
       try {
         await restoreQueueItem(threadId, itemId);
         refresh();
@@ -1151,38 +1407,52 @@ export const RealThreadView = memo(function RealThreadView({
   const steer = useCallback(
     async (itemId: string) => {
       setQueueBusy(`steer:${itemId}`);
+      setQueueError(null);
       try {
         await steerQueueItem(threadId, itemId);
       } catch (cause) {
-        reportFailure(cause, "Could not send the message now");
+        setQueueError({
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "Could not send the message now",
+          onRetry: () => void steer(itemId),
+        });
       } finally {
         setQueueBusy(null);
         refresh();
       }
     },
-    [refresh, reportFailure, threadId],
+    [refresh, threadId],
   );
 
   const edit = useCallback(
     async (itemId: string, text: string) => {
       setQueueBusy(`edit:${itemId}`);
+      setQueueError(null);
       try {
         await updateQueueItem(threadId, itemId, text);
         refresh();
         return true;
       } catch (cause) {
-        reportFailure(cause, "Could not edit the message");
+        setQueueError({
+          message:
+            cause instanceof Error ? cause.message : "Could not edit the message",
+          onRetry: () => void edit(itemId, text),
+        });
         return false;
       } finally {
         setQueueBusy(null);
       }
     },
-    [refresh, reportFailure, threadId],
+    [refresh, threadId],
   );
 
   const drop = useCallback(
     async (itemId: string) => {
     setQueueBusy(`drop:${itemId}`);
+    setQueueError(null);
+    setDroppedQueueIds((current) => new Set(current).add(itemId));
     try {
       await dropQueueItem(threadId, itemId);
       refresh();
@@ -1208,48 +1478,101 @@ export const RealThreadView = memo(function RealThreadView({
         ),
       });
     } catch (cause) {
-      reportFailure(cause, "Could not drop message");
+      setDroppedQueueIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+      setQueueError({
+        message:
+          cause instanceof Error ? cause.message : "Could not drop message",
+        onRetry: () => void drop(itemId),
+      });
     } finally {
       setQueueBusy(null);
     }
-  }, [refresh, reportFailure, restore, threadId]);
+  }, [refresh, restore, threadId]);
 
   const reorder = useCallback(
     async (ids: string[]) => {
+      setQueueError(null);
       try {
         await reorderQueue(threadId, ids);
         refresh();
       } catch (cause) {
-        reportFailure(cause, "Could not reorder queue");
+        setQueueError({
+          message:
+            cause instanceof Error ? cause.message : "Could not reorder queue",
+          onRetry: () => void reorder(ids),
+        });
         refresh();
       }
     },
-    [refresh, reportFailure, threadId],
+    [refresh, threadId],
   );
 
   const saveComment = useCallback(
     async (anchor: CommentAnchor, body: string): Promise<boolean> => {
-      if (!body.trim()) return false;
+      const text = body.trim();
+      if (!text) return false;
+      if (!currentAuthor) {
+        reportFailure(new Error("Your account is still loading"), "Could not save comment");
+        return false;
+      }
+      const tempId = `pending-${crypto.randomUUID()}`;
+      const now = Date.now();
+      const optimistic: Comment = {
+        id: tempId,
+        threadId,
+        parentId: null,
+        author: currentAuthor,
+        body: text,
+        anchor,
+        anchorChanged: false,
+        status: "pending",
+        createdAt: now,
+        updatedAt: now,
+        deliveredSeq: null,
+      };
+      insertOptimisticComment(queryClient, threadId, optimistic);
+      setOptimisticComments((current) => new Set(current).add(tempId));
       try {
-        await createComment(threadId, body.trim(), anchor, false);
-        notifications.show({
-          message: "Comment saved for the next turn",
-          color: "teal",
+        const { comment } = await createComment(threadId, text, anchor, false);
+        replaceOptimisticComment(queryClient, threadId, tempId, comment);
+        setOptimisticComments((current) => {
+          const next = new Set(current);
+          next.delete(tempId);
+          return next;
         });
+        setSavedComments((current) => new Set(current).add(comment.id));
+        window.setTimeout(() => {
+          setSavedComments((current) => {
+            const next = new Set(current);
+            next.delete(comment.id);
+            return next;
+          });
+        }, 1200);
         setCommentFor(null);
         refresh();
         return true;
       } catch (cause) {
+        removeOptimisticComment(queryClient, threadId, tempId);
+        setOptimisticComments((current) => {
+          const next = new Set(current);
+          next.delete(tempId);
+          return next;
+        });
         reportFailure(cause, "Could not save comment");
         return false;
       }
     },
-    [refresh, reportFailure, threadId],
+    [currentAuthor, queryClient, refresh, reportFailure, threadId],
   );
 
   const actOnComment = useCallback(
     async (comment: Comment, action: "resolve" | "send" | "delete") => {
       setCommentBusy(comment.id);
+      setCommentActionError(null);
       try {
         if (action === "resolve") {
           await updateComment(comment.id, { status: "resolved" });
@@ -1260,12 +1583,16 @@ export const RealThreadView = memo(function RealThreadView({
         }
         refresh();
       } catch (cause) {
-        reportFailure(cause, "Could not update comment");
+        setCommentActionError({
+          id: comment.id,
+          message:
+            cause instanceof Error ? cause.message : "Could not update comment",
+        });
       } finally {
         setCommentBusy(null);
       }
     },
-    [refresh, reportFailure],
+    [refresh],
   );
 
   const commentCard = useCallback(
@@ -1274,6 +1601,13 @@ export const RealThreadView = memo(function RealThreadView({
         key={comment.id}
         comment={comment}
         busy={commentBusy === comment.id}
+        pending={optimisticComments.has(comment.id)}
+        saved={savedComments.has(comment.id)}
+        error={
+          commentActionError?.id === comment.id
+            ? commentActionError.message
+            : null
+        }
         onResolve={() => void actOnComment(comment, "resolve")}
         onSend={() => void actOnComment(comment, "send")}
         onDelete={() => void actOnComment(comment, "delete")}
@@ -1330,6 +1664,13 @@ export const RealThreadView = memo(function RealThreadView({
 
   const footerContent = (
     <>
+      {showTurnStatus &&
+      (threadStatus === "running" || threadStatus === "preparing") ? (
+        <TurnStatus
+          agent={bundle?.thread.agent ?? "the agent"}
+          preparing={threadStatus === "preparing"}
+        />
+      ) : null}
       {comments
         .filter((comment) => comment.anchor.kind === "thread")
         .map(commentCard)}
@@ -1346,6 +1687,14 @@ export const RealThreadView = memo(function RealThreadView({
           key={approval.id}
           approval={approval}
           busy={deciding === approval.id}
+          pendingOptionId={
+            deciding === approval.id ? decidingOption : null
+          }
+          error={
+            actionError?.kind === "approval" && actionError.id === approval.id
+              ? actionError.message
+              : null
+          }
           readOnly={readOnlyAccount}
           onDecide={(option) => void decide(approval, option)}
         />
@@ -1356,6 +1705,15 @@ export const RealThreadView = memo(function RealThreadView({
           key={elicitation.id}
           elicitation={elicitation}
           busy={responding === elicitation.id}
+          pendingAction={
+            responding === elicitation.id ? respondingAction : null
+          }
+          error={
+            actionError?.kind === "elicitation" &&
+            actionError.id === elicitation.id
+              ? actionError.message
+              : null
+          }
           readOnly={readOnlyAccount}
           onRespond={(action, values) =>
             void respond(elicitation, action, values)
@@ -1365,34 +1723,23 @@ export const RealThreadView = memo(function RealThreadView({
     </>
   );
 
-  if (
+  const loadingThread =
     !live.error &&
     !live.hasEvents &&
-    (bundleQuery.isPending || live.phase === "loading")
-  ) {
-    // Slow links should see the shape of a transcript instead of a bare spinner.
+    (bundleQuery.isPending || live.phase === "loading");
+  const showThreadSkeleton = useDelayedFlag(loadingThread, 300, 500);
+
+  if (loadingThread) {
     return (
       <div
-        className="doc timeline-doc thread-skeleton"
+        className={`thread-loading${showThreadSkeleton ? "" : " is-quiet"}`}
         aria-busy="true"
-        aria-label="Loading thread"
+        aria-hidden={!showThreadSkeleton}
       >
-        {[0, 1, 2, 3].map((row) => (
-          <div key={row} className="block">
-            <div className="block-gutter">
-              <Skeleton height={32} width={32} circle />
-            </div>
-            <div className="block-body">
-              <Skeleton height={10} width={`${28 + row * 6}%`} mb={8} />
-              <Skeleton height={12} width={`${94 - row * 5}%`} mb={6} />
-              <Skeleton
-                height={12}
-                width={`${72 + (row % 2) * 12}%`}
-                mb={row === 3 ? 0 : 14}
-              />
-            </div>
-          </div>
-        ))}
+        <ThreadSkeleton />
+        <div className="composer-stack">
+          <ComposerSkeleton agent={bundle?.thread.agent} />
+        </div>
       </div>
     );
   }
@@ -1404,6 +1751,23 @@ export const RealThreadView = memo(function RealThreadView({
           stateQuery.data?.settings.textWidth === "full" ? " wide" : ""
         }`}
       >
+        {live.error && live.hasEvents ? (
+          <div
+            className="connection-banner thread-connection-banner"
+            role="status"
+          >
+            <Text size="xs" c="dimmed">
+              {live.error}
+            </Text>
+            <Button
+              variant="default"
+              size="compact-xs"
+              onClick={live.retry}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : null}
         <Virtuoso
           ref={virtuosoRef}
           scrollerRef={bindScroller}
@@ -1434,20 +1798,31 @@ export const RealThreadView = memo(function RealThreadView({
                     <Button
                       variant="default"
                       size="compact-xs"
-                      loading={loadingEarlier}
+                      loading={showLoadingEarlier}
+                      disabled={loadingEarlier}
                       onClick={() => void loadEarlier()}
                     >
                       Load earlier messages
                     </Button>
                   </div>
                 ) : null}
-                {setupBanner}
+                {bundleQuery.isError ? (
+                  <LoadError
+                    title="Could not refresh this thread"
+                    message={
+                      bundleQuery.error instanceof Error
+                        ? bundleQuery.error.message
+                        : undefined
+                    }
+                    onRetry={() => void bundleQuery.refetch()}
+                    compact
+                  />
+                ) : null}
               </div>
             ),
             Footer: () => <div className="timeline-footer">{footerContent}</div>,
             EmptyPlaceholder: () => (
               <>
-                {setupBanner}
                 {live.error ? (
                   <Alert
                     icon={<IconAlertCircle size={14} />}
@@ -1456,6 +1831,13 @@ export const RealThreadView = memo(function RealThreadView({
                   >
                     {live.error}
                   </Alert>
+                ) : showTurnStatus &&
+                  (threadStatus === "running" ||
+                    threadStatus === "preparing") ? (
+                  <TurnStatus
+                    agent={bundle?.thread.agent ?? "the agent"}
+                    preparing={threadStatus === "preparing"}
+                  />
                 ) : (
                   <EmptyThread agent={bundle?.thread.agent ?? "the agent"} />
                 )}
@@ -1476,6 +1858,7 @@ export const RealThreadView = memo(function RealThreadView({
                 item={item}
                 continued={continued}
                 active={threadStatus === "running"}
+                tail={index === firstItemIndex + rows.length - 1}
                 commentsForTool={commentsForTool}
                 comments={commentsFor(
                   item.kind === "message" ? "message" : "tool_call",
@@ -1503,6 +1886,26 @@ export const RealThreadView = memo(function RealThreadView({
                 onEditMessage={writable ? openMessageEdit : undefined}
                 onRewindMessage={writable ? openMessageRewind : undefined}
                 onMessageLongPress={openMessageSheet}
+                onRetryMessage={
+                  item.kind === "message" &&
+                  item.role === "agent" &&
+                  retryOutput?.agent.id === item.id &&
+                  threadStatus !== "running" &&
+                  threadStatus !== "preparing" &&
+                  !setupActive
+                    ? () => setRetryTarget(retryOutput.user)
+                    : undefined
+                }
+                onRetryNotice={
+                  item.kind === "notice" &&
+                  item.level === "error" &&
+                  index === firstItemIndex + rows.length - 1 &&
+                  threadStatus !== "running" &&
+                  threadStatus !== "preparing" &&
+                  lastUserPrompt
+                    ? retryPrompt
+                    : undefined
+                }
             />
             );
           }}
@@ -1587,11 +1990,61 @@ export const RealThreadView = memo(function RealThreadView({
         onSave={saveMessageEdit}
       />
       <Modal
+        opened={retryTarget !== null}
+        onClose={() => setRetryTarget(null)}
+        title="Retry this answer?"
+        size="md"
+        centered
+        closeOnClickOutside={!retryBusy}
+        closeOnEscape={!retryBusy}
+        withCloseButton={!retryBusy}
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            This discards the answer and every later turn, then runs your
+            prompt again in a fresh agent session. Files in the worktree are
+            left as they are, so review any changes the first attempt made.
+          </Text>
+          {showRetryBusy ? (
+            <Text size="xs" c="dimmed" role="status">
+              Rewinding the transcript and retrying the prompt…
+            </Text>
+          ) : null}
+          {retryError ? (
+            <LoadError
+              title="Could not retry the answer"
+              message={retryError}
+              compact
+            />
+          ) : null}
+          <Group justify="flex-end" gap="xs" mt={4}>
+            <Button
+              variant="default"
+              onClick={() => setRetryTarget(null)}
+              disabled={retryBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="dark"
+              loading={showRetryBusy}
+              disabled={retryBusy}
+              onClick={() => void retryAnswer()}
+            >
+              Retry
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <Modal
         opened={rewinding !== null}
         onClose={() => setRewinding(null)}
         title="Rewind to before this turn?"
         size="md"
         centered
+        closeOnClickOutside={!rewindBusy}
+        closeOnEscape={!rewindBusy}
+        withCloseButton={!rewindBusy}
       >
         <Stack gap="sm">
           <Text size="sm">
@@ -1604,13 +2057,30 @@ export const RealThreadView = memo(function RealThreadView({
             cleared: the next message starts a fresh session with what remains
             in the transcript.
           </Text>
+          {showRewindBusy ? (
+            <Text size="xs" c="dimmed" role="status">
+              Stopping the agent and resetting the worktree…
+            </Text>
+          ) : null}
+          {rewindError ? (
+            <LoadError
+              title="Could not rewind the thread"
+              message={rewindError}
+              compact
+            />
+          ) : null}
           <Group justify="flex-end" gap="xs" mt={4}>
-            <Button variant="default" onClick={() => setRewinding(null)}>
+            <Button
+              variant="default"
+              onClick={() => setRewinding(null)}
+              disabled={rewindBusy}
+            >
               Cancel
             </Button>
             <Button
               color="red"
-              loading={rewindBusy}
+              loading={showRewindBusy}
+              disabled={rewindBusy}
               onClick={() => void confirmRewind()}
             >
               Rewind
@@ -1619,23 +2089,27 @@ export const RealThreadView = memo(function RealThreadView({
         </Stack>
       </Modal>
       <div className="composer-stack">
+        {setupBanner}
         <AgentLog lines={diagnostics} />
         {goal ? (
           <GoalBar
             goal={goal}
             canWrite={writable}
             busy={goalBusy}
+            busyCommand={goalCommand}
+            error={goalError}
             onCommand={runGoalCommand}
           />
         ) : null}
         <QueueBar
-          items={queue}
+          items={visibleQueue}
           busy={queueBusy}
           canWrite={writable}
           onDrop={drop}
           onSteer={steer}
           onEdit={edit}
           onReorder={reorder}
+          error={queueError}
         />
         <Suspense
           fallback={<ComposerSkeleton agent={bundle?.thread.agent} />}

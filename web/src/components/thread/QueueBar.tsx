@@ -18,6 +18,8 @@ import {
 } from "react";
 import type { QueueItem } from "../../api";
 import { isImeConfirming } from "../../lib/keyboard";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
+import { LoadError } from "../loading/LoadError";
 import { can } from "../../lib/machine";
 
 const SWIPE_DROP = 64;
@@ -26,6 +28,7 @@ const SWIPE_MAX = 120;
 const QueueRow = memo(function QueueRow({
   item,
   busy,
+  busyVisible,
   canWrite,
   showAuthor,
   dragging,
@@ -38,6 +41,7 @@ const QueueRow = memo(function QueueRow({
 }: {
   item: QueueItem;
   busy: string | null;
+  busyVisible: boolean;
   canWrite: boolean;
   /** False when the previous row was written by the same author. */
   showAuthor: boolean;
@@ -176,8 +180,8 @@ const QueueRow = memo(function QueueRow({
               color="gray"
               aria-label="Send queued message now"
               title="Send now — stop the current turn and run this message"
-              loading={busy === `steer:${item.id}`}
-              disabled={editing}
+              loading={busyVisible && busy === `steer:${item.id}`}
+              disabled={editing || busy !== null}
               onClick={() => onSteer(item.id)}
             >
               <IconSend size={11} stroke={1.5} />
@@ -199,7 +203,8 @@ const QueueRow = memo(function QueueRow({
               color="gray"
               aria-label="Drop queued message"
               title="Drop"
-              loading={busy === `drop:${item.id}`}
+              loading={busyVisible && busy === `drop:${item.id}`}
+              disabled={busy !== null && busy !== `drop:${item.id}`}
               onClick={() => onDrop(item.id)}
             >
               <IconX size={12} stroke={1.5} />
@@ -219,6 +224,7 @@ export const QueueBar = memo(function QueueBar({
   onSteer,
   onEdit,
   onReorder,
+  error = null,
 }: {
   items: QueueItem[];
   busy: string | null;
@@ -227,6 +233,7 @@ export const QueueBar = memo(function QueueBar({
   onSteer: (id: string) => void;
   onEdit: (id: string, text: string) => Promise<boolean>;
   onReorder: (ids: string[]) => void;
+  error?: { message: string; onRetry: () => void } | null;
 }) {
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -257,6 +264,7 @@ export const QueueBar = memo(function QueueBar({
     moved: boolean;
   } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const showBusy = useDelayedFlag(busy !== null, 300, 500);
 
   useEffect(() => {
     if (drag.current) return;
@@ -354,6 +362,7 @@ export const QueueBar = memo(function QueueBar({
           key={item.id}
           item={item}
           busy={busy}
+          busyVisible={showBusy}
           canWrite={canWrite}
           showAuthor={index === 0 || visible[index - 1].author.id !== item.author.id}
           dragging={draggingId === item.id}
@@ -365,6 +374,14 @@ export const QueueBar = memo(function QueueBar({
           onReorderEnd={endDrag}
         />
       ))}
+      {error ? (
+        <LoadError
+          title="Queue action failed"
+          message={error.message}
+          onRetry={error.onRetry}
+          compact
+        />
+      ) : null}
     </div>
   );
 });

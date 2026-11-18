@@ -1,5 +1,6 @@
 import { AppShell, Divider, Group, Text } from "@mantine/core";
 import {
+  IconAlertCircle,
   IconFolder,
   IconGitBranch,
   IconLayoutGrid,
@@ -103,17 +104,37 @@ export function StatusBar({
         <Text size="xs" c="dimmed" visibleFrom="md">
           {thread.agent}
         </Text>
-        <Group gap={4} wrap="nowrap">
-          <Text size="xs" className="stat-add">
-            +{stats?.additions ?? 0}
-          </Text>
-          <Text size="xs" className="stat-del">
-            −{stats?.deletions ?? 0}
-          </Text>
+        <Group
+          gap={4}
+          wrap="nowrap"
+          className="status-stats"
+          title={
+            bundle.isError
+              ? "Could not load diff stats"
+              : undefined
+          }
+        >
+          {stats ? (
+            <>
+              <Text size="xs" className="stat-add">
+                +{stats.additions}
+              </Text>
+              <Text size="xs" className="stat-del">
+                −{stats.deletions}
+              </Text>
+            </>
+          ) : null}
         </Group>
-        <Text size="xs" c="dimmed">
-          {stats?.files ?? 0} {stats?.files === 1 ? "file" : "files"}
+        <Text size="xs" c="dimmed" className="status-files">
+          {stats
+            ? `${stats.files} ${stats.files === 1 ? "file" : "files"}`
+            : ""}
         </Text>
+        {bundle.isError ? (
+          <span className="status-error" title="Diff stats unavailable">
+            <IconAlertCircle size={11} stroke={1.5} />
+          </span>
+        ) : null}
         <Group gap={4} wrap="nowrap" visibleFrom="sm">
           {running || waiting ? (
             <span className={`dot ${waiting ? "waiting" : "running"}`} />

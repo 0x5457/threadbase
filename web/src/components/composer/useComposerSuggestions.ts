@@ -12,8 +12,9 @@ import Suggestion, {
 } from "@tiptap/suggestion";
 import { notifications } from "@mantine/notifications";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listSkills, searchFiles } from "../../api";
+import type { SkillsResponse } from "../../api/types/SkillsResponse";
 import { commandsFor, type SuggestionOption } from "./commands";
 import {
   SuggestionMenu,
@@ -53,16 +54,23 @@ async function commandOptions(
 
   let skills: { name: string; description: string; path: string; source: string }[] = [];
   if (context.projectId) {
-    try {
-      const response = await context.queryClient.fetchQuery({
-        queryKey: ["skills", context.projectId],
-        queryFn: () => listSkills(context.projectId as string),
-        staleTime: 60_000,
-        retry: false,
-      });
-      skills = response.skills;
-    } catch {
-      // A failed lookup leaves the commands usable; the menu just has no skills.
+    const cached = context.queryClient.getQueryData<SkillsResponse>([
+      "skills",
+      context.projectId,
+    ]);
+    if (cached) {
+      skills = cached.skills;
+    } else {
+      // Never hold the built-in commands behind a filesystem read. The hook
+      // below warms this cache as soon as the composer knows its project.
+      void context.queryClient
+        .prefetchQuery({
+          queryKey: ["skills", context.projectId],
+          queryFn: () => listSkills(context.projectId as string),
+          staleTime: 60_000,
+          retry: false,
+        })
+        .catch(() => undefined);
     }
   }
 
@@ -250,6 +258,20 @@ export function useComposerSuggestions({
     () => composerSuggestions(contextRef.current),
     [],
   );
+
+  // `/` opens on local commands; skills arrive from the project cache without
+  // making the menu wait for a directory scan.
+  useEffect(() => {
+    if (!projectId) return;
+    void queryClient
+      .prefetchQuery({
+        queryKey: ["skills", projectId],
+        queryFn: () => listSkills(projectId),
+        staleTime: 60_000,
+        retry: false,
+      })
+      .catch(() => undefined);
+  }, [projectId, queryClient]);
 
   const openTrigger = (kind: "command" | "file", editor: Editor | null) => {
     if (!editor) return;

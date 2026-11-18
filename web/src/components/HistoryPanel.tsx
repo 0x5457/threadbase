@@ -1,7 +1,10 @@
-import { ActionIcon, Box, Button, Group, Loader, ScrollArea, Text } from "@mantine/core";
+import { ActionIcon, Box, Button, ScrollArea, Text } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { IconArrowsDiff, IconGitBranch, IconGitCommit, IconX } from "@tabler/icons-react";
 import { getThreadHistory, type CommitSummary } from "../api";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { LoadError } from "./loading/LoadError";
+import { ListSkeleton } from "./loading/Skeleton";
 
 const stamp = new Intl.DateTimeFormat(undefined, {
   month: "short",
@@ -90,6 +93,7 @@ export function HistoryPanel({
   });
   const data = history.data?.history;
   const entries = data?.entries ?? [];
+  const showSkeleton = useDelayedFlag(history.isPending, 300, 500);
 
   return (
     <div className="changes history">
@@ -118,15 +122,26 @@ export function HistoryPanel({
       </div>
       <ScrollArea className="changes-scroll" type="hover">
         {history.isPending ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-          </Group>
+          showSkeleton ? (
+            <ListSkeleton
+              label="Loading history"
+              rows={6}
+              avatar
+              avatarSize={13}
+              lines={2}
+              meta
+              className="history-skeleton"
+              rowClassName="skeleton-history-row"
+            />
+          ) : null
         ) : history.isError ? (
-          <Text size="sm" c="red" p="sm">
-            {history.error instanceof Error
-              ? history.error.message
-              : "Cannot load history"}
-          </Text>
+          <LoadError
+            title="Cannot load history"
+            message={
+              history.error instanceof Error ? history.error.message : undefined
+            }
+            onRetry={() => void history.refetch()}
+          />
         ) : entries.length === 0 ? (
           <div className="history-empty">
             <Text size="sm" c="dimmed">

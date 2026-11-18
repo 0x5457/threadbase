@@ -11,6 +11,7 @@ import {
 } from "@mantine/core";
 import { useState } from "react";
 import type { Elicitation } from "../../api";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 
 interface ElicitationProperty {
   type?: string;
@@ -22,11 +23,15 @@ interface ElicitationProperty {
 export function ElicitationCard({
   elicitation,
   busy,
+  pendingAction = null,
+  error = null,
   readOnly = false,
   onRespond,
 }: {
   elicitation: Elicitation;
   busy: boolean;
+  pendingAction?: "accept" | "decline" | null;
+  error?: string | null;
   readOnly?: boolean;
   onRespond: (
     action: "accept" | "decline",
@@ -42,6 +47,7 @@ export function ElicitationCard({
   const requiredKeys = schema.required ?? [];
   const required = new Set(requiredKeys);
   const missing = requiredKeys.some((key) => !values[key]);
+  const showBusy = useDelayedFlag(busy, 300, 500);
 
   return (
     <div className="block">
@@ -140,8 +146,8 @@ export function ElicitationCard({
               <Button
                 variant="subtle"
                 color="gray"
-                loading={busy}
-                disabled={readOnly}
+                loading={showBusy && pendingAction === "decline"}
+                disabled={readOnly || busy}
                 onClick={() => onRespond("decline", values)}
               >
                 Decline
@@ -149,13 +155,18 @@ export function ElicitationCard({
               <Button
                 variant="filled"
                 color="brand"
-                loading={busy}
-                disabled={readOnly || missing}
+                loading={showBusy && pendingAction === "accept"}
+                disabled={readOnly || busy || missing}
                 onClick={() => onRespond("accept", values)}
               >
                 Continue
               </Button>
             </Group>
+            {error ? (
+              <Text size="xs" c="red" mt={8}>
+                {error}
+              </Text>
+            ) : null}
           </Box>
         </Card>
       </div>

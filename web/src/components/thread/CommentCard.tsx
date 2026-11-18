@@ -17,6 +17,7 @@ import {
 } from "@tabler/icons-react";
 import { useState } from "react";
 import type { Comment } from "../../api";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 import { can } from "../../lib/machine";
 import { initials, timeOf } from "./format";
 
@@ -33,23 +34,35 @@ export function CommentDraft({
 }) {
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const showSaving = useDelayedFlag(saving, 300, 500);
 
   const submit = () => {
     if (saving || !value.trim()) return;
+    setFailed(false);
     setSaving(true);
     void onSave(value.trim())
       .then((saved) => {
         setSaving(false);
         if (saved) setValue("");
+        else setFailed(true);
       })
-      .catch(() => setSaving(false));
+      .catch(() => {
+        setSaving(false);
+        setFailed(true);
+      });
   };
 
   return (
     <CommentEditor
       value={value}
-      onChange={setValue}
+      onChange={(next) => {
+        setValue(next);
+        if (failed) setFailed(false);
+      }}
       saving={saving}
+      showSaving={showSaving}
+      failed={failed}
       onCancel={onCancel}
       onSubmit={submit}
     />
@@ -62,13 +75,21 @@ export function CommentCard({
   onSend,
   onDelete,
   busy,
+  pending = false,
+  saved = false,
+  error = null,
 }: {
   comment: Comment;
   onResolve?: () => void;
   onSend?: () => void;
   onDelete?: () => void;
   busy?: boolean;
+  /** An optimistic comment waiting for the server to assign its real id. */
+  pending?: boolean;
+  saved?: boolean;
+  error?: string | null;
 }) {
+  const showBusy = useDelayedFlag(Boolean(busy), 300, 500);
   return (
     <div className="comment-row">
       <Card withBorder p={5} className="comment-card">
@@ -89,58 +110,75 @@ export function CommentCard({
               <Text size="xs" c="dimmed">
                 {timeOf(comment.createdAt)}
               </Text>
+              {pending ? (
+                <Text size="xs" c="dimmed">
+                  · Saving…
+                </Text>
+              ) : saved ? (
+                <Text size="xs" c="dimmed" className="comment-saved">
+                  · Saved
+                </Text>
+              ) : null}
               {comment.status === "resolved" ? (
                 <Text size="xs" c="dimmed">
                   · resolved
                 </Text>
               ) : null}
               <Box style={{ flex: 1 }} />
-              <Menu position="bottom-end" width={160} shadow="md">
-                <Menu.Target>
-                  <ActionIcon
-                    aria-label="Comment actions"
-                    className="comment-menu"
-                    size={16}
-                    loading={busy}
-                  >
-                    <IconDots size={12} stroke={1.5} />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {can("comment", comment.status, "deliver") && onSend ? (
-                    <Menu.Item
-                      leftSection={<IconSend size={12} />}
-                      onClick={onSend}
+              {pending ? null : (
+                <Menu position="bottom-end" width={160} shadow="md">
+                  <Menu.Target>
+                    <ActionIcon
+                      aria-label="Comment actions"
+                      className="comment-menu"
+                      size={16}
+                      loading={showBusy}
+                      disabled={busy}
                     >
-                      Send now
-                    </Menu.Item>
-                  ) : null}
-                  {can("comment", comment.status, "resolve") && onResolve ? (
-                    <Menu.Item
-                      leftSection={<IconCheck size={12} />}
-                      onClick={onResolve}
-                    >
-                      Resolve
-                    </Menu.Item>
-                  ) : null}
-                  {onDelete ? (
-                    <>
-                      <Menu.Divider />
+                      <IconDots size={12} stroke={1.5} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {can("comment", comment.status, "deliver") && onSend ? (
                       <Menu.Item
-                        color="red"
-                        leftSection={<IconTrash size={12} />}
-                        onClick={onDelete}
+                        leftSection={<IconSend size={12} />}
+                        onClick={onSend}
                       >
-                        Delete
+                        Send now
                       </Menu.Item>
-                    </>
-                  ) : null}
-                </Menu.Dropdown>
-              </Menu>
+                    ) : null}
+                    {can("comment", comment.status, "resolve") && onResolve ? (
+                      <Menu.Item
+                        leftSection={<IconCheck size={12} />}
+                        onClick={onResolve}
+                      >
+                        Resolve
+                      </Menu.Item>
+                    ) : null}
+                    {onDelete ? (
+                      <>
+                        <Menu.Divider />
+                        <Menu.Item
+                          color="red"
+                          leftSection={<IconTrash size={12} />}
+                          onClick={onDelete}
+                        >
+                          Delete
+                        </Menu.Item>
+                      </>
+                    ) : null}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
             </Group>
             <Text size="sm" className="comment-body">
               {comment.body}
             </Text>
+            {error ? (
+              <Text size="xs" c="red" className="comment-error">
+                {error}
+              </Text>
+            ) : null}
           </div>
         </Group>
       </Card>
@@ -154,12 +192,16 @@ function CommentEditor({
   onSubmit,
   onCancel,
   saving,
+  showSaving,
+  failed,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
   saving: boolean;
+  showSaving: boolean;
+  failed: boolean;
 }) {
   return (
     <div className="comment-row">
@@ -179,6 +221,11 @@ function CommentEditor({
             }
           }}
         />
+        {failed ? (
+          <Text size="xs" c="red" mt={6}>
+            Couldn't save. Your comment is still here.
+          </Text>
+        ) : null}
         <Group justify="flex-end" gap="xs" mt={6}>
           <Button
             variant="subtle"
@@ -191,8 +238,8 @@ function CommentEditor({
           <Button
             size="compact-xs"
             color="dark"
-            loading={saving}
-            disabled={!value.trim()}
+            loading={showSaving}
+            disabled={saving || !value.trim()}
             onClick={onSubmit}
           >
             Save comment

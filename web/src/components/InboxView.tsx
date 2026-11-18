@@ -2,7 +2,6 @@ import {
   Box,
   Button,
   Group,
-  Loader,
   SegmentedControl,
   Text,
   UnstyledButton,
@@ -32,6 +31,10 @@ import { useLongPress } from "../lib/use-long-press";
 import { Virtuoso } from "react-virtuoso";
 import { ActionSheet, type ActionSheetAction } from "./ActionSheet";
 import { EmptyState } from "./EmptyState";
+import { LoadError } from "./loading/LoadError";
+import { Bone, ListSkeleton } from "./loading/Skeleton";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { optimisticInboxRead } from "../lib/inbox-cache";
 
 const kindLabel: Record<InboxItem["kind"], string> = {
   approval: "Approval",
@@ -272,6 +275,12 @@ export const InboxView = memo(function InboxView({
 }) {
   const [filter, setFilter] = useState<"unread" | "all">("unread");
   const [sheetItem, setSheetItem] = useState<InboxItem | null>(null);
+  const [readError, setReadError] = useState<{
+    item: InboxItem;
+    message: string;
+  } | null>(null);
+  const [markingAll, setMarkingAll] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const inbox = useInfiniteQuery({
     queryKey: ["inbox", filter],
@@ -295,22 +304,47 @@ export const InboxView = memo(function InboxView({
     [pages],
   );
   const unread = pages[0]?.unread ?? 0;
+  const showSkeleton = useDelayedFlag(inbox.isPending, 300, 500);
+  const showMarkingAll = useDelayedFlag(markingAll, 300, 500);
+  const showNextPage = useDelayedFlag(inbox.isFetchingNextPage, 300, 500);
+
+  const markAllRead = useCallback(() => {
+    setBulkError(null);
+    setMarkingAll(true);
+    void markAllInboxRead()
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+        void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
+        notifications.show({ message: "Inbox marked read", color: "teal" });
+      })
+      .catch((cause: unknown) =>
+        setBulkError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not mark the inbox read",
+        ),
+      )
+      .finally(() => setMarkingAll(false));
+  }, [queryClient]);
 
   const markRead = useCallback(
     (item: InboxItem) => {
+      setReadError(null);
+      const rollback = optimisticInboxRead(queryClient, item);
       void markInboxRead(item.threadId)
         .then(() => {
           void queryClient.invalidateQueries({ queryKey: ["inbox"] });
           void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
           notifications.show({ message: "Marked read", color: "teal" });
         })
-        .catch((cause: unknown) =>
-          notifications.show({
+        .catch((cause: unknown) => {
+          rollback();
+          setReadError({
+            item,
             message:
               cause instanceof Error ? cause.message : "Could not mark read",
-            color: "red",
-          }),
-        );
+          });
+        });
     },
     [queryClient],
   );
@@ -401,30 +435,9 @@ export const InboxView = memo(function InboxView({
                 variant="subtle"
                 size="compact-xs"
                 color="gray"
-                onClick={() => {
-                  void markAllInboxRead()
-                    .then(() => {
-                      void queryClient.invalidateQueries({
-                        queryKey: ["inbox"],
-                      });
-                      void queryClient.invalidateQueries({
-                        queryKey: ["inbox-unread"],
-                      });
-                      notifications.show({
-                        message: "Inbox marked read",
-                        color: "teal",
-                      });
-                    })
-                    .catch((cause: unknown) =>
-                      notifications.show({
-                        message:
-                          cause instanceof Error
-                            ? cause.message
-                            : "Could not mark inbox read",
-                        color: "red",
-                      }),
-                    );
-                }}
+                loading={showMarkingAll}
+                disabled={markingAll}
+                onClick={markAllRead}
               >
                 Mark all read
               </Button>
@@ -432,10 +445,56 @@ export const InboxView = memo(function InboxView({
           </Group>
         </Group>
       </div>
-      {inbox.isPending ? (
-        <Group className="inbox-scroll" justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
+      {readError ? (
+        <div className="inbox-head-error">
+          <LoadError
+            title="Could not mark this thread read"
+            message={readError.message}
+            onRetry={() => markRead(readError.item)}
+            compact
+          />
+        </div>
+      ) : null}
+      {bulkError ? (
+        <div className="inbox-head-error">
+          <LoadError
+            title="Could not mark the inbox read"
+            message={bulkError}
+            onRetry={markAllRead}
+            compact
+          />
+        </div>
+      ) : null}
+      {inbox.isError ? (
+        <div className="inbox-scroll">
+          <LoadError
+            title="Could not load the inbox"
+            message={
+              inbox.error instanceof Error
+                ? inbox.error.message
+                : "The server did not return notifications."
+            }
+            onRetry={() => void inbox.refetch()}
+          />
+        </div>
+      ) : inbox.isPending ? (
+        showSkeleton ? (
+          <ListSkeleton
+            label="Loading inbox"
+            rows={7}
+            avatar
+            avatarSize={14}
+            lines={2}
+            meta
+            className="inbox-scroll"
+            rowClassName="skeleton-inbox-row"
+            header={
+              <div className="inbox-day skeleton-day">
+                <Bone width={42} height={8} />
+              </div>
+            }
+          />
+        ) : null
       ) : items.length === 0 ? (
         <div className="inbox-scroll">
           <EmptyState
@@ -495,7 +554,8 @@ export const InboxView = memo(function InboxView({
                       variant="subtle"
                       size="compact-sm"
                       color="gray"
-                      loading={inbox.isFetchingNextPage}
+                      loading={showNextPage}
+                      disabled={inbox.isFetchingNextPage}
                       onClick={() => void inbox.fetchNextPage()}
                     >
                       Load earlier notifications

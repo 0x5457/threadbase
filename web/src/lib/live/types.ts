@@ -61,6 +61,7 @@ export interface LiveThreadState {
   hasEarlier: boolean;
   /** Fetch the next older window; true when something was appended. */
   loadEarlier: () => Promise<boolean>;
+  retry: () => void;
   sendPresence: (focus: Partial<PresencePayload>) => void;
 }
 

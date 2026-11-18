@@ -14,6 +14,7 @@ import { IconLockAccess, IconShieldLock } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
 import { getAuthStatus, getMe, signInWithTailscale } from "../api";
+import { ShellSkeleton } from "./loading/Skeleton";
 
 /**
  * The server needs a session cookie, or a development identity on loopback, so
@@ -37,11 +38,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   });
 
   if (me.isPending) {
-    return (
-      <Center h="100dvh" className="auth-screen">
-        <Loader size="sm" />
-      </Center>
-    );
+    return <ShellSkeleton />;
   }
 
   if (me.isError) {

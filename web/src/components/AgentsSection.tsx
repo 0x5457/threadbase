@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   Group,
-  Loader,
   Modal,
   Stack,
   Text,
@@ -14,6 +13,9 @@ import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconAlertCircle, IconPlus, IconX } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { LoadError } from "./loading/LoadError";
+import { SettingsRowsSkeleton } from "./loading/Skeleton";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
 import { useEffect, useState } from "react";
 import {
   addAgent,
@@ -77,6 +79,7 @@ function AgentModal({ agent, onClose }: AgentModalProps) {
   );
   const [failure, setFailure] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const showSaving = useDelayedFlag(saving, 300, 500);
 
   useEffect(() => {
     if (agent) {
@@ -135,6 +138,9 @@ function AgentModal({ agent, onClose }: AgentModalProps) {
       size="md"
       centered
       fullScreen={phone}
+      closeOnClickOutside={!saving}
+      closeOnEscape={!saving}
+      withCloseButton={!saving}
     >
       <form
         onSubmit={(event) => {
@@ -298,10 +304,15 @@ function AgentModal({ agent, onClose }: AgentModalProps) {
             </Alert>
           ) : null}
           <Group justify="flex-end" gap="xs" mt={4}>
-            <Button variant="default" onClick={onClose}>
+            <Button variant="default" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" color="dark" loading={saving}>
+            <Button
+              type="submit"
+              color="dark"
+              loading={showSaving}
+              disabled={saving}
+            >
               {agent ? "Save changes" : "Add agent"}
             </Button>
           </Group>
@@ -321,10 +332,14 @@ export function AgentsSection({ isAdmin }: { isAdmin: boolean }) {
   const [editing, setEditing] = useState<Agent | null | undefined>(undefined);
   const [removing, setRemoving] = useState<Agent | null>(null);
   const [removingBusy, setRemovingBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const showLoading = useDelayedFlag(agents.isPending, 300, 500);
+  const showRemoving = useDelayedFlag(removingBusy, 300, 500);
 
   const remove = async () => {
     if (!removing) return;
     setRemovingBusy(true);
+    setRemoveError(null);
     try {
       await deleteAgent(removing.id);
       notifications.show({
@@ -334,11 +349,11 @@ export function AgentsSection({ isAdmin }: { isAdmin: boolean }) {
       setRemoving(null);
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     } catch (cause) {
-      notifications.show({
-        message:
-          cause instanceof Error ? cause.message : "Could not remove the agent",
-        color: "red",
-      });
+      setRemoveError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not remove the agent",
+      );
     } finally {
       setRemovingBusy(false);
     }
@@ -367,25 +382,19 @@ export function AgentsSection({ isAdmin }: { isAdmin: boolean }) {
           every agent menu.
         </Text>
 
-        {agents.isPending ? (
-          <Group justify="center" py="sm">
-            <Loader size="xs" />
-          </Group>
+        {agents.isPending && showLoading ? (
+          <SettingsRowsSkeleton label="Loading agents" />
         ) : null}
 
         {agents.isError ? (
-          <Alert
-            icon={<IconAlertCircle size={14} />}
-            color="red"
-            variant="light"
-            p="xs"
-          >
-            <Text size="xs">
-              {agents.error instanceof Error
-                ? agents.error.message
-                : "Could not load agents"}
-            </Text>
-          </Alert>
+          <LoadError
+            title="Could not load agents"
+            message={
+              agents.error instanceof Error ? agents.error.message : undefined
+            }
+            onRetry={() => void agents.refetch()}
+            compact
+          />
         ) : null}
 
         {(agents.data ?? []).map((agent) => (
@@ -447,17 +456,36 @@ export function AgentsSection({ isAdmin }: { isAdmin: boolean }) {
         onClose={() => setRemoving(null)}
         title="Remove agent"
         centered
+        closeOnClickOutside={!removingBusy}
+        closeOnEscape={!removingBusy}
+        withCloseButton={!removingBusy}
       >
         <Text size="sm" c="dimmed" mb="md">
           <strong>{removing?.label}</strong> disappears from every agent menu.
           Threads already using it fall back to the default agent at their next
           start.
         </Text>
+        {removeError ? (
+          <LoadError
+            title="Could not remove the agent"
+            message={removeError}
+            compact
+          />
+        ) : null}
         <Group justify="flex-end" gap="xs">
-          <Button variant="default" onClick={() => setRemoving(null)}>
+          <Button
+            variant="default"
+            onClick={() => setRemoving(null)}
+            disabled={removingBusy}
+          >
             Cancel
           </Button>
-          <Button color="red" loading={removingBusy} onClick={() => void remove()}>
+          <Button
+            color="red"
+            loading={showRemoving}
+            disabled={removingBusy}
+            onClick={() => void remove()}
+          >
             Remove
           </Button>
         </Group>

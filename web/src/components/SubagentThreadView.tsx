@@ -13,6 +13,9 @@ import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { getSubagentLog, type Subagent } from "../api";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { LoadError } from "./loading/LoadError";
+import { ThreadSkeleton } from "./loading/Skeleton";
 import type { SubagentLogEntryDto } from "../api/types/SubagentLogEntryDto";
 import { stateLabel } from "../lib/machine";
 import { formatDuration, timeOf } from "./thread/format";
@@ -179,6 +182,7 @@ export const SubagentThreadView = memo(function SubagentThreadView({
     wasRunning.current = running;
   }, [refetchLog, subagent.status]);
   const entries = log.data?.entries ?? [];
+  const showSkeleton = useDelayedFlag(log.isPending, 300, 500);
 
   // Consecutive tool rows become one collapsible run; everything else keeps
   // its own row in the transcript.
@@ -249,18 +253,17 @@ export const SubagentThreadView = memo(function SubagentThreadView({
           <div className="thread-scroll subagent-scroll">
             <div className="doc timeline-doc subagent-doc">
               {log.isPending ? (
-                <Text size="sm" c="dimmed" className="subagent-empty">
-                  Loading the subagent's transcript…
-                </Text>
+                showSkeleton ? (
+                  <ThreadSkeleton />
+                ) : null
               ) : log.error ? (
-                <Group gap={6} className="subagent-empty" wrap="nowrap">
-                  <IconAlertCircle size={13} stroke={1.5} />
-                  <Text size="sm" c="red">
-                    {log.error instanceof Error
-                      ? log.error.message
-                      : "Could not load this subagent's transcript"}
-                  </Text>
-                </Group>
+                <LoadError
+                  title="Could not load this subagent's transcript"
+                  message={
+                    log.error instanceof Error ? log.error.message : undefined
+                  }
+                  onRetry={() => void log.refetch()}
+                />
               ) : rows.length === 0 ? (
                 <Text size="sm" c="dimmed" className="subagent-empty">
                   No transcript is available for this subagent. The adapter did

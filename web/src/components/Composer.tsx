@@ -1,4 +1,4 @@
-import { ActionIcon, Loader } from "@mantine/core";
+import { ActionIcon } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useQueryClient } from "@tanstack/react-query";
@@ -122,6 +122,59 @@ export const Composer = memo(function Composer(props: ComposerProps) {
 
   return <ComposerBody {...props} autoFocus={focusOnMount} />;
 });
+
+function UploadIndicator({
+  variant,
+  status,
+  progress,
+  error,
+  onRetry,
+}: {
+  variant: "image" | "file";
+  status: "uploading" | "ready" | "failed";
+  progress: number;
+  error?: string;
+  onRetry: () => void;
+}) {
+  if (status === "uploading") {
+    const pct = Math.round(progress * 100);
+    const fill = (
+      <span
+        className="composer-upload-fill"
+        style={{ width: `${pct}%` }}
+      />
+    );
+    if (variant === "image") {
+      return (
+        <span className="composer-image-busy">
+          {fill}
+          <span className="composer-upload-pct">{pct}%</span>
+        </span>
+      );
+    }
+    return (
+      <span className="composer-upload-inline">
+        <span className="composer-upload-track">{fill}</span>
+        <span className="composer-upload-pct">{pct}%</span>
+      </span>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <button
+        type="button"
+        className={
+          variant === "image" ? "composer-image-retry" : "composer-file-retry"
+        }
+        title={error}
+        onClick={onRetry}
+      >
+        Retry
+      </button>
+    );
+  }
+  return null;
+}
 
 const ComposerBody = memo(function ComposerBody({
   threadId,
@@ -320,17 +373,23 @@ const ComposerBody = memo(function ComposerBody({
                 item.isImage ? (
                   <div key={item.key} className="composer-image">
                     <img src={item.url} alt={item.name} />
-                    {item.status === "uploading" ? (
-                      <span className="composer-image-busy">
-                        <Loader size={14} />
-                      </span>
-                    ) : null}
+                    <UploadIndicator
+                      variant="image"
+                      status={item.status}
+                      progress={item.progress}
+                      error={item.error}
+                      onRetry={() => attachments.retry(item.key)}
+                    />
                     <ActionIcon
                       className="composer-image-remove"
                       size={16}
                       variant="filled"
                       color="gray"
-                      aria-label={`Remove ${item.name}`}
+                      aria-label={
+                        item.status === "uploading"
+                          ? `Cancel upload of ${item.name}`
+                          : `Remove ${item.name}`
+                      }
                       onClick={() => attachments.remove(item.key)}
                     >
                       <IconX size={10} stroke={2} />
@@ -340,7 +399,8 @@ const ComposerBody = memo(function ComposerBody({
                   <div
                     key={item.key}
                     className="composer-file"
-                    title={item.name}
+                    data-status={item.status}
+                    title={item.error ?? item.name}
                   >
                     <IconFileText size={18} stroke={1.5} />
                     <span className="composer-file-info">
@@ -350,14 +410,22 @@ const ComposerBody = memo(function ComposerBody({
                         {isTextLike(item.mimeType, item.name) ? " · text" : ""}
                       </span>
                     </span>
-                    {item.status === "uploading" ? (
-                      <Loader size={12} />
-                    ) : null}
+                    <UploadIndicator
+                      variant="file"
+                      status={item.status}
+                      progress={item.progress}
+                      error={item.error}
+                      onRetry={() => attachments.retry(item.key)}
+                    />
                     <ActionIcon
                       size={16}
                       variant="filled"
                       color="gray"
-                      aria-label={`Remove ${item.name}`}
+                      aria-label={
+                        item.status === "uploading"
+                          ? `Cancel upload of ${item.name}`
+                          : `Remove ${item.name}`
+                      }
                       onClick={() => attachments.remove(item.key)}
                     >
                       <IconX size={10} stroke={2} />
@@ -396,6 +464,7 @@ const ComposerBody = memo(function ComposerBody({
             effectiveEffort={session.effectiveEffort}
             effortOptions={session.effortOption?.options ?? []}
             configLoading={session.configLoading}
+            configError={session.configError}
             writable={session.writable}
             onModelChange={onModelChange}
             onEffortChange={onEffortChange}

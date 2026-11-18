@@ -6,6 +6,7 @@ import {
   IconListCheck,
 } from "@tabler/icons-react";
 import { memo, useId, useState } from "react";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 import type { GoalDto } from "../../api/types/GoalDto";
 import type { GoalTaskDto } from "../../api/types/GoalTaskDto";
 import { formatDuration, formatTokens } from "./format";
@@ -117,15 +118,26 @@ export const GoalBar = memo(function GoalBar({
   goal,
   canWrite,
   busy,
+  busyCommand = null,
+  error = null,
   onCommand,
 }: {
   goal: GoalDto;
   canWrite: boolean;
   /** A goal command is in flight; buttons disable instead of double-sending. */
   busy: boolean;
+  busyCommand?: string | null;
+  error?: string | null;
   onCommand: (command: string, interrupt?: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const showBusy = useDelayedFlag(busy, 300, 500);
+  const busyLabel =
+    busyCommand === "/goal-pause"
+      ? "Pausing…"
+      : busyCommand === "/goal-resume"
+        ? "Resuming…"
+        : "Working…";
   const panelId = useId();
   const done = goal.tasks.filter(
     (task) => task.status === "complete" || task.status === "skipped",
@@ -155,8 +167,14 @@ export const GoalBar = memo(function GoalBar({
           </Text>
         </UnstyledButton>
         <Group gap={8} className="goal-bar-meta" wrap="nowrap">
-          <Text size="xs" c="dimmed" title={auditAt ?? undefined}>
-            {auditStage ?? label(goal.status)}
+          <Text
+            size="xs"
+            c={showBusy && busy ? "brand" : "dimmed"}
+            title={auditAt ?? undefined}
+          >
+            {showBusy && busy
+              ? busyLabel
+              : (auditStage ?? label(goal.status))}
           </Text>
           {goal.tasks.length > 0 ? (
             <Tooltip
@@ -200,6 +218,11 @@ export const GoalBar = memo(function GoalBar({
                   variant="subtle"
                   color="gray"
                   disabled={busy}
+                  loading={
+                    showBusy &&
+                    busy &&
+                    busyCommand === (paused ? "/goal-resume" : "/goal-pause")
+                  }
                   aria-label={paused ? "Resume goal" : "Pause goal"}
                   onClick={() =>
                     onCommand(paused ? "/goal-resume" : "/goal-pause", !paused)
@@ -216,6 +239,11 @@ export const GoalBar = memo(function GoalBar({
           </Group>
         ) : null}
       </div>
+      {error ? (
+        <Text size="xs" c="red" className="goal-bar-error">
+          {error}
+        </Text>
+      ) : null}
       {expanded ? (
         <div className="goal-tasks" id={panelId}>
           {goal.tasks.length === 0 ? (

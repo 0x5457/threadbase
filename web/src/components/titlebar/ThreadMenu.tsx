@@ -13,6 +13,7 @@ import {
   IconGitMerge,
   IconHistory,
   IconListCheck,
+  IconLoader2,
   IconMoon,
   IconPencil,
   IconPin,
@@ -30,6 +31,7 @@ import {
   retryThreadSetup,
   setThreadWatch,
 } from "../../api";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 import { actionLabel, can, threadCan } from "../../lib/machine";
 import {
   PERMISSION_MODES,
@@ -212,7 +214,11 @@ export function ThreadMenu({
       </Menu.Item>
     ) : null;
 
+  const showStopping = useDelayedFlag(stopTurn.isPending, 300, 500);
+  const showRestarting = useDelayedFlag(restartAgent.isPending, 300, 500);
+
   if (!canManage) return null;
+
   return (
     <Menu position="bottom-end" width={190} shadow="md">
       <Menu.Target>
@@ -347,7 +353,13 @@ export function ThreadMenu({
         {canStop || canRestart ? <Menu.Divider /> : null}
         {canStop ? (
           <Menu.Item
-            leftSection={<IconPlayerStop size={13} />}
+            leftSection={
+              showStopping && stopTurn.isPending ? (
+                <IconLoader2 size={13} className="tool-spinner" />
+              ) : (
+                <IconPlayerStop size={13} />
+              )
+            }
             disabled={stopTurn.isPending}
             onClick={() => stopTurn.mutate()}
           >
@@ -356,7 +368,13 @@ export function ThreadMenu({
         ) : null}
         {canRestart ? (
           <Menu.Item
-            leftSection={<IconRefresh size={13} />}
+            leftSection={
+              showRestarting && restartAgent.isPending ? (
+                <IconLoader2 size={13} className="tool-spinner" />
+              ) : (
+                <IconRefresh size={13} />
+              )
+            }
             disabled={restartAgent.isPending}
             onClick={() => restartAgent.mutate()}
           >

@@ -1,18 +1,18 @@
 import {
-  Alert,
   Avatar,
   Badge,
   Button,
   Card,
   Group,
-  Loader,
   Modal,
   Stack,
   Text,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconAlertCircle } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { LoadError } from "./loading/LoadError";
+import { SettingsRowsSkeleton } from "./loading/Skeleton";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
 import { useState } from "react";
 import { listUsers, updateUser, type User, type UserAccess } from "../api";
 import { initials } from "./thread/format";
@@ -148,10 +148,17 @@ export function PeopleSection({ currentUserId }: { currentUserId: string }) {
     staleTime: 10_000,
   });
   const [pending, setPending] = useState<string | null>(null);
+  const showLoading = useDelayedFlag(users.isPending, 300, 500);
+  const showPending = useDelayedFlag(pending !== null, 300, 500);
+  const [actionError, setActionError] = useState<{
+    message: string;
+    onRetry: () => void;
+  } | null>(null);
   const [revokeFor, setRevokeFor] = useState<User | null>(null);
 
   const apply = async (user: User, action: UserAction) => {
     setPending(`${user.id}:${action.id}`);
+    setActionError(null);
     try {
       const { users: next } = await updateUser(user.id, {
         isAdmin: action.isAdmin,
@@ -159,12 +166,14 @@ export function PeopleSection({ currentUserId }: { currentUserId: string }) {
       });
       queryClient.setQueryData(["users"], { users: next });
       notifications.show({ message: action.success, color: "teal" });
+      return true;
     } catch (cause) {
-      notifications.show({
+      setActionError({
         message:
           cause instanceof Error ? cause.message : "Could not update access",
-        color: "red",
+        onRetry: () => void apply(user, action),
       });
+      return false;
     } finally {
       setPending(null);
     }
@@ -173,7 +182,7 @@ export function PeopleSection({ currentUserId }: { currentUserId: string }) {
   const revokeAccess = async () => {
     const user = revokeFor;
     if (!user) return;
-    await apply(user, {
+    const ok = await apply(user, {
       id: "revoke",
       label: "Revoke access",
       access: "disabled",
@@ -181,7 +190,7 @@ export function PeopleSection({ currentUserId }: { currentUserId: string }) {
       success: `Access revoked for ${user.displayName}`,
       tone: "danger",
     });
-    setRevokeFor(null);
+    if (ok) setRevokeFor(null);
   };
 
   const pendingCount =
@@ -202,25 +211,27 @@ export function PeopleSection({ currentUserId }: { currentUserId: string }) {
           Approve new accounts and manage who can view or edit the workspace.
         </Text>
 
-        {users.isPending ? (
-          <Group justify="center" py="sm">
-            <Loader size="xs" />
-          </Group>
+        {users.isPending && showLoading ? (
+          <SettingsRowsSkeleton label="Loading people" />
         ) : null}
 
+        {actionError ? (
+          <LoadError
+            title="Could not update access"
+            message={actionError.message}
+            onRetry={actionError.onRetry}
+            compact
+          />
+        ) : null}
         {users.isError ? (
-          <Alert
-            icon={<IconAlertCircle size={14} />}
-            color="red"
-            variant="light"
-            p="xs"
-          >
-            <Text size="xs">
-              {users.error instanceof Error
-                ? users.error.message
-                : "Could not load people"}
-            </Text>
-          </Alert>
+          <LoadError
+            title="Could not load people"
+            message={
+              users.error instanceof Error ? users.error.message : undefined
+            }
+            onRetry={() => void users.refetch()}
+            compact
+          />
         ) : null}
 
         {(users.data?.users ?? []).map((user) => {
@@ -278,7 +289,9 @@ export function PeopleSection({ currentUserId }: { currentUserId: string }) {
                             ? "red"
                             : undefined
                       }
-                      loading={pending === `${user.id}:${action.id}`}
+                      loading={
+                        showPending && pending === `${user.id}:${action.id}`
+                      }
                       disabled={
                         pending !== null &&
                         pending !== `${user.id}:${action.id}`
@@ -310,18 +323,34 @@ export function PeopleSection({ currentUserId }: { currentUserId: string }) {
         onClose={() => setRevokeFor(null)}
         title="Revoke access"
         centered
+        closeOnClickOutside={pending === null}
+        closeOnEscape={pending === null}
+        withCloseButton={pending === null}
       >
         <Text size="sm" c="dimmed" mb="md">
           <strong>{revokeFor?.displayName}</strong> will no longer be able to
           open this workspace.
         </Text>
+        {actionError ? (
+          <LoadError
+            title="Could not revoke access"
+            message={actionError.message}
+            onRetry={actionError.onRetry}
+            compact
+          />
+        ) : null}
         <Group justify="flex-end" gap="xs">
-          <Button variant="default" onClick={() => setRevokeFor(null)}>
+          <Button
+            variant="default"
+            onClick={() => setRevokeFor(null)}
+            disabled={pending !== null}
+          >
             Cancel
           </Button>
           <Button
             color="red"
-            loading={pending === `${revokeFor?.id}:revoke`}
+            loading={showPending && pending === `${revokeFor?.id}:revoke`}
+            disabled={pending !== null}
             onClick={() => void revokeAccess()}
           >
             Revoke access

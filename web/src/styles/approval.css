@@ -148,10 +148,30 @@
   color: var(--ink-muted);
 }
 
+.msg-copy-btn {
+  position: absolute;
+  top: -1px;
+  right: 24px;
+  display: none;
+  color: var(--ink-muted);
+}
+
+.msg-retry-btn {
+  position: absolute;
+  top: -1px;
+  right: 48px;
+  display: none;
+  color: var(--ink-muted);
+}
+
 .message-block:hover .msg-comment-btn,
 .message-block:focus-within .msg-comment-btn,
 .message-block:hover .msg-edit-btn,
-.message-block:focus-within .msg-edit-btn {
+.message-block:focus-within .msg-edit-btn,
+.message-block:hover .msg-copy-btn,
+.message-block:focus-within .msg-copy-btn,
+.message-block:hover .msg-retry-btn,
+.message-block:focus-within .msg-retry-btn {
   display: grid;
 }
 
@@ -267,11 +287,11 @@
 .prose.streaming > pre:last-child > code::after {
   content: "";
   display: inline-block;
-  width: 6px;
-  height: 13px;
+  width: 2px;
+  height: 1.05em;
   margin-left: 2px;
-  background: var(--ink);
-  vertical-align: -2px;
+  background: var(--brand);
+  vertical-align: -0.15em;
   animation: blink 1s steps(2, start) infinite;
 }
 

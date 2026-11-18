@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Group,
-  Loader,
   Text,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -28,6 +27,7 @@ import {
   getCommitChanges,
   getCommitFileDiff,
   getFileDiff,
+  getMe,
   getThreadBundle,
   getTurnChanges,
   getTurnFileDiff,
@@ -51,6 +51,14 @@ import {
 } from "../lib/diff-size";
 import { CommentCard, CommentDraft } from "./thread/CommentCard";
 import { DiffView, type DiffCommentMeta } from "./DiffView";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { ListSkeleton, DiffSkeleton } from "./loading/Skeleton";
+import { LoadError } from "./loading/LoadError";
+import {
+  insertOptimisticComment,
+  removeOptimisticComment,
+  replaceOptimisticComment,
+} from "../lib/comment-cache";
 
 function patchFromDiff(diff: FileDiff, oldPath: string | null) {
   const previousPath = oldPath ?? diff.oldPath ?? diff.path;
@@ -174,10 +182,25 @@ export const RealChangesPanel = memo(function RealChangesPanel({
   const [selected, setSelected] = useState<string | null>(null);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   const [busyComment, setBusyComment] = useState<string | null>(null);
+  const [commentActionError, setCommentActionError] = useState<{
+    id: string;
+    message: string;
+  } | null>(null);
+  const [optimisticComments, setOptimisticComments] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [savedComments, setSavedComments] = useState<Set<string>>(
+    () => new Set(),
+  );
   // The panel is resizable, so "wrap automatically" has to follow this box, not
   // the window; the toggle in the diff header must agree with what is painted.
   const { ref: panelRef, narrow, wrap } = useDiffWrap<HTMLDivElement>();
   const queryClient = useQueryClient();
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: getMe,
+    staleTime: 60_000,
+  });
 
   const bundle = useQuery({
     queryKey: ["thread", threadId],
@@ -226,6 +249,12 @@ export const RealChangesPanel = memo(function RealChangesPanel({
     : turn
       ? turnChanges.error
       : bundle.error;
+  const showLoadingSkeleton = useDelayedFlag(loading, 300, 500);
+  const retryChanges = () => {
+    if (commit) void commitChanges.refetch();
+    else if (turn) void turnChanges.refetch();
+    else void bundle.refetch();
+  };
 
   const selectedIsCurrent =
     selected !== null &&
@@ -265,13 +294,30 @@ export const RealChangesPanel = memo(function RealChangesPanel({
       (commit || turn ? true : Boolean(baseline)),
     retry: false,
   });
+  const showDiffSkeleton = useDelayedFlag(diff.isPending, 300, 500);
 
   const refresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
   }, [queryClient, threadId]);
 
+  const currentAuthor = useMemo(() => {
+    const user = me.data?.user;
+    if (!user) return null;
+    const participant = bundle.data?.bundle.thread.participants.find(
+      (entry) => entry.user.id === user.id,
+    )?.user;
+    return {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      color: participant?.color ?? "#878a98",
+    };
+  }, [bundle.data?.bundle.thread.participants, me.data?.user]);
+
   const saveComment = useCallback(
     async (target: CommentTarget, body: string) => {
+      if (!currentAuthor) return false;
       const anchor: CommentAnchor = {
         kind: "diff",
         path: target.path,
@@ -280,16 +326,49 @@ export const RealChangesPanel = memo(function RealChangesPanel({
         side: target.side,
         contextHash: target.contextHash,
       };
+      const tempId = `pending-${crypto.randomUUID()}`;
+      const now = Date.now();
+      const optimistic: Comment = {
+        id: tempId,
+        threadId,
+        parentId: null,
+        author: currentAuthor,
+        body,
+        anchor,
+        anchorChanged: false,
+        status: "pending",
+        createdAt: now,
+        updatedAt: now,
+        deliveredSeq: null,
+      };
+      insertOptimisticComment(queryClient, threadId, optimistic);
+      setOptimisticComments((current) => new Set(current).add(tempId));
       try {
-        await createComment(threadId, body, anchor, false);
-        notifications.show({
-          message: "Comment saved for the next turn",
-          color: "teal",
+        const { comment } = await createComment(threadId, body, anchor, false);
+        replaceOptimisticComment(queryClient, threadId, tempId, comment);
+        setOptimisticComments((current) => {
+          const next = new Set(current);
+          next.delete(tempId);
+          return next;
         });
+        setSavedComments((current) => new Set(current).add(comment.id));
+        window.setTimeout(() => {
+          setSavedComments((current) => {
+            const next = new Set(current);
+            next.delete(comment.id);
+            return next;
+          });
+        }, 1200);
         setCommentTarget(null);
         refresh();
         return true;
       } catch (cause) {
+        removeOptimisticComment(queryClient, threadId, tempId);
+        setOptimisticComments((current) => {
+          const next = new Set(current);
+          next.delete(tempId);
+          return next;
+        });
         notifications.show({
           message:
             cause instanceof Error ? cause.message : "Could not save comment",
@@ -298,12 +377,13 @@ export const RealChangesPanel = memo(function RealChangesPanel({
         return false;
       }
     },
-    [refresh, threadId],
+    [currentAuthor, queryClient, refresh, threadId],
   );
 
   const actOnComment = useCallback(
     async (comment: Comment, action: "resolve" | "send" | "delete") => {
       setBusyComment(comment.id);
+      setCommentActionError(null);
       try {
         if (action === "resolve") {
           await updateComment(comment.id, { status: "resolved" });
@@ -314,10 +394,10 @@ export const RealChangesPanel = memo(function RealChangesPanel({
         }
         refresh();
       } catch (cause) {
-        notifications.show({
+        setCommentActionError({
+          id: comment.id,
           message:
             cause instanceof Error ? cause.message : "Could not update comment",
-          color: "red",
         });
       } finally {
         setBusyComment(null);
@@ -453,6 +533,13 @@ export const RealChangesPanel = memo(function RealChangesPanel({
               key={comment.id}
               comment={comment}
               busy={busyComment === comment.id}
+              pending={optimisticComments.has(comment.id)}
+              saved={savedComments.has(comment.id)}
+              error={
+                commentActionError?.id === comment.id
+                  ? commentActionError.message
+                  : null
+              }
               onResolve={() => void actOnComment(comment, "resolve")}
               onSend={() => void actOnComment(comment, "send")}
               onDelete={() => void actOnComment(comment, "delete")}
@@ -601,13 +688,26 @@ export const RealChangesPanel = memo(function RealChangesPanel({
         </div>
       </div>
       {loading ? (
-        <Group className="changes-scroll" justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
+        showLoadingSkeleton ? (
+          <ListSkeleton
+            label="Loading changes"
+            rows={8}
+            lines={1}
+            meta
+            className="changes-scroll changes-files changes-skeleton-list"
+            rowClassName="skeleton-change-row"
+          />
+        ) : null
       ) : loadError ? (
-        <Text size="sm" c="red" p="sm" className="changes-scroll">
-          {loadError instanceof Error ? loadError.message : "Cannot load changes"}
-        </Text>
+        <div className="changes-scroll">
+          <LoadError
+            title="Cannot load changes"
+            message={
+              loadError instanceof Error ? loadError.message : undefined
+            }
+            onRetry={retryChanges}
+          />
+        </div>
       ) : changes && changes.files.length > 0 ? (
         <div className="changes-scroll changes-files">
           <Virtuoso
@@ -666,6 +766,13 @@ export const RealChangesPanel = memo(function RealChangesPanel({
                           key={comment.id}
                           comment={comment}
                           busy={busyComment === comment.id}
+                          pending={optimisticComments.has(comment.id)}
+                          saved={savedComments.has(comment.id)}
+                          error={
+                            commentActionError?.id === comment.id
+                              ? commentActionError.message
+                              : null
+                          }
                           onResolve={() => void actOnComment(comment, "resolve")}
                           onSend={() => void actOnComment(comment, "send")}
                           onDelete={() => void actOnComment(comment, "delete")}
@@ -685,15 +792,20 @@ export const RealChangesPanel = memo(function RealChangesPanel({
                       </Text>
                     </div>
                   ) : diff.isPending ? (
-                    <Group justify="center" py="lg">
-                      <Loader size="xs" />
-                    </Group>
+                    showDiffSkeleton ? (
+                      <DiffSkeleton />
+                    ) : (
+                      <div className="diff-loading-space" aria-busy="true" />
+                    )
                   ) : diff.isError ? (
-                    <Text size="sm" c="red" p="sm">
-                      {diff.error instanceof Error
-                        ? diff.error.message
-                        : "Cannot load diff"}
-                    </Text>
+                    <LoadError
+                      title="Cannot load diff"
+                      message={
+                        diff.error instanceof Error ? diff.error.message : undefined
+                      }
+                      onRetry={() => void diff.refetch()}
+                      compact
+                    />
                   ) : diff.data && diff.data.hunks.length === 0 ? (
                     <Text size="sm" c="dimmed" ta="center" py="xl">
                       No textual changes to show (binary file or metadata-only

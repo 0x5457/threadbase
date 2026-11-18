@@ -1,7 +1,5 @@
 import {
   ActionIcon,
-  Group,
-  Loader,
   Text,
   useComputedColorScheme,
 } from "@mantine/core";
@@ -10,6 +8,9 @@ import { IconArrowLeft } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, type CSSProperties } from "react";
 import { readFile } from "../../api";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
+import { LoadError } from "../loading/LoadError";
+import { ListSkeleton } from "../loading/Skeleton";
 import { baseName, directoryOf, formatSize } from "./paths";
 
 const fileNameStyle: CSSProperties = {
@@ -36,6 +37,7 @@ export function FilePreview({
     queryFn: () => readFile(threadId, path),
     retry: false,
   });
+  const showSkeleton = useDelayedFlag(file.isPending, 300, 500);
 
   const fileOptions = useMemo(
     () => ({
@@ -51,37 +53,53 @@ export function FilePreview({
   const fileData = file.data?.file;
   const binary = fileData ? fileData.content.includes("\u0000") : false;
 
+  const head = (
+    <div className="file-head">
+      <ActionIcon aria-label="Back to folder" size={22} onClick={onBack}>
+        <IconArrowLeft size={14} stroke={1.5} />
+      </ActionIcon>
+      <Text size="sm" style={fileNameStyle}>
+        {fileName}
+      </Text>
+      <Text size="sm" c="dimmed" className="dir">
+        {fileDir ? `${fileDir}/` : ""}
+      </Text>
+    </div>
+  );
+
   if (file.isPending) {
     return (
-      <Group justify="center" py="xl">
-        <Loader size="sm" />
-      </Group>
+      <div className="file-block">
+        {head}
+        {showSkeleton ? (
+          <ListSkeleton
+            label="Loading file"
+            rows={12}
+            lines={1}
+            className="file-preview-skeleton"
+            rowClassName="skeleton-code-row"
+          />
+        ) : null}
+      </div>
     );
   }
   if (file.isError) {
     return (
-      <Text size="sm" c="red" p="sm">
-        {file.error instanceof Error
-          ? file.error.message
-          : "Cannot read this file"}
-      </Text>
+      <div className="file-block">
+        {head}
+        <LoadError
+          title="Cannot read this file"
+          message={file.error instanceof Error ? file.error.message : undefined}
+          onRetry={() => void file.refetch()}
+        />
+      </div>
     );
   }
   if (!fileData) return null;
 
   return (
     <div className="file-block">
-      <div className="file-head">
-        <ActionIcon aria-label="Back to folder" size={22} onClick={onBack}>
-          <IconArrowLeft size={14} stroke={1.5} />
-        </ActionIcon>
-        <Text size="sm" style={fileNameStyle}>
-          {fileName}
-        </Text>
-        <Text size="sm" c="dimmed" className="dir">
-          {fileDir ? `${fileDir}/` : ""}
-        </Text>
-      </div>
+      {head}
       {binary ? (
         <Text size="sm" c="dimmed" ta="center" py="xl">
           Binary file — no text preview

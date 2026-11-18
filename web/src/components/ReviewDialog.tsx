@@ -1,10 +1,13 @@
-import { Group, Loader, Modal, Stack, Text } from "@mantine/core";
+import { Modal, Stack, Text } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { ApprovalSummary } from "./review/ApprovalSummary";
 import { ChangesSummary } from "./review/ChangesSummary";
 import { CommentSummary } from "./review/CommentSummary";
 import { ReviewVerdictForm } from "./review/ReviewVerdictForm";
 import { useReviewDialog } from "./review/useReviewDialog";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { LoadError } from "./loading/LoadError";
+import { ReviewSkeleton } from "./loading/Skeleton";
 
 export function ReviewDialog({
   threadId,
@@ -19,6 +22,11 @@ export function ReviewDialog({
 }) {
   const phone = useMediaQuery("(max-width: 47.99em)");
   const review = useReviewDialog(threadId, opened, onClose);
+  const showSkeleton = useDelayedFlag(
+    review.bundle.isPending && Boolean(threadId),
+    300,
+    500,
+  );
 
   return (
     <Modal
@@ -30,15 +38,19 @@ export function ReviewDialog({
       fullScreen={phone}
     >
       {review.bundle.isPending && threadId ? (
-        <Group justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
+        showSkeleton ? (
+          <ReviewSkeleton />
+        ) : null
       ) : review.bundle.isError ? (
-        <Text size="sm" c="red">
-          {review.bundle.error instanceof Error
-            ? review.bundle.error.message
-            : "Cannot load thread"}
-        </Text>
+        <LoadError
+          title="Cannot load thread"
+          message={
+            review.bundle.error instanceof Error
+              ? review.bundle.error.message
+              : undefined
+          }
+          onRetry={() => void review.bundle.refetch()}
+        />
       ) : review.data ? (
         <Stack gap="md">
           <ChangesSummary
