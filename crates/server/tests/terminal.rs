@@ -277,6 +277,22 @@ async fn next_json(
     }
 }
 
+/// tmux redraws at any moment; wait for the frame that matters, not the next.
+async fn next_frame_of_type(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    wanted: &str,
+) -> Value {
+    for _ in 0..80 {
+        let message = next_json(socket).await;
+        if message["type"] == wanted {
+            return message;
+        }
+    }
+    panic!("no {wanted} frame arrived");
+}
+
 fn tmux_available() -> bool {
     which::which("tmux").is_ok()
 }
@@ -497,6 +513,52 @@ async fn every_keystroke_reaches_the_shell() {
         echoed.matches("key-by-key").count() >= 2,
         "keystrokes did not all arrive: {echoed:?}"
     );
+    fixture.teardown(&session).await;
+}
+
+#[tokio::test]
+async fn pings_are_answered_so_a_stale_socket_can_be_detected() {
+    if !tmux_available() {
+        return;
+    }
+    let fixture = fixture(true).await;
+    let session = format!("t-{}", fixture.thread_id);
+    let (status, body) = fixture
+        .call(
+            Method::POST,
+            "/api/terminal/sessions",
+            &fixture.admin,
+            Some(json!({ "threadId": fixture.thread_id })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ticket = body["ticket"].as_str().unwrap().to_owned();
+    let mut socket = fixture.connect(&fixture.admin, &ticket).await;
+    let ready = next_json(&mut socket).await;
+    assert_eq!(ready["type"], "ready");
+
+    socket
+        .send(WsMessage::Text(
+            json!({ "type": "ping" }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let pong = next_frame_of_type(&mut socket, "pong").await;
+    assert_eq!(pong["type"], "pong");
+
+    // Anything unparseable is dropped, not fatal: the probe must keep working.
+    socket
+        .send(WsMessage::Text("not json".into()))
+        .await
+        .unwrap();
+    socket
+        .send(WsMessage::Text(
+            json!({ "type": "ping" }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let pong = next_frame_of_type(&mut socket, "pong").await;
+    assert_eq!(pong["type"], "pong");
     fixture.teardown(&session).await;
 }
 

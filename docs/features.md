@@ -195,7 +195,11 @@ private tmux server â€” only in memory, never logged to disk or the event log â€
 so they survive refreshes and service restarts; close means detach.
 **Members watch by default; only admins and names in
 `THREADBASE_TERMINAL_DRIVERS` can type.** The WebSocket handshake uses a
-one-time ticket bound to the session (30 s). `THREADBASE_TERMINAL_SOCKET` for
+one-time ticket bound to the session (30 s); the browser mints a fresh one on
+every reconnect. Both ends probe the socket, so a tab that slept or lost the
+network re-attaches on its own instead of painting a stale screen, and a socket
+that went silent without a close frame is dropped after 90 s rather than
+holding its viewer slot. `THREADBASE_TERMINAL_SOCKET` for
 the private socket name, `THREADBASE_TERMINAL_SHELL` for the login shell.
 
 ### Host tmux sessions

@@ -293,8 +293,10 @@ impl Room {
         self.events.subscribe()
     }
 
-    /// Claim the keyboard when nobody holds it; otherwise watch. Host rooms use
-    /// the same rule, then let a watcher call [`Room::takeover`].
+    /// Claim the keyboard when nobody holds it, and keep it when the current
+    /// driver re-attaches: the socket they lost may still be half-open, and
+    /// demoting the replacement would strand the shell. Host rooms use the
+    /// same rule, then let a watcher call [`Room::takeover`].
     pub fn claim(&self, user: &str, may_drive: bool) -> Result<Role, TerminalError> {
         let mut state = self.lock_state()?;
         let viewers: u32 = state.viewers.values().sum();
@@ -304,12 +306,15 @@ impl Room {
         *state.viewers.entry(user.to_owned()).or_insert(0) += 1;
         if may_drive && state.controller.is_none() {
             state.controller = Some(user.to_owned());
-            let _ = self.events.send(RoomEvent::Viewers);
             let _ = self.events.send(RoomEvent::Control(Some(user.to_owned())));
-            return Ok(Role::Controller);
         }
         let _ = self.events.send(RoomEvent::Viewers);
-        Ok(Role::Watcher)
+        // Holding the keyboard is not the same as being allowed to type: a
+        // watch-only socket of the driver's own account stays a watcher.
+        match may_drive && state.controller.as_deref() == Some(user) {
+            true => Ok(Role::Controller),
+            false => Ok(Role::Watcher),
+        }
     }
 
     /// Move the keyboard to a watcher without reconnecting. Only host rooms
@@ -332,23 +337,22 @@ impl Room {
         true
     }
 
-    pub fn release(&self, user: &str, role: Role) {
+    /// Detach one browser. The keyboard falls back only when the driver's last
+    /// socket left: a surviving tab of the same driver keeps the shell drivable.
+    pub fn release(&self, user: &str) {
         let Ok(mut state) = self.lock_state() else {
             return;
         };
-        let remove = match state.viewers.get_mut(user) {
-            Some(count) if *count > 1 => {
-                *count -= 1;
-                false
-            }
-            Some(_) => true,
-            None => false,
+        let Some(count) = state.viewers.get_mut(user) else {
+            return;
         };
-        if remove {
+        *count -= 1;
+        let last = *count == 0;
+        if last {
             state.viewers.remove(user);
         }
         let _ = self.events.send(RoomEvent::Viewers);
-        if role == Role::Controller && state.controller.as_deref() == Some(user) {
+        if last && state.controller.as_deref() == Some(user) {
             state.controller = None;
             let _ = self.events.send(RoomEvent::Control(None));
         }
@@ -1234,9 +1238,35 @@ mod tests {
         assert_eq!(room.claim("u1", true), Ok(Role::Controller));
         assert_eq!(room.claim("u2", true), Ok(Role::Watcher));
         assert_eq!(room.controller().as_deref(), Some("u1"));
-        room.release("u1", Role::Controller);
+        room.release("u1");
         assert_eq!(room.controller(), None);
         assert_eq!(room.claim("u2", true), Ok(Role::Controller));
+    }
+
+    #[test]
+    fn a_reconnecting_driver_keeps_the_keyboard() {
+        let room = room(RoomMode::Workbench);
+        assert_eq!(room.claim("u1", true), Ok(Role::Controller));
+        // The reconnect lands while the stale socket still holds the slot.
+        assert_eq!(room.claim("u1", true), Ok(Role::Controller));
+        room.release("u1");
+        assert_eq!(room.controller().as_deref(), Some("u1"));
+        // The last socket frees the keyboard even though it attached as a
+        // watcher: the role is per socket, the controller is per user.
+        room.release("u1");
+        assert_eq!(room.controller(), None);
+    }
+
+    #[test]
+    fn a_watch_only_socket_never_becomes_a_driver() {
+        let room = room(RoomMode::Workbench);
+        assert_eq!(room.claim("u1", true), Ok(Role::Controller));
+        // The same account's read-only tab (a phone, a second window).
+        assert_eq!(room.claim("u1", false), Ok(Role::Watcher));
+        assert_eq!(room.controller().as_deref(), Some("u1"));
+        room.release("u1");
+        room.release("u1");
+        assert_eq!(room.controller(), None);
     }
 
     #[test]
@@ -1251,7 +1281,7 @@ mod tests {
         assert!(room.takeover("u2"));
         // A user who is not attached cannot take the keyboard.
         assert!(!room.takeover("u3"));
-        room.release("u2", Role::Controller);
+        room.release("u2");
         assert_eq!(room.controller(), None);
         assert!(room.takeover("u1"));
     }
@@ -1269,14 +1299,14 @@ mod tests {
     fn viewer_ids_are_unique_and_drop_with_the_last_tab() {
         let room = room(RoomMode::Host);
         assert_eq!(room.claim("u1", true), Ok(Role::Controller));
-        assert_eq!(room.claim("u1", true), Ok(Role::Watcher));
+        assert_eq!(room.claim("u1", true), Ok(Role::Controller));
         assert_eq!(room.claim("u2", false), Ok(Role::Watcher));
         assert_eq!(room.viewers(), 3);
         assert_eq!(room.viewer_ids(), ["u1", "u2"]);
-        room.release("u1", Role::Watcher);
+        room.release("u1");
         assert_eq!(room.viewers(), 2);
         assert_eq!(room.viewer_ids(), ["u1", "u2"]);
-        room.release("u1", Role::Controller);
+        room.release("u1");
         assert_eq!(room.viewers(), 1);
         assert_eq!(room.viewer_ids(), ["u2"]);
     }
