@@ -20,6 +20,7 @@ const COPY: Record<
  *
  * These actions are reversible, so a short toast replaces a confirmation
  * dialog.
+ */
 export function useThreadPlacement() {
   const queryClient = useQueryClient();
   const place = useCallback(
