@@ -92,7 +92,7 @@ impl Default for Config {
             terminal_shell: "/bin/bash".to_owned(),
             terminal_socket: crate::terminal::SOCKET.to_owned(),
             idle_session_seconds: 15 * 60,
-            max_active_turns: 4,
+            max_active_turns: 512,
             settle_days: 7,
             permission_mode: PermissionMode::Supervised,
             max_permission_mode: PermissionMode::FullAccess,
@@ -204,7 +204,7 @@ impl Config {
             .unwrap_or(15 * 60);
         let max_active_turns = non_empty("THREADBASE_MAX_ACTIVE_TURNS")
             .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(4);
+            .unwrap_or(512);
         let permission_mode = non_empty("THREADBASE_PERMISSION_MODE")
             .and_then(|value| value.parse::<PermissionMode>().ok())
             .unwrap_or(PermissionMode::Supervised);

@@ -105,7 +105,7 @@ flags adapters still on npx.
   (default 900, `0` = never); the binding remembers the ACP session id and
   resumes transparently, falling back to a context-reset notice if that
   fails.
-- **Concurrency.** `THREADBASE_MAX_ACTIVE_TURNS` (default 4, `0` unlimited)
+- **Concurrency.** `THREADBASE_MAX_ACTIVE_TURNS` (default 512, `0` unlimited)
   caps turns running at once; sends past the cap become queued input, drained
   as permits free up.
 - Deleting or archiving a thread stops its agent process first, so no agent
