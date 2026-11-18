@@ -117,7 +117,7 @@ mod tests {
                 hidden_presence: false,
                 created_at: now_ms(),
             },
-            method: "github",
+            method: "tailscale",
         }
     }
 

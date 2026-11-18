@@ -79,7 +79,7 @@ function AccessScreen({
         </Title>
         <Text size="sm" c="dimmed" ta="center">
           {pending
-            ? "Your GitHub account is signed in, but an administrator has not approved it yet. You will get access as soon as they do."
+            ? "Your account is recognized, but an administrator has not approved it yet. You will get access as soon as they do."
             : "An administrator removed your access to this workspace. Signing out clears the local session."}
         </Text>
         <Text size="sm">

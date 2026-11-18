@@ -16,10 +16,6 @@ use threadbase_shared::{now_ms, AuthSessionState};
 
 /// Session cookie name.
 pub const COOKIE: &str = "threadbase_session";
-/// Short-lived cookie carrying OAuth `state` and the PKCE verifier.
-pub const OAUTH_COOKIE: &str = "threadbase_oauth";
-/// Lifetime of the OAuth handshake cookie.
-pub const OAUTH_COOKIE_SECONDS: i64 = 10 * 60;
 /// Refresh a session at most this often, so reads stay cheap.
 const TOUCH_INTERVAL_MS: i64 = 60 * 60 * 1000;
 
@@ -332,7 +328,9 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let token = create(&pool, "u1", "github", None, None, -1).await.unwrap();
+        let token = create(&pool, "u1", "tailscale", None, None, -1)
+            .await
+            .unwrap();
         assert!(lookup(&pool, &token, 3600).await.unwrap().is_none());
     }
 }

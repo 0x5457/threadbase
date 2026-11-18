@@ -386,7 +386,7 @@ fn print_next_steps(spec: &ServiceSpec<'_>, public_origin: &Option<String>, opti
             options.https_port
         ),
     }
-    println!("Sign in with GitHub. Set THREADBASE_GITHUB_ALLOW to control who may.");
+    println!("Sign-in is your Tailscale identity; set THREADBASE_ADMINS to pin admins.");
     println!("The first identity to sign in becomes the administrator.");
     println!("Logs: {}", logs_hint(spec));
     println!("Restart: threadbase service restart --unit {}", spec.label);

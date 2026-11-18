@@ -1658,34 +1658,6 @@ pub enum TerminalPhase {
     Error,
 }
 
-/// The instance's desktop link. A display is a machine resource, so there is at
-/// most one of these per server; it exists while the process runs and is shared
-/// by whoever the owner lets in.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    TS,
-    Default,
-    Display,
-    EnumString,
-    IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-#[ts(export)]
-pub enum ScreenPhase {
-    #[default]
-    Idle,
-    Starting,
-    Live,
-    Stopping,
-}
-
 impl_as_str!(
     Role,
     UserAccess,

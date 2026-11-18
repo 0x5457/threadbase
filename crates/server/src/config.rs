@@ -3,31 +3,17 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use threadbase_shared::PermissionMode;
 
-/// GitHub OAuth application used by the sign-in flow.
-///
-/// The flow is the classic OAuth "web application" one: authorize redirect,
-/// authorization code exchange, `GET /user`. GitHub Apps are not used: they
-/// require an installation step and private keys for no benefit here.
-#[derive(Debug, Clone)]
-pub struct GitHubOAuth {
-    pub client_id: String,
-    pub client_secret: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct Config {
     pub data_dir: PathBuf,
     pub db_path: PathBuf,
     pub bind: SocketAddr,
-    /// Public HTTPS origin, for example the Funnel hostname.
+    /// Public HTTPS origin, for example the ts.net hostname.
     pub public_origin: Option<String>,
     /// Tailnet logins that are always administrators.
     pub admins: Vec<String>,
     /// Optional identity accepted from direct local connections (development).
     pub dev_identity: Option<String>,
-    /// `None` when GitHub sign-in is not configured; dev identity still works.
-
-    /// GitHub logins allowed to sign in even when no account exists yet.
     /// Session lifetime; sessions slide forward while in use.
     pub session_seconds: i64,
     /// `Secure` cookie flag. Derived from `public_origin`, overridable.
@@ -42,7 +28,7 @@ pub struct Config {
     pub terminal_host: bool,
     /// Named tmux sockets to expose as host terminals (`-L` names).
     pub terminal_host_sockets: Vec<String>,
-    /// Non-admin GitHub logins that may drive the browser terminal.
+    /// Non-admin tailnet logins that may drive the browser terminal.
     pub terminal_drivers: Vec<String>,
     /// Login shell started by tmux; `$SHELL` when it looks like a path.
     pub terminal_shell: String,
@@ -83,18 +69,6 @@ pub struct Config {
     pub log_file: Option<PathBuf>,
     /// Hold a power assertion so a dedicated Mac does not sleep.
     pub keep_awake: bool,
-    /// `THREADBASE_SCREEN=1` streams this machine's desktop to a browser. The
-    /// stream shows everything on the screen, so it is opt-in per server and
-    /// only ever visible to the person who started it.
-    pub screen: bool,
-    /// Display handed to voxl (`:0` on X11, an index or id on macOS). `None`
-    /// inherits the environment, which is what a desktop session already has.
-    pub screen_display: Option<String>,
-    /// Path to the `voxl` binary. `None` looks on `PATH`.
-    pub screen_voxl: Option<PathBuf>,
-    /// A share ends by itself after this long; renewing from the browser pushes
-    /// the deadline back. `0` means a share lasts until it is stopped.
-    pub screen_ttl_seconds: i64,
 }
 
 /// Test and tooling defaults. Production always goes through [`Config::load`],
@@ -129,10 +103,6 @@ impl Default for Config {
             env_file: PathBuf::from("/tmp/threadbase/env"),
             log_file: None,
             keep_awake: false,
-            screen: false,
-            screen_display: None,
-            screen_voxl: None,
-            screen_ttl_seconds: 30 * 60,
         }
     }
 }
@@ -143,10 +113,6 @@ pub enum ConfigError {
     NonLoopbackBind(String),
     #[error("invalid address: {0}")]
     InvalidAddress(String),
-    #[error(
-        "THREADBASE_GITHUB_CLIENT_ID and THREADBASE_GITHUB_CLIENT_SECRET must be set together"
-    )]
-    GitHubIncomplete,
     #[error("THREADBASE_SESSION_DAYS must be a positive number of days")]
     InvalidSessionDays,
     #[error("cannot determine a data directory for this platform; set THREADBASE_DATA_DIR")]
@@ -263,15 +229,6 @@ impl Config {
         let keep_awake = std::env::var("THREADBASE_KEEP_AWAKE")
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
-        let screen = std::env::var("THREADBASE_SCREEN")
-            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-            .unwrap_or(false);
-        let screen_display = non_empty("THREADBASE_SCREEN_DISPLAY");
-        let screen_voxl = non_empty("THREADBASE_VOXL").map(PathBuf::from);
-        let screen_ttl_seconds = non_empty("THREADBASE_SCREEN_TTL_SECS")
-            .and_then(|value| value.parse::<i64>().ok())
-            .filter(|value| *value >= 0)
-            .unwrap_or(30 * 60);
         Ok(Self {
             data_dir,
             db_path,
@@ -300,10 +257,6 @@ impl Config {
             env_file,
             log_file,
             keep_awake,
-            screen,
-            screen_display,
-            screen_voxl,
-            screen_ttl_seconds,
         })
     }
 

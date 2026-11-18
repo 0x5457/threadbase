@@ -12,9 +12,9 @@ agent on macOS. Nothing is built, copied or downloaded.
 Secrets belong in ~/.config/threadbase/env (or THREADBASE_ENV_FILE). The
 service file only names that path; the binary loads it at startup:
 
-  THREADBASE_GITHUB_CLIENT_ID=...
-  THREADBASE_GITHUB_CLIENT_SECRET=...
-  THREADBASE_GITHUB_ALLOW=octocat,ada
+  THREADBASE_ADMINS=you@example.com
+  THREADBASE_TERMINAL_DRIVERS=teammate@example.com
+  THREADBASE_WEBHOOK_URL=https://example.com/hook
 
 The unit is written to ~/.config/systemd/user/<unit>.service or
 ~/Library/LaunchAgents/<unit>.plist. Data is left untouched.";
@@ -31,7 +31,7 @@ pub struct Options {
     /// Port the Tailscale endpoint exposes
     #[arg(long, default_value_t = DEFAULT_HTTPS_PORT)]
     pub https_port: u16,
-    /// Pin THREADBASE_ADMINS to this GitHub login
+    /// Pin THREADBASE_ADMINS to this tailnet login
     #[arg(long)]
     pub admin: Option<String>,
     /// Pin THREADBASE_PUBLIC_ORIGIN instead of deriving it

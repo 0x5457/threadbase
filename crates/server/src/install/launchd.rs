@@ -299,7 +299,7 @@ mod tests {
         assert!(path.contains("/opt/homebrew/bin"), "{path}");
         assert!(path.ends_with("/usr/bin:/bin:/usr/sbin:/sbin"), "{path}");
         assert!(
-            !environment.contains_key("THREADBASE_GITHUB_CLIENT_SECRET"),
+            !environment.contains_key("THREADBASE_WEBHOOK_URL"),
             "the plist must not carry secrets"
         );
     }

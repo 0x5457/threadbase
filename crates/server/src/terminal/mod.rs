@@ -41,7 +41,7 @@ pub enum Access {
     Drive,
 }
 
-/// Case-insensitive match against `THREADBASE_TERMINAL_DRIVERS` (GitHub logins).
+/// Case-insensitive match against `THREADBASE_TERMINAL_DRIVERS` (tailnet logins).
 #[must_use]
 pub fn is_driver(logins: &[String], username: &str) -> bool {
     logins
