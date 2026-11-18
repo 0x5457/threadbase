@@ -345,6 +345,20 @@ pub struct SettingsPatch {
     pub browser_notifications: Option<bool>,
 }
 
+/// Creates or replaces one workspace-configured custom agent. The id is
+/// derived from the label on create and never changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentUpsertRequest {
+    pub label: String,
+    /// One executable name or path; the server launches it without a shell, so
+    /// arguments belong in `args`.
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Vec<crate::model::EnvVarDto>,
+}
+
 /// One earlier slice of the thread log, used when the transcript scrolls past
 /// the window a cold load returned.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

@@ -17,8 +17,10 @@ import { useQuery } from "@tanstack/react-query";
 import { isImeConfirming } from "../lib/keyboard";
 import { readPick } from "../lib/model-prefs";
 import {
+  agentItems,
   createThread,
   getState,
+  listAgents,
   type Project,
   type ThreadSummary,
 } from "../api";
@@ -29,13 +31,6 @@ interface NewThreadModalProps {
   onClose: () => void;
   onCreated: (thread: ThreadSummary) => void;
 }
-
-const agents = [
-  { value: "codex", label: "Codex" },
-  { value: "claude", label: "Claude Code" },
-  { value: "opencode", label: "opencode" },
-  { value: "pi", label: "pi" },
-];
 
 export function NewThreadModal({
   opened,
@@ -59,6 +54,12 @@ export function NewThreadModal({
   const stateQuery = useQuery({
     queryKey: ["state"],
     queryFn: getState,
+    enabled: opened,
+    staleTime: 60_000,
+  });
+  const agentsQuery = useQuery({
+    queryKey: ["agents"],
+    queryFn: listAgents,
     enabled: opened,
     staleTime: 60_000,
   });
@@ -129,7 +130,7 @@ export function NewThreadModal({
         />
         <Select
           label="Agent"
-          data={agents}
+          data={agentItems(agentsQuery.data)}
           value={agent}
           onChange={(value) => setAgent(value ?? "codex")}
           allowDeselect={false}

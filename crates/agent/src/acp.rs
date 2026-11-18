@@ -188,8 +188,8 @@ impl AcpHarness {
 
 #[async_trait::async_trait]
 impl Harness for AcpHarness {
-    fn id(&self) -> &'static str {
-        self.profile.id
+    fn id(&self) -> &str {
+        &self.profile.id
     }
 
     async fn start(&mut self, ctx: LaunchCtx) -> HarnessResult<Capabilities> {

@@ -16,19 +16,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconAlertCircle, IconMessage, IconTerminal2 } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import {
+  agentItems,
   createThreadFromTmux,
   getState,
+  listAgents,
   type ThreadSummary,
   type TmuxSessionSummary,
 } from "../../api";
 import { readPick } from "../../lib/model-prefs";
-
-const agents = [
-  { value: "codex", label: "Codex" },
-  { value: "claude", label: "Claude Code" },
-  { value: "opencode", label: "opencode" },
-  { value: "pi", label: "pi" },
-];
 
 function defaultPrompt(session: TmuxSessionSummary) {
   return `Continue the work from the tmux session "${session.name}"${
@@ -63,6 +58,12 @@ export function ThreadFromTmuxDialog({
   const stateQuery = useQuery({
     queryKey: ["state"],
     queryFn: getState,
+    enabled: opened,
+    staleTime: 60_000,
+  });
+  const agentsQuery = useQuery({
+    queryKey: ["agents"],
+    queryFn: listAgents,
     enabled: opened,
     staleTime: 60_000,
   });
@@ -145,7 +146,7 @@ export function ThreadFromTmuxDialog({
           />
           <Select
             label="Agent"
-            data={agents}
+            data={agentItems(agentsQuery.data)}
             value={agent}
             onChange={(value) => setAgent(value ?? "codex")}
             allowDeselect={false}

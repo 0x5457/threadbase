@@ -7,6 +7,7 @@
 //! - [`lifecycle`] and [`mapping`] hold the remaining side effects and
 //!   conversions.
 
+pub(crate) mod catalog;
 mod derived;
 mod lifecycle;
 mod mapping;
@@ -25,7 +26,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use threadbase_agent::{
-    all_profiles, find_profile, AcpHarness, Harness, LaunchCtx, NewSession, PromptPart, SessionId,
+    all_profiles, AcpHarness, Harness, LaunchCtx, NewSession, PromptPart, SessionId,
     SteeringOutcome, TurnHandle,
 };
 use threadbase_core::permissions::PermissionPolicy;
@@ -458,12 +459,14 @@ impl AgentManager {
         let binding = bindings::load(&self.inner.pool, thread_id)
             .await?
             .ok_or_else(|| ServerError::internal("agent binding is missing"))?;
-        let profile = find_profile(&binding.agent).copied().unwrap_or_else(|| {
-            all_profiles()
-                .first()
-                .copied()
-                .expect("at least one agent profile")
-        });
+        let profile = catalog::resolve_profile(&self.inner.pool, &binding.agent)
+            .await?
+            .unwrap_or_else(|| {
+                all_profiles()
+                    .first()
+                    .cloned()
+                    .expect("at least one agent profile")
+            });
         let mut harness = Box::new(AcpHarness::new(profile));
         let events = harness.events();
         let permission_mode =
@@ -476,7 +479,7 @@ impl AgentManager {
             effort: row.effort.clone(),
             subagents: true,
             permission_mode: Some(permission_mode),
-            env: adapter_env(&binding.agent),
+            env: catalog::launch_env(&self.inner.pool, &binding.agent).await?,
         };
         let capabilities = match harness.start(ctx).await {
             Ok(capabilities) => capabilities,
@@ -1480,13 +1483,4 @@ async fn cancel_pending_elicitations(inner: &Inner, thread_id: &str) {
             )
             .await;
     }
-}
-
-fn adapter_env(agent: &str) -> Vec<(String, String)> {
-    if agent != "codex" {
-        return Vec::new();
-    }
-    threadbase_agent::profile::find_in_path("codex")
-        .map(|path| vec![("CODEX_PATH".to_owned(), path.to_string_lossy().to_string())])
-        .unwrap_or_default()
 }

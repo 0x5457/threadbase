@@ -1,4 +1,4 @@
-//! Workspace state, settings and search routes.
+//! Workspace state, settings, agents and search routes.
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;
@@ -7,14 +7,19 @@ use axum::extract::State;
 use axum::routing::{get, patch};
 use axum::Json;
 use axum::Router;
-use threadbase_shared::api::SettingsPatch;
-use threadbase_shared::{MachineSpec, PermissionPolicyDto, StateResponse};
+use threadbase_shared::api::{AgentUpsertRequest, SettingsPatch};
+use threadbase_shared::{AgentDto, MachineSpec, PermissionPolicyDto, StateResponse};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/state", get(state))
         .route("/api/machines", get(machines))
         .route("/api/settings", patch(update_settings))
+        .route("/api/agents", get(list_agents).post(add_agent))
+        .route(
+            "/api/agents/{agent_id}",
+            patch(update_agent).delete(delete_agent),
+        )
 }
 
 /// The lifecycle catalogue. Unauthenticated on purpose: it describes the
@@ -59,4 +64,42 @@ async fn update_settings(
         )
         .await?,
     ))
+}
+
+async fn list_agents(
+    State(app): State<AppState>,
+    _user: CurrentUser,
+) -> Result<Json<Vec<AgentDto>>, ServerError> {
+    Ok(Json(crate::agents::catalog::list(&app.pool).await?))
+}
+
+async fn add_agent(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<AgentUpsertRequest>,
+) -> Result<Json<AgentDto>, ServerError> {
+    user.require_admin()?;
+    Ok(Json(crate::agents::catalog::add(&app.pool, request).await?))
+}
+
+async fn update_agent(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+    Json(request): Json<AgentUpsertRequest>,
+) -> Result<Json<AgentDto>, ServerError> {
+    user.require_admin()?;
+    Ok(Json(
+        crate::agents::catalog::update(&app.pool, &agent_id, request).await?,
+    ))
+}
+
+async fn delete_agent(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+) -> Result<Json<threadbase_shared::OkResponse>, ServerError> {
+    user.require_admin()?;
+    crate::agents::catalog::delete(&app.pool, &agent_id).await?;
+    Ok(Json(threadbase_shared::OkResponse { ok: true }))
 }

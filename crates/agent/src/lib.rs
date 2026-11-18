@@ -235,7 +235,7 @@ pub type HarnessResult<T> = Result<T, HarnessError>;
 
 #[async_trait]
 pub trait Harness: Send + Sync {
-    fn id(&self) -> &'static str;
+    fn id(&self) -> &str;
     async fn start(&mut self, ctx: LaunchCtx) -> HarnessResult<Capabilities>;
     async fn new_session(&mut self, req: NewSession) -> HarnessResult<SessionId>;
     async fn load_session(&mut self, id: &SessionId) -> HarnessResult<()>;
@@ -303,7 +303,7 @@ mod tests {
     fn every_profile_has_a_unique_id() {
         let mut ids = std::collections::HashSet::new();
         for profile in all_profiles() {
-            assert!(ids.insert(profile.id));
+            assert!(ids.insert(profile.id.as_str()));
         }
     }
 

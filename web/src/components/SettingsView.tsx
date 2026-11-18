@@ -15,7 +15,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { memo, useEffect, useState } from "react";
-import { getMe, getState, updateSettings, type Settings } from "../api";
+import { getMe, getState, updateSettings, agentItems, listAgents, type Settings } from "../api";
 import {
   currentPushState,
   disablePush,
@@ -24,13 +24,7 @@ import {
   type PushState,
 } from "../lib/push";
 import { PeopleSection } from "./PeopleSection";
-
-const agents = [
-  { value: "codex", label: "Codex" },
-  { value: "claude", label: "Claude Code" },
-  { value: "opencode", label: "opencode" },
-  { value: "pi", label: "pi" },
-];
+import { AgentsSection } from "./AgentsSection";
 
 const baselines = [
   { value: "base_branch", label: "Base branch" },
@@ -50,6 +44,11 @@ export const SettingsView = memo(function SettingsView() {
     queryKey: ["state"],
     queryFn: getState,
     staleTime: 10_000,
+  });
+  const agents = useQuery({
+    queryKey: ["agents"],
+    queryFn: listAgents,
+    staleTime: 30_000,
   });
   const [settings, setSettings] = useState<Settings | null>(null);
   // Last persisted snapshot, so the bar can tell an actual edit from a refetch
@@ -195,6 +194,8 @@ export const SettingsView = memo(function SettingsView() {
             </Stack>
           </Card>
 
+          <AgentsSection isAdmin={!!me.data?.user.isAdmin} />
+
           <Card withBorder p="md" className="settings-card">
             <Stack gap="sm">
               <Text size="sm" fw={500}>
@@ -203,7 +204,7 @@ export const SettingsView = memo(function SettingsView() {
               <Group grow align="flex-start">
                 <Select
                   label="Default agent"
-                  data={agents}
+                  data={agentItems(agents.data)}
                   value={settings.defaultAgent}
                   onChange={(value) => patch("defaultAgent", value ?? "codex")}
                   allowDeselect={false}

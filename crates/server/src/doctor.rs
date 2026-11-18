@@ -28,21 +28,24 @@ pub async fn report(config: &Config) -> DoctorReport {
         // leaves an npm process resident. The doctor says so out loud instead
         // of reporting a slow fallback as healthy.
         if resolved.via_npx && installed {
-            npx_fallback.push(profile.command);
+            npx_fallback.push(profile.command.clone());
         }
-        let adapter = profile
-            .npm_package
-            .map(|package| format!("{package}@{}", profile.npm_version.unwrap_or("latest")));
+        let adapter = profile.npm_package.clone().map(|package| {
+            format!(
+                "{package}@{}",
+                profile.npm_version.as_deref().unwrap_or("latest")
+            )
+        });
         agents.push(AgentInfoDto {
             id: profile.id.to_owned(),
             label: profile.label.to_owned(),
             installed,
             version: None,
             adapter,
-            adapter_version: profile.npm_version.map(ToOwned::to_owned),
-            supports_steering: matches!(profile.id, "codex" | "claude"),
-            supports_subagents: matches!(profile.id, "codex" | "claude" | "opencode"),
-            supports_elicitation: matches!(profile.id, "codex" | "claude"),
+            adapter_version: profile.npm_version.clone(),
+            supports_steering: matches!(profile.id.as_str(), "codex" | "claude"),
+            supports_subagents: matches!(profile.id.as_str(), "codex" | "claude" | "opencode"),
+            supports_elicitation: matches!(profile.id.as_str(), "codex" | "claude"),
             identity: None,
         });
     }

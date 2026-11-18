@@ -14,21 +14,23 @@ use threadbase_shared::{
 };
 use tokio::sync::broadcast;
 
-static FAKE_PROFILE: AgentProfile = AgentProfile {
-    id: "fake",
-    label: "Fake agent",
-    command: env!("CARGO_BIN_EXE_threadbase_acp_fixture"),
-    args: &[],
-    npm_package: None,
-    npm_version: None,
-    default_model: None,
-    modes: &[],
-    permission_modes: &[
-        (PermissionMode::Supervised, Some("ask")),
-        (PermissionMode::AutoEdit, Some("acceptEdits")),
-        (PermissionMode::FullAccess, Some("bypass")),
-    ],
-};
+fn fake_profile() -> AgentProfile {
+    AgentProfile {
+        id: "fake".to_owned(),
+        label: "Fake agent".to_owned(),
+        command: env!("CARGO_BIN_EXE_threadbase_acp_fixture").to_owned(),
+        args: Vec::new(),
+        npm_package: None,
+        npm_version: None,
+        default_model: None,
+        modes: &[],
+        permission_modes: &[
+            (PermissionMode::Supervised, Some("ask")),
+            (PermissionMode::AutoEdit, Some("acceptEdits")),
+            (PermissionMode::FullAccess, Some("bypass")),
+        ],
+    }
+}
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -45,20 +47,22 @@ async fn start(subagents: bool) -> TestHarness {
 }
 
 /// A profile that maps none of our permission modes, like opencode and pi.
-static UNMAPPED_PROFILE: AgentProfile = AgentProfile {
-    id: "unmapped",
-    label: "Unmapped agent",
-    command: env!("CARGO_BIN_EXE_threadbase_acp_fixture"),
-    args: &[],
-    npm_package: None,
-    npm_version: None,
-    default_model: None,
-    modes: &[],
-    permission_modes: &[],
-};
+fn unmapped_profile() -> AgentProfile {
+    AgentProfile {
+        id: "unmapped".to_owned(),
+        label: "Unmapped agent".to_owned(),
+        command: env!("CARGO_BIN_EXE_threadbase_acp_fixture").to_owned(),
+        args: Vec::new(),
+        npm_package: None,
+        npm_version: None,
+        default_model: None,
+        modes: &[],
+        permission_modes: &[],
+    }
+}
 
 async fn start_with(subagents: bool, model: Option<&str>, effort: Option<&str>) -> TestHarness {
-    start_with_profile(FAKE_PROFILE, subagents, model, effort).await
+    start_with_profile(fake_profile(), subagents, model, effort).await
 }
 
 async fn start_with_profile(
@@ -1021,7 +1025,7 @@ async fn permission_mode_is_pushed_as_a_provider_session_mode() {
 /// and the caller is told this is not an error.
 #[tokio::test]
 async fn a_mode_without_a_provider_equivalent_is_not_sent() {
-    let mut test = start_with_profile(UNMAPPED_PROFILE, true, None, None).await;
+    let mut test = start_with_profile(unmapped_profile(), true, None, None).await;
     new_session(&mut test).await;
     let error = test
         .harness

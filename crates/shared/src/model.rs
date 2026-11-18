@@ -1386,6 +1386,40 @@ pub struct DiffSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EnvVarDto {
+    pub key: String,
+    pub value: String,
+}
+
+/// One agent a thread can run, from the built-in profiles or the workspace's
+/// configured custom agents. `installed` mirrors `threadbase doctor`: it is
+/// true for an npx-only adapter when npx itself is on PATH, with `via_npx`
+/// marking the slower path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentDto {
+    pub id: String,
+    pub label: String,
+    pub command: String,
+    pub args: Vec<String>,
+    /// Environment variables for custom agents; empty for the built-ins.
+    /// Members can read any agent's environment through the agent itself, so
+    /// returning the values to the workspace adds no new exposure.
+    pub env: Vec<EnvVarDto>,
+    /// True when this agent came from workspace configuration rather than
+    /// the built-in profiles, so it can be edited or removed.
+    pub custom: bool,
+    pub installed: bool,
+    pub via_npx: bool,
+    pub supports_steering: bool,
+    pub supports_subagents: bool,
+    pub supports_elicitation: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentInfoDto {
     pub id: String,
     pub label: String,
