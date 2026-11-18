@@ -20,6 +20,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { WebSocket as ReconnectingWebSocket } from "partysocket";
 import {
   ApiError,
   attachHostTerminalSession,
@@ -38,6 +39,10 @@ import { useXterm } from "./use-xterm";
 import type { TerminalPhase } from "../../api/types/TerminalPhase";
 import type { UserBrief } from "../../api/types/UserBrief";
 import { can } from "../../lib/machine";
+import {
+  HEARTBEAT_MS,
+  RECONNECT_OPTIONS,
+} from "../../lib/live/transport";
 import { ViewerAvatars } from "../ViewerAvatars";
 
 type ServerMessage =
@@ -58,7 +63,8 @@ type ServerMessage =
       role: "controller" | "watcher" | null;
     }
   | { type: "viewers"; viewerUsers: UserBrief[] }
-  | { type: "exit"; code: number };
+  | { type: "exit"; code: number }
+  | { type: "pong" };
 
 /** Keys the browser or xterm swallows, one tap away from the drawer footer. */
 const KEY_BAR = [
@@ -81,10 +87,15 @@ const MIN_HEIGHT = 160;
 const MAX_HEIGHT = 720;
 /** A lone LF this soon after a CR is the same Enter, not a second one. */
 const LEFTOVER_NEWLINE_MS = 200;
+/** Quiet past this is a tab that slept through every timer throttle, not an
+ * idle shell; the socket cannot be trusted anymore. */
+const STALE_QUIET_MS = 5 * HEARTBEAT_MS;
 
 /**
  * Admins create, everyone else attaches to a shell that already exists. Keeping
  * this in one place means the drawer does not need to know the caller's role.
+ * The friendly rewrites stay ApiErrors carrying the real status: the reconnect
+ * loop reads it to decide whether a failure can heal by retrying.
  */
 async function openSession(
   target: TerminalTarget,
@@ -95,7 +106,11 @@ async function openSession(
       return await attachHostTerminalSession(target.socket, target.id);
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
-        throw new Error("That tmux session is gone. Pick another one.");
+        throw new ApiError(
+          "That tmux session is gone. Pick another one.",
+          404,
+          error.code,
+        );
       }
       throw error;
     }
@@ -109,8 +124,10 @@ async function openSession(
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
-      throw new Error(
+      throw new ApiError(
         "The terminal is turned off on this server (THREADBASE_TERMINAL=1).",
+        404,
+        error.code,
       );
     }
     if (!(error instanceof ApiError) || error.status !== 403) throw error;
@@ -119,10 +136,12 @@ async function openSession(
       (entry) => (entry.threadId ?? null) === threadId,
     );
     if (!existing) {
-      throw new Error(
+      throw new ApiError(
         threadId
           ? "Only an administrator can start a terminal in this thread."
           : "Only an administrator can start a terminal on this machine.",
+        403,
+        null,
       );
     }
     return attachTerminalSession(existing.id);
@@ -162,6 +181,9 @@ export function TerminalDrawer({
   const sessionRef = useRef<{ id: string; kind: "workbench" | "host" } | null>(
     null,
   );
+  // Once a session has been live, drops are transient until a 401/403/404
+  // proves otherwise; before that, failures keep the manual notice.
+  const wasLiveRef = useRef(false);
   const [controller, setController] = useState<string | null>(null);
   const [viewerUsers, setViewerUsers] = useState<UserBrief[]>([]);
   const [canTakeOver, setCanTakeOver] = useState(false);
@@ -183,7 +205,6 @@ export function TerminalDrawer({
     getInitialValueInEffect: false,
   });
 
-  const socketRef = useRef<WebSocket | null>(null);
   const sendRef = useRef<(message: unknown) => void>(() => {});
   // When the last CR went out, so a leftover LF can be recognised below.
   const lastCarriageReturn = useRef(0);
@@ -230,94 +251,188 @@ export function TerminalDrawer({
 
   useEffect(() => {
     if (!ready) return;
-    let cancelled = false;
+    let disposed = false;
+    let exited = false;
+    let permanent = false;
+    let heartbeatTimer: number | null = null;
+    let pingOutstanding = false;
+    let lastPongAt = performance.now();
     setPhase("connecting");
     setError(null);
     setExitCode(null);
 
-    const connect = async () => {
-      try {
-        const created = await openSession(target, size());
-        if (cancelled) return;
-        sessionRef.current = { id: created.session.id, kind: target.kind };
-        if ("name" in created.session) setSessionName(created.session.name);
-        setCwd(created.session.cwd ?? "");
-
-        const socket = new WebSocket(
-          target.kind === "host"
-            ? hostTerminalSocketUrl(created.ticket)
-            : terminalSocketUrl(created.session.id, created.ticket),
-        );
-        socketRef.current = socket;
-        socket.onopen = () => {
-          sendRef.current = (message) => {
-            if (socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify(message));
-            }
-          };
-          sendRef.current({
-            type: "resize",
-            cols: size().cols,
-            rows: size().rows,
-          });
-        };
-        socket.onmessage = (event) => {
-          let message: ServerMessage;
-          try {
-            message = JSON.parse(String(event.data)) as ServerMessage;
-          } catch {
-            return;
-          }
-          switch (message.type) {
-            case "ready":
-              setRole(message.role);
-              setController(message.controller);
-              setViewerUsers(message.viewerUsers);
-              setCanTakeOver(message.canTakeOver);
-              setCwd(message.cwd);
-              setPhase("live");
-              void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-              break;
-            case "output":
-              write(message.data);
-              break;
-            case "control":
-              setController(message.controller);
-              if (message.role) setRole(message.role);
-              void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-              break;
-            case "viewers":
-              setViewerUsers(message.viewerUsers);
-              void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-              break;
-            case "exit":
-              setExitCode(message.code);
-              setPhase("exited");
-              break;
-          }
-        };
-        socket.onclose = () => {
-          if (cancelled) return;
-          setPhase((current) => (current === "exited" ? current : "error"));
-          setError((current) => current ?? "The terminal connection closed.");
-        };
-      } catch (caught) {
-        if (cancelled) return;
-        setPhase("error");
-        setError(
-          caught instanceof Error ? caught.message : "Could not open the terminal",
-        );
+    const clearHeartbeat = () => {
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
       }
     };
 
-    void connect();
-    return () => {
-      cancelled = true;
-      sendRef.current = () => {};
-      socketRef.current?.close();
-      socketRef.current = null;
+    // Tickets are single-use, so every (re)connection mints a fresh one;
+    // partysocket awaits this provider before each dial and owns the backoff.
+    const socket = new ReconnectingWebSocket(
+      async () => {
+        let created: Awaited<ReturnType<typeof openSession>>;
+        try {
+          created = await openSession(target, size());
+        } catch (caught) {
+          // 401/403/404 never heal by retrying; stop the ladder and let the
+          // notice own the next step.
+          if (
+            caught instanceof ApiError &&
+            [401, 403, 404].includes(caught.status)
+          ) {
+            permanent = true;
+            socket.close(1000, caught.message);
+          }
+          throw caught;
+        }
+        if (disposed) throw new Error("terminal drawer released");
+        sessionRef.current = { id: created.session.id, kind: target.kind };
+        if ("name" in created.session) setSessionName(created.session.name);
+        setCwd(created.session.cwd ?? "");
+        return target.kind === "host"
+          ? hostTerminalSocketUrl(created.ticket)
+          : terminalSocketUrl(created.session.id, created.ticket);
+      },
+      undefined,
+      RECONNECT_OPTIONS,
+    );
+
+    socket.onopen = () => {
+      sendRef.current = (message) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify(message));
+        }
+      };
+      // A re-attach redraws the whole pane; give the redraw a clear screen
+      // instead of pasting it under the stale one.
+      if (wasLiveRef.current) reset();
+      pingOutstanding = false;
+      lastPongAt = performance.now();
+      clearHeartbeat();
+      heartbeatTimer = window.setInterval(() => {
+        // An unanswered ping, or quiet past every timer throttle, means the
+        // socket is half-open (slept tab, dead network): replace it.
+        if (pingOutstanding || performance.now() - lastPongAt > STALE_QUIET_MS) {
+          socket.reconnect(4000, "heartbeat timeout");
+          return;
+        }
+        pingOutstanding = true;
+        sendRef.current({ type: "ping" });
+      }, HEARTBEAT_MS);
+      sendRef.current({
+        type: "resize",
+        cols: size().cols,
+        rows: size().rows,
+      });
     };
-  }, [queryClient, ready, target, attempt, size, write]);
+
+    // A tab that slept through every timer wakes on a socket nobody kept alive.
+    // Replace it before the user sees the stale screen and types into it.
+    const onVisibilityChange = () => {
+      if (disposed || document.visibilityState !== "visible") return;
+      if (performance.now() - lastPongAt < HEARTBEAT_MS) return;
+      socket.reconnect(4000, "resumed from background");
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    socket.onmessage = (event: MessageEvent) => {
+      if (typeof event.data !== "string") return;
+      let message: ServerMessage;
+      try {
+        message = JSON.parse(event.data) as ServerMessage;
+      } catch {
+        return;
+      }
+      switch (message.type) {
+        case "ready":
+          wasLiveRef.current = true;
+          setError(null);
+          setRole(message.role);
+          setController(message.controller);
+          setViewerUsers(message.viewerUsers);
+          setCanTakeOver(message.canTakeOver);
+          setCwd(message.cwd);
+          setPhase("live");
+          void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+          break;
+        case "output":
+          write(message.data);
+          break;
+        case "pong":
+          pingOutstanding = false;
+          lastPongAt = performance.now();
+          break;
+        case "control":
+          setController(message.controller);
+          if (message.role) setRole(message.role);
+          void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+          break;
+        case "viewers":
+          setViewerUsers(message.viewerUsers);
+          void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+          break;
+        case "exit":
+          exited = true;
+          clearHeartbeat();
+          setExitCode(message.code);
+          setPhase("exited");
+          // A deliberate close stops partysocket from redialing a dead shell.
+          socket.close(1000, "exited");
+          break;
+      }
+    };
+
+    socket.onerror = (event) => {
+      if (disposed || exited || !event.message) return;
+      // The ticket mint failed before any socket existed, so no close event
+      // follows; transport errors keep theirs and leave this alone.
+      const text =
+        event.message === "TIMEOUT"
+          ? "Could not open the terminal."
+          : event.message;
+      if (permanent || !wasLiveRef.current) {
+        setPhase("error");
+        setError(text);
+        return;
+      }
+      setPhase("connecting");
+      setError(`Reconnecting: ${text}`);
+    };
+
+    socket.onclose = (event: CloseEvent) => {
+      if (disposed || exited) return;
+      clearHeartbeat();
+      // A session that was live dropped for a transient reason: partysocket is
+      // already dialing again. Before the first attach, failures keep the
+      // manual notice.
+      if (wasLiveRef.current && !permanent) {
+        setPhase("connecting");
+        setError(
+          event.code === 4000 || event.reason === ""
+            ? "Connection lost; reconnecting…"
+            : event.reason,
+        );
+        return;
+      }
+      setPhase("error");
+      setError(event.reason || "Could not open the terminal.");
+    };
+
+    return () => {
+      disposed = true;
+      clearHeartbeat();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      sendRef.current = () => {};
+      // Detach first: partysocket only re-enters from these callbacks.
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = null;
+      socket.close(1000, "terminal drawer released");
+    };
+  }, [queryClient, ready, target, attempt, size, write, reset]);
 
   // Drag the top edge to trade transcript space for terminal height.
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -360,6 +475,7 @@ export function TerminalDrawer({
   };
 
   const reconnect = () => {
+    setError(null);
     reset();
     setAttempt((current) => current + 1);
   };
@@ -530,6 +646,12 @@ export function TerminalDrawer({
               </Button>
             ) : null}
           </Group>
+        </div>
+      ) : null}
+
+      {phase === "connecting" && error ? (
+        <div className="terminal-notice" data-kind="reconnecting">
+          <Text size="xs">{error}</Text>
         </div>
       ) : null}
 

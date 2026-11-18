@@ -32,6 +32,9 @@ const DEFAULT_ROWS: u16 = 30;
 /// Coalesce pty writes so a chatty command does not send one frame per chunk.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(16);
 const FLUSH_BYTES: usize = 64 * 1024;
+/// A socket quiet this long went away without a close frame (suspended tab,
+/// dead network); drop it so its room slot and pty can be reused.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -388,6 +391,8 @@ enum ClientMessage {
     },
     /// Ask for the keyboard in a host room. Workbench rooms ignore it.
     Take,
+    /// Liveness probe; the browser reconnects when the answer stops arriving.
+    Ping,
 }
 
 #[derive(Debug, Serialize)]
@@ -420,6 +425,7 @@ enum ServerMessage {
     Exit {
         code: i32,
     },
+    Pong,
 }
 
 async fn socket(
@@ -500,7 +506,7 @@ async fn upgrade(
     let attachment = match terminal::attach(&room, DEFAULT_COLS, DEFAULT_ROWS, role) {
         Ok(attachment) => attachment,
         Err(error) => {
-            room.release(user.user.id.as_str(), role);
+            room.release(user.user.id.as_str());
             return Err(map_terminal_error(error));
         }
     };
@@ -634,7 +640,7 @@ async fn host_upgrade(
     let attachment = match terminal::attach(&room, DEFAULT_COLS, DEFAULT_ROWS, role) {
         Ok(attachment) => attachment,
         Err(error) => {
-            room.release(user.user.id.as_str(), role);
+            room.release(user.user.id.as_str());
             return Err(map_terminal_error(error));
         }
     };
@@ -654,7 +660,7 @@ async fn run(
 ) {
     let user_id = user.user.id.as_str().to_owned();
     let Some(mut exit) = attachment.exit.take() else {
-        room.release(&user_id, role);
+        room.release(&user_id);
         return;
     };
     let (mut sender, mut receiver) = socket.split();
@@ -674,11 +680,12 @@ async fn run(
         can_take_over,
     };
     if send(&mut sender, &ready).await.is_err() {
-        room.release(&user_id, role);
+        room.release(&user_id);
         return;
     }
 
     let mut pending: Vec<u8> = Vec::new();
+    let mut last_seen = tokio::time::Instant::now();
     let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -734,7 +741,8 @@ async fn run(
             }
             incoming = receiver.next() => {
                 let Some(Ok(message)) = incoming else { break };
-                handle_client(
+                last_seen = tokio::time::Instant::now();
+                if let Some(reply) = handle_client(
                     &message,
                     &attachment,
                     &mut role,
@@ -743,20 +751,31 @@ async fn run(
                     &user_id,
                     can_take_over,
                 )
-                .await;
+                .await
+                {
+                    if send(&mut sender, &reply).await.is_err() {
+                        break;
+                    }
+                }
             }
             _ = ticker.tick() => {
+                // Browsers ping every few seconds; quiet past that is a
+                // socket nobody is driving anymore.
+                if last_seen.elapsed() > IDLE_TIMEOUT {
+                    break;
+                }
                 flush(&mut sender, &mut pending, &attachment).await;
             }
         }
     }
 
     drop(attachment);
-    room.release(&user_id, role);
+    room.release(&user_id);
 }
 
-/// Handles one client frame. Anything unparseable is ignored on purpose: a
-/// terminal socket that closes on a bad frame is worse than dropping it.
+/// Handles one client frame and returns the reply it owes, if any. Anything
+/// unparseable is ignored on purpose: a terminal socket that closes on a bad
+/// frame is worse than dropping it.
 async fn handle_client(
     message: &Message,
     attachment: &Attachment,
@@ -765,12 +784,12 @@ async fn handle_client(
     room: &terminal::Room,
     user_id: &str,
     can_take_over: bool,
-) {
+) -> Option<ServerMessage> {
     let Message::Text(text) = message else {
-        return;
+        return None;
     };
     let Ok(client) = serde_json::from_str::<ClientMessage>(text.as_str()) else {
-        return;
+        return None;
     };
     match client {
         ClientMessage::Input { data } => {
@@ -787,7 +806,7 @@ async fn handle_client(
             // left to tmux's own window-size policy.
             attachment.resize(cols, rows);
             if room.controller().as_deref() != Some(user_id) || room.allows_takeover() {
-                return;
+                return None;
             }
             let state = state.clone();
             let socket = room.socket.clone();
@@ -801,7 +820,7 @@ async fn handle_client(
         }
         ClientMessage::Take => {
             if !can_take_over {
-                return;
+                return None;
             }
             // Re-check the live account row: a member downgraded after the
             // ticket was minted must not take the keyboard on an open socket.
@@ -814,7 +833,9 @@ async fn handle_client(
                 *role = Role::Controller;
             }
         }
+        ClientMessage::Ping => return Some(ServerMessage::Pong),
     }
+    None
 }
 
 async fn flush(
