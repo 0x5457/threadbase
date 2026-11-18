@@ -29,13 +29,11 @@ cookie = "0.18"
 directories = "6.0"
 dotenvy.workspace = true
 futures-util.workspace = true
-governor.workspace = true
 gray_matter.workspace = true
 hex.workspace = true
 ignore.workspace = true
 jiff.workspace = true
 mime_guess.workspace = true
-oauth2.workspace = true
 plist.workspace = true
 portable-pty.workspace = true
 rand.workspace = true
@@ -51,6 +49,7 @@ sqlx.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
@@ -71,7 +70,6 @@ keepawake = "0.6"
 [dev-dependencies]
 tempfile.workspace = true
 tower.workspace = true
-tokio-tungstenite = "0.30"
 
 [lints]
 workspace = true
