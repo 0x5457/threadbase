@@ -167,6 +167,196 @@ pub enum ThreadStatus {
     Archived,
 }
 
+/// What an outside agent may do with a token minted from the settings page.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum McpScope {
+    /// List and read threads.
+    Read,
+    /// Start a turn on a thread.
+    Write,
+    /// Answer an approval or a question.
+    Approve,
+}
+
+/// One guest's drafted message, waiting for a person to send or dismiss it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum GuestMessageStatus {
+    Pending,
+    Sent,
+    Dismissed,
+}
+
+/// Where a thread sits in the workbench between turns.
+///
+/// This is deliberately *not* part of [`ThreadStatus`]. `ThreadStatus` answers
+/// "what is the agent doing", and `Archived` lives there because it changes
+/// which commands the agent may accept. Placement answers "where did a human
+/// park this thread", and it changes nothing about the agent: a settled thread
+/// can be prompted again, which simply wakes it.
+///
+/// `Working` and "needs you" are not placements. They are sections derived from
+/// live facts ([`ThreadSection`]), so a parked thread can never silently claim
+/// to be running and a running thread can never hide in a shelf.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum ThreadPlacement {
+    Active,
+    Snoozed,
+    Settled,
+}
+
+/// How much the agent may do without asking.
+///
+/// There is deliberately no fourth "auto" mode: it would have to mean "the
+/// provider reviews the request itself", and only some adapters offer that.
+/// A mode we cannot enforce the same way for every agent would be a promise the
+/// server cannot keep, so the ladder is three steps and every step is decided by
+/// the same function (`threadbase_core::permissions`).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum PermissionMode {
+    /// Ask before edits and commands.
+    Supervised,
+    /// Edits are accepted; commands and network still ask.
+    AutoEdit,
+    /// Nothing asks.
+    FullAccess,
+}
+
+impl PermissionMode {
+    /// Ordering used to clamp a request to the instance ceiling.
+    #[must_use]
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Supervised => 0,
+            Self::AutoEdit => 1,
+            Self::FullAccess => 2,
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Supervised => "Supervised",
+            Self::AutoEdit => "Auto-accept edits",
+            Self::FullAccess => "Full access",
+        }
+    }
+}
+
+/// Whether the inactivity sweeper may park this thread.
+///
+/// This is a policy flag, not a placement: a thread that is `never` can still be
+/// settled by a person, and a `default` thread is only settled when it is idle
+/// and nobody is waiting on it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum AutoSettle {
+    Default,
+    Never,
+}
+
+/// The row a thread renders in, derived by
+/// [`threadbase_core::state::section`] from placement, status and live work.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum ThreadSection {
+    Pinned,
+    Active,
+    Working,
+    Snoozed,
+    Settled,
+    Archived,
+}
+
 #[derive(
     Debug,
     Clone,
@@ -489,6 +679,9 @@ pub enum BaselineKind {
     BaseBranch,
     LastCommit,
     LastTurn,
+    /// One turn's own span: from the checkpoint taken before it to the
+    /// checkpoint after it (or the worktree, for the latest turn).
+    Turn,
     Commit,
 }
 
@@ -773,6 +966,9 @@ pub struct ProjectDto {
     pub verify_command: Option<String>,
     /// Optional command run once when a thread worktree is created.
     pub setup_command: Option<String>,
+    /// Default permission mode for threads in this project; `None` inherits the
+    /// instance default. A thread may still choose its own.
+    pub permission_mode: Option<PermissionMode>,
     pub active_threads: u32,
     pub waiting_approvals: u32,
     pub last_activity_at: Option<i64>,
@@ -807,8 +1003,28 @@ pub struct ThreadDto {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
     pub pinned: bool,
+    /// Where the thread sits between turns. Written only by placement
+    /// commands; `working` and "needs you" are never stored.
+    pub placement: ThreadPlacement,
+    /// The list row this thread belongs in, computed by the server.
+    pub section: ThreadSection,
+    pub placement_at: i64,
+    /// Unix ms when a snoozed thread wakes. `None` for other placements.
+    pub snooze_until: Option<i64>,
+    /// Whether the inactivity sweeper may settle this thread on its own.
+    pub auto_settle: AutoSettle,
+    /// The mode in force for this thread, after project inheritance and the
+    /// instance ceiling. This is what the agent is actually allowed to do.
+    pub permission_mode: PermissionMode,
+    /// The thread's own choice, `None` when it inherits. The picker shows
+    /// "Inherit" only for this, so a capped value is never mistaken for a choice.
+    pub permission_mode_override: Option<PermissionMode>,
     pub participants: Vec<Participant>,
     pub pending_approvals: u32,
+    /// Unanswered agent questions. Separate from approvals because a question
+    /// blocks the turn the same way but needs a different UI affordance.
+    #[serde(default)]
+    pub pending_elicitations: u32,
     /// A non-empty collaborative composer draft exists for this thread.
     #[serde(default)]
     pub has_draft: bool,
@@ -1494,6 +1710,11 @@ impl_as_str!(
     Role,
     UserAccess,
     ThreadStatus,
+    ThreadPlacement,
+    ThreadSection,
+    AutoSettle,
+    PermissionMode,
+    GuestMessageStatus,
     SetupStatus,
     SubagentStatus,
     Delivery,

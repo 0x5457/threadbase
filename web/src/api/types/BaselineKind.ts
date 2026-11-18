@@ -4,4 +4,5 @@ export type BaselineKind =
   | "base_branch"
   | "last_commit"
   | "last_turn"
+  | "turn"
   | "commit";

@@ -3,10 +3,11 @@
 use crate::event::EventEnvelope;
 use crate::ids::{CommentId, ProjectId, ThreadId, UserId};
 use crate::model::{
-    ApprovalDecision, ApprovalDto, AuthStatusDto, BaselineDto, ChangesDto, CommentAnchor,
-    CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto, FileContentDto,
-    FileEntryDto, GoalDto, InboxItemDto, ProjectDto, QueueItemDto, Role, SettingsDto, SubagentDto,
-    ThreadDto, ThreadHistoryDto, UserAccess, UserBrief, UserDto,
+    ApprovalDecision, ApprovalDto, AuthStatusDto, AutoSettle, BaselineDto, ChangesDto,
+    CommentAnchor, CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto,
+    FileContentDto, FileEntryDto, GoalDto, GuestMessageStatus, InboxItemDto, McpScope,
+    PermissionMode, ProjectDto, QueueItemDto, Role, SettingsDto, SubagentDto, ThreadDto,
+    ThreadHistoryDto, UserAccess, UserBrief, UserDto,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -81,6 +82,9 @@ pub struct UpdateProjectRequest {
     pub verify_command: Option<String>,
     /// Empty string clears the configured command.
     pub setup_command: Option<String>,
+    /// Default mode for new threads in this project. Empty string clears it back
+    /// to inheriting the instance default, matching the two fields above.
+    pub permission_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -176,6 +180,10 @@ pub struct UpdateThreadRequest {
     pub archived: Option<bool>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub auto_settle: Option<AutoSettle>,
+    /// This thread's own choice. Empty string goes back to inheriting the
+    /// project (and then the instance) default; `None` leaves it alone.
+    pub permission_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -183,6 +191,142 @@ pub struct UpdateThreadRequest {
 #[ts(export)]
 pub struct ForkThreadRequest {
     pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GuestMessageDto {
+    pub id: String,
+    pub text: String,
+    pub status: GuestMessageStatus,
+    pub created_at: i64,
+}
+
+/// What a guest may see and do.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GuestThreadResponse {
+    pub title: String,
+    pub agent: String,
+    pub model: Option<String>,
+    /// When this link stops working, in Unix ms.
+    pub expires_at: i64,
+    /// Transcript window, oldest first. Poll with `after` to continue.
+    pub page: EventsPageDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GuestLinkResponse {
+    pub url: String,
+    pub expires_at: i64,
+}
+
+/// Whether a thread currently has a link, so the menu can offer to stop sharing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GuestLinkStatus {
+    pub active: bool,
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct McpTokenDto {
+    pub id: String,
+    pub label: String,
+    pub scopes: Vec<McpScope>,
+    pub created_at: i64,
+    pub last_used_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct McpTokensResponse {
+    pub tokens: Vec<McpTokenDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CreateMcpTokenRequest {
+    pub label: String,
+    pub scopes: Vec<McpScope>,
+}
+
+/// Returned once: the token itself is never readable again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CreatedMcpToken {
+    pub token: String,
+    pub endpoint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GuestSessionRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GuestMessageRequest {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum GuestMessageAction {
+    Send,
+    Dismiss,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GuestMessageDecision {
+    pub action: GuestMessageAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GuestMessagesResponse {
+    pub messages: Vec<GuestMessageDto>,
+}
+
+/// Discard one turn and everything after it, files included.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RewindRequest {
+    pub message_id: String,
+}
+
+/// Move a thread between shelves.
+///
+/// `action` is a command id from the published `placement` machine
+/// (`settle`, `unsettle`, `snooze`, `wake`). Keeping it a string means the
+/// machine stays the only list of legal commands; a second enum here would be
+/// a second rule set to forget.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PlacementRequest {
+    pub action: String,
+    /// Unix ms deadline for `snooze`. Ignored by other commands; omitted means a
+    /// day from now, resolved by the server so clients never disagree on it.
+    pub until: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -375,6 +519,11 @@ pub struct ThreadState {
     pub pending_elicitations: u32,
     pub queued_inputs: u32,
     pub active_subagents: u32,
+    /// Where the thread sits between turns, and the row it renders in. Both are
+    /// server-owned: the sidebar never derives them from status strings.
+    pub placement: crate::model::ThreadPlacement,
+    pub section: crate::model::ThreadSection,
+    pub snooze_until: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -505,6 +654,10 @@ pub struct ApprovalResolvedResponse {
 pub struct StateResponse {
     pub settings: SettingsDto,
     pub user: UserDto,
+    /// The instance's permission defaults and ceiling. The picker renders every
+    /// mode above `cap` as managed, instead of offering a choice the server
+    /// would clamp away.
+    pub permissions: PermissionPolicyDto,
     /// The browser terminal is opt-in per server; the UI hides its entry points
     /// when this is false.
     pub terminal: bool,
@@ -512,6 +665,20 @@ pub struct StateResponse {
     /// list and attach to the configured tmux servers outside the private
     /// socket.
     pub terminal_host: bool,
+    /// Guest links are opt-in; with them off the sharing entry points are hidden
+    /// and their endpoints do not exist.
+    pub guest_links: bool,
+    /// The MCP endpoint is opt-in; with it off outside agents cannot drive
+    /// threads and the settings section is hidden.
+    pub mcp: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PermissionPolicyDto {
+    pub default: PermissionMode,
+    pub cap: PermissionMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
