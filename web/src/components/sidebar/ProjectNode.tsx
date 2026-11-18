@@ -74,8 +74,8 @@ export const ProjectNode = memo(function ProjectNode({
   useOverlayBack(removeOpen, () => setRemoveOpen(false));
 
   // The server decides which row a thread belongs to; the tree only renders it.
-  // Pinned threads live in the global shelf, so they are not repeated here.
-  // A collapsed project still has to say that someone inside it is waiting.
+  // Pinned and working threads live in the global groups, so they are not
+  // repeated here. A collapsed project still has to say that someone is waiting.
   const needsYou = threads.filter(
     (thread) =>
       thread.pendingApprovals + thread.pendingElicitations > 0 ||
@@ -84,7 +84,6 @@ export const ProjectNode = memo(function ProjectNode({
       thread.status === "interrupted",
   ).length;
   const activeThreads = threads.filter((thread) => thread.section === "active");
-  const working = threads.filter((thread) => thread.section === "working");
   const snoozed = threads.filter((thread) => thread.section === "snoozed");
   const settled = threads.filter((thread) => thread.section === "settled");
   const row = (thread: ThreadSummary) => (
@@ -172,9 +171,6 @@ export const ProjectNode = memo(function ProjectNode({
                   disabled
                 />
               ) : null}
-              {/* Live work is the foreground, not a pile to fold away: a running
-                  thread reads above idle ones with its status dot as the marker. */}
-              {working.map(row)}
               {activeThreads.map(row)}
               <ThreadShelf
                 shelfKey={`${project.id}:snoozed`}

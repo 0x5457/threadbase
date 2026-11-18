@@ -118,18 +118,22 @@ export const Sidebar = memo(function Sidebar({
     );
   }, [projectsQuery.data, added]);
 
-  // The server decides the row; pinned work is lifted out of its project so it is
-  // not rendered twice. Per-project array identity is preserved so a status
-  // change in one project does not re-render the others.
+  // The server decides the row. Work that is live right now and work somebody
+  // pinned are both lifted out of their project: these two groups are what the
+  // sidebar is for, and neither should need a scroll to reach.
   const pinned = useMemo(
     () => (allThreads.data?.threads ?? []).filter((thread) => thread.section === "pinned"),
+    [allThreads.data],
+  );
+  const working = useMemo(
+    () => (allThreads.data?.threads ?? []).filter((thread) => thread.section === "working"),
     [allThreads.data],
   );
   const groupedThreadsRef = useRef<Map<string, ThreadSummary[]>>(new Map());
   const projectThreads = useMemo(() => {
     const next = new Map<string, ThreadSummary[]>();
     for (const thread of allThreads.data?.threads ?? []) {
-      if (thread.section === "pinned") continue;
+      if (thread.section === "pinned" || thread.section === "working") continue;
       const list = next.get(thread.projectId);
       if (list) list.push(thread);
       else next.set(thread.projectId, [thread]);
@@ -157,8 +161,28 @@ export const Sidebar = memo(function Sidebar({
     );
     return (projectId: string) => names.get(projectId) ?? "";
   }, [projectsQuery.data]);
-  const [pinnedSheet, setPinnedSheet] = useState<ThreadSummary | null>(null);
+  const [shelfSheet, setShelfSheet] = useState<ThreadSummary | null>(null);
   const unread = inbox.data?.unread ?? 0;
+  // One row shape for the groups above the project tree: the project name is the
+  // context a lifted row would otherwise lose.
+  const shelfRow = (thread: ThreadSummary) => (
+    <SidebarThreadRow
+      key={thread.id}
+      thread={thread}
+      selected={thread.id === selectedThreadId}
+      selectedSubagentId={thread.id === selectedThreadId ? selectedSubagentId : null}
+      projectName={projectName(thread.projectId)}
+      onOpen={(next) => {
+        onSelectThread(next);
+        onNavigate();
+      }}
+      onSelectSubagent={(next, subagent) => {
+        onSelectSubagent(next, subagent);
+        onNavigate();
+      }}
+      onLongPress={setShelfSheet}
+    />
+  );
 
   return (
     <AppShell.Navbar p={0} className="sidebar">
@@ -220,26 +244,18 @@ export const Sidebar = memo(function Sidebar({
                   Pinned
                 </Text>
               </Group>
-              {pinned.map((thread) => (
-                <SidebarThreadRow
-                  key={thread.id}
-                  thread={thread}
-                  selected={thread.id === selectedThreadId}
-                  selectedSubagentId={
-                    thread.id === selectedThreadId ? selectedSubagentId : null
-                  }
-                  projectName={projectName(thread.projectId)}
-                  onOpen={(next) => {
-                    onSelectThread(next);
-                    onNavigate();
-                  }}
-                  onSelectSubagent={(next, subagent) => {
-                    onSelectSubagent(next, subagent);
-                    onNavigate();
-                  }}
-                  onLongPress={setPinnedSheet}
-                />
-              ))}
+              {pinned.map(shelfRow)}
+            </div>
+          ) : null}
+
+          {working.length ? (
+            <div className="section">
+              <Group className="section-head" justify="space-between">
+                <Text size="sm" className="section-label">
+                  Working
+                </Text>
+              </Group>
+              {working.map(shelfRow)}
             </div>
           ) : null}
 
@@ -351,13 +367,13 @@ export const Sidebar = memo(function Sidebar({
       />
 
       <ThreadActionSheet
-        thread={pinnedSheet}
-        projectId={pinnedSheet?.projectId ?? ""}
-        subtitle={pinnedSheet ? projectName(pinnedSheet.projectId) : undefined}
-        opened={pinnedSheet !== null}
-        onClose={() => setPinnedSheet(null)}
+        thread={shelfSheet}
+        projectId={shelfSheet?.projectId ?? ""}
+        subtitle={shelfSheet ? projectName(shelfSheet.projectId) : undefined}
+        opened={shelfSheet !== null}
+        onClose={() => setShelfSheet(null)}
         onOpen={(thread) => {
-          setPinnedSheet(null);
+          setShelfSheet(null);
           onSelectThread(thread);
           onNavigate();
         }}
