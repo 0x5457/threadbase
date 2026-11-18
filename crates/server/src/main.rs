@@ -277,6 +277,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
     });
     state.push.spawn();
+    // A staged binary installs itself only while nothing is running.
+    let _deploy = threadbase_server::deploy::spawn(&state.config, state.pool.clone());
     // Parking idle work and waking due snoozes happen without a client; the
     // decision itself lives in `threadbase-core`, the loop only supplies facts.
     let _sweeper = threadbase_server::threads::spawn_sweeper(

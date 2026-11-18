@@ -708,6 +708,9 @@ pub struct HealthResponse {
     pub version: String,
     pub needs_admin: bool,
     pub bind: String,
+    /// A built binary is staged and will be installed at the next idle window.
+    #[serde(default)]
+    pub deploy_staged: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

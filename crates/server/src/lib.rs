@@ -13,6 +13,7 @@ pub mod bindings;
 pub mod comments;
 pub mod config;
 pub mod db;
+pub mod deploy;
 pub mod diff;
 pub mod doctor;
 pub mod drafts;

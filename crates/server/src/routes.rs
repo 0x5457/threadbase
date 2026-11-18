@@ -62,6 +62,8 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, S
         version: env!("CARGO_PKG_VERSION").to_owned(),
         needs_admin: needs_admin(&state.pool).await?,
         bind: state.config.bind.to_string(),
+        deploy_staged: state.config.auto_deploy
+            && crate::deploy::is_staged(&crate::deploy::staged_path(&state.config)).await,
     }))
 }
 

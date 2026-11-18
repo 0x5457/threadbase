@@ -9,6 +9,9 @@
 # Usage:
 #   scripts/deploy.sh                 # build + install + restart
 #   scripts/deploy.sh --no-restart    # build + install, leave the service alone
+#   scripts/deploy.sh --wait-idle     # wait until no turn is running, then deploy
+#   scripts/deploy.sh --stage         # hand the build to the server, which
+#                                     # installs it at the next idle window
 #   scripts/deploy.sh --rollback      # restore the most recent backup
 #   scripts/deploy.sh --dry-run       # print the plan, change nothing
 #
@@ -18,6 +21,8 @@
 #   THREADBASE_BACKUPS    backup directory            (default: <data dir>/backups)
 #   THREADBASE_HEALTH_URL health endpoint             (default: http://127.0.0.1:7777/api/health)
 #   THREADBASE_KEEP       backups to keep             (default: 5)
+#   THREADBASE_DATA_DIR   data directory              (default: platform data dir)
+#   THREADBASE_AUTO_DEPLOY_PATH  where --stage drops the binary
 #   MBX_BLAZE             forwarded to cargo          (default: false)
 set -euo pipefail
 
@@ -33,9 +38,12 @@ export MBX_BLAZE="${MBX_BLAZE:-false}"
 
 MODE="deploy"
 DRY_RUN=0
+WAIT_IDLE=0
 for arg in "$@"; do
   case "$arg" in
     --no-restart) MODE="install" ;;
+    --wait-idle) WAIT_IDLE=1 ;;
+    --stage) MODE="stage" ;;
     --rollback) MODE="rollback" ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help)
@@ -48,6 +56,13 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+DATA_DIR="${THREADBASE_DATA_DIR:-$HOME/.local/share/threadbase}"
+if [[ "$(uname -s)" == "Darwin" && -z "${THREADBASE_DATA_DIR:-}" ]]; then
+  DATA_DIR="$HOME/Library/Application Support/threadbase"
+fi
+DB="$DATA_DIR/threadbase.db"
+STAGED="${THREADBASE_AUTO_DEPLOY_PATH:-$DATA_DIR/incoming/threadbase}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 run() {
@@ -126,6 +141,53 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     exit 1
   fi
   printf '    embedded %s\n' "$asset"
+fi
+
+# 2b. Optionally wait for a moment when no turn is running.
+if [[ "$WAIT_IDLE" -eq 1 && "$MODE" == "deploy" ]]; then
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "deploy: --wait-idle needs sqlite3 to read $DB" >&2
+    exit 1
+  fi
+  say "Waiting for an idle window (Ctrl-C to deploy anyway)"
+  waited=0
+  while :; do
+    busy="$(sqlite3 "$DB" "SELECT
+        (SELECT COUNT(*) FROM threads WHERE status IN ('preparing','running','requires_action'))
+      + (SELECT COUNT(*) FROM approvals WHERE status='pending')
+      + (SELECT COUNT(*) FROM elicitations WHERE status='pending')
+      + (SELECT COUNT(*) FROM queued_inputs WHERE status='queued')
+      + (SELECT COUNT(*) FROM subagents WHERE status IN ('running','requires_action'));" 2>/dev/null || echo 1)"
+    [[ "${busy:-1}" == "0" ]] && break
+    if [[ $((waited % 60)) -eq 0 ]]; then
+      printf '    %ss: %s item(s) still busy\n' "$waited" "$busy"
+    fi
+    sleep 5
+    waited=$((waited + 5))
+    if [[ "$waited" -ge 7200 ]]; then
+      echo "deploy: still busy after two hours; giving up" >&2
+      exit 1
+    fi
+  done
+  say "Idle now; deploying"
+fi
+
+# 2c. Hand the build to the server instead of restarting it ourselves.
+if [[ "$MODE" == "stage" ]]; then
+  say "Staging to $STAGED"
+  run mkdir -p "$(dirname "$STAGED")"
+  run install -m 755 "$NEW_BIN" "$STAGED"
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    printf '    staged   %s\n' "$STAGED"
+    health="$(curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null || true)"
+    if [[ "$health" == *'"deployStaged":true'* ]]; then
+      say "The server sees it; it will install at the next idle window."
+    else
+      say "Staged. Turn it on with THREADBASE_AUTO_DEPLOY=1 on the server,"
+      say "or deploy normally: $0 --wait-idle"
+    fi
+  fi
+  exit 0
 fi
 
 # 3. Back up the currently installed binary.

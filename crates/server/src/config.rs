@@ -72,6 +72,15 @@ pub struct Config {
     /// The MCP endpoint lets an outside agent drive threads. Off by default: it
     /// is the widest capability the product offers.
     pub mcp: bool,
+    /// Install a staged binary and restart, but only while no turn is running.
+    /// Off by default: a server replacing itself is not something to do unasked.
+    pub auto_deploy: bool,
+    /// Where a staged binary is expected. `None` means
+    /// `<data dir>/incoming/threadbase`.
+    pub auto_deploy_path: Option<PathBuf>,
+    /// Service unit to restart after installing. Only matters when one machine
+    /// runs several instances.
+    pub unit: String,
     /// Worktree setup commands are killed after this many seconds.
     pub setup_timeout_seconds: i64,
     /// Secrets file loaded into the environment at startup. Both service
@@ -113,6 +122,9 @@ impl Default for Config {
             max_permission_mode: PermissionMode::FullAccess,
             guest_links: false,
             mcp: false,
+            auto_deploy: false,
+            auto_deploy_path: None,
+            unit: "threadbase".to_owned(),
             setup_timeout_seconds: 15 * 60,
             env_file: PathBuf::from("/tmp/threadbase/env"),
             log_file: None,
@@ -243,6 +255,11 @@ impl Config {
         let mcp = std::env::var("THREADBASE_MCP")
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
+        let auto_deploy = std::env::var("THREADBASE_AUTO_DEPLOY")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        let auto_deploy_path = non_empty("THREADBASE_AUTO_DEPLOY_PATH").map(PathBuf::from);
+        let unit = non_empty("THREADBASE_UNIT").unwrap_or_else(|| "threadbase".to_owned());
         let guest_links = std::env::var("THREADBASE_GUEST_LINKS")
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
@@ -284,6 +301,9 @@ impl Config {
             max_permission_mode,
             guest_links,
             mcp,
+            auto_deploy,
+            auto_deploy_path,
+            unit,
             setup_timeout_seconds,
             env_file,
             log_file,
