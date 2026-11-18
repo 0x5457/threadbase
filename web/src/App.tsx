@@ -61,6 +61,7 @@ import {
 import type { InboxPageDto } from "./api/types/InboxPageDto";
 import type { AsideTab, AsideView } from "./components/AsidePanels";
 import { DrawerResizeHandle } from "./components/DrawerResizeHandle";
+import { HaloLayer } from "./components/HaloLayer";
 import { InboxView } from "./components/InboxView";
 import { MobileTabBar } from "./components/MobileTabBar";
 import { ReviewDialog } from "./components/ReviewDialog";
@@ -1509,6 +1510,7 @@ function Workspace() {
           />
         ) : null}
       </AppShell>
+      <HaloLayer />
 
       {!wide && showAside && hasWorktree ? (
         <Drawer

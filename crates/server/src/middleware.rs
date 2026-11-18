@@ -12,10 +12,12 @@ use threadbase_shared::{ApiError, ErrorCode};
 
 const CUSTOM_HEADER: &str = "x-requested-with";
 const CUSTOM_VALUE: &str = "threadbase";
+// `base-uri 'self'` lets the halo snapshot set a same-origin base in its
+// cloned document; the base still cannot point off-origin.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; \
      font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; \
-     base-uri 'none'; form-action 'self'";
+     base-uri 'self'; form-action 'self'";
 
 /// The streamed page is the one same-origin document we frame, so it gets its own
 /// policy: the video worker, its inline stylesheet and a `'self'` frame ancestor.
