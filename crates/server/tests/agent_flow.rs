@@ -1261,16 +1261,12 @@ async fn agent_prompt_includes_state_summary_when_pending() {
     );
     let journal = std::fs::read_to_string(fixture.data.path().join("journal.log")).unwrap();
     assert!(
-        journal.contains("pending_approvals=1"),
-        "agent prompt should report the same pending count; journal:\n{journal}"
-    );
-    assert!(
-        journal.contains("status=running"),
+        journal.contains("This thread is running."),
         "the summary must not say idle while a turn is current; journal:\n{journal}"
     );
     assert!(
-        !journal.contains("current_turn=-"),
-        "the summary must include the turn it just recorded; journal:\n{journal}"
+        journal.contains("1 approval waiting for a person"),
+        "the summary should match the projection; journal:\n{journal}"
     );
 }
 
