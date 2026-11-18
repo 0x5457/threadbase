@@ -6,8 +6,7 @@ use crate::model::{
     ApprovalDecision, ApprovalDto, AuthStatusDto, AutoSettle, BaselineDto, ChangesDto,
     CommentAnchor, CommentDto, CommentStatus, Delivery, ElicitationAction, ElicitationDto,
     FileContentDto, FileEntryDto, GoalDto, InboxItemDto, PermissionMode, ProjectDto, QueueItemDto,
-    Role, ScreenPhase, SettingsDto, SubagentDto, ThreadDto, ThreadHistoryDto, UserAccess,
-    UserBrief, UserDto,
+    Role, SettingsDto, SubagentDto, ThreadDto, ThreadHistoryDto, UserAccess, UserBrief, UserDto,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -553,45 +552,6 @@ pub struct StateResponse {
     /// list and attach to the configured tmux servers outside the private
     /// socket.
     pub terminal_host: bool,
-    /// The desktop link is opt-in per server. When false the entry points are
-    /// hidden and the endpoints do not exist.
-    pub screen: bool,
-}
-
-/// Everything the client needs to decide what to offer: whether the feature is
-/// on, whether this host can stream at all, and who is sharing right now.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ScreenStatusDto {
-    pub enabled: bool,
-    /// False when this host cannot stream (no voxl binary, no display, or an
-    /// unsupported Wayland session). `note` says which one.
-    pub available: bool,
-    pub note: Option<String>,
-    pub phase: ScreenPhase,
-    /// Present once a share is starting or live. Absent when idle.
-    pub session: Option<ScreenSessionDto>,
-}
-
-/// One desktop share. Only the owner sees it: a whole screen shows everything
-/// else on the machine, so it is never a team-wide surface by default.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ScreenSessionDto {
-    pub started_by: UserId,
-    pub started_by_name: String,
-    /// The display handed to voxl, for example `:0` or a macOS display id.
-    pub display: String,
-    pub started_at: i64,
-    /// A share is a session, not a mode: it ends on its own unless renewed.
-    pub expires_at: i64,
-    /// The device currently holding the keyboard and pointer.
-    pub controller: Option<UserId>,
-    pub viewers: u32,
-    /// True for the device that may type; every other device is watching.
-    pub driving: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

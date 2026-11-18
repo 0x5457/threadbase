@@ -1709,7 +1709,6 @@ impl_as_str!(
     ConnectionPhase,
     DraftPhase,
     TerminalPhase,
-    ScreenPhase,
 );
 
 #[cfg(test)]

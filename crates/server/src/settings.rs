@@ -16,7 +16,6 @@ use threadbase_shared::{PermissionPolicyDto, SettingsDto, StateResponse};
 pub struct Instance {
     pub terminal: bool,
     pub terminal_host: bool,
-    pub screen: bool,
     pub policy: PermissionPolicyDto,
 }
 
@@ -26,7 +25,6 @@ impl Instance {
         Self {
             terminal: config.terminal,
             terminal_host: config.terminal_host,
-            screen: config.screen,
             policy,
         }
     }
@@ -115,6 +113,5 @@ pub async fn update(
         permissions: instance.policy,
         terminal: instance.terminal,
         terminal_host: instance.terminal_host,
-        screen: instance.screen,
     })
 }
