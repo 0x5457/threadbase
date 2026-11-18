@@ -349,14 +349,9 @@ pub async fn auto_title(
     if title.as_deref() != Some("New thread") {
         return;
     }
-    let first_line = text.lines().next().unwrap_or("").trim();
-    if first_line.is_empty() {
+    let Some(next) = crate::threads::title_from_prompt(text) else {
         return;
-    }
-    let mut next: String = first_line.chars().take(60).collect();
-    if next.len() < first_line.len() {
-        next.push('…');
-    }
+    };
     if sqlx::query("UPDATE threads SET title = ?, updated_at = ? WHERE id = ?")
         .bind(&next)
         .bind(now_ms())

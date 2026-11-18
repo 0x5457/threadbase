@@ -434,6 +434,51 @@ async fn inbox_pages_without_losing_the_total_unread_count() {
 }
 
 #[tokio::test]
+async fn unread_turn_outcomes_coalesce_per_thread() {
+    let fixture = fixture().await;
+    let projection = test_projection(&fixture.pool);
+    let notify = |kind: &'static str| {
+        threadbase_server::notify::notify_watchers(
+            &fixture.pool,
+            &projection,
+            fixture.thread.as_str(),
+            kind,
+            None,
+            None,
+            "The agent finished its turn.",
+            None,
+        )
+    };
+    for _ in 0..3 {
+        notify("completed").await.unwrap();
+    }
+    let inbox = inbox::list(&fixture.pool, &fixture.owner, false, None, 50)
+        .await
+        .unwrap();
+    assert_eq!(inbox.items.len(), 1, "one unread completion per thread");
+    assert_eq!(inbox.unread, 1);
+
+    inbox::mark_read(
+        &fixture.pool,
+        &fixture.owner,
+        Some(fixture.thread.as_str()),
+        false,
+    )
+    .await
+    .unwrap();
+    notify("completed").await.unwrap();
+    let inbox = inbox::list(&fixture.pool, &fixture.owner, false, None, 50)
+        .await
+        .unwrap();
+    assert_eq!(
+        inbox.items.len(),
+        2,
+        "a read row stays, the next turn gets its own"
+    );
+    assert_eq!(inbox.unread, 1);
+}
+
+#[tokio::test]
 async fn watchers_receive_notifications_and_mute_suppresses_them() {
     let fixture = fixture().await;
     threadbase_server::watchers::watch(

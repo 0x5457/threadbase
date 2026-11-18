@@ -1519,3 +1519,26 @@ async fn sweep_wakes_snoozes_and_settles_only_idle_work() {
         .unwrap();
     assert_eq!(again, threads::SweepReport::default());
 }
+
+#[tokio::test]
+async fn title_backfill_repairs_paste_markup() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    sqlx::query("UPDATE threads SET title = ? WHERE id = ?")
+        .bind("集成到系统<link title=\"null\" target=\"_blank\" rel=\"noopene")
+        .bind(thread.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+    assert_eq!(threads::backfill_titles(&fixture.pool).await.unwrap(), 1);
+    let title: String = sqlx::query_scalar("SELECT title FROM threads WHERE id = ?")
+        .bind(thread.id.as_str())
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+    assert_eq!(title, "集成到系统");
+    // Nothing left to repair, and a title that reads fine is never touched.
+    assert_eq!(threads::backfill_titles(&fixture.pool).await.unwrap(), 0);
+}

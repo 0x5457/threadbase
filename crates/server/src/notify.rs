@@ -58,24 +58,56 @@ pub async fn notify_watchers(
         let focused = presence.focused_user_ids(thread_id).await;
         recipients.retain(|user_id| !focused.contains(user_id));
     }
+    // A completion or a failure is a state — "this thread ended and you have not
+    // looked yet" — while an approval or a question is a distinct thing to act
+    // on. Only the stateless kinds collapse into the unread row already waiting.
+    let coalesce = approval_id.is_none() && elicitation_id.is_none();
     for user_id in recipients {
-        insert(
-            pool,
-            InboxItem {
-                user_id: &user_id,
-                kind,
-                thread_id,
-                actor_id: None,
-                approval_id,
-                elicitation_id,
-                comment_id: None,
-                summary,
-            },
-        )
-        .await?;
+        let refreshed =
+            coalesce && refresh_unread(pool, &user_id, thread_id, kind, summary).await?;
+        if !refreshed {
+            insert(
+                pool,
+                InboxItem {
+                    user_id: &user_id,
+                    kind,
+                    thread_id,
+                    actor_id: None,
+                    approval_id,
+                    elicitation_id,
+                    comment_id: None,
+                    summary,
+                },
+            )
+            .await?;
+        }
         crate::inbox::publish_count(pool, projection, &user_id).await;
     }
     Ok(())
+}
+
+/// Moves an unread row of the same kind forward instead of stacking an identical
+/// line under an identical title. `true` when a row was updated.
+async fn refresh_unread(
+    pool: &SqlitePool,
+    user_id: &str,
+    thread_id: &str,
+    kind: &str,
+    summary: &str,
+) -> Result<bool, ServerError> {
+    let updated = sqlx::query(
+        "UPDATE inbox SET summary = ?, created_at = ?
+         WHERE user_id = ? AND thread_id = ? AND kind = ? AND read_at IS NULL",
+    )
+    .bind(summary)
+    .bind(now_ms())
+    .bind(user_id)
+    .bind(thread_id)
+    .bind(kind)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(updated > 0)
 }
 
 /// Insert one notification and refresh that user's badge.
