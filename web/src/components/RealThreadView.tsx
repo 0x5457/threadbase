@@ -728,6 +728,13 @@ export const RealThreadView = memo(function RealThreadView({
       return;
     }
     scrollerRef.current = element;
+    // A phone keyboard shrinks this box without a window resize (iOS keeps the
+    // layout viewport), and the newest rows then sit below the fold. Re-pin the
+    // tail whenever the box we follow changes size.
+    const resizeObserver = new ResizeObserver(() => {
+      if (stickRef.current) scrollToLatest("auto", true);
+    });
+    resizeObserver.observe(element);
     const unpin = () => {
       if (!stickRef.current || element.scrollTop <= 0) return;
       stickRef.current = false;
@@ -785,6 +792,7 @@ export const RealThreadView = memo(function RealThreadView({
     window.addEventListener("keydown", onKeyDown);
     element.addEventListener("pointerdown", onPointerDown);
     removeScrollerListenerRef.current = () => {
+      resizeObserver.disconnect();
       element.removeEventListener("scroll", onScroll);
       element.removeEventListener("wheel", onWheel);
       element.removeEventListener("touchstart", onTouchStart);
@@ -792,7 +800,7 @@ export const RealThreadView = memo(function RealThreadView({
       window.removeEventListener("keydown", onKeyDown);
       element.removeEventListener("pointerdown", onPointerDown);
     };
-  }, []);
+  }, [scrollToLatest]);
 
   useEffect(
     () => () => {

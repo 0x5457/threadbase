@@ -257,9 +257,17 @@
    soft keyboard, so the layout goes edge to edge and the key bar stays pinned
    above the keyboard. */
 @media (max-width: 47.99em) {
+  /* Portaled to `body`, so this drawer is laid out against the layout viewport,
+     which iOS does not shrink when the keyboard opens; the key bar and the
+     prompt line ended up underneath it. Follow the visual viewport the way the
+     shell does. */
   .terminal-drawer {
     position: fixed;
-    inset: 0;
+    top: var(--app-offset, 0px);
+    right: 0;
+    bottom: auto;
+    left: 0;
+    height: var(--app-height, 100dvh);
     z-index: 190;
     border-top: none;
   }
