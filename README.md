@@ -33,23 +33,23 @@ pnpm --dir web dev   # http://127.0.0.1:5173，/api 与 /ws 代理到 7777
 
 真实 Codex 需要安装 `codex-acp` 并登录 Codex；服务会自动把本机 `codex` 路径写入 `CODEX_PATH`。所有参与者共用这台机器上的 agent 登录，成本与审计记在该账号。没有 adapter 时 `doctor` 会明确报告，UI 会把 thread 标记为错误而不是卡在运行中。
 
-数据目录默认是平台数据目录下的 `threadbase/`（Linux 为 `~/.local/share/threadbase/`），可用 `THREADBASE_DATA_DIR` 覆盖。服务固定绑定回环地址，`THREADBASE_BIND` 只接受回环地址。
+数据目录默认是平台数据目录下的 `threadbase/`（Linux 为 `~/.local/share/threadbase/`，macOS 为 `~/Library/Application Support/threadbase/`），可用 `THREADBASE_DATA_DIR` 覆盖。服务固定绑定回环地址，`THREADBASE_BIND` 只接受回环地址。
 
 ## 部署模型：本机服务，GitHub 登录，HTTPS 隧道对外
 
-服务跑在开发机上，只监听回环地址；对外由任意 HTTPS 隧道终结 TLS 并转发到 `127.0.0.1:7777`。Tailscale Funnel 是最省事的一种：
+服务跑在开发机上，只监听回环地址；对外由任意 HTTPS 隧道终结 TLS 并转发到 `127.0.0.1:7777`。Tailscale Funnel 是最省事的一种，而且不需要自己的域名：
 
 ```bash
 tailscale funnel --bg --https=443 http://127.0.0.1:7777
 ```
 
-其他设备（不需要装 Tailscale，也不需要加入 tailnet）访问 `https://<machine>.<tailnet>.ts.net`，用 GitHub 账号登录。
+其他设备（不需要装 Tailscale，也不需要加入 tailnet）访问 `https://<machine>.<tailnet>.ts.net`，用 GitHub 账号登录。只想给 tailnet 用就把 `funnel` 换成 `serve`。
 
 ### 登录：GitHub OAuth + 服务端会话
 
 - 应用不保存密码。浏览器通过 GitHub OAuth（授权码 + PKCE）登录，服务端在 `auth_sessions` 里存会话，只把哈希入库；浏览器拿到的 Cookie 是 `HttpOnly; SameSite=Lax`，生产环境再加 `Secure`。
 - **完全不信任任何身份请求头。** 之前 `Tailscale-User-Login` 那套已经删除，公网隧道上伪造请求头无法提权。
-- 需要在 GitHub 注册一个 **OAuth App**（不是 GitHub App）：`Settings → Developer settings → OAuth Apps → New OAuth App`，回调地址填 `https://<公开域名>/api/auth/github/callback`，权限不勾任何 scope。
+- 需要在 GitHub 注册一个 **OAuth App**（不是 GitHub App）：`Settings → Developer settings → OAuth Apps → New OAuth App`，回调地址填 `https://<公开域名>/api/auth/github/callback`，权限不勾任何 scope。一个 OAuth App 只能填一个回调地址，多台机器各开一个。
 
 ```bash
 export THREADBASE_PUBLIC_ORIGIN=https://machine.tailnet.ts.net
@@ -62,47 +62,228 @@ cargo run -p threadbase
 
 - 登录策略：管理员名单 > 允许名单 > 已存在用户 > 实例尚未有管理员时自动放行第一个登录者（引导）。因此公开隧道不会变成「任何 GitHub 用户都能进」。
 - 首次登录的身份自动成为管理员；`THREADBASE_ADMINS` 可指定固定管理员。
+- 新账号默认 `pending`，管理员在用户页批准后才算 member；`github_allow` 只决定「能不能登录」，不代替批准。
 - 会话默认 30 天，边用边续期（`THREADBASE_SESSION_DAYS` 可改）；退出登录会撤销服务端会话。
 - 想撤销某人访问：从 `THREADBASE_GITHUB_ALLOW` 移除并在用户页取消管理员，或直接删 `auth_sessions` 里的会话；想重置本机开发环境，直接删 `threadbase.db`。
 
-### 一键部署（systemd）
+### 一键部署（systemd / launchd）
 
-在 Linux 主机上一条命令把**当前这个二进制**配置成 systemd user 服务：
+一条命令把**当前这个二进制**配置成用户服务：Linux 用 systemd，macOS 用 launchd。生命周期交给 [`service-manager`](https://crates.io/crates/service-manager)，只有服务文件的内容是本项目渲染的（见下方“为什么不是现成模板”）。
 
 ```bash
-threadbase install --funnel --admin octocat
+threadbase install --admin octocat        # 默认只暴露到 tailnet
+threadbase install --funnel               # 需要公网访问时（GitHub OAuth 回调必须是公开 HTTPS）
 ```
 
 它会：
 
-- 写 `~/.config/systemd/user/threadbase.service`，`ExecStart` 就是当前进程的可执行文件路径（不拷贝、不构建、不下载）
-- `Environment` 里带上绑定地址、数据目录、`THREADBASE_PUBLIC_ORIGIN`（从 `tailscale status` 推导）与 `THREADBASE_ADMINS`，以及去重后的 `PATH`（agent CLI 常在 mise/nvm 路径下）
-- 带上 `EnvironmentFile=-%h/.config/threadbase/env`：**GitHub 的 client secret 放这个文件，不写进 unit**（unit 文件是可读的）
-- `loginctl enable-linger`，让服务在登出后仍在跑
-- `systemctl --user enable --now`
-- `tailscale serve|funnel --bg --https=<port> http://127.0.0.1:7777`（`--funnel` 才公开；GitHub OAuth 回调需要公开 HTTPS）
+- 写 `~/.config/systemd/user/threadbase.service` 或 `~/Library/LaunchAgents/threadbase.plist`，`ExecStart` / `ProgramArguments` 就是当前进程的可执行文件路径（不拷贝、不构建、不下载）
+- 带上绑定地址、数据目录、`THREADBASE_PUBLIC_ORIGIN`（`--public-origin` > `THREADBASE_PUBLIC_ORIGIN` > 从 `tailscale status` 推导）、`THREADBASE_ADMINS` 与去重后的 `PATH`（agent CLI 常在 mise/nvm/Homebrew 路径下）
+- 只把 `THREADBASE_ENV_FILE` 指向 `~/.config/threadbase/env`：**GitHub 的 client secret 放这个文件，服务文件里没有密钥**。这个文件由二进制自己加载（`dotenvy`），所以手动 `cargo run` 与 `threadbase doctor` 也读同一份
+- Linux：`loginctl enable-linger` + `systemctl --user enable/start`
+- macOS：`launchctl load/start`，并设置 `AbandonProcessGroup`（等价 `KillMode=process`，重启时 tmux 会话存活）、`KeepAlive{SuccessfulExit:false}`、`ThrottleInterval`、`ProcessType=Interactive`、`ExitTimeOut`
+- `tailscale serve|funnel --bg --https=<port> http://127.0.0.1:7777`（`--funnel` 才公开；用别的隧道就传 `--no-serve --public-origin <你的 URL>`）
 - 轮询 `/api/health` 确认真的起来了
 
-所以要升级，替换这个二进制再跑一次 `threadbase install`（或 `threadbase upgrade` 后 `systemctl --user restart threadbase`）即可。
+升级 = 替换二进制再 `threadbase service restart`（`threadbase upgrade` 只负责换文件）：
+
+```bash
+threadbase upgrade && threadbase service restart
+threadbase service status                 # 服务管理器状态 + /api/health
+threadbase service logs --lines 100       # Linux 走 journald，macOS 走日志文件
+```
 
 常用选项：
 
 ```bash
-threadbase install --print                  # 只打印 unit 与命令，不改动系统
+threadbase install --print                   # 只打印服务文件与命令，不改动系统
 threadbase install --port 7788 --https-port 9443 --unit threadbase-dev
-threadbase install --no-serve --no-start     # 只写 unit
-threadbase install --funnel                 # 用 tailscale funnel 公开到互联网
-threadbase install --uninstall              # 停用并删除 unit、关掉 serve/funnel（保留数据与二进制）
+threadbase install --no-serve --no-start     # 只写服务文件
+threadbase install --keep-awake              # macOS：持有电源断言，机器不空闲睡眠
+threadbase install --uninstall               # 停用并删除服务文件、关掉 serve/funnel（保留数据与二进制）
 ```
 
-unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例。日志：`journalctl --user -u threadbase -f`。
+unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例（名字会直接成为文件名，只允许字母、数字、`_`、`-`）。
+
+#### macOS 上的额外前提
+
+- **登录会话**：LaunchAgent 只在用户登录后运行。常开机器需要在“系统设置 → 用户与群组 → 自动登录”里配置自动登录；开启 FileVault 会阻止自动登录。`threadbase install` 会检测并提示。
+- **防止睡眠**：`--keep-awake` 让服务进程自己持有 IOKit 电源断言（等价 `caffeinate -s`，进程退出即失效），不需要额外 launchd job。合盖仍然会睡，笔记本不适合当常开主机。
+- **Tailscale CLI**：GUI/App Store 版的 CLI 在 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`，不一定在 `PATH` 里；程序会自动回退到这个路径，也可用 `THREADBASE_TAILSCALE` 指定。也可以用 `tailscale serve` 只暴露给 tailnet。
+- **日志**：macOS 默认写 `~/Library/Logs/threadbase/threadbase.log`（按天轮转，保留 7 份，另有 `threadbase.log` 软链指向当天），另有两个 `launchd.*.log` 只收启动早期输出与 panic。Linux 默认仍走 journald，设置 `THREADBASE_LOG_FILE` 也可改用文件。
+- **签名**：release 里的 darwin 二进制未签名未公证；`curl` 下载不带 quarantine 可以直接跑，浏览器/AirDrop 传过去的需要 `xattr -d com.apple.quarantine`。
+
+#### 为什么不是 `service-manager` 的现成模板
+
+`service-manager` 的 systemd 模板不写 `KillMode`（默认 `control-group`，重启会连带杀掉 tmux server，浏览器终端全部断开），launchd 模板不写 `AbandonProcessGroup` / 日志路径，也不支持 `EnvironmentFile` 这类外部密钥文件。所以这里用它的 `contents` 参数：命令与生命周期全走库，只有服务文件正文由本项目渲染（systemd 文本 + `plist` crate）。升级库时只需保证 `contents` 契约不变。
+
+### 左栏分区与搁置
+
+线程有两种正交的状态，各自只有一处定义：
+
+- `thread` 机器回答"agent 在干什么"（preparing / idle / running / requires_action / interrupted / error / archived）。`archived` 留在这里，因为它改变 agent 还能接受什么命令。
+- `placement` 机器回答"人把它放在哪"（active / snoozed / settled）。它不影响 agent：搁置的线程照样可以被 prompt，发消息时会自动回到 active。
+
+`Working` 和"需要你"不是可存储的状态，而是**推导**出来的分区：由 status、排队输入和活跃子 agent 算出。所以搁置中的线程不会声称在跑，正在跑的线程也不会藏进货架。
+
+分区优先级只有一处实现（`crates/core/src/state/placement.rs`）：
+
+```
+archived > pinned > snoozed > settled > working > active
+```
+
+- settle 会顺手清掉 pin，否则"置顶的已完成工作"会永远压在最上面；
+- 同一分区内"需要你"（未答审批、未答提问、错误、中断）排在前面，再按最近活动倒序；
+- 排序在服务端算一次：`GET /api/threads` 已排好，WebSocket 的 `ThreadState` 也带 `placement` / `section`，前端不再自己排序。
+
+**命令**：`POST /api/threads/{id}/placement`，body `{"action": "...", "until": <ms>}`。`action` 取自 placement 机器发布的命令（`settle` / `unsettle` / `snooze` / `wake`），`threadbase machines` 与前端 `can("placement", …)` 读同一份，未知命令返回 422，非法迁移返回 409 并给出人话（例如 "wake this thread before settling it"）。
+
+- 有未答审批/提问、或回合/排队输入/子 agent 还在跑时拒绝 settle，不会替你取消任何东西；
+- `snooze` 不传 `until` 时由服务端定成 24 小时后，避免两个浏览器对"明天"理解不同；
+- 发消息（含编辑后的重发）会先把 settled/snoozed 的线程唤醒，消息不会落进货架；
+- approval 或提问出现时也会唤醒：把正在跑的线程 snooze 掉是允许的，但它一旦开口问人就必须回到眼前；
+- 左栏的 `Working` / `Snoozed` / `Settled` 是折叠货架，折叠状态按设备存在 localStorage；如果当前打开的线程在被折叠的货架里，货架自动展开；
+- 项目行上的琥珀色数字是该项目里"需要你"的线程数，折叠起来的项目也会报数。
+
+### 让外部 agent 驱动线程（MCP，默认关闭）
+
+```bash
+THREADBASE_MCP=1 cargo run -p threadbase
+```
+
+服务在 `/mcp` 暴露 MCP（JSON-RPC over HTTP）。关掉时这个路由由一层中间件直接回 404——不是"注册了再拒绝"，因为 axum 会先跑 body extractor，那样会用 422 告诉你端点存在。
+
+**令牌不是 cookie。** 令牌在设置页由登录的人创建（`POST /api/mcp/tokens`），只显示一次、只存哈希、带显式 scope、随时可撤销。请求必须用 `Authorization: Bearer <token>`；`/mcp` 是唯一一条豁免 CSRF 头的写路径，因为它不读 cookie，跨站请求借不到任何人的权限（MCP 客户端也没法带上我们自定义的头）。
+
+**令牌就是那个人**，不是旁路：`pending` / `read_only` 账号驱动不了线程；被停用的账号，它的令牌立刻失效（401）；每个工具内部仍然走 `authz` 与线程的权限模式。`approve` scope 只有管理员能签发，`read_only` 账号签不出 `write`。
+
+| 工具 | 需要的 scope | 做什么 |
+| --- | --- | --- |
+| `threads_list` | read | 最近活动倒序列出线程（可按项目过滤） |
+| `thread_read` | read | 线程元信息 + transcript 事件（`after` 增量） |
+| `thread_prompt` | write | 以令牌持有人的身份发消息，起一个 turn |
+| `thread_wait` | read | 等到线程空闲或需要人（默认 60s，上限 300s） |
+| `approvals_list` | read | 某线程待处理审批 |
+| `approval_decide` | approve | 回答审批（管理员签发的令牌才有） |
+
+`thread_wait` 是这套东西的价值所在：外部 agent 可以"发一条、等它跑完、看结果"，而不是轮询。它读的是投影（状态 + 待处理 + 队列 + 子 agent），与左上角看到的是同一份。
+
+**留痕**：`thread_prompt` 与 `approval_decide` 会在目标线程里写一条 `SystemNotice`（"Development sent this turn through MCP (token "cli")"），并在 `audit_log` 里记一条；只读调用只进 audit，不进事件流——否则每次轮询都会污染对话。
+
+客户端配置（以 Claude Code 这类支持 HTTP MCP 的客户端为例）：
+
+```json
+{
+  "mcpServers": {
+    "threadbase": {
+      "type": "http",
+      "url": "https://threadbase.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+### 访客链接（beta，默认关闭）
+
+给一个**没有账号的人**看某个 thread，并允许他提问。设计上它是一条能力，不是一个用户：
+
+```bash
+THREADBASE_GUEST_LINKS=1 cargo run -p threadbase
+```
+
+默认关闭，因为它绕过账号体系、把对话内容交给一个不受管理的浏览器；这条信任边界该由运行这台机器的人来划，而不是由默认值来划。
+
+**能力边界**
+
+- 链接属于**一个 thread**，24 小时过期，只存哈希（`guest_links.token_hash`），一个 thread 同时只有一条有效链接（再分享会作废旧链接）。
+- 打开链接时令牌换成 `HttpOnly` cookie（`threadbase_guest`），之后轮询不再把令牌放在 URL 上；`Referrer-Policy: same-origin` 保证它不会随外链泄漏。
+- 访客**只能读和起草**。他发的内容进 `guest_messages`（`pending`），团队成员点 Send 才变成一个 turn，点 Dismiss 就删掉。起草上限：同时 5 条、单条 8000 字符、**不支持附件**。
+- 服务端按**白名单**过滤事件：只给 `turn_started` / 消息 / 思考 / 工具调用 / 计划 / usage / 回合结束 / 系统通知。排队中的成员消息、审批请求与决定、提问、子 agent 行、评论都不在响应里——这是在服务端过滤而不是在 UI 里隐藏，否则"看不见"只是假象。
+- 看不到 diff、文件、终端、其他 thread。访客发起的 turn 由点 Send 的人署名执行（他没有角色、没有凭据），transcript 里是一次正常回合。
+
+**撤销**
+
+- `DELETE /api/threads/{id}/guest-link`：作废链接并把所有已经换过 cookie 的浏览器立刻踢掉（`guest_sessions.expires_at = now`），同时丢弃该 thread 上还在等待的草稿。
+- 归档/删除 thread、删除项目会连带清理（外键 `ON DELETE CASCADE`）。
+- 菜单里 `Share with a guest…` 生成并复制链接（创建即替换旧的），`Stop guest sharing` 撤销。
+
+**为什么不需要额外的限流**
+
+令牌是 256 位随机值，猜不出来；真正的滥用面是"握有链接的人刷草稿"，而那被 5 条待处理上限和成员的 Dismiss 动作夹住。若将来开放附件或提高配额，再引入按链接的固定窗口限流。
+
+**接口**
+
+| 方法 | 路径 | 谁 |
+| --- | --- | --- |
+| `POST` | `/api/guest/session` | 持链接的人（令牌换 cookie） |
+| `GET` | `/api/guest/thread?after=<seq>` | 访客（cookie） |
+| `POST` | `/api/guest/messages` | 访客（cookie） |
+| `GET/POST/DELETE` | `/api/threads/{id}/guest-link` | 成员（状态 / 新建 / 撤销） |
+| `GET` | `/api/threads/{id}/guest-messages` | 成员（待处理草稿） |
+| `POST` | `/api/threads/{id}/guest-messages/{mid}` | 成员（`{"action":"send"\|"dismiss"}`） |
+
+开关关闭时这些路由**根本不注册**（不是返回 404 的 handler），所以连 422 都不会泄漏它们存在。
+
+### 权限模式
+
+线程能不能不问就动手，由**一台梯子**决定，而不是由谁在线的临时判断：
+
+| 模式 | 行为 |
+| --- | --- |
+| `supervised` | 命令和编辑都问。默认值。 |
+| `auto_edit` | 编辑（含读取）自动放行；命令、网络、其它仍然问。 |
+| `full_access` | 什么都不问。 |
+
+没有第四档 "auto"。它的含义只能是"让 provider 自己评审"，只有部分适配器提供；一个不能对每个 agent 同样兑现的模式，是服务端兑现不了的承诺。
+
+**解析顺序**只有一个实现（`crates/core/src/permissions.rs::PermissionPolicy`）：线程自己的选择 → 项目默认 → 实例默认，然后**按实例上限夹一次**。上限的意义是：谁运行这台机器，谁决定这台机器交出多少自主权。
+
+```bash
+THREADBASE_PERMISSION_MODE=supervised       # 实例默认（新线程没有更具体选择时）
+THREADBASE_MAX_PERMISSION_MODE=full_access  # 上限；设成 auto_edit 就再也没有线程能开 full access
+```
+
+- 线程菜单里的 **Permissions** 有 `Inherit · <生效模式>` 和三档；超过上限的档显示 `· managed` 并禁用，避免给出一个服务端会夹掉的选项。
+- 项目设置里的 **Permissions** 是这个项目新线程的默认值，线程仍可覆盖。
+- 放行发生在**同一个**地方：适配器发来权限请求 → 先看有没有该用户立的常驻规则（那是"总是允许这个"），再看线程生效模式。规则优先：规则是一个人的明确决定，模式只是默认姿态。
+- 决策要留痕：规则放行记成该用户的决定（`matched standing rule`），模式放行记成系统的（`decided_by = null`，note 写 `allowed by auto-accept edits` / `allowed by full access`）。transcript 不会声称某个人批准了他没见过的命令。
+- 被模式放行的请求仍然写 `approvals` 行（`status=approved`、`scope=once`），所以审计里能看到"这条命令是模式放行的"，不是凭空的。
+
+**同时也告诉 agent 自己。** 会话启动时（以及线程模式被改动时）把生效模式映射成 provider 自己的会话模式下发（ACP `session/set_mode`），这样长回合不会一直发服务端反正会放行的请求：
+
+| 我们 | Claude Code | Codex | opencode / pi |
+| --- | --- | --- | --- |
+| `supervised` | `default` | `agent` | — |
+| `auto_edit` | `acceptEdits` | —（无等价档） | — |
+| `full_access` | `bypassPermissions` | `agent-full-access` | — |
+
+- 只在适配器在 `session/new` 里**真的声明过**这个模式时才发。没有等价档就不发：服务端策略仍然逐条作答，这是正常路径，不是错误（`HarnessError::Unavailable`）。
+- 适配器声明了模式集合但没有我们要的那个 id，是配置错位，会以 warning notice 告诉用户，而不是静默降级。
+- 线程模式改动会即时推给活着的会话；**项目默认改动不会**——策略在每次请求时重新读，所以行为立刻正确，只是 provider 那边要到下次会话启动才换档。
+
+### 自动搁置（空闲清扫）
+
+服务端每 60 秒跑一次清扫（`crates/server/src/threads/sweep.rs`），做两件事：
+
+- **snooze 到期**：`snooze_until <= now` 的线程按 `snooze_elapsed` 事实唤醒，不看空闲策略；
+- **空闲自动 settle**：满足全部条件才停靠——`status = idle`、`placement = active`、`auto_settle = default`、没有排队输入、没有活的子 agent、没有未答审批/提问、且静默超过 `THREADBASE_SETTLE_DAYS`（默认 7，`0` 关闭自动 settle 但 snooze 仍会到期唤醒）。
+
+判断本身是纯函数 `should_auto_settle`（`crates/core/src/state/placement.rs`），SQL 只做预筛。几个刻意的选择：
+
+- 静默期从 `last_activity_at` 和 `placement_at` 里**更晚**的那个算起。刚被唤醒或被 un-settle 的线程等于"刚被人看过"，不该在同一轮清扫里又被停靠——否则用户永远看不到它；
+- `error` / `interrupted` 不自动 settle：那是需要人处理，不是完成；
+- 清扫和点击走**同一个** `place()` 写点，所以和 prompt 竞争时会被同一道 guard 拒绝，跳过该线程而不是把它停靠掉。
+
+线程菜单（桌面）和长按菜单（手机）里的 **Never auto-settle** 把该线程的 `auto_settle` 设成 `never`，人在任何时候仍可手动 settle。
 
 ### 通知、关注与 Agent 生命周期
 
 - 每个 thread 的创建者自动成为 watcher；之后发消息、评论、审批或回答问题的人也会自动加入。`GET/POST /api/threads/{id}/watch` 可以显式关注、静音或取消关注；`ThreadMenu` 里的 “Mute notifications” 只影响通知，不影响读写。
 - approval、elicitation、@mention、turn 完成和错误只通知该 thread 的 **未静音 watcher**，不再给全工作区每人写一条 inbox。完成通知会跳过当前正聚焦该 thread 的人；错误通知不会。
 - Inbox 现在有分页（`/api/inbox?before=<id>&limit=50`），`unread` 是账号的完整未读数而不是当前页的条数；新通知、标记已读和审批/提问解决都会通过现有 `/ws` 推送 `inbox_count`，只发给对应用户的 socket。
-- Agent 采用懒启动：新建 thread 不再立刻拉起 ACP 进程，首次发送/排队输入时才启动。空闲 `THREADBASE_IDLE_SESSION_SECS`（默认 900，0 关闭）后会关闭进程；binding 里的 ACP session id 会在下次 prompt 时自动 resume，失败则发 context reset notice。
+- Agent 采用懒启动：新建 thread 不再立刻拉起 ACP 进程，首次发送/排队输入时才启动。发送请求本身不等进程启动：属于冷启动的消息先停在队列条里，适配器在后台拉起后再进入 transcript；启动失败时消息仍留在队列里，不会随请求一起丢掉。空闲 `THREADBASE_IDLE_SESSION_SECS`（默认 900，0 关闭）后会关闭进程；binding 里的 ACP session id 会在下次 prompt 时自动 resume，失败则发 context reset notice。
+- 建议把适配器装成 `PATH` 上的本地命令（例如 `npm i -g pi-acp@0.0.34`）。只有找不到命令时才回退到 `npx`，而 npx 每次启动多约 1 秒、还会常驻一个 npm 进程；`threadbase doctor` 会提示仍在走 npx 的适配器。
 - `THREADBASE_MAX_ACTIVE_TURNS`（默认 4，0 不限）限制所有 thread 同时运行的 turn。达到上限时直接发送会转成 queued input，队列 worker 等到 permit 释放后继续，不会把 HTTP 请求挂住。
 - 删除 thread/project、归档 thread 之前会先停掉对应的 agent 进程，避免 agent 在已删除的 worktree 里继续写。
 - PWA：`/manifest.webmanifest` 与 `sw.js` 让页面可以安装；设置页的 **Push notifications** 通过 VAPID + `push_subscriptions` 接收审批、@mention、turn 完成和错误通知。VAPID 密钥首次使用时自动生成并保存在 `push_config`，不需要手工配置。Push 只在 HTTPS（或 localhost）安全上下文可用；iOS 需要先“添加到主屏幕”。关掉页面后仍能收到通知，打开且正聚焦同一 thread 时 service worker 会抑制重复通知。
@@ -112,7 +293,7 @@ unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例�
 项目设置里的 **Setup command** 会在每个新 worktree（包括 fork）创建后、agent 启动前执行一次，适合做 `pnpm install`、复制 `.env`、启动依赖服务等：
 
 - 状态持久化在 `threads.setup_status`（`none/pending/running/succeeded/failed`）与 `setup_error`；对话框和 thread 顶部的 banner 会显示进度，失败时可以点 **Retry setup**。
-- setup 期间不能发 prompt，后端 `ensure_started` 会拒绝，避免 agent 在依赖还没装好的 worktree 里开始工作。
+- setup 期间不能发 prompt：界面会禁用发送，队列 worker 也会等 setup 结束后再处理排队的输入，避免 agent 在依赖还没装好的 worktree 里开始工作。
 - 输出以 `AgentLog` 写进事件流（最多保留尾部 32 KB），最终结果写一条 `SystemNotice`；失败也会向 watcher 发 inbox 通知。
 - setup 被服务重启打断时，启动阶段会把它标成 `failed` 并提示重跑，而不是永久卡在 running。
 - 超时由 `THREADBASE_SETUP_TIMEOUT_SECS` 控制（默认 900 秒）。
@@ -140,6 +321,29 @@ unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例�
 - ACP adapter 的会话无法回退，所以 Threadbase 会清掉 binding 里的 session id，在新会话里只发送这一条编辑后的 prompt。编辑点之前的轮次不会进入新会话上下文，worktree 文件也不会回滚——对话框会明确写出这两点。
 - 因为 seq 不复用，回退后的日志会从较高的序号开始；`events_page.hasEarlier` 单独判断是否真的有更早的事件，避免出现空的 “Load earlier”。
 
+### 某一轮改了什么
+
+History 里的一个提交和"这一轮做了什么"不是一回事：一轮可能产出多个提交，也可能只有未提交的改动。所以 Changes 面板多了一种视图——**一轮的跨度**。
+
+- `GET /api/threads/{id}/turns/{turn_id}/changes` 与 `.../file?path=`：从这一轮开始前的 checkpoint 到下一轮开始前的 checkpoint（最新一轮则到工作区，所以未提交的改动也算这轮的）。两端都来自 `checkpoints` 表，不靠时间推断。
+- 入口在 Changes 头部：从 History 点开某个提交时，标题旁边有 **This turn**，把视图从"这个提交"拓宽成"这一轮"。
+- 这一轮的视图不支持行级评论：评论锚点只相对 base 基线的 diff 成立（`canComment` 只看 `base_branch`），在这里放锚点会在下一次重算时漂移。
+- History 的归属也换成了事实：每行提交按 `checkpoints` 的先后定位到某一轮，不再比较提交时间和 prompt 时间。快照提交装的是**上一轮**的成果（它在那一轮开始前写），所以快照行标注上一轮，之后的提交标为最新一轮。
+
+**没有做的一件**：排除"这一轮里 agent 自己 `git pull`/`merge` 带进来的文件"。要把它做对，需要区分"agent 编辑的文件"和"git 搬进来的文件"（rename/merge 检测或写入拦截），而我们的模型里 thread worktree 极少主动 pull。凭空猜一个近似会让这个视图比现在更不可信，所以先不写。
+
+### 回滚到某一轮
+
+编辑消息只回退对话，不回退文件；**回滚**两样都回退。入口在用户消息上（桌面悬停的回退图标，手机长按菜单里的 “Rewind to before this turn”）。
+
+- 每一轮 prompt 之前都会在当前 worktree 写一个快照提交，并在 `checkpoints` 表里显式记下 `(thread, turn, sha)`。以前 History 面板靠提交时间与 prompt 时间猜这个映射，而回滚是破坏性操作，不该建立在猜测上。
+- `POST /api/threads/{id}/rewind`，body `{"messageId": "..."}`：该消息必须是一个真实 prompt。
+- 顺序是刻意的：**先停适配器**（`cancel` + 等 pump 结束），**再 `git reset --hard <快照>` + `git clean -fd`**，**最后截断事件日志**。git 失败时日志不动，线程还能重启，不会有任何一条记录声称"文件已经回去了"。
+- 截断复用编辑消息的同一段逻辑（`discard_tail`）：事件、排队输入、待处理的审批/提问、按消息/工具锚定的评论、子 agent 行、相关 inbox 都一起清掉，然后清 binding 的 ACP session id 并广播 `ThreadRewound`。
+- 该轮自己的 checkpoint 行也随它删除；更早的保留。
+- 没有快照的轮次（thread 跑在项目目录里、或当时 git 失败）返回 409 而不是猜一个位置。
+- 回滚后写一条 `SystemNotice`：文件回到了那一轮之前、agent 上下文已清空。否则 transcript 会默默少掉几轮，没人知道文件也动了。
+
 ### 应用变更前的检查
 
 `Apply changes` 不再直接 `git apply` + `commit -a`：
@@ -161,7 +365,7 @@ threadbase compact             # 在线可跑；只是普通 WAL 事务
 threadbase compact --vacuum    # 重建数据库文件回收磁盘
 ```
 
-`--vacuum` 需要独占锁，服务正在写时会自动跳过并提示；要稳定回收磁盘，先 `systemctl --user stop threadbase`，跑完再启动。折叠可以反复跑，第二次之后就没有可删的行。
+`--vacuum` 需要独占锁，服务正在写时会自动跳过并提示；要稳定回收磁盘，先 `threadbase service stop`，跑完再 `threadbase service start`。折叠可以反复跑，第二次之后就没有可删的行。
 
 ### 附件与大文本粘贴
 
@@ -292,7 +496,7 @@ threadbase machines          # 人读的大纲
 threadbase machines --json   # 与 GET /api/machines 完全相同
 ```
 
-- 覆盖 14 台机器：thread、setup、approval、elicitation、subagent、queue、comment、watch、turn、auth_session、push、connection、draft、terminal。前三组是服务端领域状态，`turn`/`auth_session`/`push` 是进程内与投递状态，`connection`/`draft`/`terminal` 是浏览器侧生命周期（类型由 Rust 生成，前端不再手写字符串联合）。
+- 覆盖 15 台机器：thread、placement、setup、approval、elicitation、subagent、queue、comment、watch、turn、auth_session、push、connection、draft、terminal。前三组是服务端领域状态，`turn`/`auth_session`/`push` 是进程内与投递状态，`connection`/`draft`/`terminal` 是浏览器侧生命周期（类型由 Rust 生成，前端不再手写字符串联合）。
 - 每台机器区分**命令**与**事实**：命令是调用方可以主动执行的动作（`prompt`、`cancel`、`restore`），事实是适配器上报的事件（`turn_ended`、`process_exited`）。事实永远不会出现在按钮里。
 - 每条命令带目标状态（`cancel -> idle`），所以 `threadbase machines` 输出的是完整的迁移图；目标值就是 `transition()` 的返回值，不另写一份表，所以图不会和规则漂移。
 - `ThreadDto.allowedActions` 与 `ThreadState.allowedActions` 由机器生成；前端通过 `web/src/lib/machine.ts` 的 `can()` / `threadCan()` 判断，所以按钮和服务端不会给出相反答案。
@@ -361,7 +565,7 @@ MBX_BLAZE=false cargo test -p threadbase --test real_codex -- --ignored --nocapt
 ```bash
 MBX_BLAZE=false cargo build --release -p threadbase
 threadbase doctor
-threadbase service install --print
+threadbase install --print
 ```
 
 GitHub Releases 工作流见 `.github/workflows/release.yml`，安装脚本为 `scripts/install.sh`，升级命令为 `threadbase upgrade [--check]`。
