@@ -3,12 +3,55 @@
 mod support;
 
 use axum::http::StatusCode;
-use support::{cookie_of, fixture, request};
+use axum::Router;
+use support::{cookie_of, fixture, request, Fixture};
 use threadbase_server::config::Config;
 use threadbase_server::guest;
 use threadbase_shared::api::{GuestMessageRequest, GuestSessionRequest};
 use threadbase_shared::{now_ms, ErrorCode};
 use tower::ServiceExt;
+
+/// Guest links on, plus one link token.
+async fn linked() -> (Fixture, Router, String) {
+    let (fixture, app) = fixture(Config {
+        guest_links: true,
+        ..Config::default()
+    })
+    .await;
+    let (token, _) = guest::create_link(
+        &fixture.pool,
+        &fixture.thread_id,
+        fixture.current.user.id.as_str(),
+    )
+    .await
+    .unwrap();
+    (fixture, app, token)
+}
+
+/// One request; the caller inspects status and body.
+async fn call(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    cookie: Option<&str>,
+    body: &str,
+) -> axum::response::Response {
+    app.clone()
+        .oneshot(request(method, uri, cookie, body))
+        .await
+        .unwrap()
+}
+
+/// Exchanges a token for the cookie a fresh browser gets.
+async fn exchange(app: &Router, token: &str) -> String {
+    let body = serde_json::to_string(&GuestSessionRequest {
+        token: token.to_owned(),
+    })
+    .unwrap();
+    let response = call(app, "POST", "/api/guest/session", None, &body).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    cookie_of(&response)
+}
 
 #[tokio::test]
 async fn guest_endpoints_do_not_exist_when_disabled() {
@@ -37,25 +80,10 @@ async fn guest_endpoints_do_not_exist_when_disabled() {
 
 #[tokio::test]
 async fn a_link_is_exchanged_for_a_cookie_that_reads_only_its_thread() {
-    let (fixture, app) = fixture(Config {
-        guest_links: true,
-        ..Config::default()
-    })
-    .await;
-    let (token, _) = guest::create_link(
-        &fixture.pool,
-        &fixture.thread_id,
-        fixture.current.user.id.as_str(),
-    )
-    .await
-    .unwrap();
+    let (_fixture, app, token) = linked().await;
 
     // Without a cookie the guest API says nothing.
-    let anonymous = app
-        .clone()
-        .oneshot(request("GET", "/api/guest/thread", None, ""))
-        .await
-        .unwrap();
+    let anonymous = call(&app, "GET", "/api/guest/thread", None, "").await;
     assert_eq!(anonymous.status(), StatusCode::FORBIDDEN);
 
     let body = serde_json::to_string(&GuestSessionRequest {
@@ -74,11 +102,7 @@ async fn a_link_is_exchanged_for_a_cookie_that_reads_only_its_thread() {
         "the exchange sets the guest cookie: {cookie}"
     );
 
-    let read = app
-        .clone()
-        .oneshot(request("GET", "/api/guest/thread", Some(&cookie), ""))
-        .await
-        .unwrap();
+    let read = call(&app, "GET", "/api/guest/thread", Some(&cookie), "").await;
     assert_eq!(read.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(read.into_body(), 1 << 20)
         .await
@@ -91,11 +115,7 @@ async fn a_link_is_exchanged_for_a_cookie_that_reads_only_its_thread() {
     );
 
     // A guest cookie is not a member session: the ordinary API stays closed.
-    let member_api = app
-        .clone()
-        .oneshot(request("GET", "/api/threads", Some(&cookie), ""))
-        .await
-        .unwrap();
+    let member_api = call(&app, "GET", "/api/threads", Some(&cookie), "").await;
     assert!(
         !member_api.status().is_success(),
         "a guest must not reach the member API, got {}",
@@ -105,51 +125,19 @@ async fn a_link_is_exchanged_for_a_cookie_that_reads_only_its_thread() {
 
 #[tokio::test]
 async fn revoking_a_link_ends_the_sessions_it_opened() {
-    let (fixture, app) = fixture(Config {
-        guest_links: true,
-        ..Config::default()
-    })
-    .await;
-    let (token, _) = guest::create_link(
-        &fixture.pool,
-        &fixture.thread_id,
-        fixture.current.user.id.as_str(),
-    )
-    .await
-    .unwrap();
-    let body = serde_json::to_string(&GuestSessionRequest { token }).unwrap();
-    let exchanged = app
-        .clone()
-        .oneshot(request("POST", "/api/guest/session", None, &body))
-        .await
-        .unwrap();
-    let cookie = cookie_of(&exchanged);
+    let (fixture, app, token) = linked().await;
+    let cookie = exchange(&app, &token).await;
 
     guest::revoke_thread_links(&fixture.pool, &fixture.thread_id)
         .await
         .unwrap();
-    let read = app
-        .clone()
-        .oneshot(request("GET", "/api/guest/thread", Some(&cookie), ""))
-        .await
-        .unwrap();
+    let read = call(&app, "GET", "/api/guest/thread", Some(&cookie), "").await;
     assert_eq!(read.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn an_expired_or_unknown_link_does_not_exchange() {
-    let (fixture, app) = fixture(Config {
-        guest_links: true,
-        ..Config::default()
-    })
-    .await;
-    let (token, _) = guest::create_link(
-        &fixture.pool,
-        &fixture.thread_id,
-        fixture.current.user.id.as_str(),
-    )
-    .await
-    .unwrap();
+    let (fixture, app, token) = linked().await;
     sqlx::query("UPDATE guest_links SET expires_at = ?")
         .bind(now_ms() - 1_000)
         .execute(&fixture.pool)
@@ -260,25 +248,8 @@ async fn drafts_are_limited_and_can_only_be_claimed_once() {
 
 #[tokio::test]
 async fn a_guest_can_only_draft_text_through_its_link() {
-    let (fixture, app) = fixture(Config {
-        guest_links: true,
-        ..Config::default()
-    })
-    .await;
-    let (token, _) = guest::create_link(
-        &fixture.pool,
-        &fixture.thread_id,
-        fixture.current.user.id.as_str(),
-    )
-    .await
-    .unwrap();
-    let body = serde_json::to_string(&GuestSessionRequest { token }).unwrap();
-    let exchanged = app
-        .clone()
-        .oneshot(request("POST", "/api/guest/session", None, &body))
-        .await
-        .unwrap();
-    let cookie = cookie_of(&exchanged);
+    let (fixture, app, token) = linked().await;
+    let cookie = exchange(&app, &token).await;
 
     let draft = serde_json::to_string(&GuestMessageRequest {
         text: "What does this change do?".into(),
@@ -347,18 +318,8 @@ async fn the_guest_payload_leaves_out_workbench_events() {
     )
     .await
     .unwrap();
-    let body = serde_json::to_string(&GuestSessionRequest { token }).unwrap();
-    let exchanged = app
-        .clone()
-        .oneshot(request("POST", "/api/guest/session", None, &body))
-        .await
-        .unwrap();
-    let cookie = cookie_of(&exchanged);
-    let read = app
-        .clone()
-        .oneshot(request("GET", "/api/guest/thread", Some(&cookie), ""))
-        .await
-        .unwrap();
+    let cookie = exchange(&app, &token).await;
+    let read = call(&app, "GET", "/api/guest/thread", Some(&cookie), "").await;
     let bytes = axum::body::to_bytes(read.into_body(), 1 << 20)
         .await
         .unwrap();

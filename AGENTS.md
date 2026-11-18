@@ -4,3 +4,8 @@
 - Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
 - Test only complex or high-risk changes, or when explicitly requested. Batch focused test runs at a meaningful milestone; rerun only to investigate a failure or verify its fix.
 - The primary agent owns architecture, planning, task decomposition, test strategy, scenario design, scope, and acceptance criteria. Do not delegate planning or final decisions.
+- Keep the code small. One module per feature is the ceiling: a domain module, its routes and its tests. Merge rather than add a file when the code is under a hundred lines.
+- Comments are three lines at most and say what the code does, why, and what breaks if you change it. No metaphors, no em dashes, no restating the signature, no history of the change.
+- Tests share one fixture. One test per behaviour, not per function; cover the branch that can go wrong and skip the permutation.
+- Do not add an endpoint, DTO or global state for a UI affordance. Derive it from what the client already has.
+- Before adding a module, look for the deleted lines it replaces. A change that adds more than it removes needs a stated reason.
