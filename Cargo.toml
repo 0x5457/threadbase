@@ -81,7 +81,3 @@ all = { level = "warn", priority = -1 }
 lto = "thin"
 codegen-units = 1
 strip = true
-
-# blaze: expand dprint's proc macro natively; it cannot run in the WASM sandbox.
-[workspace.metadata.blaze]
-native-proc-macros = ["dprint-core-macros", "sqlx-macros"]

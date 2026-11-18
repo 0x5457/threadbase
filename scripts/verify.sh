@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the quality gates in parallel: fmt, clippy, tests, types, React Doctor,
-# build. The audit scripts under web/audit stay manual.
+# build.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,8 +19,8 @@ run() {
 }
 
 run fmt cargo fmt --all --check
-run clippy env MBX_BLAZE=false cargo clippy --workspace --all-targets -- -D warnings
-run nextest env MBX_BLAZE=false cargo nextest run --workspace
+run clippy cargo clippy --workspace --all-targets -- -D warnings
+run nextest cargo nextest run --workspace
 run typecheck pnpm --dir web typecheck
 run doctor pnpm --dir web doctor:ci
 run build pnpm --dir web build

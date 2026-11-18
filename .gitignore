@@ -11,6 +11,9 @@ data/
 *.sqlite-journal
 *.db
 
+# Machine-local mise overrides
+mise.local.toml
+
 # Research sources: screenshots stay local (32 MB, re-fetchable)
 docs/research/_raw/images/
 
@@ -25,6 +28,9 @@ skills-lock.json
 # Playwright artifacts
 web/playwright-report/
 web/test-results/
+
+# UI audit evidence (kept local, not part of the product)
+web/audit/
 
 # Quality reports (scripts/quality/measure.sh)
 .quality/

@@ -10,7 +10,7 @@
 #   scripts/deploy.sh --dry-run       print the plan, change nothing
 #
 # Env: THREADBASE_UNIT, THREADBASE_BIN, THREADBASE_BACKUPS, THREADBASE_HEALTH_URL,
-#      THREADBASE_DATA_DIR, THREADBASE_AUTO_DEPLOY_PATH, THREADBASE_KEEP, MBX_BLAZE
+#      THREADBASE_DATA_DIR, THREADBASE_AUTO_DEPLOY_PATH, THREADBASE_KEEP
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,7 +21,6 @@ BIN="${THREADBASE_BIN:-$HOME/.local/bin/threadbase}"
 BACKUPS="${THREADBASE_BACKUPS:-$HOME/.local/share/threadbase/backups}"
 HEALTH_URL="${THREADBASE_HEALTH_URL:-http://127.0.0.1:7777/api/health}"
 KEEP="${THREADBASE_KEEP:-5}"
-export MBX_BLAZE="${MBX_BLAZE:-false}"
 
 MODE="deploy"
 DRY_RUN=0

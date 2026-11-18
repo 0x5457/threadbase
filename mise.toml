@@ -1,10 +1,6 @@
 # mise 任务：threadbase 本地一键启动
 # 用法：mise run start   （默认 http://127.0.0.1:7777）
 
-[env]
-# 本地运行/测试关闭 blaze 沙箱，cargo 走 mbx 正常路径
-MBX_BLAZE = "false"
-
 [tasks.install-web]
 description = "安装前端依赖"
 hide = true

@@ -19,8 +19,8 @@ git -C "$REPO_DIR" commit -m "initial" >/dev/null
 
 cd "$ROOT"
 pnpm --dir web build >/dev/null
-MBX_BLAZE=false cargo build -p threadbase-agent --bin threadbase_acp_fixture >/dev/null
-MBX_BLAZE=false cargo build -p threadbase >/dev/null
+cargo build -p threadbase-agent --bin threadbase_acp_fixture >/dev/null
+cargo build -p threadbase >/dev/null
 
 export THREADBASE_DATA_DIR="$DATA_DIR"
 export THREADBASE_BIND="127.0.0.1:7790"
