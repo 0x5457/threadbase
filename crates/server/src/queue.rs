@@ -575,32 +575,33 @@ mod tests {
         .unwrap();
     }
 
-    #[tokio::test]
-    async fn cancelling_marks_queued_inputs_superseded() {
+    /// A fresh database with one user and one thread.
+    async fn seeded() -> (SqlitePool, String, String) {
         let pool = db::connect_memory().await.unwrap();
         let (user, _, thread) = seed_thread(&pool).await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q1",
-            QueueStatus::Queued,
-            1,
-        )
-        .await;
+        (pool, user.to_string(), thread.to_string())
+    }
+
+    /// One queued row, which is what most of these tests need.
+    async fn queued(pool: &SqlitePool, thread: &str, user: &str, id: &str, position: i64) {
+        seed_item(pool, thread, user, id, QueueStatus::Queued, position).await;
+    }
+
+    #[tokio::test]
+    async fn cancelling_marks_queued_inputs_superseded() {
+        let (pool, user, thread) = seeded().await;
+        queued(&pool, &thread, &user, "q1", 1).await;
         supersede(&pool, &projection(&pool), thread.as_str(), Some("turn-1"))
             .await
             .unwrap();
         let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].status, QueueStatus::Superseded);
-        assert_eq!(items[0].status, QueueStatus::Superseded);
     }
 
     #[tokio::test]
     async fn enqueue_assigns_positions_and_keeps_order() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
+        let (pool, user, thread) = seeded().await;
         for (expected, text) in [(1, "first"), (2, "second")] {
             let position = enqueue(
                 &pool,
@@ -626,26 +627,9 @@ mod tests {
 
     #[tokio::test]
     async fn head_returns_the_next_queued_item() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q1",
-            QueueStatus::Queued,
-            1,
-        )
-        .await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q2",
-            QueueStatus::Queued,
-            2,
-        )
-        .await;
+        let (pool, user, thread) = seeded().await;
+        queued(&pool, &thread, &user, "q1", 1).await;
+        queued(&pool, &thread, &user, "q2", 2).await;
         let head_item = head(&pool, thread.as_str()).await.unwrap().unwrap();
         assert_eq!(head_item.0, "q1");
         dispatch(&pool, &projection(&pool), thread.as_str(), "q1")
@@ -657,17 +641,8 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_then_complete_marks_sent() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q1",
-            QueueStatus::Queued,
-            1,
-        )
-        .await;
+        let (pool, user, thread) = seeded().await;
+        queued(&pool, &thread, &user, "q1", 1).await;
         let projection = projection(&pool);
         assert_eq!(
             dispatch(&pool, &projection, thread.as_str(), "q1")
@@ -692,17 +667,8 @@ mod tests {
 
     #[tokio::test]
     async fn claimed_items_leave_the_visible_queue() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q1",
-            QueueStatus::Queued,
-            1,
-        )
-        .await;
+        let (pool, user, thread) = seeded().await;
+        queued(&pool, &thread, &user, "q1", 1).await;
         let projection = projection(&pool);
         assert_eq!(
             list_for_thread(&pool, thread.as_str()).await.unwrap().len(),
@@ -721,17 +687,8 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_then_fail_marks_dropped() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q1",
-            QueueStatus::Queued,
-            1,
-        )
-        .await;
+        let (pool, user, thread) = seeded().await;
+        queued(&pool, &thread, &user, "q1", 1).await;
         let projection = projection(&pool);
         dispatch(&pool, &projection, thread.as_str(), "q1")
             .await
@@ -747,8 +704,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_rejects_items_that_already_left_the_queue() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
+        let (pool, user, thread) = seeded().await;
         seed_item(
             &pool,
             thread.as_str(),
@@ -767,17 +723,8 @@ mod tests {
 
     #[tokio::test]
     async fn update_text_rewrites_only_waiting_items() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q1",
-            QueueStatus::Queued,
-            1,
-        )
-        .await;
+        let (pool, user, thread) = seeded().await;
+        queued(&pool, &thread, &user, "q1", 1).await;
         let projection = projection(&pool);
         update_text(&pool, &projection, thread.as_str(), "q1", "edited")
             .await
@@ -796,17 +743,8 @@ mod tests {
 
     #[tokio::test]
     async fn release_returns_a_claimed_item_to_the_queue() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
-        seed_item(
-            &pool,
-            thread.as_str(),
-            user.as_str(),
-            "q1",
-            QueueStatus::Queued,
-            1,
-        )
-        .await;
+        let (pool, user, thread) = seeded().await;
+        queued(&pool, &thread, &user, "q1", 1).await;
         let projection = projection(&pool);
         dispatch(&pool, &projection, thread.as_str(), "q1")
             .await
@@ -877,8 +815,7 @@ mod tests {
 
     #[tokio::test]
     async fn restart_continuation_is_hidden_from_the_queue() {
-        let pool = db::connect_memory().await.unwrap();
-        let (user, _, thread) = seed_thread(&pool).await;
+        let (pool, user, thread) = seeded().await;
         let system = UserBrief {
             id: "threadbase".into(),
             username: "threadbase".into(),

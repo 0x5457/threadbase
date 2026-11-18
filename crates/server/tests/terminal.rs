@@ -189,6 +189,19 @@ impl Fixture {
         (status, value)
     }
 
+    /// Ends the session this fixture opened and the tmux server it started.
+    async fn teardown(&self, session: &str) {
+        let _ = self
+            .call(
+                Method::DELETE,
+                &format!("/api/terminal/sessions/{session}"),
+                &self.admin,
+                None,
+            )
+            .await;
+        kill_server(&self.socket);
+    }
+
     async fn connect(
         &self,
         user: &str,
@@ -347,16 +360,12 @@ async fn a_home_shell_belongs_to_one_account() {
         .unwrap()
         .iter()
         .all(|session| session["id"] != home.as_str()));
-    let _ = fixture
-        .call(
-            Method::DELETE,
-            &format!("/api/terminal/sessions/{home}"),
-            &fixture.admin,
-            None,
-        )
-        .await;
+    fixture.teardown(&home).await;
+}
+
+fn kill_server(socket: &str) {
     let _ = std::process::Command::new("tmux")
-        .args(["-L", &fixture.socket, "kill-server"])
+        .args(["-L", socket, "kill-server"])
         .status();
 }
 
@@ -383,17 +392,7 @@ async fn a_watch_only_ticket_never_takes_the_keyboard() {
     assert_eq!(ready["type"], "ready");
     assert_eq!(ready["role"], "watcher");
 
-    let _ = fixture
-        .call(
-            Method::DELETE,
-            &format!("/api/terminal/sessions/{session}"),
-            &fixture.admin,
-            None,
-        )
-        .await;
-    let _ = std::process::Command::new("tmux")
-        .args(["-L", &fixture.socket, "kill-server"])
-        .status();
+    fixture.teardown(&session).await;
 }
 
 #[tokio::test]
@@ -442,17 +441,7 @@ async fn a_thread_without_a_worktree_opens_at_the_project_checkout() {
         body["session"]["cwd"],
         fixture.project.path().to_string_lossy().as_ref()
     );
-    let _ = fixture
-        .call(
-            Method::DELETE,
-            &format!("/api/terminal/sessions/{session}"),
-            &fixture.admin,
-            None,
-        )
-        .await;
-    let _ = std::process::Command::new("tmux")
-        .args(["-L", &fixture.socket, "kill-server"])
-        .status();
+    fixture.teardown(&session).await;
 }
 
 #[tokio::test]
@@ -508,17 +497,7 @@ async fn every_keystroke_reaches_the_shell() {
         echoed.matches("key-by-key").count() >= 2,
         "keystrokes did not all arrive: {echoed:?}"
     );
-    let _ = fixture
-        .call(
-            Method::DELETE,
-            &format!("/api/terminal/sessions/{session}"),
-            &fixture.admin,
-            None,
-        )
-        .await;
-    let _ = std::process::Command::new("tmux")
-        .args(["-L", &fixture.socket, "kill-server"])
-        .status();
+    fixture.teardown(&session).await;
 }
 
 #[tokio::test]
@@ -639,9 +618,7 @@ async fn an_admin_drives_and_a_member_watches() {
     assert_eq!(body["sessions"].as_array().unwrap().len(), 0);
 
     // The test socket goes away with the test.
-    let _ = std::process::Command::new("tmux")
-        .args(["-L", &fixture.socket, "kill-server"])
-        .status();
+    kill_server(&fixture.socket);
 }
 
 #[tokio::test]
@@ -848,9 +825,7 @@ async fn members_list_and_drive_host_tmux_sessions() {
 
     drop(admin);
     drop(member);
-    let _ = std::process::Command::new("tmux")
-        .args(["-L", &socket, "kill-server"])
-        .status();
+    kill_server(&socket);
 }
 
 #[tokio::test]
