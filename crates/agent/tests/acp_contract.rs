@@ -9,8 +9,8 @@ use threadbase_agent::{
     PromptPart, RawAgentEvent, SteeringOutcome,
 };
 use threadbase_shared::{
-    ApprovalDecision, ElicitationAction, PlanPriority, PlanStatus, SubagentStatus, ToolKind,
-    ToolStatus,
+    ApprovalDecision, ElicitationAction, PermissionMode, PlanPriority, PlanStatus, SubagentStatus,
+    ToolKind, ToolStatus,
 };
 use tokio::sync::broadcast;
 
@@ -23,6 +23,11 @@ static FAKE_PROFILE: AgentProfile = AgentProfile {
     npm_version: None,
     default_model: None,
     modes: &[],
+    permission_modes: &[
+        (PermissionMode::Supervised, Some("ask")),
+        (PermissionMode::AutoEdit, Some("acceptEdits")),
+        (PermissionMode::FullAccess, Some("bypass")),
+    ],
 };
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -39,7 +44,29 @@ async fn start(subagents: bool) -> TestHarness {
     start_with(subagents, None, None).await
 }
 
+/// A profile that maps none of our permission modes, like opencode and pi.
+static UNMAPPED_PROFILE: AgentProfile = AgentProfile {
+    id: "unmapped",
+    label: "Unmapped agent",
+    command: env!("CARGO_BIN_EXE_threadbase_acp_fixture"),
+    args: &[],
+    npm_package: None,
+    npm_version: None,
+    default_model: None,
+    modes: &[],
+    permission_modes: &[],
+};
+
 async fn start_with(subagents: bool, model: Option<&str>, effort: Option<&str>) -> TestHarness {
+    start_with_profile(FAKE_PROFILE, subagents, model, effort).await
+}
+
+async fn start_with_profile(
+    profile: AgentProfile,
+    subagents: bool,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> TestHarness {
     let dir = tempfile::tempdir().expect("temp directory");
     let journal = dir.path().join("journal.jsonl");
     let ctx = LaunchCtx {
@@ -49,12 +76,13 @@ async fn start_with(subagents: bool, model: Option<&str>, effort: Option<&str>) 
         model: model.map(str::to_owned),
         effort: effort.map(str::to_owned),
         subagents,
+        permission_mode: None,
         env: vec![(
             "FAKE_AGENT_JOURNAL".to_owned(),
             journal.to_string_lossy().into_owned(),
         )],
     };
-    let mut harness = AcpHarness::new(FAKE_PROFILE);
+    let mut harness = AcpHarness::new(profile);
     let events = harness.events();
     let capabilities = harness.start(ctx).await.expect("start harness");
     TestHarness {
@@ -958,4 +986,52 @@ async fn inter_session_messages_map_to_agent_message_events() {
     assert_eq!(text, "peer message");
     expect_prompt_done(&mut test.events).await;
     test.harness.shutdown().await.expect("shutdown");
+}
+
+/// The thread's permission mode becomes the provider's own session mode, so the
+/// agent stops sending requests the server would only answer the same way.
+#[tokio::test]
+async fn permission_mode_is_pushed_as_a_provider_session_mode() {
+    let mut test = start(true).await;
+    let session = new_session(&mut test).await;
+    assert_eq!(session, "sess-1");
+
+    test.harness
+        .set_permission_mode(PermissionMode::AutoEdit)
+        .await
+        .expect("the fixture offers acceptEdits");
+    let journal = std::fs::read_to_string(&test.journal).unwrap();
+    let pushed = journal
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .any(|entry| {
+            entry.pointer("/received/method").and_then(|m| m.as_str()) == Some("session/set_mode")
+                && entry
+                    .pointer("/received/params/modeId")
+                    .and_then(|m| m.as_str())
+                    == Some("acceptEdits")
+        });
+    assert!(
+        pushed,
+        "session/set_mode with acceptEdits was not sent:\n{journal}"
+    );
+}
+
+/// An adapter with no mapping keeps the server in charge: no request is sent,
+/// and the caller is told this is not an error.
+#[tokio::test]
+async fn a_mode_without_a_provider_equivalent_is_not_sent() {
+    let mut test = start_with_profile(UNMAPPED_PROFILE, true, None, None).await;
+    new_session(&mut test).await;
+    let error = test
+        .harness
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect_err("this profile maps no permission modes");
+    assert!(matches!(error, HarnessError::Unavailable(_)), "{error:?}");
+    let journal = std::fs::read_to_string(&test.journal).unwrap();
+    assert!(
+        !journal.contains("session/set_mode"),
+        "nothing should have been sent:\n{journal}"
+    );
 }

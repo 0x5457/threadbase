@@ -2,6 +2,7 @@
 //! the thread event model or the UI.
 
 use std::path::PathBuf;
+use threadbase_shared::PermissionMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentProfile {
@@ -13,10 +14,31 @@ pub struct AgentProfile {
     pub npm_version: Option<&'static str>,
     pub default_model: Option<&'static str>,
     pub modes: &'static [&'static str],
+    /// Provider session-mode id for each of our permission modes.
+    ///
+    /// `None` means the provider has no equivalent, so the server's own policy
+    /// answers the requests instead. Guessing an id here would silently give a
+    /// thread more or less autonomy than its mode says.
+    pub permission_modes: &'static [(PermissionMode, Option<&'static str>)],
 }
 
 const CODEX_MODES: &[&str] = &["read-only", "workspace-write", "agent", "agent-full-access"];
 const CLAUDE_MODES: &[&str] = &["default", "acceptEdits", "plan", "bypassPermissions"];
+
+/// Codex has no "accept edits but ask for commands" step: `agent` asks, and
+/// `agent-full-access` does not. Auto-accept edits therefore falls back to the
+/// server policy, which answers edit requests itself.
+const CODEX_PERMISSION_MODES: &[(PermissionMode, Option<&str>)] = &[
+    (PermissionMode::Supervised, Some("agent")),
+    (PermissionMode::AutoEdit, None),
+    (PermissionMode::FullAccess, Some("agent-full-access")),
+];
+
+const CLAUDE_PERMISSION_MODES: &[(PermissionMode, Option<&str>)] = &[
+    (PermissionMode::Supervised, Some("default")),
+    (PermissionMode::AutoEdit, Some("acceptEdits")),
+    (PermissionMode::FullAccess, Some("bypassPermissions")),
+];
 
 pub const CODEX: AgentProfile = AgentProfile {
     id: "codex",
@@ -27,6 +49,7 @@ pub const CODEX: AgentProfile = AgentProfile {
     npm_version: Some("2.6.0"),
     default_model: None,
     modes: CODEX_MODES,
+    permission_modes: CODEX_PERMISSION_MODES,
 };
 
 pub const CLAUDE: AgentProfile = AgentProfile {
@@ -38,6 +61,7 @@ pub const CLAUDE: AgentProfile = AgentProfile {
     npm_version: Some("0.101.0"),
     default_model: None,
     modes: CLAUDE_MODES,
+    permission_modes: CLAUDE_PERMISSION_MODES,
 };
 
 pub const OPENCODE: AgentProfile = AgentProfile {
@@ -49,6 +73,7 @@ pub const OPENCODE: AgentProfile = AgentProfile {
     npm_version: None,
     default_model: None,
     modes: &[],
+    permission_modes: &[],
 };
 
 pub const PI: AgentProfile = AgentProfile {
@@ -60,6 +85,7 @@ pub const PI: AgentProfile = AgentProfile {
     npm_version: Some("0.0.34"),
     default_model: None,
     modes: &[],
+    permission_modes: &[],
 };
 
 #[must_use]
@@ -70,6 +96,16 @@ pub fn all_profiles() -> &'static [AgentProfile] {
 #[must_use]
 pub fn find_profile(id: &str) -> Option<&'static AgentProfile> {
     all_profiles().iter().find(|profile| profile.id == id)
+}
+
+/// The provider's own mode id for one of our permission modes.
+#[must_use]
+pub fn provider_mode(profile: &AgentProfile, mode: PermissionMode) -> Option<&'static str> {
+    profile
+        .permission_modes
+        .iter()
+        .find(|(ours, _)| *ours == mode)
+        .and_then(|(_, provider)| *provider)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -127,6 +127,7 @@ struct Fixture {
     /// defaults — exactly like a real adapter spawned for a new turn.
     current_model: String,
     current_effort: String,
+    current_mode: String,
 }
 
 impl Fixture {
@@ -139,7 +140,25 @@ impl Fixture {
             root_session: "sess-1".to_owned(),
             current_model: "fake-model-a".to_owned(),
             current_effort: "high".to_owned(),
+            current_mode: "ask".to_owned(),
         }
+    }
+
+    /// Session modes the fixture claims to support. The fake profile in
+    /// `acp_contract.rs` maps our three permission levels onto these ids.
+    fn modes(&self) -> Value {
+        json!({
+            "currentModeId": self.current_mode,
+            // A superset: the contract test's fake profile maps onto the first
+            // three, the server tests run the codex profile onto the last two.
+            "availableModes": [
+                {"id": "ask", "name": "Ask"},
+                {"id": "acceptEdits", "name": "Accept edits"},
+                {"id": "bypass", "name": "Bypass permissions"},
+                {"id": "agent", "name": "Agent"},
+                {"id": "agent-full-access", "name": "Agent, full access"},
+            ],
+        })
     }
 
     fn config(&self) -> Value {
@@ -282,6 +301,7 @@ impl Fixture {
                     json!({
                         "sessionId": self.root_session,
                         "configOptions": self.config(),
+                        "modes": self.modes(),
                     }),
                 )
             }
@@ -300,8 +320,27 @@ impl Fixture {
                 // on the agent's own defaults again.
                 self.current_model = "fake-model-b".to_owned();
                 self.current_effort = "high".to_owned();
-                self.respond(out, &id, json!({"configOptions": self.config()}))?;
+                self.respond(
+                    out,
+                    &id,
+                    json!({"configOptions": self.config(), "modes": self.modes()}),
+                )?;
                 self.chunk(out, &session, "replayed")
+            }
+            (Some("session/set_mode"), Some(id)) => {
+                let mode = params
+                    .get("modeId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                if !matches!(
+                    mode.as_str(),
+                    "ask" | "acceptEdits" | "bypass" | "agent" | "agent-full-access"
+                ) {
+                    return self.respond_error(out, &id, -32602, "Unknown modeId");
+                }
+                self.current_mode = mode;
+                self.respond(out, &id, json!({}))
             }
             (Some("session/set_config_option"), Some(id)) => {
                 let option = params
@@ -380,6 +419,9 @@ impl Fixture {
             "permission-deny" => self.permission(reader, out, id, &session, "permission-deny"),
             "permission-reject" => self.permission(reader, out, id, &session, "permission-reject"),
             "permission-none" => self.permission(reader, out, id, &session, "permission-none"),
+            "permission-execute" => {
+                self.permission(reader, out, id, &session, "permission-execute")
+            }
             "elicit" => self.elicitation(reader, out, id, &session),
             "subagents" => self.subagents(out, id, &session),
             "agent-message" => self.agent_message(out, id, &session),
@@ -476,14 +518,21 @@ impl Fixture {
         session: &str,
         mode: &str,
     ) -> io::Result<()> {
+        // The permission mode is decided by the request kind, so the fixture can
+        // prove that "auto-accept edits" does not also accept commands.
+        let kind = if mode == "permission-execute" {
+            ("Run command", "execute")
+        } else {
+            ("Write file", "edit")
+        };
         self.notify_update(
             out,
             session,
             json!({
                 "sessionUpdate": "tool_call",
                 "toolCallId": "call-perm",
-                "title": "Write file",
-                "kind": "edit",
+                "title": kind.0,
+                "kind": kind.1,
                 "status": "pending",
                 "rawInput": {"command": "echo hi", "cwd": "/tmp/work"},
             }),
@@ -518,8 +567,8 @@ impl Fixture {
                 "sessionId": session,
                 "toolCall": {
                     "toolCallId": "call-perm",
-                    "title": "Write file",
-                    "kind": "edit",
+                    "title": kind.0,
+                    "kind": kind.1,
                     "status": "pending",
                 },
                 "options": options,

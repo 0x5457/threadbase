@@ -31,6 +31,9 @@ pub struct LaunchCtx {
     pub effort: Option<String>,
     /// Advertise ACP subagent sessions when the caller has opted in.
     pub subagents: bool,
+    /// The thread's permission mode, applied to the provider's own session mode
+    /// when it has an equivalent.
+    pub permission_mode: Option<threadbase_shared::PermissionMode>,
     pub env: Vec<(String, String)>,
 }
 
@@ -253,6 +256,20 @@ pub trait Harness: Send + Sync {
     async fn cancel_subagent(&mut self, subagent_id: &str) -> HarnessResult<()>;
     fn config_options(&self) -> Vec<threadbase_shared::AgentConfigOptionDto> {
         Vec::new()
+    }
+
+    /// Ask the provider to enforce a permission mode itself, so it stops sending
+    /// requests Threadbase would only answer the same way.
+    ///
+    /// `Unavailable` means "no provider equivalent": the caller keeps answering
+    /// requests through its own policy, which is not an error.
+    async fn set_permission_mode(
+        &mut self,
+        _mode: threadbase_shared::PermissionMode,
+    ) -> HarnessResult<()> {
+        Err(HarnessError::Unavailable(
+            "this harness has no provider-side permission modes".to_owned(),
+        ))
     }
 
     async fn set_config(

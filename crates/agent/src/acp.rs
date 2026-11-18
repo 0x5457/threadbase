@@ -13,6 +13,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::profile as threadbase_agent_profile;
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::schema::{
     CancelNotification, ClientCapabilities, ContentBlock, CreateElicitationRequest,
@@ -24,10 +25,10 @@ use agent_client_protocol::v1::schema::{
     PlanEntryStatus as AcpPlanStatus, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionConfigKind, SessionConfigOptionCategory,
-    SessionConfigSelectOptions, SessionId as AcpSessionId, SessionNotification, SessionUpdate,
-    SetSessionConfigOptionRequest, StateUpdate, StopReason, SubagentCapabilities, SubagentUpdate,
-    TextContent, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate,
-    ToolKind as AcpToolKind, Usage as AcpUsage, UsageUpdate, WriteTextFileRequest,
+    SessionConfigSelectOptions, SessionId as AcpSessionId, SessionModeId, SessionNotification,
+    SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StateUpdate, StopReason,
+    SubagentCapabilities, SubagentUpdate, TextContent, ToolCall, ToolCallContent, ToolCallStatus,
+    ToolCallUpdate, ToolKind as AcpToolKind, Usage as AcpUsage, UsageUpdate, WriteTextFileRequest,
     WriteTextFileResponse,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
@@ -75,6 +76,8 @@ pub struct AcpHarness {
     cwd: Option<PathBuf>,
     model: Option<String>,
     effort: Option<String>,
+    /// The thread's permission mode; `None` leaves the provider on its default.
+    permission_mode: Option<threadbase_shared::PermissionMode>,
     capabilities: Capabilities,
     agent_info: Option<AgentIdentity>,
     shutdown: Option<watch::Sender<bool>>,
@@ -94,6 +97,7 @@ impl AcpHarness {
             cwd: None,
             model: None,
             effort: None,
+            permission_mode: None,
             capabilities: Capabilities::default(),
             agent_info: None,
             shutdown: None,
@@ -150,6 +154,20 @@ impl AcpHarness {
     /// A rejected value is a warning, not a launch failure: the thread stays
     /// usable and the transcript says which setting was ignored.
     async fn apply_launch_config(&mut self) {
+        if let Some(mode) = self.permission_mode {
+            // A provider without an equivalent keeps asking; the server's policy
+            // answers. That is a normal outcome, not a launch warning.
+            if let Err(error) = self.set_permission_mode(mode).await {
+                if !matches!(error, HarnessError::Unavailable(_)) {
+                    self.bus.send(RawAgentEvent::Notice {
+                        level: "warning".to_owned(),
+                        message: format!(
+                            "The thread's permission mode could not be applied to the agent ({error})."
+                        ),
+                    });
+                }
+            }
+        }
         let (model, effort) = (self.model.clone(), self.effort.clone());
         let mut requested = Vec::new();
         if let Some(model) = &model {
@@ -188,6 +206,7 @@ impl Harness for AcpHarness {
         self.stopping.store(false, Ordering::SeqCst);
         self.model.clone_from(&ctx.model);
         self.effort.clone_from(&ctx.effort);
+        self.permission_mode = ctx.permission_mode;
         // The adapter may only touch files below the launch directory; resolve
         // it once here so every fs request is checked against the same root.
         let fs_root = ctx.cwd.canonicalize().unwrap_or_else(|_| ctx.cwd.clone());
@@ -471,7 +490,11 @@ impl Harness for AcpHarness {
             .await
             .map_err(|error| HarnessError::Protocol(error.to_string()))?;
         let session = SessionId(response.session_id.0.to_string());
-        lock_state(&self.state).config_options = response.config_options.unwrap_or_default();
+        {
+            let mut state = lock_state(&self.state);
+            state.config_options = response.config_options.unwrap_or_default();
+            state.session_modes = response.modes.clone();
+        }
         reset_session(&mut lock_state(&self.state), &session.0);
         self.session = Some(session.clone());
         self.apply_launch_config().await;
@@ -504,8 +527,14 @@ impl Harness for AcpHarness {
         // `session/load` re-announces the session configuration; without this a
         // resumed thread reported "does not advertise models" even though the
         // agent advertised them moments earlier in `session/new`.
-        if let Some(options) = response.config_options {
-            lock_state(&self.state).config_options = options;
+        {
+            let mut state = lock_state(&self.state);
+            if let Some(options) = response.config_options {
+                state.config_options = options;
+            }
+            if response.modes.is_some() {
+                state.session_modes = response.modes.clone();
+            }
         }
         self.session = Some(id.clone());
         self.apply_launch_config().await;
@@ -570,6 +599,48 @@ impl Harness for AcpHarness {
                 }
             })
             .collect()
+    }
+
+    async fn set_permission_mode(
+        &mut self,
+        mode: threadbase_shared::PermissionMode,
+    ) -> HarnessResult<()> {
+        let Some(provider_mode) = threadbase_agent_profile::provider_mode(&self.profile, mode)
+        else {
+            return Err(HarnessError::Unavailable(
+                "this agent has no provider-side mode for that permission level".to_owned(),
+            ));
+        };
+        // Only send a mode the agent said it has. An adapter that advertises no
+        // modes at all gets no request; one that advertises a different set is
+        // a mismatch worth reporting.
+        let advertised = lock_state(&self.state).session_modes.clone();
+        let Some(modes) = advertised else {
+            return Err(HarnessError::Unavailable(
+                "the agent did not advertise session modes".to_owned(),
+            ));
+        };
+        if !modes
+            .available_modes
+            .iter()
+            .any(|candidate| &*candidate.id.0 == provider_mode)
+        {
+            return Err(HarnessError::Protocol(format!(
+                "the agent does not offer the {provider_mode} mode"
+            )));
+        }
+        let connection = self.connection()?.clone();
+        let session = self.active_session()?.clone();
+        connection
+            .send_request(SetSessionModeRequest::new(
+                AcpSessionId::new(session.0.as_str()),
+                SessionModeId::new(provider_mode),
+            ))
+            .block_task()
+            .await
+            .map_err(|error| HarnessError::Protocol(error.to_string()))?;
+        self.permission_mode = Some(mode);
+        Ok(())
     }
 
     async fn set_config(&mut self, model: Option<&str>, effort: Option<&str>) -> HarnessResult<()> {
@@ -860,6 +931,10 @@ struct HarnessState {
     /// `session/new` or `session/load` response and can be replaced at any time
     /// by a `config_option_update` notification, so they are shared state.
     config_options: Vec<agent_client_protocol::v1::schema::SessionConfigOption>,
+    /// Session modes the agent advertised. Empty means "no provider-side
+    /// modes", which is what makes `set_permission_mode` fall back to the
+    /// server's own policy instead of sending a request the agent would reject.
+    session_modes: Option<agent_client_protocol::v1::schema::SessionModeState>,
     turn_seq: u64,
     running_turn: Option<String>,
     /// Set while `session/load` replays stored history so replayed output is
