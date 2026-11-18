@@ -346,6 +346,9 @@ export const QueueBar = memo(function QueueBar({
           />
         </button>
       </Group>
+      <Text size="xs" c="dimmed" role="status">
+        Queued messages wait for a free turn slot, then start automatically.
+      </Text>
       {collapsed ? null : visible.map((item, index) => (
         <QueueRow
           key={item.id}

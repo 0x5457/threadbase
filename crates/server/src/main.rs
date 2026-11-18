@@ -23,7 +23,7 @@ Environment:
   THREADBASE_MAX_PERMISSION_MODE  Ceiling no thread may exceed
   THREADBASE_SETTLE_DAYS       Idle threads settle after N days (default 7, 0=off)
   THREADBASE_IDLE_SESSION_SECS Idle agent sessions shut down after N seconds (default 900, 0=off)
-  THREADBASE_MAX_ACTIVE_TURNS  Concurrent agent turns across all threads (default 4, 0=unlimited)
+  THREADBASE_MAX_ACTIVE_TURNS  Concurrent agent turns across all threads (default 512, 0=unlimited)
   THREADBASE_SETUP_TIMEOUT_SECS Worktree setup command timeout (default 900)
   THREADBASE_SESSION_DAYS      Session lifetime in days (default 30)
   THREADBASE_COOKIE_SECURE     Force the Secure cookie flag on or off

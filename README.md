@@ -127,7 +127,7 @@ Linux), overridable with `THREADBASE_DATA_DIR`. Core variables:
 | `THREADBASE_ENV_FILE` | `~/.config/threadbase/env` | Optional settings and secrets for the service |
 | `THREADBASE_PERMISSION_MODE` | `supervised` | Default autonomy for new threads |
 | `THREADBASE_MAX_PERMISSION_MODE` | `full_access` | Instance-wide ceiling |
-| `THREADBASE_MAX_ACTIVE_TURNS` | `4` | Concurrent turns across all threads (`0` = unlimited) |
+| `THREADBASE_MAX_ACTIVE_TURNS` | `512` | Concurrent turns across all threads (`0` = unlimited) |
 | `THREADBASE_IDLE_SESSION_SECS` | `900` | Idle agent process shutdown (`0` = never) |
 | `THREADBASE_SETTLE_DAYS` | `7` | Days idle before a thread auto-settles (`0` = off) |
 | `THREADBASE_DEV_IDENTITY` | unset | Loopback development sign-in (never in production) |
