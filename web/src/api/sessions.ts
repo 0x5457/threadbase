@@ -5,7 +5,6 @@ import type { SessionsResponse } from "./types/SessionsResponse";
 import type { ThreadResponse } from "./types/ThreadResponse";
 
 export type SessionSummary = SessionSummaryDto;
-export type ThreadSessionSummary = Extract<SessionSummary, { kind: "thread" }>;
 export type TmuxSessionSummary = Extract<SessionSummary, { kind: "tmux" }>;
 
 /**

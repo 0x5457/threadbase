@@ -2,14 +2,13 @@
 
 export { initials } from "../../lib/initials";
 
-export function describeTitle(title: string) {
-  const flat = title.replace(/\s+/g, " ").trim();
-  return flat.length > 96 ? `${flat.slice(0, 96)}…` : flat;
-}
-
 const clock = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
   minute: "2-digit",
+  // 24-hour keeps the stamp five characters wide in every locale, so it fits
+  // the 46px phone gutter and the column stays aligned; the exact locale
+  // string is still in the element's title.
+  hourCycle: "h23",
 });
 
 export function timeOf(ts: number) {

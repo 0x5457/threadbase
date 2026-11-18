@@ -29,7 +29,7 @@ export function permissionModeHint(mode: PermissionMode): string {
   return HINTS[mode] ?? "";
 }
 
-export function permissionModeRank(mode: PermissionMode): number {
+function permissionModeRank(mode: PermissionMode): number {
   const index = PERMISSION_MODES.indexOf(mode);
   return index === -1 ? 0 : index;
 }

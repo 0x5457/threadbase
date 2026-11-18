@@ -1,163 +1,18 @@
-//! Guest links: the capability path, and the member API it must not open.
+//! Guest links: what a guest can do, and the member API it must not open.
 
-use axum::body::Body;
-use axum::extract::ConnectInfo;
-use axum::http::{Request, StatusCode};
-use axum::Router;
-use sqlx::SqlitePool;
-use std::path::Path;
-use std::process::Command;
-use tempfile::TempDir;
-use threadbase_server::auth::CurrentUser;
+mod support;
+
+use axum::http::StatusCode;
+use support::{cookie_of, fixture, request};
 use threadbase_server::config::Config;
-use threadbase_server::{auth, db, guest, projects, threads};
-use threadbase_shared::api::{
-    CreateProjectRequest, CreateThreadRequest, GuestMessageRequest, GuestSessionRequest,
-};
+use threadbase_server::guest;
+use threadbase_shared::api::{GuestMessageRequest, GuestSessionRequest};
 use threadbase_shared::{now_ms, ErrorCode};
 use tower::ServiceExt;
 
-fn policy() -> threadbase_core::permissions::PermissionPolicy {
-    threadbase_core::permissions::PermissionPolicy::default()
-}
-
-struct Fixture {
-    /// Kept alive so the worktree and data directory outlive the test.
-    _repo: TempDir,
-    _data: TempDir,
-    pool: SqlitePool,
-    current: CurrentUser,
-    thread_id: String,
-}
-
-async fn fixture(guest_links: bool) -> (Fixture, Router) {
-    let repo = TempDir::new().unwrap();
-    init_repo(repo.path()).await;
-    let data = TempDir::new().unwrap();
-    let pool = db::connect_memory().await.unwrap();
-    let user = auth::ensure_identity_user(
-        &pool,
-        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
-        &[],
-    )
-    .await
-    .unwrap();
-    let current = CurrentUser {
-        user,
-        method: "tailscale",
-    };
-    let state = threadbase_server::app::AppState::new(
-        Config {
-            data_dir: data.path().to_path_buf(),
-            db_path: data.path().join("threadbase.db"),
-            guest_links,
-            ..Config::default()
-        },
-        pool.clone(),
-    );
-    let project = projects::create(
-        &pool,
-        &current,
-        &CreateProjectRequest {
-            path: repo.path().to_string_lossy().to_string(),
-            name: None,
-            create: false,
-        },
-    )
-    .await
-    .unwrap();
-    let thread = threads::create(
-        &pool,
-        &state.projection,
-        data.path(),
-        &current,
-        project.id.as_str(),
-        &CreateThreadRequest {
-            title: Some("Shared with a guest".into()),
-            agent: Some("codex".into()),
-            model: None,
-            effort: None,
-            base_branch: Some("main".into()),
-            initial_prompt: None,
-            worktree: None,
-        },
-        &policy(),
-    )
-    .await
-    .unwrap();
-    let app = threadbase_server::routes::router(state);
-    (
-        Fixture {
-            _repo: repo,
-            _data: data,
-            pool,
-            current,
-            thread_id: thread.id.0.clone(),
-        },
-        app,
-    )
-}
-
-async fn init_repo(path: &Path) {
-    git(path, &["init", "-b", "main"]);
-    git(path, &["config", "user.email", "test@example.com"]);
-    git(path, &["config", "user.name", "Test"]);
-    tokio::fs::write(path.join("README.md"), "one\ntwo\n")
-        .await
-        .unwrap();
-    git(path, &["add", "-A"]);
-    git(path, &["commit", "-m", "initial"]);
-}
-
-fn git(path: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn request(method: &str, uri: &str, cookie: Option<&str>, body: &str) -> Request<Body> {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("host", "localhost")
-        .header("origin", "http://localhost")
-        .header("x-requested-with", "threadbase")
-        .header("content-type", "application/json");
-    if let Some(cookie) = cookie {
-        builder = builder.header("cookie", cookie);
-    }
-    let mut request = builder.body(Body::from(body.to_owned())).unwrap();
-    request
-        .extensions_mut()
-        .insert(ConnectInfo(std::net::SocketAddr::from((
-            [127, 0, 0, 1],
-            1234,
-        ))));
-    request
-}
-
-/// The `Set-Cookie` value of a guest exchange, reduced to `name=value`.
-fn guest_cookie(response: &axum::http::Response<axum::body::Body>) -> String {
-    response
-        .headers()
-        .get("set-cookie")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(';').next())
-        .unwrap_or_default()
-        .to_owned()
-}
-
 #[tokio::test]
 async fn guest_endpoints_do_not_exist_when_disabled() {
-    let (fixture, app) = fixture(false).await;
+    let (fixture, app) = fixture(Config::default()).await;
     for (method, uri) in [
         ("POST", "/api/guest/session"),
         ("GET", "/api/guest/thread"),
@@ -182,7 +37,11 @@ async fn guest_endpoints_do_not_exist_when_disabled() {
 
 #[tokio::test]
 async fn a_link_is_exchanged_for_a_cookie_that_reads_only_its_thread() {
-    let (fixture, app) = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        guest_links: true,
+        ..Config::default()
+    })
+    .await;
     let (token, _) = guest::create_link(
         &fixture.pool,
         &fixture.thread_id,
@@ -209,7 +68,7 @@ async fn a_link_is_exchanged_for_a_cookie_that_reads_only_its_thread() {
         .await
         .unwrap();
     assert_eq!(exchanged.status(), StatusCode::OK);
-    let cookie = guest_cookie(&exchanged);
+    let cookie = cookie_of(&exchanged);
     assert!(
         cookie.starts_with("threadbase_guest="),
         "the exchange sets the guest cookie: {cookie}"
@@ -225,7 +84,7 @@ async fn a_link_is_exchanged_for_a_cookie_that_reads_only_its_thread() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(json["title"], "Shared with a guest");
+    assert_eq!(json["title"], "Test thread");
     assert!(
         json["page"].get("events").is_some(),
         "the transcript window is part of the response"
@@ -246,7 +105,11 @@ async fn a_link_is_exchanged_for_a_cookie_that_reads_only_its_thread() {
 
 #[tokio::test]
 async fn revoking_a_link_ends_the_sessions_it_opened() {
-    let (fixture, app) = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        guest_links: true,
+        ..Config::default()
+    })
+    .await;
     let (token, _) = guest::create_link(
         &fixture.pool,
         &fixture.thread_id,
@@ -260,7 +123,7 @@ async fn revoking_a_link_ends_the_sessions_it_opened() {
         .oneshot(request("POST", "/api/guest/session", None, &body))
         .await
         .unwrap();
-    let cookie = guest_cookie(&exchanged);
+    let cookie = cookie_of(&exchanged);
 
     guest::revoke_thread_links(&fixture.pool, &fixture.thread_id)
         .await
@@ -275,7 +138,11 @@ async fn revoking_a_link_ends_the_sessions_it_opened() {
 
 #[tokio::test]
 async fn an_expired_or_unknown_link_does_not_exchange() {
-    let (fixture, app) = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        guest_links: true,
+        ..Config::default()
+    })
+    .await;
     let (token, _) = guest::create_link(
         &fixture.pool,
         &fixture.thread_id,
@@ -301,7 +168,11 @@ async fn an_expired_or_unknown_link_does_not_exchange() {
 
 #[tokio::test]
 async fn drafts_are_limited_and_can_only_be_claimed_once() {
-    let (fixture, _) = fixture(true).await;
+    let (fixture, _) = fixture(Config {
+        guest_links: true,
+        ..Config::default()
+    })
+    .await;
     let (token, _) = guest::create_link(
         &fixture.pool,
         &fixture.thread_id,
@@ -389,7 +260,11 @@ async fn drafts_are_limited_and_can_only_be_claimed_once() {
 
 #[tokio::test]
 async fn a_guest_can_only_draft_text_through_its_link() {
-    let (fixture, app) = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        guest_links: true,
+        ..Config::default()
+    })
+    .await;
     let (token, _) = guest::create_link(
         &fixture.pool,
         &fixture.thread_id,
@@ -403,7 +278,7 @@ async fn a_guest_can_only_draft_text_through_its_link() {
         .oneshot(request("POST", "/api/guest/session", None, &body))
         .await
         .unwrap();
-    let cookie = guest_cookie(&exchanged);
+    let cookie = cookie_of(&exchanged);
 
     let draft = serde_json::to_string(&GuestMessageRequest {
         text: "What does this change do?".into(),
@@ -440,7 +315,11 @@ async fn a_guest_can_only_draft_text_through_its_link() {
 /// not the workbench. Queued member drafts and approval requests stay out.
 #[tokio::test]
 async fn the_guest_payload_leaves_out_workbench_events() {
-    let (fixture, app) = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        guest_links: true,
+        ..Config::default()
+    })
+    .await;
     let events = threadbase_server::events::EventStore::new(fixture.pool.clone());
     let actor = threadbase_shared::Actor::system();
     for payload in [
@@ -474,7 +353,7 @@ async fn the_guest_payload_leaves_out_workbench_events() {
         .oneshot(request("POST", "/api/guest/session", None, &body))
         .await
         .unwrap();
-    let cookie = guest_cookie(&exchanged);
+    let cookie = cookie_of(&exchanged);
     let read = app
         .clone()
         .oneshot(request("GET", "/api/guest/thread", Some(&cookie), ""))

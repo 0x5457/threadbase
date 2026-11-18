@@ -1,171 +1,68 @@
-//! Idle-window deploys: when the machine counts as idle, and how a staged
-//! binary replaces the running one.
+//! Idle-window deploys: the busy check and the binary swap.
 
-use sqlx::SqlitePool;
+mod support;
+
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
-use std::process::Command;
+use support::fixture;
 use tempfile::TempDir;
 use threadbase_server::config::Config;
-use threadbase_server::{auth, db, deploy, projects, threads};
-use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest};
+use threadbase_server::deploy;
 use threadbase_shared::{now_ms, ThreadStatus};
 
-fn policy() -> threadbase_core::permissions::PermissionPolicy {
-    threadbase_core::permissions::PermissionPolicy::default()
-}
-
-struct Fixture {
-    _repo: TempDir,
-    _data: TempDir,
-    pool: SqlitePool,
-    thread_id: String,
-    user_id: String,
-}
-
-async fn fixture() -> Fixture {
-    let repo = TempDir::new().unwrap();
-    git(repo.path(), &["init", "-b", "main"]);
-    git(repo.path(), &["config", "user.email", "test@example.com"]);
-    git(repo.path(), &["config", "user.name", "Test"]);
-    std::fs::write(repo.path().join("README.md"), "one\n").unwrap();
-    git(repo.path(), &["add", "-A"]);
-    git(repo.path(), &["commit", "-m", "initial"]);
-    let data = TempDir::new().unwrap();
-    let pool = db::connect_memory().await.unwrap();
-    let user = auth::ensure_identity_user(
-        &pool,
-        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
-        &[],
-    )
-    .await
-    .unwrap();
-    let current = auth::CurrentUser {
-        user: user.clone(),
-        method: "tailscale",
-    };
-    let state = threadbase_server::app::AppState::new(
-        Config {
-            data_dir: data.path().to_path_buf(),
-            db_path: data.path().join("threadbase.db"),
-            ..Config::default()
-        },
-        pool.clone(),
-    );
-    let project = projects::create(
-        &pool,
-        &current,
-        &CreateProjectRequest {
-            path: repo.path().to_string_lossy().to_string(),
-            name: None,
-            create: false,
-        },
-    )
-    .await
-    .unwrap();
-    let thread = threads::create(
-        &pool,
-        &state.projection,
-        data.path(),
-        &current,
-        project.id.as_str(),
-        &CreateThreadRequest {
-            title: Some("Deploy target".into()),
-            agent: Some("codex".into()),
-            model: None,
-            effort: None,
-            base_branch: Some("main".into()),
-            initial_prompt: None,
-            worktree: None,
-        },
-        &policy(),
-    )
-    .await
-    .unwrap();
-    Fixture {
-        _repo: repo,
-        _data: data,
-        pool,
-        thread_id: thread.id.0.clone(),
-        user_id: user.id.0.clone(),
-    }
-}
-
-fn git(path: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
+/// Only work that a restart would damage counts as busy.
 #[tokio::test]
-async fn an_idle_workspace_is_not_busy() {
-    let fixture = fixture().await;
-    assert!(!deploy::busy(&fixture.pool).await.unwrap());
-}
+async fn only_running_work_blocks_a_deploy() {
+    let (fixture, _app) = fixture(Config::default()).await;
+    let pool = &fixture.pool;
+    let thread = fixture.thread_id.as_str();
+    assert!(!deploy::busy(pool).await.unwrap(), "idle workspace");
 
-#[tokio::test]
-async fn a_running_turn_blocks_a_deploy() {
-    let fixture = fixture().await;
     sqlx::query("UPDATE threads SET status = 'running' WHERE id = ?")
-        .bind(&fixture.thread_id)
-        .execute(&fixture.pool)
+        .bind(thread)
+        .execute(pool)
         .await
         .unwrap();
-    assert!(deploy::busy(&fixture.pool).await.unwrap());
-}
+    assert!(deploy::busy(pool).await.unwrap(), "running turn");
+    sqlx::query("UPDATE threads SET status = 'idle' WHERE id = ?")
+        .bind(thread)
+        .execute(pool)
+        .await
+        .unwrap();
 
-/// A pending approval is work waiting on a person; a restart would cancel it, so
-/// it counts as busy even though no turn is running.
-#[tokio::test]
-async fn an_unanswered_request_blocks_a_deploy() {
-    let fixture = fixture().await;
+    // A pending approval is waiting on a person; a restart would cancel it.
     let now = now_ms();
     sqlx::query(
         "INSERT INTO approvals(id, thread_id, agent, title, kind, paths_json, options_json,
             status, created_at)
          VALUES('a1', ?, 'codex', 'Run tests', 'command', '[]', '[]', 'pending', ?)",
     )
-    .bind(&fixture.thread_id)
+    .bind(thread)
     .bind(now)
-    .execute(&fixture.pool)
+    .execute(pool)
     .await
     .unwrap();
-    assert!(deploy::busy(&fixture.pool).await.unwrap());
-
+    assert!(deploy::busy(pool).await.unwrap(), "pending approval");
     sqlx::query("UPDATE approvals SET status = 'approved' WHERE id = 'a1'")
-        .execute(&fixture.pool)
+        .execute(pool)
         .await
         .unwrap();
-    assert!(!deploy::busy(&fixture.pool).await.unwrap());
-}
+    assert!(!deploy::busy(pool).await.unwrap());
 
-#[tokio::test]
-async fn queued_input_and_live_subagents_block_a_deploy() {
-    let fixture = fixture().await;
-    let now = now_ms();
     sqlx::query(
         "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position,
             created_at, updated_at)
          VALUES('q1', ?, ?, 'waiting', 'queued', 0, ?, ?)",
     )
-    .bind(&fixture.thread_id)
-    .bind(&fixture.user_id)
+    .bind(thread)
+    .bind(fixture.current.user.id.as_str())
     .bind(now)
     .bind(now)
-    .execute(&fixture.pool)
+    .execute(pool)
     .await
     .unwrap();
-    assert!(deploy::busy(&fixture.pool).await.unwrap());
+    assert!(deploy::busy(pool).await.unwrap(), "queued input");
     sqlx::query("DELETE FROM queued_inputs WHERE id = 'q1'")
-        .execute(&fixture.pool)
+        .execute(pool)
         .await
         .unwrap();
 
@@ -174,25 +71,26 @@ async fn queued_input_and_live_subagents_block_a_deploy() {
             created_at, updated_at)
          VALUES('s1', ?, 'reviewer', 'running', 1, 0, ?, ?)",
     )
-    .bind(&fixture.thread_id)
+    .bind(thread)
     .bind(now)
     .bind(now)
-    .execute(&fixture.pool)
+    .execute(pool)
     .await
     .unwrap();
-    assert!(deploy::busy(&fixture.pool).await.unwrap());
-}
-
-#[tokio::test]
-async fn a_settled_or_archived_thread_does_not_block() {
-    let fixture = fixture().await;
-    sqlx::query("UPDATE threads SET status = ? WHERE id = ?")
-        .bind(ThreadStatus::Archived.as_str())
-        .bind(&fixture.thread_id)
-        .execute(&fixture.pool)
+    assert!(deploy::busy(pool).await.unwrap(), "running subagent");
+    sqlx::query("DELETE FROM subagents WHERE id = 's1'")
+        .execute(pool)
         .await
         .unwrap();
-    assert!(!deploy::busy(&fixture.pool).await.unwrap());
+
+    // A thread that is only archived or idle is not work.
+    sqlx::query("UPDATE threads SET status = ? WHERE id = ?")
+        .bind(ThreadStatus::Archived.as_str())
+        .bind(thread)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(!deploy::busy(pool).await.unwrap(), "archived thread");
 }
 
 #[tokio::test]

@@ -2,13 +2,9 @@ import { request } from "./client";
 import { ApiError } from "./client";
 import type { CreateTerminalSessionRequest } from "./types/CreateTerminalSessionRequest";
 import type { HostTerminalAttachResponse } from "./types/HostTerminalAttachResponse";
-import type { HostTerminalSessionDto } from "./types/HostTerminalSessionDto";
-import type { TerminalSessionDto } from "./types/TerminalSessionDto";
 import type { TerminalSessionResponse } from "./types/TerminalSessionResponse";
 import type { TerminalSessionsResponse } from "./types/TerminalSessionsResponse";
 
-export type TerminalSession = TerminalSessionDto;
-export type HostTerminalSession = HostTerminalSessionDto;
 
 /**
  * The drawer always shows exactly one target: a threadbase shell for a thread

@@ -9,7 +9,7 @@ const MAX_COMPOSER_ATTACHMENTS = 8;
 const MAX_COMPOSER_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_COMPOSER_FILE_BYTES = 25 * 1024 * 1024;
 
-export interface ComposerAttachment {
+interface ComposerAttachment {
   key: string;
   name: string;
   mimeType: string;

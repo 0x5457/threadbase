@@ -1,124 +1,20 @@
 //! The MCP endpoint: token auth, scopes and the JSON-RPC surface.
 
+mod support;
+
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
-use std::path::Path;
-use std::process::Command;
-use tempfile::TempDir;
+use support::{fixture, Fixture};
 use threadbase_server::auth::CurrentUser;
 use threadbase_server::config::Config;
-use threadbase_server::{auth, db, mcp, projects, threads};
-use threadbase_shared::api::{CreateMcpTokenRequest, CreateProjectRequest, CreateThreadRequest};
+use threadbase_server::mcp;
+use threadbase_server::auth;
+use threadbase_shared::api::CreateMcpTokenRequest;
 use threadbase_shared::{McpScope, UserAccess};
 use tower::ServiceExt;
-
-fn policy() -> threadbase_core::permissions::PermissionPolicy {
-    threadbase_core::permissions::PermissionPolicy::default()
-}
-
-struct Fixture {
-    _repo: TempDir,
-    _data: TempDir,
-    pool: SqlitePool,
-    current: CurrentUser,
-    thread_id: String,
-    app: Router,
-}
-
-async fn fixture(enabled: bool) -> Fixture {
-    let repo = TempDir::new().unwrap();
-    init_repo(repo.path()).await;
-    let data = TempDir::new().unwrap();
-    let pool = db::connect_memory().await.unwrap();
-    let user = auth::ensure_identity_user(
-        &pool,
-        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
-        &[],
-    )
-    .await
-    .unwrap();
-    let current = CurrentUser {
-        user,
-        method: "tailscale",
-    };
-    let state = threadbase_server::app::AppState::new(
-        Config {
-            data_dir: data.path().to_path_buf(),
-            db_path: data.path().join("threadbase.db"),
-            mcp: enabled,
-            ..Config::default()
-        },
-        pool.clone(),
-    );
-    let project = projects::create(
-        &pool,
-        &current,
-        &CreateProjectRequest {
-            path: repo.path().to_string_lossy().to_string(),
-            name: None,
-            create: false,
-        },
-    )
-    .await
-    .unwrap();
-    let thread = threads::create(
-        &pool,
-        &state.projection,
-        data.path(),
-        &current,
-        project.id.as_str(),
-        &CreateThreadRequest {
-            title: Some("Driven from outside".into()),
-            agent: Some("codex".into()),
-            model: None,
-            effort: None,
-            base_branch: Some("main".into()),
-            initial_prompt: None,
-            worktree: None,
-        },
-        &policy(),
-    )
-    .await
-    .unwrap();
-    let app = threadbase_server::routes::router(state);
-    Fixture {
-        _repo: repo,
-        _data: data,
-        pool,
-        current,
-        thread_id: thread.id.0.clone(),
-        app,
-    }
-}
-
-async fn init_repo(path: &Path) {
-    git(path, &["init", "-b", "main"]);
-    git(path, &["config", "user.email", "test@example.com"]);
-    git(path, &["config", "user.name", "Test"]);
-    tokio::fs::write(path.join("README.md"), "one\ntwo\n")
-        .await
-        .unwrap();
-    git(path, &["add", "-A"]);
-    git(path, &["commit", "-m", "initial"]);
-}
-
-fn git(path: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
 
 async fn rpc(app: &Router, token: Option<&str>, body: Value) -> (StatusCode, Option<Value>) {
     let mut builder = Request::builder()
@@ -156,13 +52,8 @@ async fn mint(fixture: &Fixture, scopes: &[McpScope]) -> String {
 
 #[tokio::test]
 async fn the_endpoint_does_not_exist_when_disabled() {
-    let fixture = fixture(false).await;
-    let (status, _) = rpc(
-        &fixture.app,
-        None,
-        json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
-    )
-    .await;
+    let (_fixture, app) = fixture(Config::default()).await;
+    let (status, _) = rpc(&app, None, json!({"jsonrpc":"2.0","id":1,"method":"ping"})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let request = Request::builder()
         .method("GET")
@@ -172,22 +63,21 @@ async fn the_endpoint_does_not_exist_when_disabled() {
         .header("x-requested-with", "threadbase")
         .body(Body::empty())
         .unwrap();
-    let response = fixture.app.clone().oneshot(request).await.unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn a_bearer_token_is_required_and_revocable() {
-    let fixture = fixture(true).await;
-    let (status, _) = rpc(
-        &fixture.app,
-        None,
-        json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
-    )
+    let (fixture, app) = fixture(Config {
+        mcp: true,
+        ..Config::default()
+    })
     .await;
+    let (status, _) = rpc(&app, None, json!({"jsonrpc":"2.0","id":1,"method":"ping"})).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _) = rpc(
-        &fixture.app,
+        &app,
         Some("not-a-token"),
         json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
     )
@@ -196,7 +86,7 @@ async fn a_bearer_token_is_required_and_revocable() {
 
     let token = mint(&fixture, &[McpScope::Read]).await;
     let (status, body) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
     )
@@ -216,7 +106,7 @@ async fn a_bearer_token_is_required_and_revocable() {
     .await
     .unwrap();
     let (status, _) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
     )
@@ -230,10 +120,14 @@ async fn a_bearer_token_is_required_and_revocable() {
 
 #[tokio::test]
 async fn initialize_and_tools_list_describe_the_surface() {
-    let fixture = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        mcp: true,
+        ..Config::default()
+    })
+    .await;
     let token = mint(&fixture, &[McpScope::Read]).await;
     let (_, body) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}),
     )
@@ -246,7 +140,7 @@ async fn initialize_and_tools_list_describe_the_surface() {
     );
 
     let (_, body) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
     )
@@ -273,7 +167,7 @@ async fn initialize_and_tools_list_describe_the_surface() {
 
     // A notification has no id and must not produce a reply.
     let (status, _) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
     )
@@ -283,11 +177,15 @@ async fn initialize_and_tools_list_describe_the_surface() {
 
 #[tokio::test]
 async fn read_tokens_can_list_and_read_but_not_prompt() {
-    let fixture = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        mcp: true,
+        ..Config::default()
+    })
+    .await;
     let token = mint(&fixture, &[McpScope::Read]).await;
 
     let (_, body) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"threads_list","arguments":{}}}),
     )
@@ -300,7 +198,7 @@ async fn read_tokens_can_list_and_read_but_not_prompt() {
     assert_eq!(listed["threads"].as_array().unwrap().len(), 1);
 
     let (_, body) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"thread_read","arguments":{"thread_id": fixture.thread_id}}}),
     )
@@ -310,11 +208,11 @@ async fn read_tokens_can_list_and_read_but_not_prompt() {
         .expect("tool text")
         .to_owned();
     let read: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(read["thread"]["title"], "Driven from outside");
+    assert_eq!(read["thread"]["title"], "Test thread");
 
     // The write tool is refused before anything reaches an agent.
     let (_, body) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"thread_prompt","arguments":{"thread_id": fixture.thread_id, "text": "go"}}}),
     )
@@ -333,7 +231,11 @@ async fn read_tokens_can_list_and_read_but_not_prompt() {
 
 #[tokio::test]
 async fn granting_write_needs_an_account_that_can_write() {
-    let fixture = fixture(true).await;
+    let (fixture, _app) = fixture(Config {
+        mcp: true,
+        ..Config::default()
+    })
+    .await;
     sqlx::query("UPDATE users SET access = ? WHERE id = ?")
         .bind(UserAccess::ReadOnly.as_str())
         .bind(fixture.current.user.id.as_str())
@@ -366,7 +268,11 @@ async fn granting_write_needs_an_account_that_can_write() {
 
 #[tokio::test]
 async fn approving_needs_the_approve_scope_and_an_admin_mint() {
-    let fixture = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        mcp: true,
+        ..Config::default()
+    })
+    .await;
     // The fixture's first user is the instance admin; a second member is not.
     let member = auth::ensure_identity_user(
         &fixture.pool,
@@ -410,7 +316,7 @@ async fn approving_needs_the_approve_scope_and_an_admin_mint() {
     assert!(!admin_token.is_empty());
     let read_only = mint(&fixture, &[McpScope::Read]).await;
     let (_, body) = rpc(
-        &fixture.app,
+        &app,
         Some(&read_only),
         json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"approval_decide","arguments":{"approval_id":"nope","decision":"allow_once"}}}),
     )
@@ -420,11 +326,15 @@ async fn approving_needs_the_approve_scope_and_an_admin_mint() {
 
 #[tokio::test]
 async fn waiting_returns_as_soon_as_the_thread_is_idle() {
-    let fixture = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        mcp: true,
+        ..Config::default()
+    })
+    .await;
     let token = mint(&fixture, &[McpScope::Read]).await;
     let started = std::time::Instant::now();
     let (_, body) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"thread_wait","arguments":{"thread_id": fixture.thread_id, "timeout_seconds": 5}}}),
     )
@@ -443,7 +353,11 @@ async fn waiting_returns_as_soon_as_the_thread_is_idle() {
 /// being able to drive threads, the token stops working too.
 #[tokio::test]
 async fn a_token_stops_working_when_its_account_is_suspended() {
-    let fixture = fixture(true).await;
+    let (fixture, app) = fixture(Config {
+        mcp: true,
+        ..Config::default()
+    })
+    .await;
     let token = mint(&fixture, &[McpScope::Read]).await;
     sqlx::query("UPDATE users SET access = ? WHERE id = ?")
         .bind(UserAccess::Disabled.as_str())
@@ -452,7 +366,7 @@ async fn a_token_stops_working_when_its_account_is_suspended() {
         .await
         .unwrap();
     let (status, _) = rpc(
-        &fixture.app,
+        &app,
         Some(&token),
         json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
     )
@@ -467,7 +381,11 @@ async fn a_token_stops_working_when_its_account_is_suspended() {
 /// The token DTO round-trips through the API the settings page uses.
 #[tokio::test]
 async fn tokens_are_listed_without_ever_showing_the_secret() {
-    let fixture = fixture(true).await;
+    let (fixture, _app) = fixture(Config {
+        mcp: true,
+        ..Config::default()
+    })
+    .await;
     let request = CreateMcpTokenRequest {
         label: "laptop".into(),
         scopes: vec![McpScope::Read],

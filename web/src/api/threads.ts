@@ -63,10 +63,6 @@ export function listAllThreads() {
   return request<ThreadsResponse>("/api/threads");
 }
 
-export function listThreads(projectId: string) {
-  return request<ThreadsResponse>(`/api/projects/${projectId}/threads`);
-}
-
 export function getOlderEvents(threadId: string, beforeSeq: number) {
   return request<OlderEventsDto>(
     `/api/threads/${threadId}/events/older?before=${beforeSeq}`,

@@ -1,6 +1,6 @@
-import type { SessionSummary, TmuxSessionSummary } from "../api";
+import type { SessionSummary } from "../api";
 
-export interface TmuxSessionRef {
+interface TmuxSessionRef {
   socket: string;
   id: string;
 }
@@ -27,7 +27,7 @@ export function parseTmuxSession(search: string): TmuxSessionRef | null {
   return { socket, id };
 }
 
-export function tmuxSessionParam(socket: string, id: string): string {
+function tmuxSessionParam(socket: string, id: string): string {
   return `${TMUX_PREFIX}${socket}:${id}`;
 }
 
@@ -49,12 +49,6 @@ export function sessionKey(session: { kind: string; id: string; socket?: string 
   return session.kind === "tmux"
     ? `tmux:${session.socket}:${session.id}`
     : `thread:${session.id}`;
-}
-
-export function sessionTitle(
-  session: TmuxSessionSummary | { kind: "thread"; title: string },
-): string {
-  return session.kind === "thread" ? session.title : session.name;
 }
 
 export function sessionMatches(session: SessionSummary, needle: string): boolean {

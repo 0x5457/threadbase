@@ -62,7 +62,7 @@ function useDiffWrapPreference() {
   );
 }
 
-export function useEffectiveDiffWrap(narrow: boolean) {
+function useEffectiveDiffWrap(narrow: boolean) {
   const current = useDiffWrapPreference();
   return current === "auto" ? narrow : current === "wrap";
 }
