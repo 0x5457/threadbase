@@ -218,6 +218,86 @@
     ]
   },
   {
+    "id": "placement",
+    "title": "Thread placement",
+    "summary": "Where a thread sits between turns: active, snoozed or settled. Working is derived, never stored.",
+    "states": [
+      {
+        "id": "active",
+        "label": "Active",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "settle",
+            "to": "settled"
+          },
+          {
+            "id": "snooze",
+            "to": "snoozed"
+          }
+        ]
+      },
+      {
+        "id": "snoozed",
+        "label": "Snoozed",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "wake",
+            "to": "active"
+          }
+        ]
+      },
+      {
+        "id": "settled",
+        "label": "Settled",
+        "terminal": false,
+        "commands": [
+          {
+            "id": "unsettle",
+            "to": "active"
+          },
+          {
+            "id": "snooze",
+            "to": "snoozed"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "settle",
+        "label": "Settle",
+        "kind": "command"
+      },
+      {
+        "id": "unsettle",
+        "label": "Un-settle",
+        "kind": "command"
+      },
+      {
+        "id": "snooze",
+        "label": "Snooze",
+        "kind": "command"
+      },
+      {
+        "id": "wake",
+        "label": "Wake",
+        "kind": "command"
+      },
+      {
+        "id": "auto_settle",
+        "label": "Settled automatically",
+        "kind": "fact"
+      },
+      {
+        "id": "snooze_elapsed",
+        "label": "Snooze ended",
+        "kind": "fact"
+      }
+    ]
+  },
+  {
     "id": "setup",
     "title": "Worktree setup",
     "summary": "The project's setup command for this worktree; it gates the agent.",

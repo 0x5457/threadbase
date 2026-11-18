@@ -35,6 +35,7 @@ fn catalogue_is_complete() {
     let catalogue = threadbase_core::state::catalogue();
     for id in [
         "thread",
+        "placement",
         "setup",
         "approval",
         "elicitation",

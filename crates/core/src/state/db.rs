@@ -16,6 +16,22 @@ pub fn parse_thread_status(value: &str) -> Option<ThreadStatus> {
     value.parse().ok()
 }
 
+pub fn placement_str(placement: threadbase_shared::ThreadPlacement) -> &'static str {
+    placement.as_str()
+}
+
+pub fn parse_thread_placement(value: &str) -> Option<threadbase_shared::ThreadPlacement> {
+    value.parse().ok()
+}
+
+pub fn section_str(section: threadbase_shared::ThreadSection) -> &'static str {
+    section.as_str()
+}
+
+pub fn parse_thread_section(value: &str) -> Option<threadbase_shared::ThreadSection> {
+    value.parse().ok()
+}
+
 pub fn setup_status_str(status: threadbase_shared::SetupStatus) -> &'static str {
     status.as_str()
 }

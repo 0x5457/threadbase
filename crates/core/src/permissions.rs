@@ -2,7 +2,72 @@
 
 use std::path::Path;
 
-use threadbase_shared::{ApprovalScope, Role};
+use threadbase_shared::{ApprovalKind, ApprovalScope, PermissionMode, Role};
+
+/// The instance's permission defaults, as the server enforces them.
+///
+/// Resolution is a pure fold with one clamp: a thread's own choice, else its
+/// project's, else the instance default, and never above the instance ceiling.
+/// The ceiling exists for the one case a product cannot talk its way out of:
+/// whoever runs the machine decides how much autonomy the machine hands out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PermissionPolicy {
+    pub default: PermissionMode,
+    pub cap: PermissionMode,
+}
+
+impl Default for PermissionPolicy {
+    fn default() -> Self {
+        Self {
+            default: PermissionMode::Supervised,
+            cap: PermissionMode::FullAccess,
+        }
+    }
+}
+
+impl PermissionPolicy {
+    #[must_use]
+    pub fn new(default: PermissionMode, cap: PermissionMode) -> Self {
+        Self { default, cap }
+    }
+
+    /// The mode in force for one thread.
+    #[must_use]
+    pub fn resolve(
+        &self,
+        thread: Option<PermissionMode>,
+        project: Option<PermissionMode>,
+    ) -> PermissionMode {
+        let chosen = thread.or(project).unwrap_or(self.default);
+        self.clamp(chosen)
+    }
+
+    /// Hold a mode down to the instance ceiling.
+    #[must_use]
+    pub fn clamp(&self, mode: PermissionMode) -> PermissionMode {
+        if mode.rank() > self.cap.rank() {
+            self.cap
+        } else {
+            mode
+        }
+    }
+
+    /// Whether a request of this kind may proceed without asking.
+    ///
+    /// Reads are included in `AutoEdit` because a read never changes the
+    /// worktree; everything that runs a program or touches the network still
+    /// asks, which is the difference between "let it edit" and "let it loose".
+    #[must_use]
+    pub fn allows(&self, mode: PermissionMode, kind: ApprovalKind) -> bool {
+        match mode {
+            PermissionMode::Supervised => false,
+            PermissionMode::AutoEdit => {
+                matches!(kind, ApprovalKind::FileRead | ApprovalKind::FileWrite)
+            }
+            PermissionMode::FullAccess => true,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PolicyError {
@@ -251,4 +316,66 @@ mod tests {
         ));
         std::fs::remove_dir_all(&base).expect("remove scratch directory");
     }
+}
+
+#[test]
+fn a_thread_overrides_its_project_which_overrides_the_instance() {
+    let policy = PermissionPolicy::new(PermissionMode::AutoEdit, PermissionMode::FullAccess);
+    assert_eq!(
+        policy.resolve(
+            Some(PermissionMode::FullAccess),
+            Some(PermissionMode::Supervised)
+        ),
+        PermissionMode::FullAccess,
+        "the thread wins"
+    );
+    assert_eq!(
+        policy.resolve(None, Some(PermissionMode::Supervised)),
+        PermissionMode::Supervised,
+        "then the project"
+    );
+    assert_eq!(
+        policy.resolve(None, None),
+        PermissionMode::AutoEdit,
+        "then the instance default"
+    );
+}
+
+#[test]
+fn the_ceiling_holds_a_choice_down() {
+    let policy = PermissionPolicy::new(PermissionMode::Supervised, PermissionMode::AutoEdit);
+    assert_eq!(
+        policy.resolve(Some(PermissionMode::FullAccess), None),
+        PermissionMode::AutoEdit,
+        "a thread cannot exceed the ceiling"
+    );
+    assert_eq!(
+        policy.resolve(Some(PermissionMode::Supervised), None),
+        PermissionMode::Supervised,
+        "below the ceiling is untouched"
+    );
+    assert_eq!(
+        policy.clamp(PermissionMode::FullAccess),
+        PermissionMode::AutoEdit
+    );
+}
+
+#[test]
+fn modes_allow_what_their_names_promise() {
+    let policy = PermissionPolicy::default();
+    for kind in [
+        ApprovalKind::Command,
+        ApprovalKind::FileRead,
+        ApprovalKind::FileWrite,
+        ApprovalKind::Network,
+        ApprovalKind::Other,
+    ] {
+        assert!(!policy.allows(PermissionMode::Supervised, kind));
+        assert!(policy.allows(PermissionMode::FullAccess, kind));
+    }
+    assert!(policy.allows(PermissionMode::AutoEdit, ApprovalKind::FileWrite));
+    assert!(policy.allows(PermissionMode::AutoEdit, ApprovalKind::FileRead));
+    assert!(!policy.allows(PermissionMode::AutoEdit, ApprovalKind::Command));
+    assert!(!policy.allows(PermissionMode::AutoEdit, ApprovalKind::Network));
+    assert!(!policy.allows(PermissionMode::AutoEdit, ApprovalKind::Other));
 }

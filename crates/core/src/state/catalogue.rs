@@ -6,7 +6,9 @@
 //! graph is the result of calling the machine's own transition function, so
 //! the table the clients read cannot drift from the code that enforces it.
 
-use threadbase_shared::{MachineAction, MachineCommand, MachineSpec, MachineState, ThreadStatus};
+use threadbase_shared::{
+    MachineAction, MachineCommand, MachineSpec, MachineState, ThreadPlacement, ThreadStatus,
+};
 
 use super::*;
 
@@ -77,6 +79,12 @@ pub fn catalogue() -> Vec<MachineSpec> {
             "Thread",
             "A shared agent conversation: startup, turns, attention and archiving.",
             ThreadMachine::transition,
+        ),
+        spec(
+            PlacementMachine::ENTITY,
+            "Thread placement",
+            "Where a thread sits between turns: active, snoozed or settled. Working is derived, never stored.",
+            PlacementMachine::transition,
         ),
         spec(
             SetupMachine::ENTITY,
@@ -164,6 +172,15 @@ pub fn catalogue() -> Vec<MachineSpec> {
 #[must_use]
 pub fn thread_commands(state: ThreadStatus) -> Vec<String> {
     ThreadAction::commands(state)
+        .iter()
+        .map(|action| action.id().to_owned())
+        .collect()
+}
+
+/// Command ids for a placement. Mirrors [`thread_commands`] for the shelves.
+#[must_use]
+pub fn placement_commands(placement: ThreadPlacement) -> Vec<String> {
+    PlacementAction::commands(placement)
         .iter()
         .map(|action| action.id().to_owned())
         .collect()

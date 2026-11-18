@@ -1,7 +1,8 @@
 mod tests {
     use crate::state::*;
     use threadbase_shared::{
-        ApprovalStatus, CommentStatus, ElicitationStatus, QueueStatus, SubagentStatus, ThreadStatus,
+        ApprovalStatus, CommentStatus, ElicitationStatus, QueueStatus, SubagentStatus,
+        ThreadPlacement, ThreadSection, ThreadStatus,
     };
 
     // ----- thread -----
@@ -192,6 +193,216 @@ mod tests {
         assert!(
             ThreadMachine::transition(ThreadStatus::Archived, &ThreadAction::AgentFailed).is_err()
         );
+    }
+
+    // ----- placement -----
+
+    #[test]
+    fn placement_park_and_wake() {
+        assert_eq!(
+            PlacementMachine::transition(ThreadPlacement::Active, &PlacementAction::Settle)
+                .unwrap(),
+            ThreadPlacement::Settled
+        );
+        assert_eq!(
+            PlacementMachine::transition(ThreadPlacement::Settled, &PlacementAction::Unsettle)
+                .unwrap(),
+            ThreadPlacement::Active
+        );
+        assert_eq!(
+            PlacementMachine::transition(ThreadPlacement::Active, &PlacementAction::Snooze)
+                .unwrap(),
+            ThreadPlacement::Snoozed
+        );
+        assert_eq!(
+            PlacementMachine::transition(ThreadPlacement::Snoozed, &PlacementAction::Wake).unwrap(),
+            ThreadPlacement::Active
+        );
+    }
+
+    #[test]
+    fn placement_commands_are_idempotent() {
+        for (state, action, expected) in [
+            (
+                ThreadPlacement::Settled,
+                PlacementAction::Settle,
+                ThreadPlacement::Settled,
+            ),
+            (
+                ThreadPlacement::Active,
+                PlacementAction::Wake,
+                ThreadPlacement::Active,
+            ),
+            (
+                ThreadPlacement::Snoozed,
+                PlacementAction::Snooze,
+                ThreadPlacement::Snoozed,
+            ),
+        ] {
+            assert_eq!(
+                PlacementMachine::transition(state, &action).unwrap(),
+                expected
+            );
+        }
+        // A parked thread must be woken before it can be settled, so a shelf
+        // cannot silently swallow work that is still on hold.
+        assert!(
+            PlacementMachine::transition(ThreadPlacement::Snoozed, &PlacementAction::Settle)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn placement_facts_never_hide_parked_work() {
+        assert_eq!(
+            PlacementMachine::transition(ThreadPlacement::Snoozed, &PlacementAction::SnoozeElapsed)
+                .unwrap(),
+            ThreadPlacement::Active
+        );
+        assert_eq!(
+            PlacementMachine::transition(ThreadPlacement::Active, &PlacementAction::AutoSettle)
+                .unwrap(),
+            ThreadPlacement::Settled
+        );
+        assert!(PlacementMachine::transition(
+            ThreadPlacement::Snoozed,
+            &PlacementAction::AutoSettle
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn placement_commands_exclude_facts() {
+        assert_eq!(
+            PlacementMachine::command("settle"),
+            Some(PlacementAction::Settle)
+        );
+        assert_eq!(PlacementMachine::command("auto_settle"), None);
+        assert_eq!(PlacementMachine::command("snooze_elapsed"), None);
+        assert_eq!(PlacementMachine::command("nope"), None);
+    }
+
+    #[test]
+    fn section_prefers_closed_then_pinned_then_shelves() {
+        assert_eq!(
+            section(ThreadStatus::Archived, ThreadPlacement::Settled, true, true),
+            ThreadSection::Archived
+        );
+        assert_eq!(
+            section(ThreadStatus::Idle, ThreadPlacement::Settled, true, false),
+            ThreadSection::Pinned
+        );
+        assert_eq!(
+            section(ThreadStatus::Idle, ThreadPlacement::Snoozed, false, true),
+            ThreadSection::Snoozed
+        );
+        assert_eq!(
+            section(ThreadStatus::Running, ThreadPlacement::Active, false, true),
+            ThreadSection::Working
+        );
+        assert_eq!(
+            section(ThreadStatus::Idle, ThreadPlacement::Active, false, false),
+            ThreadSection::Active
+        );
+    }
+
+    #[test]
+    fn working_ignores_states_that_need_a_person() {
+        assert!(is_working(ThreadStatus::Running, 0, 0));
+        assert!(is_working(ThreadStatus::Idle, 1, 0));
+        assert!(is_working(ThreadStatus::Idle, 0, 1));
+        assert!(!is_working(ThreadStatus::Idle, 0, 0));
+        for status in [
+            ThreadStatus::RequiresAction,
+            ThreadStatus::Error,
+            ThreadStatus::Interrupted,
+            ThreadStatus::Archived,
+        ] {
+            assert!(!is_working(status, 3, 2), "{status:?} needs a person");
+        }
+    }
+
+    #[test]
+    fn auto_settle_needs_an_idle_thread_nobody_is_waiting_on() {
+        let idle = IdleFacts {
+            status: ThreadStatus::Idle,
+            placement: ThreadPlacement::Active,
+            auto_settle: true,
+            working: false,
+            pending: 0,
+            last_activity_at: 1_000,
+            placement_at: 1_000,
+        };
+        let now = 1_000 + 8 * DAY_MS;
+        assert!(should_auto_settle(idle, now, 7 * DAY_MS));
+        // Fresh activity keeps it.
+        assert!(!should_auto_settle(idle, 1_000 + DAY_MS, 7 * DAY_MS));
+        // A thread that opted out is never swept.
+        assert!(!should_auto_settle(
+            IdleFacts {
+                auto_settle: false,
+                ..idle
+            },
+            now,
+            7 * DAY_MS
+        ));
+        // A parked thread is already parked.
+        for placement in [ThreadPlacement::Settled, ThreadPlacement::Snoozed] {
+            assert!(!should_auto_settle(
+                IdleFacts { placement, ..idle },
+                now,
+                7 * DAY_MS
+            ));
+        }
+        // Work or an unanswered request blocks it, whatever the clock says.
+        assert!(!should_auto_settle(
+            IdleFacts {
+                working: true,
+                ..idle
+            },
+            now,
+            7 * DAY_MS
+        ));
+        assert!(!should_auto_settle(
+            IdleFacts { pending: 1, ..idle },
+            now,
+            7 * DAY_MS
+        ));
+        for status in [
+            ThreadStatus::Running,
+            ThreadStatus::RequiresAction,
+            ThreadStatus::Error,
+            ThreadStatus::Interrupted,
+            ThreadStatus::Preparing,
+            ThreadStatus::Archived,
+        ] {
+            assert!(
+                !should_auto_settle(IdleFacts { status, ..idle }, now, 7 * DAY_MS),
+                "{status:?} must not be swept"
+            );
+        }
+        // Moving the thread restarts the clock, so a wake is never undone by the
+        // same pass that produced it.
+        assert!(!should_auto_settle(
+            IdleFacts {
+                placement_at: now,
+                ..idle
+            },
+            now,
+            7 * DAY_MS
+        ));
+        // Zero disables the sweeper entirely.
+        assert!(!should_auto_settle(idle, now, 0));
+    }
+
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+    #[test]
+    fn settle_is_refused_while_work_or_questions_remain() {
+        assert!(check_settle_allowed(ThreadStatus::Idle, 0, 0, 0).is_ok());
+        assert!(check_settle_allowed(ThreadStatus::Running, 0, 0, 0).is_err());
+        assert!(check_settle_allowed(ThreadStatus::Idle, 1, 0, 0).is_err());
+        assert!(check_settle_allowed(ThreadStatus::Idle, 0, 0, 1).is_err());
     }
 
     // ----- approval -----
