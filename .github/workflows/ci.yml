@@ -34,9 +34,16 @@ jobs:
         with:
           workspaces: ". -> target"
 
-      # The terminal and sessions tests drive real tmux servers.
-      - name: Install tmux
-        run: sudo apt-get update && sudo apt-get install -y tmux
+      # The browser terminal config sets `window-size manual`, a value only
+      # tmux 3.7+ accepts; ubuntu's stock 3.6a server refuses to start with
+      # it, so build the version the product actually requires.
+      - name: Install tmux 3.8
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libevent-dev libncurses-dev bison pkg-config
+          curl -fsSL https://github.com/tmux/tmux/releases/download/3.8/tmux-3.8.tar.gz | tar xz
+          (cd tmux-3.8 && ./configure >/dev/null && make -j"$(nproc)" >/dev/null && sudo make install)
+          tmux -V
 
       - name: Install web dependencies
         working-directory: web
