@@ -36,6 +36,10 @@ dotenvy = "0.15"
 futures-util = { version = "0.3", features = ["sink"] }
 gray_matter = "0.3"
 hex = "0.4"
+# web-push's ece links OpenSSL; vendored builds it statically into the
+# binary, so darwin releases run without a Homebrew OpenSSL and the
+# x86_64 target cross-compiles on Apple Silicon.
+openssl-sys = { version = "0.9", features = ["vendored"] }
 ignore = "0.4"
 jiff = "0.2"
 mime_guess = "2.0"
