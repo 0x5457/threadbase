@@ -10,6 +10,7 @@ mod bundle;
 mod lifecycle;
 mod query;
 mod sweep;
+mod title;
 
 pub use bundle::bundle;
 pub use lifecycle::{
@@ -17,3 +18,4 @@ pub use lifecycle::{
 };
 pub use query::{get, ids_for_project, list, list_all, load_row, permission_mode, ThreadRow};
 pub use sweep::{spawn_sweeper, sweep, SweepReport};
+pub use title::{backfill_titles, title_from_prompt};
