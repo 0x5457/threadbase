@@ -51,8 +51,16 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # The agent-flow tests mutate process environment variables, so each
+      # test needs its own process: that is what the local `verify.sh` gate
+      # uses too.
       - name: Test
-        run: cargo test --workspace
+        run: cargo nextest run --workspace
 
       - name: Verify embedded assets
         run: |
