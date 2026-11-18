@@ -6,8 +6,6 @@ import {
   IconArrowBackUp,
   IconCalendarOff,
   IconCheck,
-  IconLink,
-  IconLinkOff,
   IconBell,
   IconBellOff,
   IconDots,
@@ -25,10 +23,6 @@ import {
 import type { WatchState } from "../../api/types/WatchState";
 import {
   cancelThread,
-  createGuestLink,
-  getGuestLink,
-  getState,
-  revokeGuestLink,
   updateThread,
   getThreadBundle,
   getThreadWatch,
@@ -157,53 +151,6 @@ export function ThreadMenu({
     },
   });
   const permissions = usePermissionPolicy();
-  const state = useQuery({
-    queryKey: ["state"],
-    queryFn: getState,
-    staleTime: 60_000,
-  });
-  const guestLinks = state.data?.guestLinks ?? false;
-  const guestLink = useQuery({
-    queryKey: ["guest-link", threadId],
-    queryFn: () => getGuestLink(threadId!),
-    enabled: guestLinks && threadId !== null,
-    staleTime: 10_000,
-  });
-  const share = useMutation({
-    mutationFn: async () => {
-      const link = await createGuestLink(threadId!);
-      await navigator.clipboard?.writeText(link.url).catch(() => {});
-      return link;
-    },
-    onSuccess: (link) => {
-      void queryClient.invalidateQueries({ queryKey: ["guest-link", threadId] });
-      notifications.show({
-        color: "teal",
-        message: `Guest link copied · expires ${new Date(link.expiresAt).toLocaleString()}`,
-      });
-    },
-    onError: (cause) => {
-      notifications.show({
-        message:
-          cause instanceof Error ? cause.message : "Could not create the link",
-        color: "red",
-      });
-    },
-  });
-  const stopSharing = useMutation({
-    mutationFn: () => revokeGuestLink(threadId!),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["guest-link", threadId] });
-      notifications.show({ color: "teal", message: "Guest link revoked" });
-    },
-    onError: (cause) => {
-      notifications.show({
-        message:
-          cause instanceof Error ? cause.message : "Could not revoke the link",
-        color: "red",
-      });
-    },
-  });
   const permissionOverride =
     bundle.data?.bundle.thread.permissionModeOverride ?? null;
   const permissionMode =
@@ -349,27 +296,6 @@ export function ThreadMenu({
           >
             {watchLabel}
           </Menu.Item>
-        ) : null}
-        {guestLinks && threadId ? (
-          <>
-            <Menu.Divider />
-            <Menu.Item
-              leftSection={<IconLink size={13} />}
-              disabled={share.isPending}
-              onClick={() => share.mutate()}
-            >
-              Share with a guest…
-            </Menu.Item>
-            {guestLink.data?.active ? (
-              <Menu.Item
-                leftSection={<IconLinkOff size={13} />}
-                disabled={stopSharing.isPending}
-                onClick={() => stopSharing.mutate()}
-              >
-                Stop guest sharing
-              </Menu.Item>
-            ) : null}
-          </>
         ) : null}
         <Menu.Divider />
         <Menu.Label>Permissions</Menu.Label>

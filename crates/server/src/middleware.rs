@@ -17,6 +17,14 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; \
      font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; \
      base-uri 'none'; form-action 'self'";
 
+/// The streamed page is the one same-origin document we frame, so it gets its own
+/// policy: the video worker, its inline stylesheet and a `'self'` frame ancestor.
+/// Everything it needs is served from this origin by the screen proxy.
+const EMBED_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; \
+     connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-ancestors 'self'; \
+     base-uri 'none'";
+
 pub async fn host_guard(
     State(state): State<AppState>,
     request: Request,
@@ -55,13 +63,6 @@ pub async fn csrf_guard(
     if matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
         return Ok(next.run(request).await);
     }
-    // The MCP endpoint authenticates with a bearer token and never reads a cookie,
-    // so a cross-site request cannot borrow anyone's authority there — and MCP
-    // clients cannot send headers of our choosing. It is the one write path that
-    // does not need the browser rule.
-    if state.config.mcp && request.uri().path() == "/mcp" {
-        return Ok(next.run(request).await);
-    }
     let headers = request.headers();
     if headers
         .get(CUSTOM_HEADER)
@@ -89,6 +90,10 @@ pub async fn csrf_guard(
 }
 
 pub async fn security_headers(request: Request, next: Next) -> Response {
+    // The desktop stream is proxied into the app as an iframe, so it is the one
+    // path that may be framed (by this origin) and that needs a worker-capable
+    // policy. Checking before the handler runs keeps the relaxation to that path.
+    let embedded = request.uri().path().starts_with("/screen/stream");
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(
@@ -97,7 +102,7 @@ pub async fn security_headers(request: Request, next: Next) -> Response {
     );
     headers.insert(
         "x-frame-options",
-        axum::http::HeaderValue::from_static("DENY"),
+        axum::http::HeaderValue::from_static(if embedded { "SAMEORIGIN" } else { "DENY" }),
     );
     headers.insert(
         "referrer-policy",
@@ -105,7 +110,11 @@ pub async fn security_headers(request: Request, next: Next) -> Response {
     );
     headers.insert(
         "content-security-policy",
-        axum::http::HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+        axum::http::HeaderValue::from_static(if embedded {
+            EMBED_SECURITY_POLICY
+        } else {
+            CONTENT_SECURITY_POLICY
+        }),
     );
     response
 }

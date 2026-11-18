@@ -42,8 +42,7 @@ async fn state(
         permissions: instance.policy,
         terminal: instance.terminal,
         terminal_host: instance.terminal_host,
-        guest_links: instance.guest_links,
-        mcp: instance.mcp,
+        screen: instance.screen,
     }))
 }
 

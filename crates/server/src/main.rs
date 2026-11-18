@@ -17,8 +17,6 @@ Environment:
   THREADBASE_PUBLIC_ORIGIN     HTTPS origin the tailnet reaches this service at
   THREADBASE_ADMINS            Comma-separated tailnet logins that are always admins
   THREADBASE_TERMINAL_DRIVERS  Tailnet logins allowed to drive the browser terminal
-  THREADBASE_GUEST_LINKS       Set to 1 to allow guest links (default off)
-  THREADBASE_MCP               Set to 1 to expose the MCP endpoint (default off)
   THREADBASE_AUTO_DEPLOY       Set to 1 to install a staged binary when idle
   THREADBASE_AUTO_DEPLOY_PATH  Where a staged binary is expected
   THREADBASE_PERMISSION_MODE   Default permission mode (supervised/auto_edit/full_access)
@@ -272,6 +270,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     }
     if let Err(error) = state.drafts.backfill_flags().await {
         tracing::warn!(%error, "draft marker backfill failed");
+    }
+    // Titles written before the prompt cleaner existed still carry paste markup.
+    match threadbase_server::threads::backfill_titles(&state.pool).await {
+        Ok(0) => {}
+        Ok(repaired) => tracing::info!(repaired, "thread titles repaired"),
+        Err(error) => tracing::warn!(%error, "thread title backfill failed"),
     }
     let index_pool = state.pool.clone();
     tokio::spawn(async move {

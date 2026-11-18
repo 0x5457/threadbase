@@ -24,13 +24,8 @@ export type StateResponse = {
    */
   terminalHost: boolean;
   /**
-   * Guest links are opt-in; with them off the sharing entry points are hidden
-   * and their endpoints do not exist.
+   * The desktop link is opt-in per server. When false the entry points are
+   * hidden and the endpoints do not exist.
    */
-  guestLinks: boolean;
-  /**
-   * The MCP endpoint is opt-in; with it off outside agents cannot drive
-   * threads and the settings section is hidden.
-   */
-  mcp: boolean;
+  screen: boolean;
 };

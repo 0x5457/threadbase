@@ -21,7 +21,6 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { AuthGate } from "./components/AuthGate";
-import { GuestThread } from "./components/guest/GuestThread";
 import { installVisualViewportSync } from "./lib/viewport";
 import "./styles/base.css";
 import "./styles/header.css";
@@ -34,7 +33,6 @@ import "./styles/panels.css";
 import "./styles/terminal.css";
 import "./styles/sessions.css";
 import "./styles/comments.css";
-import "./styles/tree.css";
 import "./styles/thoughts.css";
 import "./styles/typography.css";
 import "./styles/diff.css";
@@ -43,6 +41,7 @@ import "./styles/empty.css";
 import "./styles/frame.css";
 import "./styles/goal.css";
 import "./styles/responsive.css";
+import "./styles/screen.css";
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -237,10 +236,6 @@ function NotificationHost() {
   return <Notifications position={phone ? "top-center" : "bottom-right"} />;
 }
 
-const guestToken = window.location.pathname.startsWith("/guest/")
-  ? window.location.pathname.slice("/guest/".length).split("/")[0]
-  : null;
-
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root");
 
@@ -252,15 +247,9 @@ createRoot(root).render(
       colorSchemeManager={colorSchemeManager}
     >
       <QueryClientProvider client={queryClient}>
-        {/* A guest link is its own surface: no account, no shell, one thread.
-            Keeping it outside `AuthGate` is what makes "no account" literal. */}
-        {guestToken ? (
-          <GuestThread token={guestToken} />
-        ) : (
-          <AuthGate>
-            <App />
-          </AuthGate>
-        )}
+        <AuthGate>
+          <App />
+        </AuthGate>
         <NotificationHost />
       </QueryClientProvider>
     </MantineProvider>

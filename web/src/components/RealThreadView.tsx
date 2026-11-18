@@ -71,7 +71,6 @@ import { useLiveThread } from "../lib/live-thread";
 import type { LivePanel } from "../lib/live/types";
 import { type ViewItem } from "../lib/thread-events";
 import { ActionSheet } from "./ActionSheet";
-import { GuestDrafts } from "./thread/GuestDrafts";
 import { AgentLog } from "./AgentLog";
 import { ComposerSkeleton } from "./composer/ComposerSkeleton";
 import { ApprovalCard } from "./thread/ApprovalCard";
@@ -1621,7 +1620,6 @@ export const RealThreadView = memo(function RealThreadView({
             onCommand={runGoalCommand}
           />
         ) : null}
-        <GuestDrafts threadId={threadId} canWrite={writable} />
         <QueueBar
           items={queue}
           busy={queueBusy}

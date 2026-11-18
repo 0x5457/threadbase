@@ -167,55 +167,6 @@ pub enum ThreadStatus {
     Archived,
 }
 
-/// What an outside agent may do with a token minted from the settings page.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    TS,
-    Display,
-    EnumString,
-    IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-#[ts(export)]
-pub enum McpScope {
-    /// List and read threads.
-    Read,
-    /// Start a turn on a thread.
-    Write,
-    /// Answer an approval or a question.
-    Approve,
-}
-
-/// One guest's drafted message, waiting for a person to send or dismiss it.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    TS,
-    Display,
-    EnumString,
-    IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-#[ts(export)]
-pub enum GuestMessageStatus {
-    Pending,
-    Sent,
-    Dismissed,
-}
-
 /// Where a thread sits in the workbench between turns.
 ///
 /// This is deliberately *not* part of [`ThreadStatus`]. `ThreadStatus` answers
@@ -1707,6 +1658,34 @@ pub enum TerminalPhase {
     Error,
 }
 
+/// The instance's desktop link. A display is a machine resource, so there is at
+/// most one of these per server; it exists while the process runs and is shared
+/// by whoever the owner lets in.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    Default,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum ScreenPhase {
+    #[default]
+    Idle,
+    Starting,
+    Live,
+    Stopping,
+}
+
 impl_as_str!(
     Role,
     UserAccess,
@@ -1715,7 +1694,6 @@ impl_as_str!(
     ThreadSection,
     AutoSettle,
     PermissionMode,
-    GuestMessageStatus,
     SetupStatus,
     SubagentStatus,
     Delivery,
@@ -1731,6 +1709,7 @@ impl_as_str!(
     ConnectionPhase,
     DraftPhase,
     TerminalPhase,
+    ScreenPhase,
 );
 
 #[cfg(test)]

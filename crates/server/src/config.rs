@@ -64,13 +64,6 @@ pub struct Config {
     /// Ceiling no thread may exceed. Whoever runs the machine decides how much
     /// autonomy the machine hands out; the UI renders modes above it as managed.
     pub max_permission_mode: PermissionMode,
-    /// Guest links are a capability that bypasses accounts, so they are opt-in.
-    /// With this off every guest endpoint answers 404 and the UI hides its
-    /// entry points.
-    pub guest_links: bool,
-    /// The MCP endpoint lets an outside agent drive threads. Off by default: it
-    /// is the widest capability the product offers.
-    pub mcp: bool,
     /// Install a staged binary and restart, but only while no turn is running.
     /// Off by default: a server replacing itself is not something to do unasked.
     pub auto_deploy: bool,
@@ -90,6 +83,18 @@ pub struct Config {
     pub log_file: Option<PathBuf>,
     /// Hold a power assertion so a dedicated Mac does not sleep.
     pub keep_awake: bool,
+    /// `THREADBASE_SCREEN=1` streams this machine's desktop to a browser. The
+    /// stream shows everything on the screen, so it is opt-in per server and
+    /// only ever visible to the person who started it.
+    pub screen: bool,
+    /// Display handed to voxl (`:0` on X11, an index or id on macOS). `None`
+    /// inherits the environment, which is what a desktop session already has.
+    pub screen_display: Option<String>,
+    /// Path to the `voxl` binary. `None` looks on `PATH`.
+    pub screen_voxl: Option<PathBuf>,
+    /// A share ends by itself after this long; renewing from the browser pushes
+    /// the deadline back. `0` means a share lasts until it is stopped.
+    pub screen_ttl_seconds: i64,
 }
 
 /// Test and tooling defaults. Production always goes through [`Config::load`],
@@ -117,8 +122,6 @@ impl Default for Config {
             settle_days: 7,
             permission_mode: PermissionMode::Supervised,
             max_permission_mode: PermissionMode::FullAccess,
-            guest_links: false,
-            mcp: false,
             auto_deploy: false,
             auto_deploy_path: None,
             unit: "threadbase".to_owned(),
@@ -126,6 +129,10 @@ impl Default for Config {
             env_file: PathBuf::from("/tmp/threadbase/env"),
             log_file: None,
             keep_awake: false,
+            screen: false,
+            screen_display: None,
+            screen_voxl: None,
+            screen_ttl_seconds: 30 * 60,
         }
     }
 }
@@ -238,17 +245,11 @@ impl Config {
         let max_permission_mode = non_empty("THREADBASE_MAX_PERMISSION_MODE")
             .and_then(|value| value.parse::<PermissionMode>().ok())
             .unwrap_or(PermissionMode::FullAccess);
-        let mcp = std::env::var("THREADBASE_MCP")
-            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-            .unwrap_or(false);
         let auto_deploy = std::env::var("THREADBASE_AUTO_DEPLOY")
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
         let auto_deploy_path = non_empty("THREADBASE_AUTO_DEPLOY_PATH").map(PathBuf::from);
         let unit = non_empty("THREADBASE_UNIT").unwrap_or_else(|| "threadbase".to_owned());
-        let guest_links = std::env::var("THREADBASE_GUEST_LINKS")
-            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-            .unwrap_or(false);
         let settle_days = non_empty("THREADBASE_SETTLE_DAYS")
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|value| *value >= 0)
@@ -262,6 +263,15 @@ impl Config {
         let keep_awake = std::env::var("THREADBASE_KEEP_AWAKE")
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
+        let screen = std::env::var("THREADBASE_SCREEN")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        let screen_display = non_empty("THREADBASE_SCREEN_DISPLAY");
+        let screen_voxl = non_empty("THREADBASE_VOXL").map(PathBuf::from);
+        let screen_ttl_seconds = non_empty("THREADBASE_SCREEN_TTL_SECS")
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|value| *value >= 0)
+            .unwrap_or(30 * 60);
         Ok(Self {
             data_dir,
             db_path,
@@ -283,8 +293,6 @@ impl Config {
             settle_days,
             permission_mode,
             max_permission_mode,
-            guest_links,
-            mcp,
             auto_deploy,
             auto_deploy_path,
             unit,
@@ -292,6 +300,10 @@ impl Config {
             env_file,
             log_file,
             keep_awake,
+            screen,
+            screen_display,
+            screen_voxl,
+            screen_ttl_seconds,
         })
     }
 
