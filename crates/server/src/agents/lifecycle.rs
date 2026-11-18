@@ -14,6 +14,7 @@ use threadbase_shared::api::SendMessageResponse;
 use threadbase_shared::{
     now_ms, Actor, ApiError, CommentAnchor, EventEnvelope, ThreadEvent, ThreadId, ThreadStatus,
 };
+use threadbase_workspace::git;
 
 /// Replaces one user prompt and discards everything after it.
 ///
@@ -240,6 +241,23 @@ pub(crate) async fn rewind_to_turn(
             "this turn has no worktree checkpoint, so its file changes cannot be undone",
         )));
     };
+    // Forked-in checkpoints sit behind the fork's base; resetting there would
+    // make the removed work read as new changes in diffs and merge-back.
+    let row = threads::load_row(&inner.pool, thread_id).await?;
+    let base = row
+        .base_sha
+        .clone()
+        .unwrap_or_else(|| row.base_branch.clone());
+    if sha != base {
+        if let Some(worktree) = row.worktree_path.as_deref() {
+            if git::is_ancestor(std::path::Path::new(worktree), &sha, &base).await {
+                return Err(ServerError(ApiError::conflict(
+                    "this turn belongs to the conversation this thread was forked from; \
+                     rewind it in that thread instead",
+                )));
+            }
+        }
+    }
 
     // Read the cutoff before anything deletes rows: the checkpoint belonged to a
     // turn that is about to stop existing, and so does every later one.

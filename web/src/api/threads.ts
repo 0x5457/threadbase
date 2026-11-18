@@ -229,8 +229,14 @@ export function restartThread(threadId: string) {
   return jsonRequest<OkResponse>(`/api/threads/${threadId}/restart`, "POST");
 }
 
-export function forkThread(threadId: string, title?: string) {
-  const body: ForkThreadRequest = { title: title ?? null };
+export function forkThread(
+  threadId: string,
+  options?: { messageId?: string; title?: string },
+) {
+  const body: ForkThreadRequest = {
+    title: options?.title ?? null,
+    messageId: options?.messageId ?? null,
+  };
   return jsonRequest<ThreadResponse>(`/api/threads/${threadId}/fork`, "POST", body);
 }
 

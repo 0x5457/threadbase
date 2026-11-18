@@ -17,6 +17,7 @@ import {
   IconChevronDown,
   IconCopy,
   IconDots,
+  IconGitFork,
   IconLoader2,
   IconMessagePlus,
   IconPencil,
@@ -220,6 +221,7 @@ function TimelineRowImpl({
   onToggleExpanded,
   onComment,
   onEditMessage,
+  onForkMessage,
   onRewindMessage,
   onMessageLongPress,
   onRetryNotice,
@@ -246,6 +248,8 @@ function TimelineRowImpl({
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
   onEditMessage?: (item: Extract<ViewItem, { kind: "message" }>) => void;
+  /** Keep the conversation up to and including this prompt's turn. */
+  onForkMessage?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onRewindMessage?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onMessageLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onRetryNotice?: () => void;
@@ -438,6 +442,7 @@ function TimelineRowImpl({
           continued={continued}
           onComment={onComment}
           onEdit={onEditMessage}
+          onFork={onForkMessage}
           onRewind={onRewindMessage}
           onRetry={onRetryMessage}
           onLongPress={onMessageLongPress}
@@ -520,6 +525,7 @@ const TimelineRow = memo(
       prev.editor === next.editor &&
       prev.onComment === next.onComment &&
       prev.onEditMessage === next.onEditMessage &&
+      prev.onForkMessage === next.onForkMessage &&
       prev.onRewindMessage === next.onRewindMessage &&
       prev.onMessageLongPress === next.onMessageLongPress &&
       prev.onRetryNotice === next.onRetryNotice &&
@@ -553,10 +559,13 @@ TimelineList.displayName = "TimelineList";
 export const RealThreadView = memo(function RealThreadView({
   threadId,
   onPresence,
+  onForkMessage,
   presencePanel = "transcript",
 }: {
   threadId: string;
   onPresence?: (onlineUserIds: string[]) => void;
+  /** Fork while keeping the conversation up to the chosen prompt. */
+  onForkMessage?: (messageId: string) => void;
   /** What this browser is looking at, reported to everyone else in the thread. */
   presencePanel?: LivePanel;
 }) {
@@ -683,6 +692,8 @@ export const RealThreadView = memo(function RealThreadView({
     onInboxCount: () => {
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
       void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
+      // The sidebar rows carry the same unread count as a dot.
+      void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
     },
   });
 
@@ -1176,6 +1187,14 @@ export const RealThreadView = memo(function RealThreadView({
       setRewinding(item);
     },
     [],
+  );
+
+  const openMessageFork = useCallback(
+    (item: Extract<ViewItem, { kind: "message" }>) => {
+      setMessageSheet(null);
+      onForkMessage?.(item.id);
+    },
+    [onForkMessage],
   );
 
   const confirmRewind = useCallback(async () => {
@@ -1884,6 +1903,7 @@ export const RealThreadView = memo(function RealThreadView({
                 onToggleExpanded={toggleExpandedRow}
                 onComment={commentOnMessage}
                 onEditMessage={writable ? openMessageEdit : undefined}
+                onForkMessage={writable ? openMessageFork : undefined}
                 onRewindMessage={writable ? openMessageRewind : undefined}
                 onMessageLongPress={openMessageSheet}
                 onRetryMessage={
@@ -1940,13 +1960,22 @@ export const RealThreadView = memo(function RealThreadView({
         actions={
           messageSheet
             ? [
-                ...(messageSheet.role === "user" && writable
+                ...(messageSheet.role === "user" && messageSheet.prompt && writable
                   ? [
                       {
                         label: "Edit message",
                         icon: <IconPencil size={17} stroke={1.5} />,
                         onSelect: () => openMessageEdit(messageSheet),
                       },
+                      ...(onForkMessage
+                        ? [
+                            {
+                              label: "Fork from here",
+                              icon: <IconGitFork size={17} stroke={1.5} />,
+                              onSelect: () => openMessageFork(messageSheet),
+                            },
+                          ]
+                        : []),
                       {
                         label: "Rewind to before this turn",
                         icon: <IconArrowBackUp size={17} stroke={1.5} />,

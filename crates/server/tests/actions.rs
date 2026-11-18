@@ -221,6 +221,18 @@ async fn inbox_tracks_pending_items_and_read_state() {
         .unwrap();
     assert_eq!(inbox.items.len(), 1);
     assert_eq!(inbox.unread, 1);
+    // The sidebar row carries the same count so it can show a dot without
+    // loading the inbox page.
+    let listed = threadbase_server::threads::list(
+        &fixture.pool,
+        fixture.project.as_str(),
+        false,
+        &fixture.owner,
+        &threadbase_core::permissions::PermissionPolicy::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(listed[0].unread, 1);
     let read = inbox::mark_read(
         &fixture.pool,
         &fixture.owner,
@@ -235,6 +247,16 @@ async fn inbox_tracks_pending_items_and_read_state() {
         .unwrap();
     assert_eq!(inbox.unread, 0);
     assert_eq!(inbox.items[0].project_id, fixture.project);
+    let listed = threadbase_server::threads::list(
+        &fixture.pool,
+        fixture.project.as_str(),
+        false,
+        &fixture.owner,
+        &threadbase_core::permissions::PermissionPolicy::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(listed[0].unread, 0);
 }
 
 fn elicitation(fixture: &Fixture, schema: serde_json::Value) -> ElicitationDto {

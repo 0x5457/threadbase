@@ -46,7 +46,7 @@ pub async fn list_for_thread(
     thread_id: &str,
 ) -> Result<Vec<QueueItemDto>, ServerError> {
     let rows = sqlx::query_as::<_, QueueRow>(&format!(
-        "{SELECT} WHERE q.thread_id = ? AND q.status IN (?, ?)
+        "{SELECT} WHERE q.thread_id = ? AND q.status IN (?, ?) AND q.starting = 0
          ORDER BY q.position ASC"
     ))
     .bind(thread_id)
@@ -72,36 +72,82 @@ pub struct NewQueuedInput<'a> {
     pub text: &'a str,
     pub authors_json: Option<&'a str>,
     pub attachments_json: Option<&'a str>,
+    /// This message is starting a cold thread; it is not waiting behind
+    /// anything, so it stays out of the queue bar until the worker takes it.
+    pub starting: bool,
     pub created_at: i64,
 }
 
-/// Append a queued input and return its display position.
-pub async fn enqueue(pool: &SqlitePool, input: NewQueuedInput<'_>) -> Result<u32, ServerError> {
+/// Append a queued input and return its id and display position.
+pub async fn enqueue(
+    pool: &SqlitePool,
+    input: NewQueuedInput<'_>,
+) -> Result<(String, u32), ServerError> {
     let position: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_inputs WHERE thread_id = ?",
     )
     .bind(input.thread_id)
     .fetch_one(pool)
     .await?;
+    let id = Ulid::new().to_string();
     let status = queue_status_str(QueueStatus::Queued);
     sqlx::query(
         "INSERT INTO queued_inputs(id, thread_id, author_id, text, authors_json, attachments_json,
-            status, position, created_at, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            status, starting, position, created_at, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(Ulid::new().to_string())
+    .bind(&id)
     .bind(input.thread_id)
     .bind(input.author_id)
     .bind(input.text)
     .bind(input.authors_json)
     .bind(input.attachments_json)
     .bind(status)
+    .bind(input.starting)
     .bind(position)
     .bind(input.created_at)
     .bind(input.created_at)
     .execute(pool)
     .await?;
-    Ok(u32::try_from(position).unwrap_or(0))
+    Ok((id, u32::try_from(position).unwrap_or(0)))
+}
+
+/// Whether anything is still waiting to be delivered. A hidden cold-start row
+/// counts: the adapter has not taken it yet.
+pub async fn pending(pool: &SqlitePool, thread_id: &str) -> Result<bool, ServerError> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM queued_inputs
+          WHERE thread_id = ? AND status IN ('queued', 'sending'))",
+    )
+    .bind(thread_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(exists)
+}
+
+/// Put a cold-start message back in the bar: the adapter never took it, so it
+/// is waiting like any other input.
+pub async fn reveal(
+    pool: &SqlitePool,
+    projection: &Projection,
+    events: &EventStore,
+    thread_id: &str,
+    item_id: &str,
+) -> Result<(), ServerError> {
+    let updated = sqlx::query(
+        "UPDATE queued_inputs SET starting = 0, updated_at = ?
+          WHERE id = ? AND thread_id = ? AND starting = 1",
+    )
+    .bind(now_ms())
+    .bind(item_id)
+    .bind(thread_id)
+    .execute(pool)
+    .await?;
+    if updated.rows_affected() > 0 {
+        projection.publish(thread_id).await;
+        publish(pool, events, thread_id).await?;
+    }
+    Ok(())
 }
 
 pub async fn status_of(pool: &SqlitePool, item_id: &str) -> Result<QueueStatus, ServerError> {
@@ -407,6 +453,11 @@ pub async fn recover_sending(
     projection: &Projection,
     interrupted: &HashSet<String>,
 ) -> Result<(), ServerError> {
+    // The task that hid a cold-start message died with the process; nothing is
+    // starting anymore, so every row is honestly waiting.
+    sqlx::query("UPDATE queued_inputs SET starting = 0 WHERE starting = 1")
+        .execute(pool)
+        .await?;
     let threads: Vec<String> =
         sqlx::query_scalar("SELECT DISTINCT thread_id FROM queued_inputs WHERE status = ?")
             .bind(queue_status_str(QueueStatus::Sending))
@@ -485,7 +536,7 @@ async fn transition_from(
     let next = QueueMachine::transition(current, action)
         .map_err(|error| ServerError::internal(error.to_string()))?;
     let updated = sqlx::query(
-        "UPDATE queued_inputs SET status = ?, turn_id = ?, updated_at = ?
+        "UPDATE queued_inputs SET status = ?, turn_id = ?, starting = 0, updated_at = ?
          WHERE id = ? AND status = ?",
     )
     .bind(queue_status_str(next))
@@ -603,7 +654,7 @@ mod tests {
     async fn enqueue_assigns_positions_and_keeps_order() {
         let (pool, user, thread) = seeded().await;
         for (expected, text) in [(1, "first"), (2, "second")] {
-            let position = enqueue(
+            let (_, position) = enqueue(
                 &pool,
                 NewQueuedInput {
                     thread_id: thread.as_str(),
@@ -611,6 +662,7 @@ mod tests {
                     text,
                     authors_json: None,
                     attachments_json: None,
+                    starting: false,
                     created_at: now_ms(),
                 },
             )
@@ -683,6 +735,46 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_starting_message_is_hidden_until_the_start_fails() {
+        let (pool, user, thread) = seeded().await;
+        let (id, position) = enqueue(
+            &pool,
+            NewQueuedInput {
+                thread_id: thread.as_str(),
+                author_id: user.as_str(),
+                text: "starting the thread",
+                authors_json: None,
+                attachments_json: None,
+                starting: true,
+                created_at: now_ms(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(position, 1);
+        // It is the message starting the thread, not something waiting behind it.
+        assert!(list_for_thread(&pool, thread.as_str())
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(pending(&pool, thread.as_str()).await.unwrap());
+
+        // A failed adapter start returns it to the queue, where it can be seen.
+        reveal(
+            &pool,
+            &projection(&pool),
+            &EventStore::new(pool.clone()),
+            thread.as_str(),
+            &id,
+        )
+        .await
+        .unwrap();
+        let items = list_for_thread(&pool, thread.as_str()).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.0, id);
     }
 
     #[tokio::test]
@@ -832,6 +924,7 @@ mod tests {
                 text: "The server restarted during the previous turn.",
                 authors_json: Some(&authors_json),
                 attachments_json: None,
+                starting: false,
                 created_at: now_ms(),
             },
         )
@@ -845,6 +938,7 @@ mod tests {
                 text: "from a person",
                 authors_json: None,
                 attachments_json: None,
+                starting: false,
                 created_at: now_ms(),
             },
         )

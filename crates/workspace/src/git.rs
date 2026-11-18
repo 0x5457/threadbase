@@ -231,6 +231,19 @@ pub async fn rev_parse(root: &Path, reference: &str) -> Result<String, GitError>
     git(root, &["rev-parse", "--verify", reference]).await
 }
 
+/// Whether `ancestor` is reachable from `descendant`. A git error reads as
+/// "no": the caller uses this to refuse a destructive reset, not to prove one.
+pub async fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .status()
+        .await
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// Create a thread worktree from `base_ref` on a new branch.
 pub async fn create_worktree(
     project_root: &Path,
@@ -326,6 +339,38 @@ pub async fn worktree_patch(worktree: &Path, base_sha: Option<&str>) -> Result<S
         (Ok(patch), Ok(())) => Ok(String::from_utf8_lossy(&patch).to_string()),
         (Err(error), _) | (_, Err(error)) => Err(error),
     }
+}
+
+/// Every uncommitted tracked change in `root`, staged or not. Unlike
+/// [`worktree_patch`] it never stages anything, so reading a dirty project
+/// cannot unstage a person's work.
+pub async fn worktree_state_patch(root: &Path) -> Result<String, GitError> {
+    let patch = git_raw(root, &["diff", "--binary", "--no-color", "HEAD"]).await?;
+    Ok(String::from_utf8_lossy(&patch).to_string())
+}
+
+/// Copy the files git does not track. [`worktree_state_patch`] covers tracked
+/// paths only, and a fresh file an agent wrote is work a fork should carry.
+pub async fn copy_untracked(source: &Path, target: &Path) -> Result<(), GitError> {
+    let listing = git_raw(
+        source,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )
+    .await?;
+    for raw in listing
+        .split(|byte| *byte == 0)
+        .filter(|raw| !raw.is_empty())
+    {
+        let path =
+            std::str::from_utf8(raw).map_err(|error| GitError::Message(error.to_string()))?;
+        let relative = Path::new(path);
+        let to = target.join(relative);
+        if let Some(parent) = to.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::copy(source.join(relative), &to).await?;
+    }
+    Ok(())
 }
 
 /// Snapshot the current worktree as a commit and return its SHA. If there is

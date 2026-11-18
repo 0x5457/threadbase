@@ -66,6 +66,8 @@ struct Aggregate {
     pending_elicitations: i64,
     queued_inputs: i64,
     active_subagents: i64,
+    /// This user's unread inbox rows for the thread.
+    unread: i64,
 }
 
 pub async fn load_row(pool: &SqlitePool, thread_id: &str) -> Result<ThreadRow, ServerError> {
@@ -84,13 +86,14 @@ pub async fn get(
 ) -> Result<ThreadDto, ServerError> {
     authz::require_read(pool, thread_id, user).await?;
     let row = load_row(pool, thread_id).await?;
-    dto(pool, &row, policy).await
+    dto(pool, &row, user.user.id.as_str(), policy).await
 }
 
 pub async fn list(
     pool: &SqlitePool,
     project_id: &str,
     include_archived: bool,
+    user: &CurrentUser,
     policy: &PermissionPolicy,
 ) -> Result<Vec<ThreadDto>, ServerError> {
     projects::row(pool, project_id).await?;
@@ -103,7 +106,7 @@ pub async fn list(
     .bind(i64::from(include_archived))
     .fetch_all(pool)
     .await?;
-    let mut threads = dtos(pool, rows, policy).await?;
+    let mut threads = dtos(pool, rows, user.user.id.as_str(), policy).await?;
     sort_for_sidebar(&mut threads);
     Ok(threads)
 }
@@ -124,6 +127,7 @@ pub async fn ids_for_project(
 pub async fn list_all(
     pool: &SqlitePool,
     include_archived: bool,
+    user: &CurrentUser,
     policy: &PermissionPolicy,
 ) -> Result<Vec<ThreadDto>, ServerError> {
     let rows = sqlx::query_as::<_, ThreadRow>(&select(
@@ -133,7 +137,7 @@ pub async fn list_all(
     .bind(i64::from(include_archived))
     .fetch_all(pool)
     .await?;
-    let mut threads = dtos(pool, rows, policy).await?;
+    let mut threads = dtos(pool, rows, user.user.id.as_str(), policy).await?;
     sort_for_sidebar(&mut threads);
     Ok(threads)
 }
@@ -159,10 +163,11 @@ pub async fn permission_mode(
 pub async fn dto(
     pool: &SqlitePool,
     row: &ThreadRow,
+    user_id: &str,
     policy: &PermissionPolicy,
 ) -> Result<ThreadDto, ServerError> {
     let ids = [row.id.as_str()];
-    let aggregates = aggregates(pool, &ids).await?;
+    let aggregates = aggregates(pool, &ids, user_id).await?;
     let participants = creator_participant(pool, &row.created_by, row.created_at)
         .await
         .map(|creator| vec![creator])
@@ -181,10 +186,11 @@ pub async fn dto(
 async fn dtos(
     pool: &SqlitePool,
     rows: Vec<ThreadRow>,
+    user_id: &str,
     policy: &PermissionPolicy,
 ) -> Result<Vec<ThreadDto>, ServerError> {
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-    let aggregates = aggregates(pool, &ids).await?;
+    let aggregates = aggregates(pool, &ids, user_id).await?;
     let mut subagents = subagents::list_for_threads(pool, &ids).await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
@@ -221,6 +227,7 @@ fn to_dto(
     let active_subagents = u32::try_from(aggregate.active_subagents).unwrap_or(0);
     let pending_approvals = u32::try_from(aggregate.pending_approvals).unwrap_or(0);
     let pending_elicitations = u32::try_from(aggregate.pending_elicitations).unwrap_or(0);
+    let unread = u32::try_from(aggregate.unread).unwrap_or(0);
     let working = threadbase_core::state::is_working(status, queued_inputs, active_subagents);
     let thread_mode = row.permission_mode.as_deref().and_then(|v| v.parse().ok());
     let project_mode = row
@@ -261,6 +268,7 @@ fn to_dto(
         permission_mode_override: thread_mode,
         participants,
         pending_approvals,
+        unread,
         pending_elicitations,
         has_draft: row.has_draft != 0,
         subagents,
@@ -298,10 +306,13 @@ fn sort_for_sidebar(threads: &mut [ThreadDto]) {
 async fn aggregates(
     pool: &SqlitePool,
     ids: &[&str],
+    user_id: &str,
 ) -> Result<HashMap<String, Aggregate>, ServerError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
+    // The inbox subquery binds this user, so its placeholder is pushed between
+    // two string parts; a `?` left in the first part would bind nothing.
     let mut query = QueryBuilder::new(
         "SELECT t.id,
             (SELECT COUNT(*) FROM approvals a
@@ -309,9 +320,16 @@ async fn aggregates(
             (SELECT COUNT(*) FROM elicitations e
               WHERE e.thread_id = t.id AND e.status = 'pending') AS pending_elicitations,
             (SELECT COUNT(*) FROM queued_inputs q
-              WHERE q.thread_id = t.id AND q.status = 'queued') AS queued_inputs,
+              WHERE q.thread_id = t.id AND q.status = 'queued' AND q.starting = 0)
+                AS queued_inputs,
             (SELECT COUNT(*) FROM subagents s
-              WHERE s.thread_id = t.id AND s.status IN ('running','requires_action')) AS active_subagents
+              WHERE s.thread_id = t.id AND s.status IN ('running','requires_action')) AS active_subagents,
+            (SELECT COUNT(*) FROM inbox i
+              WHERE i.thread_id = t.id AND i.user_id = ",
+    );
+    query.push_bind(user_id);
+    query.push(
+        " AND i.read_at IS NULL) AS unread
          FROM threads t WHERE t.id IN (",
     );
     let mut separated = query.separated(", ");
@@ -330,6 +348,7 @@ async fn aggregates(
                     pending_elicitations: row.pending_elicitations,
                     queued_inputs: row.queued_inputs,
                     active_subagents: row.active_subagents,
+                    unread: row.unread,
                 },
             )
         })
@@ -343,6 +362,7 @@ struct AggregateRow {
     pending_elicitations: i64,
     queued_inputs: i64,
     active_subagents: i64,
+    unread: i64,
 }
 
 async fn creator_participant(

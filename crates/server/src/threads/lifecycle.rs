@@ -35,6 +35,8 @@ pub struct NewThread<'a> {
     pub agent: &'a str,
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
+    /// The thread's own permission choice; `None` inherits the project default.
+    pub permission_mode: Option<&'a str>,
     pub branch: &'a str,
     pub base_branch: &'a str,
     pub base_sha: &'a str,
@@ -313,9 +315,9 @@ async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, 
         .map_err(|error| ServerError::internal(error.to_string()))?;
     sqlx::query(
         "INSERT INTO threads(id, project_id, parent_thread_id, title, status, agent, model, effort,
-            branch, base_branch, base_sha, last_turn_sha, worktree_path, created_by, created_at,
-            updated_at, placement_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            permission_mode, branch, base_branch, base_sha, last_turn_sha, worktree_path,
+            created_by, created_at, updated_at, placement_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(row.id)
     .bind(row.project_id)
@@ -325,6 +327,7 @@ async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, 
     .bind(row.agent)
     .bind(row.model)
     .bind(row.effort)
+    .bind(row.permission_mode)
     .bind(row.branch)
     .bind(row.base_branch)
     .bind(row.base_sha)
@@ -404,6 +407,7 @@ pub async fn create(
             agent: &agent,
             model: request.model.as_deref(),
             effort: request.effort.as_deref(),
+            permission_mode: None,
             branch: &branch,
             base_branch: &base_branch,
             base_sha: &base_sha,
@@ -448,6 +452,7 @@ pub async fn create(
                 text: prompt,
                 authors_json: None,
                 attachments_json: None,
+                starting: false,
                 created_at: now,
             },
         )
@@ -559,8 +564,115 @@ pub async fn update(
     get(pool, thread_id, user, policy).await
 }
 
+/// Where a fork's transcript and files stop.
+struct ForkPoint {
+    /// Events at or after this sequence belong to the branch the fork leaves
+    /// behind. `None` keeps the whole thread as it stands now.
+    before_seq: Option<u64>,
+    /// The next turn's checkpoint: the commit holding the files right after the
+    /// chosen turn. `None` when the source has no snapshot at that point.
+    checkpoint: Option<String>,
+}
+
+/// Fork after the turn behind `message_id`: transcript before the next turn,
+/// files at that turn's checkpoint. The checkpoint of turn N is the snapshot
+/// taken before N started, which is the file state right after turn N-1.
+async fn fork_point(
+    events: &EventStore,
+    pool: &SqlitePool,
+    thread_id: &ThreadId,
+    message_id: Option<&str>,
+) -> Result<ForkPoint, ServerError> {
+    let Some(message_id) = message_id else {
+        return Ok(ForkPoint {
+            before_seq: None,
+            checkpoint: None,
+        });
+    };
+    let turn = events
+        .turn_started(thread_id, message_id)
+        .await?
+        .ok_or_else(|| {
+            ServerError(ApiError::not_found(
+                "message not found or it is not a user prompt",
+            ))
+        })?;
+    let next: Option<(i64, String)> = sqlx::query_as(
+        "SELECT seq, json_extract(payload_json, '$.turnId') FROM events
+          WHERE thread_id = ? AND kind = 'turn_started' AND seq > ?
+          ORDER BY seq ASC LIMIT 1",
+    )
+    .bind(thread_id.as_str())
+    .bind(i64::try_from(turn.seq).unwrap_or(i64::MAX))
+    .fetch_optional(pool)
+    .await?;
+    let Some((next_seq, next_turn)) = next else {
+        // The chosen prompt is the newest turn: its files are the current ones.
+        return Ok(ForkPoint {
+            before_seq: None,
+            checkpoint: None,
+        });
+    };
+    let checkpoint: Option<String> =
+        sqlx::query_scalar("SELECT sha FROM checkpoints WHERE thread_id = ? AND turn_id = ?")
+            .bind(thread_id.as_str())
+            .bind(&next_turn)
+            .fetch_optional(pool)
+            .await?;
+    Ok(ForkPoint {
+        before_seq: Some(u64::try_from(next_seq).unwrap_or(u64::MAX)),
+        checkpoint,
+    })
+}
+
+/// Carry the copied transcript and the checkpoints of its turns into the fork.
+/// The checkpoint commits are ancestors of the fork's start, so per-turn diffs
+/// and rewind keep working on the inherited turns.
+async fn carry_history(
+    pool: &SqlitePool,
+    events: &EventStore,
+    source: &str,
+    target: &str,
+    point: &ForkPoint,
+) -> Result<(), ServerError> {
+    let turn_ids = events
+        .copy_transcript(
+            &ThreadId::from(source.to_owned()),
+            &ThreadId::from(target.to_owned()),
+            point.before_seq,
+        )
+        .await?;
+    for turn_id in turn_ids {
+        sqlx::query(
+            "INSERT INTO checkpoints(thread_id, turn_id, sha, created_at)
+             SELECT ?, turn_id, sha, created_at FROM checkpoints
+              WHERE thread_id = ? AND turn_id = ?",
+        )
+        .bind(target)
+        .bind(source)
+        .bind(&turn_id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Undo a half-created fork. The thread row owns the worktree row, events and
+/// checkpoints by foreign key, so deleting it is what makes the retry clean.
+async fn discard_fork(pool: &SqlitePool, project_root: &Path, worktree: &Path, thread_id: &str) {
+    let _ = git::remove_worktree(project_root, worktree, true).await;
+    let _ = tokio::fs::remove_dir_all(worktree).await;
+    let _ = git::delete_branch(project_root, &format!("threadbase/{thread_id}"), true).await;
+    let _ = sqlx::query("DELETE FROM threads WHERE id = ?")
+        .bind(thread_id)
+        .execute(pool)
+        .await;
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn fork(
     pool: &SqlitePool,
+    events: &EventStore,
     projection: &Projection,
     data_dir: &Path,
     thread_id: &str,
@@ -573,17 +685,49 @@ pub async fn fork(
     let project = projects::row(pool, &source.project_id).await?;
     let project_root = PathBuf::from(&project.path);
     let source_worktree = source.worktree_path.as_deref().map(PathBuf::from);
-    let head = match source_worktree.as_deref() {
-        Some(path) => git::head_sha(path)
-            .await
-            .unwrap_or_else(|_| source.base_sha.clone().unwrap_or_default()),
-        None => source.base_sha.clone().unwrap_or_default(),
+    let point = fork_point(
+        events,
+        pool,
+        &ThreadId::from(source.id.clone()),
+        request.message_id.as_deref(),
+    )
+    .await?;
+
+    // The fork starts at the turn's checkpoint when there is one. Otherwise it
+    // starts from the source's live files, and says so in the copy below when
+    // the transcript was cut earlier than those files.
+    let (head, base_branch, copy_state) = match point.checkpoint.clone() {
+        Some(sha) => (sha, source.base_branch.clone(), None),
+        None => match source_worktree.clone() {
+            Some(path) => {
+                let head = git::head_sha(&path).await.map_err(|error| {
+                    ServerError(ApiError::validation(format!(
+                        "could not read the source worktree: {error}"
+                    )))
+                })?;
+                (head, source.base_branch.clone(), Some(path))
+            }
+            None => {
+                let head = git::head_sha(&project_root).await.map_err(|error| {
+                    ServerError(ApiError::validation(format!(
+                        "could not read the project: {error}"
+                    )))
+                })?;
+                let branch = git::current_branch(&project_root).await.map_err(|error| {
+                    ServerError::internal(format!("could not read current branch: {error}"))
+                })?;
+                // A detached project still has files worth forking; the source's
+                // recorded branch is the closest honest base in that case.
+                let branch = if branch.is_empty() {
+                    source.base_branch.clone()
+                } else {
+                    branch
+                };
+                (head, branch, Some(project_root.clone()))
+            }
+        },
     };
-    if head.is_empty() {
-        return Err(ServerError(ApiError::validation(
-            "cannot fork a thread without a base commit",
-        )));
-    }
+
     let new_id = Ulid::new().to_string();
     let branch = format!("threadbase/{new_id}");
     let worktree = data_dir.join("worktrees").join(&new_id);
@@ -606,8 +750,12 @@ pub async fn fork(
             agent: &source.agent,
             model: source.model.as_deref(),
             effort: source.effort.as_deref(),
+            // The fork continues this thread, including how much autonomy it
+            // was given; inheriting the project default instead could loosen
+            // or tighten the permission ladder without anyone asking.
+            permission_mode: source.permission_mode.as_deref(),
             branch: &branch,
-            base_branch: &source.branch,
+            base_branch: &base_branch,
             base_sha: &head,
             worktree_path: Some(&worktree_path),
             created_by: user.user.id.as_str(),
@@ -616,28 +764,44 @@ pub async fn fork(
     )
     .await?;
     if let Err(error) = git::create_worktree(&project_root, &worktree, &branch, &head).await {
-        sqlx::query("DELETE FROM threads WHERE id = ?")
-            .bind(&new_id)
-            .execute(pool)
-            .await?;
-        let _ = tokio::fs::remove_dir_all(&worktree).await;
+        discard_fork(pool, &project_root, &worktree, &new_id).await;
         return Err(ServerError(ApiError::validation(format!(
             "could not create fork worktree: {error}"
         ))));
     }
-    if let Some(source_worktree) = source_worktree.as_deref() {
-        if let Ok(patch) = git::worktree_patch(source_worktree, None).await {
-            if let Err(error) = git::apply_patch(&worktree, &patch).await {
-                let _ = git::remove_worktree(&project_root, &worktree, true).await;
-                sqlx::query("DELETE FROM threads WHERE id = ?")
-                    .bind(&new_id)
-                    .execute(pool)
-                    .await?;
-                return Err(ServerError(ApiError::validation(format!(
-                    "could not copy uncommitted changes into the fork: {error}"
-                ))));
-            }
+    if let Some(source_root) = copy_state.as_deref() {
+        let copied = async {
+            let patch = git::worktree_state_patch(source_root).await?;
+            git::apply_patch(&worktree, &patch).await?;
+            git::copy_untracked(source_root, &worktree).await
         }
+        .await;
+        if let Err(error) = copied {
+            discard_fork(pool, &project_root, &worktree, &new_id).await;
+            return Err(ServerError(ApiError::validation(format!(
+                "could not copy the source files into the fork: {error}"
+            ))));
+        }
+    }
+    if let Err(error) = carry_history(pool, events, &source.id, &new_id, &point).await {
+        discard_fork(pool, &project_root, &worktree, &new_id).await;
+        return Err(error);
+    }
+    if point.before_seq.is_some() && point.checkpoint.is_none() {
+        let _ = events
+            .append(
+                &ThreadId::from(new_id.clone()),
+                Actor::system(),
+                ThreadEvent::SystemNotice {
+                    level: "info".to_owned(),
+                    message: "This thread continues the conversation up to the chosen message. \
+                              The source thread has no checkpoint for the turn after it, so the \
+                              files were copied from the source's current state instead."
+                        .to_owned(),
+                },
+                EventMeta::default(),
+            )
+            .await;
     }
     bindings::copy(pool, &new_id, &worktree_path, &source.id, now).await?;
     watchers::copy_for_fork(pool, &new_id, source.id.as_str()).await?;

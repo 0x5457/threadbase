@@ -373,6 +373,113 @@ impl EventStore {
             .await?;
         Ok(events)
     }
+
+    /// Copy the visible conversation before `before_seq` into a new thread,
+    /// keeping timestamps, actors and payloads so the fork reads like the
+    /// source did. Returns the copied turn ids, oldest first.
+    pub async fn copy_transcript(
+        &self,
+        source: &ThreadId,
+        target: &ThreadId,
+        before_seq: Option<u64>,
+    ) -> Result<Vec<String>, EventStoreError> {
+        // Only what the transcript renders. Approvals, questions, subagents,
+        // comments, queue snapshots and usage name live rows the fork does not
+        // have; copying them would point at nothing or at the source session.
+        let rows = sqlx::query_as::<_, CopyRow>(
+            "SELECT ts, actor_kind, actor_id, actor_name, origin, tool_call_id, delivery,
+                    kind, payload_json
+               FROM events
+              WHERE thread_id = ? AND seq < ? AND subagent_id IS NULL
+                AND kind IN ('turn_started', 'message_delta', 'message_completed',
+                             'thinking_delta', 'thinking_completed', 'tool_call',
+                             'tool_call_update', 'turn_ended', 'turn_error',
+                             'system_notice', 'agent_message')
+              ORDER BY seq ASC",
+        )
+        .bind(source.as_str())
+        .bind(i64::try_from(before_seq.unwrap_or(u64::MAX)).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut tx = self.pool.begin().await?;
+        let mut turn_ids = Vec::new();
+        let mut copied = 0_i64;
+        for (index, row) in rows.into_iter().enumerate() {
+            let seq = i64::try_from(index + 1).unwrap_or(i64::MAX);
+            let payload = retarget_thread(&row.kind, &row.payload_json, target)?;
+            if row.kind == "turn_started" {
+                if let Ok(ThreadEvent::TurnStarted { turn_id, .. }) =
+                    serde_json::from_str::<ThreadEvent>(&payload)
+                {
+                    turn_ids.push(turn_id.0);
+                }
+            }
+            sqlx::query(
+                "INSERT INTO events(thread_id, seq, ts, actor_kind, actor_id, actor_name,
+                    origin, tool_call_id, delivery, kind, payload_json)
+                 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(target.as_str())
+            .bind(seq)
+            .bind(row.ts)
+            .bind(&row.actor_kind)
+            .bind(&row.actor_id)
+            .bind(&row.actor_name)
+            .bind(&row.origin)
+            .bind(&row.tool_call_id)
+            .bind(&row.delivery)
+            .bind(&row.kind)
+            .bind(&payload)
+            .execute(&mut *tx)
+            .await?;
+            copied = seq;
+        }
+        if copied > 0 {
+            sqlx::query(
+                "INSERT INTO thread_counters(thread_id, last_seq) VALUES(?, ?)
+                 ON CONFLICT(thread_id) DO UPDATE SET last_seq = excluded.last_seq",
+            )
+            .bind(target.as_str())
+            .bind(copied)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(turn_ids)
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct CopyRow {
+    ts: i64,
+    actor_kind: String,
+    actor_id: Option<String>,
+    actor_name: Option<String>,
+    origin: String,
+    tool_call_id: Option<String>,
+    delivery: Option<String>,
+    kind: String,
+    payload_json: String,
+}
+
+/// The payloads that name their own thread. A copied row that still pointed at
+/// the source would send links and comments to the wrong thread.
+fn retarget_thread(
+    kind: &str,
+    payload: &str,
+    target: &ThreadId,
+) -> Result<String, serde_json::Error> {
+    let path = match kind {
+        "message_completed" => "/message/threadId",
+        "tool_call" | "tool_call_update" => "/call/threadId",
+        _ => return Ok(payload.to_owned()),
+    };
+    let mut value: serde_json::Value = serde_json::from_str(payload)?;
+    match value.pointer_mut(path) {
+        Some(slot) => *slot = serde_json::Value::String(target.0.clone()),
+        None => return Ok(payload.to_owned()),
+    }
+    serde_json::to_string(&value)
 }
 
 #[derive(Debug, FromRow)]

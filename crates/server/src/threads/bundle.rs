@@ -19,7 +19,7 @@ pub async fn bundle(
 ) -> Result<ThreadBundleDto, ServerError> {
     let role = authz::require_read(pool, thread_id, user).await?;
     let row = load_row(pool, thread_id).await?;
-    let thread = dto(pool, &row, policy).await?;
+    let thread = dto(pool, &row, user.user.id.as_str(), policy).await?;
     let project = projects::get(pool, &row.project_id).await?;
     let subagents = subagents::list(pool, thread_id).await?;
     let approvals = crate::approvals::list_pending_for_thread(pool, thread_id).await?;

@@ -76,6 +76,14 @@ function ThreadSignal({ thread }: { thread: ThreadSummary }) {
       />
     );
   }
+  if (thread.unread > 0) {
+    return (
+      <span
+        className="dot unread"
+        title={`${thread.unread} unread update${thread.unread === 1 ? "" : "s"}`}
+      />
+    );
+  }
   if (thread.hasDraft) {
     return (
       <span className="thread-draft-mark" title="Draft saved" aria-label="Draft saved">
