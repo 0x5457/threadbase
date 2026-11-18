@@ -414,6 +414,7 @@ impl Fixture {
             .to_owned();
         match text.trim() {
             "stream" => self.stream(out, id, &session),
+            "demo" => self.demo(out, id, &session),
             "permission" => self.permission(reader, out, id, &session, "permission"),
             "permission-choice" => self.permission(reader, out, id, &session, "permission-choice"),
             "permission-deny" => self.permission(reader, out, id, &session, "permission-deny"),
@@ -506,6 +507,90 @@ impl Fixture {
             out,
             session,
             json!({"sessionUpdate": "usage_update", "used": 1234, "size": 200000}),
+        )?;
+        self.respond(out, id, json!({"stopReason": "end_turn"}))
+    }
+
+    /// A realistic transcript for screenshots and manual QA against the
+    /// e2e server; the scripted scenarios above are too terse to fill a UI.
+    fn demo(&self, out: &mut impl Write, id: &Value, session: &str) -> io::Result<()> {
+        self.notify_update(
+            out,
+            session,
+            json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "I'll add a /pricing route and style the three plan cards with the existing design tokens. "},
+            }),
+        )?;
+        self.notify_update(
+            out,
+            session,
+            json!({
+                "sessionUpdate": "agent_thought_chunk",
+                "content": {"type": "text", "text": "Checking the router setup and the shared card components"},
+            }),
+        )?;
+        self.notify_update(
+            out,
+            session,
+            json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "demo-1",
+                "title": "Edit src/pages/pricing.tsx",
+                "kind": "edit",
+                "status": "pending",
+                "locations": [{"path": "src/pages/pricing.tsx", "line": 1}],
+                "content": [{
+                    "type": "diff",
+                    "path": "src/pages/pricing.tsx",
+                    "oldText": "",
+                    "newText": "export function PricingPage() {\n  const plans = [Starter, Growth, Scale];\n  return <PlansGrid plans={plans} />;\n}\n"
+                }],
+                "rawInput": {"path": "src/pages/pricing.tsx"},
+            }),
+        )?;
+        self.notify_update(
+            out,
+            session,
+            json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "demo-1",
+                "status": "in_progress",
+            }),
+        )?;
+        self.notify_update(
+            out,
+            session,
+            json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "demo-1",
+                "status": "completed",
+            }),
+        )?;
+        self.notify_update(
+            out,
+            session,
+            json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "The route is wired up and the cards reuse the shared grid. Draft copy is in place; swap the real prices before shipping."},
+            }),
+        )?;
+        self.notify_update(
+            out,
+            session,
+            json!({
+                "sessionUpdate": "plan",
+                "entries": [
+                    {"content": "Add the /pricing route", "priority": "high", "status": "completed"},
+                    {"content": "Style the three plan cards", "priority": "medium", "status": "in_progress"},
+                    {"content": "Swap in the real prices", "priority": "low", "status": "pending"},
+                ],
+            }),
+        )?;
+        self.notify_update(
+            out,
+            session,
+            json!({"sessionUpdate": "usage_update", "used": 48213, "size": 200000}),
         )?;
         self.respond(out, id, json!({"stopReason": "end_turn"}))
     }
