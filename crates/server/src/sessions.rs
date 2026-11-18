@@ -1,9 +1,7 @@
-//! The Sessions read model: threads and host tmux sessions composed into one
-//! list for the workspace's "what is running right now" surface.
+//! Sessions read model: threads and host tmux sessions in one list.
 //!
-//! This is intentionally a projection, not an aggregate. Threads keep their
-//! SQLite lifecycle and tmux sessions stay runtime processes discovered from
-//! tmux itself; the only shared interface is the ordered list the UI renders.
+//! Nothing is stored here. Threads come from SQLite and tmux sessions are read
+//! from tmux, so this module only orders them.
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;

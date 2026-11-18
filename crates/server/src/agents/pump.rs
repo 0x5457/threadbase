@@ -36,12 +36,9 @@ pub(crate) fn spawn(
         session,
     };
     tokio::spawn(async move {
-        // Thinking chunks arrive in bursts (10-20+ per second) and are only
-        // ever rendered as a collapsed "Thought" row and its tooltip, so a row
-        // per chunk buys nothing and turns one turn into thousands of SQLite
-        // transactions. Hold them for a moment and append the folded text as
-        // one event. Every other event flushes first, so transcript order is
-        // preserved.
+        // Thinking chunks arrive 10-20 times a second and render as one
+        // collapsed row, so they are folded into one event every 500ms. Every
+        // other event flushes first, which keeps the transcript in order.
         const THOUGHT_FLUSH: Duration = Duration::from_millis(500);
         let mut thought: Option<(MessageId, String)> = None;
         // A fixed deadline, not a fresh timeout per chunk: a continuously

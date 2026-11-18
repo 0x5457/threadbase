@@ -25,13 +25,12 @@ struct Fixture {
     thread: threadbase_shared::ThreadDto,
 }
 
-/// Locate the scripted adapter once per process.
+/// Locates the scripted adapter.
 ///
-/// `cargo nextest` runs every test in its own process, so calling `cargo build`
-/// from each of them made 20+ builds fight over the package-cache lock while
-/// clippy was running, which is why crash-recovery waits occasionally timed
-/// out. The binary sits next to the test executable after any workspace build;
-/// only build when it is genuinely missing.
+/// Nextest runs each test in its own process, so building here unconditionally
+/// started 20+ cargos that fought over the package-cache lock. The binary sits
+/// next to the test executable after any workspace build, so build only when it
+/// is missing.
 fn fixture_binary() -> Option<PathBuf> {
     static BINARY: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     BINARY

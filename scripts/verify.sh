@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# Run the repository quality gates in parallel and print a one-line summary.
-# Usage: scripts/verify.sh
-#
-# The frontend gates are `tsc --noEmit && vite build` (`pnpm build` already
-# runs both) plus React Doctor (`pnpm doctor:ci`, correctness errors only).
-# eslint and the Playwright suite were dropped with the v2 frontend; the audit
-# scripts under web/audit stay manual.
+# Runs the quality gates in parallel: fmt, clippy, tests, types, React Doctor,
+# build. The audit scripts under web/audit stay manual.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

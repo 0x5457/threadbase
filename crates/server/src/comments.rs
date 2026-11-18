@@ -367,11 +367,9 @@ async fn set_delivered(
     Ok(next)
 }
 
-/// A diff comment stores both the hunk id and a hash of the hunk text. Hunk
-/// ids are positional and shift when an earlier hunk changes. `list_for_thread`
-/// re-resolves the hash: if the same hunk content exists under a new id we move
-/// the anchor; otherwise we degrade it to a file-level anchor and persist that
-/// fact so the UI can explain the loss of precision.
+/// Hunk ids are positional, so an earlier edit shifts them. The stored text hash
+/// finds the same hunk under its new id; when the content is gone the anchor
+/// degrades to the file and `anchorChanged` tells the UI.
 async fn reconcile_anchors(pool: &SqlitePool, thread_id: &str, rows: &mut [CommentRow]) {
     let mut by_path: HashMap<String, Vec<usize>> = HashMap::new();
     for (index, row) in rows.iter().enumerate() {

@@ -568,13 +568,11 @@ impl AgentManager {
             .await
     }
 
-    /// Send a message preserving the full list of draft-block authors.
+    /// Sends a message and keeps every draft-block author.
     ///
-    /// A cold thread does not launch its adapter inside the request: a process
-    /// start takes about a second and nothing about the send needs to wait for
-    /// it. The input is stored first and the adapter starts in the background,
-    /// the same handoff thread creation uses. A live session takes the prompt
-    /// immediately.
+    /// A cold thread stores the input and starts the adapter in the background
+    /// instead of waiting a second inside the request. A live session takes the
+    /// prompt directly.
     pub async fn send_with_authors(
         &self,
         thread_id: &str,
