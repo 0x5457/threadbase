@@ -23,9 +23,4 @@ export type StateResponse = {
    * socket.
    */
   terminalHost: boolean;
-  /**
-   * The desktop link is opt-in per server. When false the entry points are
-   * hidden and the endpoints do not exist.
-   */
-  screen: boolean;
 };
