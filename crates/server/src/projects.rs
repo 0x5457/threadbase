@@ -4,8 +4,8 @@ use crate::auth::CurrentUser;
 use crate::error::ServerError;
 use sqlx::{FromRow, SqlitePool};
 use std::path::{Path, PathBuf};
-use threadbase_shared::api::CreateProjectRequest;
-use threadbase_shared::{now_ms, ApiError, ProjectDto};
+use threadbase_shared::api::{CreateProjectRequest, UpdateProjectRequest};
+use threadbase_shared::{now_ms, ApiError, PermissionMode, ProjectDto};
 use threadbase_workspace::git;
 use threadbase_workspace::git::GitInfo;
 use ulid::Ulid;
@@ -19,6 +19,7 @@ pub struct ProjectRow {
     pub default_branch: String,
     pub verify_command: Option<String>,
     pub setup_command: Option<String>,
+    pub permission_mode: Option<String>,
     pub created_at: i64,
     pub active_threads: i64,
     pub waiting_approvals: i64,
@@ -39,7 +40,7 @@ pub(crate) fn inspect_message(error: &git::GitError) -> &'static str {
 
 const PROJECT_SELECT: &str = "
     SELECT p.id, p.name, p.path, p.remote_url, p.default_branch, p.verify_command,
-      p.setup_command, p.created_at,
+      p.setup_command, p.permission_mode, p.created_at,
       (SELECT COUNT(*) FROM threads t WHERE t.project_id = p.id AND t.archived_at IS NULL) AS active_threads,
       (SELECT COUNT(*) FROM approvals a JOIN threads t ON a.thread_id = t.id
          WHERE t.project_id = p.id AND a.status = 'pending') AS waiting_approvals,
@@ -368,14 +369,18 @@ pub async fn delete(pool: &SqlitePool, project_id: &str) -> Result<(), ServerErr
 pub async fn update(
     pool: &SqlitePool,
     project_id: &str,
-    name: Option<&str>,
-    remote_url: Option<&str>,
-    path: Option<&str>,
-    verify_command: Option<&str>,
-    setup_command: Option<&str>,
+    request: &UpdateProjectRequest,
 ) -> Result<ProjectDto, ServerError> {
+    let UpdateProjectRequest {
+        name,
+        remote_url,
+        path,
+        verify_command,
+        setup_command,
+        permission_mode,
+    } = request;
     let current = row(pool, project_id).await?;
-    if let Some(name) = name {
+    if let Some(name) = name.as_deref() {
         let name = name.trim();
         if name.is_empty() || name.len() > 80 {
             return Err(ServerError(ApiError::validation(
@@ -389,7 +394,7 @@ pub async fn update(
             .execute(pool)
             .await?;
     }
-    if let Some(remote_url) = remote_url {
+    if let Some(remote_url) = remote_url.as_deref() {
         sqlx::query("UPDATE projects SET remote_url = ?, updated_at = ? WHERE id = ?")
             .bind(remote_url.trim())
             .bind(now_ms())
@@ -398,8 +403,8 @@ pub async fn update(
             .await?;
     }
     for (column, command) in [
-        ("verify_command", verify_command),
-        ("setup_command", setup_command),
+        ("verify_command", verify_command.as_deref()),
+        ("setup_command", setup_command.as_deref()),
     ] {
         if let Some(command) = command {
             let command = command.trim();
@@ -414,7 +419,25 @@ pub async fn update(
             .await?;
         }
     }
-    if let Some(path) = path {
+    if let Some(mode) = permission_mode.as_deref() {
+        let mode = mode.trim();
+        let value = if mode.is_empty() {
+            None
+        } else {
+            Some(mode.parse::<PermissionMode>().map_err(|_| {
+                ServerError(ApiError::validation(format!(
+                    "unknown permission mode: {mode}"
+                )))
+            })?)
+        };
+        sqlx::query("UPDATE projects SET permission_mode = ?, updated_at = ? WHERE id = ?")
+            .bind(value.map(threadbase_shared::PermissionMode::as_str))
+            .bind(now_ms())
+            .bind(project_id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(path) = path.as_deref() {
         let raw = path.trim();
         if raw.is_empty() {
             return Err(ServerError(ApiError::validation(
@@ -480,6 +503,7 @@ pub fn to_dto(row: ProjectRow, available: bool) -> ProjectDto {
         default_branch: row.default_branch,
         verify_command: row.verify_command,
         setup_command: row.setup_command,
+        permission_mode: row.permission_mode.and_then(|value| value.parse().ok()),
         active_threads: u32::try_from(row.active_threads).unwrap_or(0),
         waiting_approvals: u32::try_from(row.waiting_approvals).unwrap_or(0),
         last_activity_at: row.last_activity_at,

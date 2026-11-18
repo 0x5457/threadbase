@@ -203,6 +203,9 @@ pub async fn create(
     actor: Actor,
     meta: EventMeta,
 ) -> Result<ElicitationDto, ServerError> {
+    // Same rule as approvals: an unanswered question pulls the thread back into
+    // the active list, even if it was snoozed while the turn ran.
+    crate::threads::wake(pool, projection, elicitation.thread_id.as_str()).await?;
     insert(pool, &elicitation).await?;
     projection.publish(elicitation.thread_id.as_str()).await;
     events

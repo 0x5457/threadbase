@@ -55,6 +55,13 @@ pub async fn csrf_guard(
     if matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
         return Ok(next.run(request).await);
     }
+    // The MCP endpoint authenticates with a bearer token and never reads a cookie,
+    // so a cross-site request cannot borrow anyone's authority there — and MCP
+    // clients cannot send headers of our choosing. It is the one write path that
+    // does not need the browser rule.
+    if state.config.mcp && request.uri().path() == "/mcp" {
+        return Ok(next.run(request).await);
+    }
     let headers = request.headers();
     if headers
         .get(CUSTOM_HEADER)

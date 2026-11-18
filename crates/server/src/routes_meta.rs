@@ -8,7 +8,7 @@ use axum::routing::{get, patch};
 use axum::Json;
 use axum::Router;
 use threadbase_shared::api::SettingsPatch;
-use threadbase_shared::{MachineSpec, StateResponse};
+use threadbase_shared::{MachineSpec, PermissionPolicyDto, StateResponse};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -20,6 +20,13 @@ pub fn router() -> Router<AppState> {
 /// The lifecycle catalogue. Unauthenticated on purpose: it describes the
 /// product, not any user's data, and agent tooling should be able to read it
 /// before a session exists.
+fn policy_of(app: &AppState) -> PermissionPolicyDto {
+    PermissionPolicyDto {
+        default: app.policy.default,
+        cap: app.policy.cap,
+    }
+}
+
 async fn machines() -> Json<Vec<MachineSpec>> {
     Json(threadbase_core::state::catalogue())
 }
@@ -28,11 +35,15 @@ async fn state(
     State(app): State<AppState>,
     user: CurrentUser,
 ) -> Result<Json<StateResponse>, ServerError> {
+    let instance = crate::settings::Instance::of(&app.config, policy_of(&app));
     Ok(Json(StateResponse {
         settings: crate::settings::load(&app.pool, &user).await?,
         user: user.user,
-        terminal: app.config.terminal,
-        terminal_host: app.config.terminal_host,
+        permissions: instance.policy,
+        terminal: instance.terminal,
+        terminal_host: instance.terminal_host,
+        guest_links: instance.guest_links,
+        mcp: instance.mcp,
     }))
 }
 
@@ -46,8 +57,7 @@ async fn update_settings(
             &app.pool,
             &user,
             patch,
-            app.config.terminal,
-            app.config.terminal_host,
+            crate::settings::Instance::of(&app.config, policy_of(&app)),
         )
         .await?,
     ))

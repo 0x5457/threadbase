@@ -650,12 +650,16 @@ impl Pump {
         Ok(())
     }
 
+    /// Answer a request without a person when something already covers it.
+    ///
+    /// A standing rule wins over the mode: the rule is a deliberate "always
+    /// this" from a user, while the mode is only the thread's default posture.
     async fn try_auto_rule(
         &self,
         approval: &threadbase_shared::ApprovalDto,
     ) -> Result<(), ServerError> {
         let agent = crate::bindings::agent(&self.inner.pool, &self.thread_id).await?;
-        let Some(rule) = approvals::match_rule(
+        let reason = match approvals::match_rule(
             &self.inner.pool,
             &self.thread_id,
             &agent,
@@ -665,8 +669,17 @@ impl Pump {
             approval.subagent_id.is_some(),
         )
         .await?
-        else {
-            return Ok(());
+        {
+            Some(rule) => approvals::AutoApproval::Rule(rule),
+            None => {
+                let mode =
+                    threads::permission_mode(&self.inner.pool, &self.thread_id, &self.inner.policy)
+                        .await?;
+                if !self.inner.policy.allows(mode, approval.kind) {
+                    return Ok(());
+                }
+                approvals::AutoApproval::Mode(mode)
+            }
         };
         let Some(session) = self.inner.session(&self.thread_id).await else {
             return Ok(());
@@ -676,7 +689,7 @@ impl Pump {
             &self.inner.projection,
             &self.inner.events,
             approval.id.as_str(),
-            &rule,
+            &reason,
         )
         .await?;
         {

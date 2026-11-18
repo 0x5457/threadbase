@@ -13,9 +13,11 @@ use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
 use serde::Deserialize;
+use threadbase_core::state::PlacementMachine;
 use threadbase_shared::api::{
-    CreateProjectRequest, CreateThreadRequest, ForkThreadRequest, MergeBackRequest, SeenRequest,
-    ThreadState, UpdateProjectRequest, UpdateThreadRequest,
+    CreateProjectRequest, CreateThreadRequest, ForkThreadRequest, MergeBackRequest,
+    PlacementRequest, RewindRequest, SeenRequest, ThreadState, UpdateProjectRequest,
+    UpdateThreadRequest,
 };
 use threadbase_shared::{
     Actor, ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse,
@@ -57,6 +59,16 @@ pub fn router() -> Router<AppState> {
             get(get_thread).patch(update_thread).delete(delete_thread),
         )
         .route("/api/threads/{thread_id}/fork", post(fork_thread))
+        .route("/api/threads/{thread_id}/placement", post(set_placement))
+        .route("/api/threads/{thread_id}/rewind", post(rewind_thread))
+        .route(
+            "/api/threads/{thread_id}/turns/{turn_id}/changes",
+            get(thread_turn_changes),
+        )
+        .route(
+            "/api/threads/{thread_id}/turns/{turn_id}/file",
+            get(thread_turn_file_diff),
+        )
         .route("/api/threads/{thread_id}/setup", post(run_thread_setup))
         .route(
             "/api/threads/{thread_id}/watch",
@@ -145,16 +157,7 @@ async fn update_project(
         )));
     }
     Ok(Json(ProjectResponse {
-        project: projects::update(
-            &state.pool,
-            &project_id,
-            request.name.as_deref(),
-            request.remote_url.as_deref(),
-            request.path.as_deref(),
-            request.verify_command.as_deref(),
-            request.setup_command.as_deref(),
-        )
-        .await?,
+        project: projects::update(&state.pool, &project_id, &request).await?,
     }))
 }
 
@@ -174,6 +177,7 @@ async fn list_threads(
             &state.pool,
             &project_id,
             query.include_archived.unwrap_or(false),
+            &state.policy,
         )
         .await?,
     }))
@@ -204,6 +208,7 @@ pub(crate) async fn create_thread_and_start(
         user,
         project_id,
         request,
+        &state.policy,
     )
     .await?;
     let manager = state.agents.clone();
@@ -214,7 +219,7 @@ pub(crate) async fn create_thread_and_start(
         .is_some_and(|prompt| !prompt.trim().is_empty());
     let setup_started = crate::setup::maybe_start(state, &thread_id).await?;
     let thread = if setup_started {
-        threads::get(&state.pool, &thread_id, user).await?
+        threads::get(&state.pool, &thread_id, user, &state.policy).await?
     } else {
         thread
     };
@@ -238,7 +243,12 @@ async fn list_all_threads(
     Query(query): Query<ThreadListQuery>,
 ) -> Result<Json<ThreadsResponse>, ServerError> {
     Ok(Json(ThreadsResponse {
-        threads: threads::list_all(&state.pool, query.include_archived.unwrap_or(false)).await?,
+        threads: threads::list_all(
+            &state.pool,
+            query.include_archived.unwrap_or(false),
+            &state.policy,
+        )
+        .await?,
     }))
 }
 
@@ -260,6 +270,7 @@ async fn thread_bundle(
         &thread_id,
         &user,
         query.changes.unwrap_or(true),
+        &state.policy,
     )
     .await?;
     let online = state
@@ -278,7 +289,7 @@ async fn get_thread(
     Path(thread_id): Path<String>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
     Ok(Json(ThreadResponse {
-        thread: threads::get(&state.pool, &thread_id, &user).await?,
+        thread: threads::get(&state.pool, &thread_id, &user, &state.policy).await?,
     }))
 }
 
@@ -331,8 +342,15 @@ async fn update_thread(
         crate::authz::require_manage_role(&state.pool, &thread_id, &user).await?;
         state.agents.stop(&thread_id).await;
     }
-    let thread =
-        threads::update(&state.pool, &state.projection, &thread_id, &user, &request).await?;
+    let thread = threads::update(
+        &state.pool,
+        &state.projection,
+        &thread_id,
+        &user,
+        &request,
+        &state.policy,
+    )
+    .await?;
     if request.model.is_some() || request.effort.is_some() {
         // The UI sends an empty string to clear a field; never forward that to
         // the adapter as a literal model or effort value.
@@ -371,6 +389,100 @@ async fn update_thread(
             }
         }
     }
+    if request.permission_mode.is_some() {
+        // The provider is told as well, so a long turn stops asking for what the
+        // thread now allows instead of relying on the server to answer each
+        // request. Adapters without their own modes answer `Ok` and keep asking;
+        // the policy already handles those.
+        if let Err(error) = state
+            .agents
+            .set_permission_mode(&thread_id, thread.permission_mode)
+            .await
+        {
+            tracing::warn!(thread_id, %error, "could not apply the permission mode to agent");
+            let _ = state
+                .events
+                .append(
+                    &ThreadId::from(thread_id.clone()),
+                    Actor::system(),
+                    ThreadEvent::SystemNotice {
+                        level: "warning".to_owned(),
+                        message: format!(
+                            "The running agent did not accept the new permission mode ({error}). Requests are still answered by Threadbase's policy."
+                        ),
+                    },
+                    EventMeta::default(),
+                )
+                .await;
+        }
+    }
+    Ok(Json(ThreadResponse { thread }))
+}
+
+async fn thread_turn_changes(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, turn_id)): Path<(String, String)>,
+) -> Result<Json<ChangesDto>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    Ok(Json(diff::turn_changes(&state.pool, &row, &turn_id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct TurnFileQuery {
+    path: String,
+}
+
+async fn thread_turn_file_diff(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, turn_id)): Path<(String, String)>,
+    Query(query): Query<TurnFileQuery>,
+) -> Result<Json<FileDiffDto>, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let row = threads::load_row(&state.pool, &thread_id).await?;
+    Ok(Json(
+        diff::turn_file_diff(&state.pool, &row, &turn_id, &query.path).await?,
+    ))
+}
+
+async fn rewind_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<RewindRequest>,
+) -> Result<Json<OkResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    state
+        .agents
+        .rewind_to_turn(&thread_id, &request.message_id, &user)
+        .await?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn set_placement(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<PlacementRequest>,
+) -> Result<Json<ThreadResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let action = PlacementMachine::command(&request.action).ok_or_else(|| {
+        ServerError(ApiError::validation(format!(
+            "unknown placement command: {}",
+            request.action
+        )))
+    })?;
+    threads::place(
+        &state.pool,
+        &state.projection,
+        &thread_id,
+        action,
+        request.until,
+    )
+    .await?;
+    let thread = threads::get(&state.pool, &thread_id, &user, &state.policy).await?;
     Ok(Json(ThreadResponse { thread }))
 }
 
@@ -463,10 +575,11 @@ async fn fork_thread(
         &thread_id,
         &user,
         &request,
+        &state.policy,
     )
     .await?;
     let thread = if crate::setup::maybe_start(&state, thread.id.as_str()).await? {
-        threads::get(&state.pool, thread.id.as_str(), &user).await?
+        threads::get(&state.pool, thread.id.as_str(), &user, &state.policy).await?
     } else {
         thread
     };

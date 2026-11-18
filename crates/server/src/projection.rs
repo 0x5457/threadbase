@@ -31,6 +31,9 @@ struct ProjectionRow {
     pending_elicitations: i64,
     queued_inputs: i64,
     active_subagents: i64,
+    placement: String,
+    pinned: i64,
+    snooze_until: Option<i64>,
 }
 
 impl Projection {
@@ -56,6 +59,12 @@ impl Projection {
         let status = parse_thread_status(&row.status).ok_or_else(|| {
             ServerError::internal(format!("unknown thread status: {}", row.status))
         })?;
+        let placement =
+            threadbase_core::state::parse_thread_placement(&row.placement).ok_or_else(|| {
+                ServerError::internal(format!("unknown thread placement: {}", row.placement))
+            })?;
+        let queued_inputs = count(row.queued_inputs);
+        let active_subagents = count(row.active_subagents);
         Ok(ThreadState {
             thread_id: ThreadId::from(thread_id.to_owned()),
             revision: self.revision.load(Ordering::SeqCst),
@@ -64,8 +73,16 @@ impl Projection {
             current_turn: row.current_turn_id,
             pending_approvals: count(row.pending_approvals),
             pending_elicitations: count(row.pending_elicitations),
-            queued_inputs: count(row.queued_inputs),
-            active_subagents: count(row.active_subagents),
+            queued_inputs,
+            active_subagents,
+            placement,
+            section: threadbase_core::state::section(
+                status,
+                placement,
+                row.pinned != 0,
+                threadbase_core::state::is_working(status, queued_inputs, active_subagents),
+            ),
+            snooze_until: row.snooze_until,
         })
     }
 
@@ -129,7 +146,7 @@ impl Projection {
 
     async fn row(&self, thread_id: &str) -> Result<ProjectionRow, ServerError> {
         let row = sqlx::query_as::<_, ProjectionRow>(
-            "SELECT t.status, t.current_turn_id,
+            "SELECT t.status, t.current_turn_id, t.placement, t.pinned, t.snooze_until,
                 (SELECT COUNT(*) FROM approvals a
                   WHERE a.thread_id = t.id AND a.status = 'pending') AS pending_approvals,
                 (SELECT COUNT(*) FROM elicitations e

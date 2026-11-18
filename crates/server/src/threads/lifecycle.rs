@@ -12,13 +12,20 @@ use crate::queue;
 use crate::watchers;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
-use threadbase_core::state::{subagent_status_str, ThreadAction, ThreadMachine};
+use threadbase_core::permissions::PermissionPolicy;
+use threadbase_core::state::{subagent_status_str, PlacementAction, PlacementMachine};
+use threadbase_core::state::{ThreadAction, ThreadMachine};
 use threadbase_shared::api::{CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest};
 use threadbase_shared::{
-    now_ms, Actor, ApiError, SubagentStatus, ThreadDto, ThreadEvent, ThreadId, ThreadStatus, TurnId,
+    now_ms, Actor, ApiError, PermissionMode, SubagentStatus, ThreadDto, ThreadEvent, ThreadId,
+    ThreadPlacement, ThreadStatus, TurnId,
 };
 use threadbase_workspace::git;
 use ulid::Ulid;
+
+/// A snooze without a deadline wakes a day later. The server picks the value so
+/// two browsers cannot disagree about what "tomorrow" means.
+const SNOOZE_DEFAULT_MS: i64 = 24 * 60 * 60 * 1000;
 
 pub struct NewThread<'a> {
     pub id: &'a str,
@@ -38,6 +45,89 @@ pub struct NewThread<'a> {
 
 pub async fn status(pool: &SqlitePool, thread_id: &str) -> Result<ThreadStatus, ServerError> {
     projection::thread_status(pool, thread_id).await
+}
+
+/// Move a thread between shelves. This is the only writer of `placement`.
+///
+/// The guard lives here rather than in the machine because it reads live facts
+/// (queued input, subagents, unanswered requests) that a pure transition cannot
+/// see. A setting that hides work in progress is the failure mode, so settling is
+/// refused instead of cancelling turns nobody asked to cancel.
+pub async fn place(
+    pool: &SqlitePool,
+    projection: &Projection,
+    thread_id: &str,
+    action: PlacementAction,
+    until: Option<i64>,
+) -> Result<ThreadPlacement, ServerError> {
+    let state = projection.read(thread_id).await?;
+    if state.status == ThreadStatus::Archived {
+        return Err(ServerError(ApiError::conflict(
+            "this thread is archived; unarchive it before moving it",
+        )));
+    }
+    // Auto-settling is the same transition as settling, so it gets the same
+    // guard: a thread that just started a turn must not be parked by the sweep.
+    if matches!(
+        action,
+        PlacementAction::Settle | PlacementAction::AutoSettle
+    ) {
+        threadbase_core::state::check_settle_allowed(
+            state.status,
+            state.queued_inputs,
+            state.active_subagents,
+            state.pending_approvals + state.pending_elicitations,
+        )
+        .map_err(|error| ServerError(ApiError::conflict(error.to_string())))?;
+    }
+    let current = state.placement;
+    let next = PlacementMachine::transition(current, &action).map_err(|_| {
+        ServerError(ApiError::conflict(PlacementMachine::refusal(
+            &action, current,
+        )))
+    })?;
+    if next == current && action != PlacementAction::Snooze {
+        return Ok(next);
+    }
+    let now = now_ms();
+    let snooze_until = (next == ThreadPlacement::Snoozed)
+        .then(|| until.unwrap_or_else(|| now + SNOOZE_DEFAULT_MS));
+    // Settling takes the pin with it: the sidebar sorts pinned work first, and a
+    // pin that outlives the shelf would put finished work back on top.
+    let clears_pin = next == ThreadPlacement::Settled;
+    sqlx::query(
+        "UPDATE threads SET placement = ?, placement_at = ?, snooze_until = ?,
+            pinned = CASE WHEN ? THEN 0 ELSE pinned END,
+            updated_at = ?
+          WHERE id = ?",
+    )
+    .bind(threadbase_core::state::placement_str(next))
+    .bind(now)
+    .bind(snooze_until)
+    .bind(clears_pin)
+    .bind(now)
+    .bind(thread_id)
+    .execute(pool)
+    .await?;
+    projection.publish(thread_id).await;
+    Ok(next)
+}
+
+/// A message is a reason to come back: settled and snoozed threads wake before
+/// the turn starts, so a prompt never lands in a shelf.
+pub async fn wake(
+    pool: &SqlitePool,
+    projection: &Projection,
+    thread_id: &str,
+) -> Result<(), ServerError> {
+    let state = projection.read(thread_id).await?;
+    let action = match state.placement {
+        ThreadPlacement::Active => return Ok(()),
+        ThreadPlacement::Snoozed => PlacementAction::Wake,
+        ThreadPlacement::Settled => PlacementAction::Unsettle,
+    };
+    place(pool, projection, thread_id, action, None).await?;
+    Ok(())
 }
 
 /// Validate and persist a lifecycle transition, then publish the projection.
@@ -228,8 +318,8 @@ async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, 
     sqlx::query(
         "INSERT INTO threads(id, project_id, parent_thread_id, title, status, agent, model, effort,
             branch, base_branch, base_sha, last_turn_sha, worktree_path, created_by, created_at,
-            updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            updated_at, placement_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(row.id)
     .bind(row.project_id)
@@ -247,6 +337,9 @@ async fn insert(pool: &SqlitePool, row: &NewThread<'_>) -> Result<ThreadStatus, 
     .bind(row.created_by)
     .bind(row.created_at)
     .bind(row.created_at)
+    // A thread starts on the active shelf, and "when it got there" is when it
+    // was created; the column default of 0 exists only for the migration.
+    .bind(row.created_at)
     .execute(pool)
     .await?;
     Ok(status)
@@ -259,6 +352,7 @@ pub async fn create(
     user: &CurrentUser,
     project_id: &str,
     request: &CreateThreadRequest,
+    policy: &PermissionPolicy,
 ) -> Result<ThreadDto, ServerError> {
     let project = projects::row(pool, project_id).await?;
     let project_root = PathBuf::from(&project.path);
@@ -373,7 +467,7 @@ pub async fn create(
         None,
     )
     .await;
-    get(pool, &thread_id, user).await
+    get(pool, &thread_id, user, policy).await
 }
 
 pub async fn update(
@@ -382,12 +476,16 @@ pub async fn update(
     thread_id: &str,
     user: &CurrentUser,
     request: &UpdateThreadRequest,
+    policy: &PermissionPolicy,
 ) -> Result<ThreadDto, ServerError> {
     if request.title.is_some() || request.pinned.is_some() {
         authz::require_write_role(pool, thread_id, user).await?;
     }
     if request.archived.is_some() {
         authz::require_manage_role(pool, thread_id, user).await?;
+    }
+    if request.auto_settle.is_some() || request.permission_mode.is_some() {
+        authz::require_write_role(pool, thread_id, user).await?;
     }
     if let Some(title) = request.title.as_deref() {
         let title = title.trim();
@@ -415,6 +513,36 @@ pub async fn update(
     if let Some(archived) = request.archived {
         set_archived(pool, projection, thread_id, archived).await?;
     }
+    if let Some(mode) = request.permission_mode.as_deref() {
+        let mode = mode.trim();
+        let value = if mode.is_empty() {
+            None
+        } else {
+            Some(
+                mode.parse::<PermissionMode>()
+                    .map_err(|_| {
+                        ServerError(ApiError::validation(format!(
+                            "unknown permission mode: {mode}"
+                        )))
+                    })?
+                    .as_str(),
+            )
+        };
+        sqlx::query("UPDATE threads SET permission_mode = ?, updated_at = ? WHERE id = ?")
+            .bind(value)
+            .bind(now_ms())
+            .bind(thread_id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(auto_settle) = request.auto_settle {
+        sqlx::query("UPDATE threads SET auto_settle = ?, updated_at = ? WHERE id = ?")
+            .bind(auto_settle.as_str())
+            .bind(now_ms())
+            .bind(thread_id)
+            .execute(pool)
+            .await?;
+    }
     for (column, value) in [
         ("model", request.model.as_deref()),
         ("effort", request.effort.as_deref()),
@@ -432,7 +560,7 @@ pub async fn update(
             .await?;
         }
     }
-    get(pool, thread_id, user).await
+    get(pool, thread_id, user, policy).await
 }
 
 pub async fn fork(
@@ -442,6 +570,7 @@ pub async fn fork(
     thread_id: &str,
     user: &CurrentUser,
     request: &ForkThreadRequest,
+    policy: &PermissionPolicy,
 ) -> Result<ThreadDto, ServerError> {
     authz::require_write_role(pool, thread_id, user).await?;
     let source = load_row(pool, thread_id).await?;
@@ -529,7 +658,7 @@ pub async fn fork(
         None,
     )
     .await;
-    get(pool, &new_id, user).await
+    get(pool, &new_id, user, policy).await
 }
 
 pub async fn delete(

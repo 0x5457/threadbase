@@ -9,13 +9,17 @@ use threadbase_server::events::{EventMeta, EventStore};
 use threadbase_server::{auth, comments, db, diff, projects, queue, threads};
 use threadbase_shared::api::{
     CreateCommentRequest, CreateProjectRequest, CreateThreadRequest, ForkThreadRequest,
-    UpdateThreadRequest,
+    UpdateProjectRequest, UpdateThreadRequest,
 };
 use threadbase_shared::{
     Actor, BaselineDto, BaselineKind, CommentAnchor, CommentSide, ErrorCode, MessageId, Role,
     ThreadEvent, ThreadStatus, TurnId, UserBrief,
 };
 use tokio::process::Command as TokioCommand;
+
+fn policy() -> threadbase_core::permissions::PermissionPolicy {
+    threadbase_core::permissions::PermissionPolicy::default()
+}
 
 fn test_projection(pool: &SqlitePool) -> threadbase_server::projection::Projection {
     let (state_tx, _) = tokio::sync::broadcast::channel(16);
@@ -126,6 +130,7 @@ async fn create_thread(fixture: &Fixture, project_id: &str) -> threadbase_shared
             initial_prompt: None,
             worktree: None,
         },
+        &policy(),
     )
     .await
     .unwrap()
@@ -170,9 +175,14 @@ async fn restart_recovery_resets_interrupted_threads() {
         vec![(thread.id.to_string(), Some(turn_id.to_owned()))]
     );
 
-    let reloaded = threads::get(&fixture.pool, thread.id.as_str(), &fixture.current)
-        .await
-        .unwrap();
+    let reloaded = threads::get(
+        &fixture.pool,
+        thread.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
     assert_eq!(reloaded.status, ThreadStatus::Idle);
     let current_turn: Option<String> =
         sqlx::query_scalar("SELECT current_turn_id FROM threads WHERE id = ?")
@@ -457,6 +467,7 @@ async fn thread_without_worktree_runs_in_the_project_directory() {
             initial_prompt: None,
             worktree: Some(false),
         },
+        &policy(),
     )
     .await
     .unwrap();
@@ -575,16 +586,19 @@ async fn project_validation_and_thread_lifecycle() {
             archived: Some(true),
             model: None,
             effort: None,
+            auto_settle: None,
+            permission_mode: None,
         },
+        &policy(),
     )
     .await
     .unwrap();
     assert_eq!(archived.status, ThreadStatus::Archived);
-    let active = threads::list(&fixture.pool, project.id.as_str(), false)
+    let active = threads::list(&fixture.pool, project.id.as_str(), false, &policy())
         .await
         .unwrap();
     assert!(active.is_empty());
-    let all = threads::list(&fixture.pool, project.id.as_str(), true)
+    let all = threads::list(&fixture.pool, project.id.as_str(), true, &policy())
         .await
         .unwrap();
     assert_eq!(all.len(), 1);
@@ -600,7 +614,10 @@ async fn project_validation_and_thread_lifecycle() {
             archived: Some(false),
             model: None,
             effort: None,
+            auto_settle: None,
+            permission_mode: None,
         },
+        &policy(),
     )
     .await
     .unwrap();
@@ -619,6 +636,7 @@ async fn project_validation_and_thread_lifecycle() {
         thread.id.as_str(),
         &fixture.current,
         &ForkThreadRequest { title: None },
+        &policy(),
     )
     .await
     .unwrap();
@@ -1126,12 +1144,13 @@ async fn thread_history_lists_checkpoints_and_commit_diffs() {
         .unwrap();
 
     let events = EventStore::new(fixture.pool.clone());
+    let first_turn = TurnId::new();
     events
         .append(
             &thread.id,
             Actor::system(),
             ThreadEvent::TurnStarted {
-                turn_id: TurnId::new(),
+                turn_id: first_turn.clone(),
                 message_id: MessageId::new(),
                 author: UserBrief::from_user(&fixture.current.user),
                 authors: Vec::new(),
@@ -1142,20 +1161,44 @@ async fn thread_history_lists_checkpoints_and_commit_diffs() {
         )
         .await
         .unwrap();
-    // Committer timestamps are whole seconds; let the turn event land in an
-    // earlier one so the checkpoint maps back to it.
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     tokio::fs::write(worktree.join("README.md"), "one\nTWO\n")
         .await
         .unwrap();
     git(worktree, &["add", "-A"]);
     git(worktree, &["commit", "-m", "Threadbase turn snapshot"]);
+    // The snapshot written before a turn holds the work of the turn before it,
+    // so this commit is recorded as the checkpoint of the *next* turn. Turn 1's
+    // own checkpoint is the untouched base — exactly what a clean worktree
+    // produces, since `snapshot_worktree` returns HEAD when nothing changed.
+    let snapshot = threadbase_workspace::git::head_sha(worktree).await.unwrap();
+    let next_turn = TurnId::new();
+    for (turn, sha, at) in [
+        (
+            first_turn.as_str(),
+            thread.base_sha.clone().unwrap_or_default(),
+            threadbase_shared::now_ms(),
+        ),
+        (
+            next_turn.as_str(),
+            snapshot.clone(),
+            threadbase_shared::now_ms() + 1,
+        ),
+    ] {
+        sqlx::query("INSERT INTO checkpoints(thread_id, turn_id, sha, created_at) VALUES(?,?,?,?)")
+            .bind(thread.id.as_str())
+            .bind(turn)
+            .bind(sha)
+            .bind(at)
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+    }
     events
         .append(
             &thread.id,
             Actor::system(),
             ThreadEvent::TurnStarted {
-                turn_id: TurnId::new(),
+                turn_id: next_turn,
                 message_id: MessageId::new(),
                 author: UserBrief::from_user(&fixture.current.user),
                 authors: Vec::new(),
@@ -1201,14 +1244,278 @@ async fn project_path_can_be_relocated() {
     let updated = projects::update(
         &fixture.pool,
         project.id.as_str(),
-        None,
-        None,
-        Some(moved.path().to_str().unwrap()),
-        None,
-        None,
+        &UpdateProjectRequest {
+            name: None,
+            remote_url: None,
+            path: Some(moved.path().to_str().unwrap().to_owned()),
+            verify_command: None,
+            setup_command: None,
+            permission_mode: None,
+        },
     )
     .await
     .unwrap();
     assert_eq!(updated.path, moved.path().to_string_lossy());
     assert!(updated.available);
+}
+
+#[tokio::test]
+async fn placement_parks_threads_without_hiding_work() {
+    use threadbase_core::state::PlacementAction;
+    use threadbase_shared::{ThreadPlacement, ThreadSection};
+
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    let projection = test_projection(&fixture.pool);
+    assert_eq!(thread.placement, ThreadPlacement::Active);
+    assert_eq!(thread.section, ThreadSection::Active);
+
+    // Settling parks the thread but keeps it in the list: a shelf is a read
+    // model, not a filter, so nothing disappears the way archiving hides work.
+    threads::place(
+        &fixture.pool,
+        &projection,
+        thread.id.as_str(),
+        PlacementAction::Settle,
+        None,
+    )
+    .await
+    .unwrap();
+    let listed = threads::list(&fixture.pool, project.id.as_str(), false, &policy())
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].placement, ThreadPlacement::Settled);
+    assert_eq!(listed[0].section, ThreadSection::Settled);
+
+    // A message is a reason to come back: waking is the inverse of settling.
+    threads::wake(&fixture.pool, &projection, thread.id.as_str())
+        .await
+        .unwrap();
+    let woken = threads::get(
+        &fixture.pool,
+        thread.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(woken.placement, ThreadPlacement::Active);
+
+    // A pin outranks the shelf it sits in, and settling takes the pin with it.
+    threads::update(
+        &fixture.pool,
+        &projection,
+        thread.id.as_str(),
+        &fixture.current,
+        &UpdateThreadRequest {
+            title: None,
+            pinned: Some(true),
+            archived: None,
+            model: None,
+            effort: None,
+            auto_settle: None,
+            permission_mode: None,
+        },
+        &policy(),
+    )
+    .await
+    .unwrap();
+    let pinned = threads::get(
+        &fixture.pool,
+        thread.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(pinned.section, ThreadSection::Pinned);
+    threads::place(
+        &fixture.pool,
+        &projection,
+        thread.id.as_str(),
+        PlacementAction::Settle,
+        None,
+    )
+    .await
+    .unwrap();
+    let settled = threads::get(
+        &fixture.pool,
+        thread.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
+    assert!(!settled.pinned, "settling drops the pin");
+    assert_eq!(settled.section, ThreadSection::Settled);
+
+    // Snoozing records a deadline; the default is the server's, not the client's.
+    let deadline = threadbase_shared::now_ms() + 90_000;
+    threads::place(
+        &fixture.pool,
+        &projection,
+        thread.id.as_str(),
+        PlacementAction::Snooze,
+        Some(deadline),
+    )
+    .await
+    .unwrap();
+    let snoozed = threads::get(
+        &fixture.pool,
+        thread.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(snoozed.placement, ThreadPlacement::Snoozed);
+    assert_eq!(snoozed.snooze_until, Some(deadline));
+    assert_eq!(snoozed.section, ThreadSection::Snoozed);
+
+    // Parked work must be woken before it can be settled again, so a shelf
+    // cannot swallow a thread nobody looked at.
+    let err = threads::place(
+        &fixture.pool,
+        &projection,
+        thread.id.as_str(),
+        PlacementAction::Settle,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Conflict);
+
+    // A running turn refuses to be parked: settling must never cancel work.
+    sqlx::query("UPDATE threads SET placement = 'active', snooze_until = NULL WHERE id = ?")
+        .bind(thread.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE threads SET status = 'running' WHERE id = ?")
+        .bind(thread.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let err = threads::place(
+        &fixture.pool,
+        &projection,
+        thread.id.as_str(),
+        PlacementAction::Settle,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Conflict);
+}
+
+#[tokio::test]
+async fn sweep_wakes_snoozes_and_settles_only_idle_work() {
+    use threadbase_core::state::PlacementAction;
+    use threadbase_shared::{now_ms, ThreadPlacement, ThreadSection};
+
+    const DAY: i64 = 24 * 60 * 60 * 1000;
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let projection = test_projection(&fixture.pool);
+    let now = now_ms();
+    let stale = now - 8 * DAY;
+
+    let settled = create_thread(&fixture, project.id.as_str()).await;
+    let opted_out = create_thread(&fixture, project.id.as_str()).await;
+    let queued = create_thread(&fixture, project.id.as_str()).await;
+    let snoozed = create_thread(&fixture, project.id.as_str()).await;
+
+    for thread in [&settled, &opted_out, &queued, &snoozed] {
+        sqlx::query(
+            "UPDATE threads SET last_activity_at = ?, placement_at = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(stale)
+        .bind(stale)
+        .bind(stale)
+        .bind(thread.id.as_str())
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE threads SET auto_settle = 'never' WHERE id = ?")
+        .bind(opted_out.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO queued_inputs(id, thread_id, author_id, text, status, position,
+            created_at, updated_at)
+         VALUES('q1', ?, ?, 'still waiting', 'queued', 0, ?, ?)",
+    )
+    .bind(queued.id.as_str())
+    .bind(fixture.current.user.id.as_str())
+    .bind(now)
+    .bind(now)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    threads::place(
+        &fixture.pool,
+        &projection,
+        snoozed.id.as_str(),
+        PlacementAction::Snooze,
+        Some(now - 1_000),
+    )
+    .await
+    .unwrap();
+
+    let report = threads::sweep(&fixture.pool, &projection, 7 * DAY, now)
+        .await
+        .unwrap();
+    assert_eq!(report.woken, 1);
+    assert_eq!(report.settled, 1);
+
+    let settled_after = threads::get(
+        &fixture.pool,
+        settled.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
+    let opted_out_after = threads::get(
+        &fixture.pool,
+        opted_out.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
+    let queued_after = threads::get(
+        &fixture.pool,
+        queued.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
+    let woken = threads::get(
+        &fixture.pool,
+        snoozed.id.as_str(),
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(settled_after.section, ThreadSection::Settled);
+    assert_eq!(opted_out_after.section, ThreadSection::Active);
+    // Queued input keeps the thread out of the shelf: it is waiting to run, so
+    // it belongs in the working list rather than in "settled".
+    assert_eq!(queued_after.section, ThreadSection::Working);
+    assert_eq!(woken.placement, ThreadPlacement::Active);
+    assert_eq!(woken.snooze_until, None);
+
+    // A second pass is a no-op: settled work stays settled and the queue still
+    // holds its thread in the active list.
+    let again = threads::sweep(&fixture.pool, &projection, 7 * DAY, now)
+        .await
+        .unwrap();
+    assert_eq!(again, threads::SweepReport::default());
 }

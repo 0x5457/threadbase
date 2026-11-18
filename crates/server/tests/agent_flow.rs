@@ -8,9 +8,13 @@ use threadbase_server::app::AppState;
 use threadbase_server::auth::CurrentUser;
 use threadbase_server::events::EventStore;
 use threadbase_server::{agents, auth, db, projects, threads};
-use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest};
+use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest, UpdateThreadRequest};
 use threadbase_shared::{ApprovalDecision, ElicitationAction, ThreadEvent, ThreadStatus};
 use tokio::time::{sleep, Duration};
+
+fn policy() -> threadbase_core::permissions::PermissionPolicy {
+    threadbase_core::permissions::PermissionPolicy::default()
+}
 
 struct Fixture {
     repo: TempDir,
@@ -136,6 +140,7 @@ async fn fixture() -> Option<Fixture> {
             initial_prompt: None,
             worktree: None,
         },
+        &policy(),
     )
     .await
     .unwrap();
@@ -327,6 +332,7 @@ async fn approval_ids_stay_unique_across_threads() {
             initial_prompt: None,
             worktree: None,
         },
+        &policy(),
     )
     .await
     .unwrap();
@@ -647,6 +653,7 @@ async fn fake_agent_streams_tools_and_permissions() {
             initial_prompt: Some("stream".into()),
             worktree: None,
         },
+        &policy(),
     )
     .await
     .unwrap();
@@ -680,6 +687,7 @@ async fn fake_agent_streams_tools_and_permissions() {
         threadbase_server::presence::PresenceHub::new(),
         0,
         0,
+        policy(),
     );
 }
 
@@ -708,6 +716,7 @@ async fn worktree_setup_runs_before_the_agent_can_start() {
             initial_prompt: None,
             worktree: None,
         },
+        &policy(),
     )
     .await
     .unwrap();
@@ -763,6 +772,7 @@ async fn a_failed_worktree_setup_is_recorded_and_does_not_start_the_agent() {
             initial_prompt: None,
             worktree: None,
         },
+        &policy(),
     )
     .await
     .unwrap();
@@ -919,32 +929,30 @@ async fn editing_a_prompt_rewinds_the_tail_and_starts_a_new_session() {
         .rewind_and_edit(thread_id, &first_id, "stream", &fixture.user)
         .await
         .unwrap();
-    assert_eq!(response.delivery, threadbase_shared::Delivery::Injected);
-    let new_id = response.message_id.expect("rewound prompt starts a turn");
-    assert_ne!(new_id, first_id);
-
-    let prompts: Vec<String> = sqlx::query_scalar(
-        "SELECT payload_json FROM events
-          WHERE thread_id = ? AND kind = 'turn_started' ORDER BY seq ASC",
-    )
-    .bind(thread_id)
-    .fetch_all(&fixture.state.pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        prompts.len(),
-        1,
-        "the discarded branch must leave no prompt"
-    );
-    let event: ThreadEvent = serde_json::from_str(&prompts[0]).unwrap();
+    // The rewind shut the adapter down, so the edited prompt is queued and the
+    // worker starts the fresh session instead of the request waiting for it.
+    assert_eq!(response.delivery, threadbase_shared::Delivery::Queued);
+    let rewritten = wait_for(&fixture.state.pool, thread_id, |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    })
+    .await;
     let ThreadEvent::TurnStarted {
         prompt, message_id, ..
-    } = event
+    } = rewritten
     else {
         unreachable!();
     };
     assert_eq!(prompt, "stream");
-    assert_eq!(message_id.0, new_id);
+    assert_ne!(message_id.0, first_id);
+
+    let prompts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM events WHERE thread_id = ? AND kind = 'turn_started'",
+    )
+    .bind(thread_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(prompts, 1, "the discarded branch must leave no prompt");
 
     let old_seq: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE thread_id = ? AND seq = ?")
@@ -1028,6 +1036,7 @@ async fn failed_session_restore_emits_a_context_reset_notice() {
         threadbase_server::presence::PresenceHub::new(),
         0,
         0,
+        policy(),
     );
     manager
         .ensure_started(fixture.thread.id.as_str())
@@ -1117,6 +1126,7 @@ async fn first_turn_replaces_the_default_thread_title() {
             initial_prompt: None,
             worktree: None,
         },
+        &policy(),
     )
     .await
     .unwrap();
@@ -1528,8 +1538,12 @@ async fn empty_draft_send_returns_already_sent() {
     assert!(text.contains("draft already sent"), "body: {text}");
 }
 
+/// A cold start can no longer fail inside the request: the route answers before
+/// any process exists. The message must survive that late failure somewhere the
+/// sender can see it, so the input stays in the queue instead of disappearing
+/// with the draft.
 #[tokio::test]
-async fn failed_send_retains_draft() {
+async fn failed_start_keeps_the_message_queued() {
     use axum::body::Body;
     use axum::extract::ConnectInfo;
     use axum::http::{Request, StatusCode};
@@ -1539,7 +1553,7 @@ async fn failed_send_retains_draft() {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
-    // Force agent startup to fail: the route must not consume the draft.
+    // Force agent startup to fail after the route has already answered.
     std::env::set_var(
         "THREADBASE_ACP_COMMAND",
         "/nonexistent/threadbase_acp_fixture",
@@ -1580,16 +1594,43 @@ async fn failed_send_retains_draft() {
             1234,
         ))));
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let sent: threadbase_shared::SendMessageResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(sent.delivery, threadbase_shared::Delivery::Queued);
 
-    let (text, authors) = fixture
+    // The failure lands on the thread instead of the HTTP status.
+    let failure = wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::TurnError { turn_id: None, .. })
+    })
+    .await;
+    let ThreadEvent::TurnError { message, .. } = failure else {
+        unreachable!();
+    };
+    assert!(
+        !message.is_empty(),
+        "the thread must say why the start failed"
+    );
+
+    // The message itself is still there, still sendable.
+    let items =
+        threadbase_server::queue::list_for_thread(&fixture.state.pool, fixture.thread.id.as_str())
+            .await
+            .unwrap();
+    assert_eq!(items.len(), 1, "the failed start must not drop the input");
+    assert_eq!(items[0].text, "keep me");
+    assert_eq!(items[0].status, threadbase_shared::QueueStatus::Queued);
+
+    // The draft was consumed because the message is durable in the queue.
+    let (text, _) = fixture
         .state
         .drafts
         .peek_draft(fixture.thread.id.as_str())
         .await
         .unwrap();
-    assert_eq!(text, "keep me", "failed send must retain the draft");
-    assert_eq!(authors.len(), 1);
+    assert_eq!(text.trim(), "", "the text now lives in the queue");
 }
 
 #[tokio::test]
@@ -1655,6 +1696,52 @@ async fn queued_turn_writes_current_turn() {
         Some(turn_id.as_str()),
         "queued turn must persist current_turn_id"
     );
+}
+
+#[tokio::test]
+async fn cold_send_queues_without_waiting_for_the_adapter() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    // No `ensure_started`: the thread has never run a turn, so this send would
+    // have to launch the adapter under the old synchronous path.
+    let response = fixture
+        .state
+        .agents
+        .send(
+            fixture.thread.id.as_str(),
+            &fixture.user,
+            "cold start",
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.delivery, threadbase_shared::Delivery::Queued);
+    assert_eq!(response.queue_position, Some(1));
+    assert!(
+        response.message_id.is_none(),
+        "a queued input has no message until the worker starts the turn"
+    );
+
+    // The worker starts the adapter and turns the item into a prompt; the
+    // sender does not have to kick it again.
+    let event = wait_for(&fixture.state.pool, fixture.thread.id.as_str(), |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    })
+    .await;
+    let ThreadEvent::TurnStarted { prompt, .. } = event else {
+        unreachable!();
+    };
+    assert_eq!(prompt, "cold start");
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
+    )
+    .bind(fixture.thread.id.as_str())
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(queued, 0, "the dispatched item must leave the queue bar");
 }
 
 #[tokio::test]
@@ -2149,4 +2236,413 @@ async fn send_now_interrupts_a_non_steering_agent() {
         .unwrap();
     assert_eq!(status, "sent");
     assert!(!message_id.0.is_empty());
+}
+
+/// A permission mode decides who answers a request. Supervised waits for a
+/// person, auto-accept edits answers file edits itself, and a command still
+/// waits even then — the difference between "let it edit" and "let it loose".
+#[tokio::test]
+async fn permission_modes_decide_who_answers_a_request() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+
+    // Supervised (the default): the request waits for a person.
+    fixture
+        .state
+        .agents
+        .ensure_started(thread_id)
+        .await
+        .unwrap();
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "permission", None)
+        .await
+        .unwrap();
+    let ThreadEvent::PermissionRequested { approval } =
+        wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+            matches!(event, ThreadEvent::PermissionRequested { .. })
+        })
+        .await
+    else {
+        unreachable!("filtered for a permission request");
+    };
+    assert_eq!(
+        pending_approvals(&fixture.state.pool, thread_id).await,
+        1,
+        "supervised mode must leave the request for a person"
+    );
+    answer_as_person(&fixture, thread_id, approval.id.as_str()).await;
+
+    // Auto-accept edits: an edit is answered without a person.
+    set_permission_mode(&fixture, thread_id, Some("auto_edit")).await;
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "permission", None)
+        .await
+        .unwrap();
+    let resolved = wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::PermissionResolved { .. })
+    })
+    .await;
+    let ThreadEvent::PermissionResolved {
+        decision,
+        decided_by,
+        ..
+    } = resolved
+    else {
+        unreachable!("filtered for a resolution");
+    };
+    assert_eq!(decision, ApprovalDecision::AllowOnce);
+    assert!(decided_by.is_none(), "a policy decided this, not a person");
+    assert_eq!(
+        pending_approvals(&fixture.state.pool, thread_id).await,
+        0,
+        "the request must not stay pending"
+    );
+
+    // The same mode still asks about a command.
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "permission-execute", None)
+        .await
+        .unwrap();
+    let ThreadEvent::PermissionRequested { approval } =
+        wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+            matches!(event, ThreadEvent::PermissionRequested { .. })
+        })
+        .await
+    else {
+        unreachable!("filtered for a permission request");
+    };
+    assert_eq!(
+        approval.kind,
+        threadbase_shared::ApprovalKind::Command,
+        "the fixture asked to run a command"
+    );
+    assert_eq!(
+        pending_approvals(&fixture.state.pool, thread_id).await,
+        1,
+        "auto-accept edits must not run commands"
+    );
+    answer_as_person(&fixture, thread_id, approval.id.as_str()).await;
+
+    // Full access: nothing asks.
+    set_permission_mode(&fixture, thread_id, Some("full_access")).await;
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "permission-execute", None)
+        .await
+        .unwrap();
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::PermissionResolved { .. })
+    })
+    .await;
+    assert_eq!(pending_approvals(&fixture.state.pool, thread_id).await, 0);
+}
+
+async fn pending_approvals(pool: &SqlitePool, thread_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM approvals WHERE thread_id = ? AND status = 'pending'")
+        .bind(thread_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// What the HTTP route does: persist the decision, then hand it to the agent.
+async fn answer_as_person(fixture: &Fixture, thread_id: &str, approval_id: &str) {
+    threadbase_server::approvals::decide(
+        &fixture.state.pool,
+        &fixture.state.projection,
+        &fixture.state.events,
+        approval_id,
+        &fixture.user,
+        ApprovalDecision::AllowOnce,
+        None,
+    )
+    .await
+    .unwrap();
+    let _ = fixture
+        .state
+        .agents
+        .decide(thread_id, approval_id, ApprovalDecision::AllowOnce, None)
+        .await;
+}
+
+async fn set_permission_mode(fixture: &Fixture, thread_id: &str, mode: Option<&str>) {
+    let request = UpdateThreadRequest {
+        title: None,
+        pinned: None,
+        archived: None,
+        model: None,
+        effort: None,
+        auto_settle: None,
+        permission_mode: mode.map(str::to_owned),
+    };
+    threads::update(
+        &fixture.state.pool,
+        &fixture.state.projection,
+        thread_id,
+        &fixture.user,
+        &request,
+        &policy(),
+    )
+    .await
+    .unwrap();
+}
+
+/// Rewinding to a turn undoes that turn and every later one, in the worktree and
+/// in the transcript, and leaves the earlier work alone.
+#[tokio::test]
+async fn rewind_to_a_turn_restores_files_and_truncates_the_log() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    let worktree = threads::load_row(&fixture.state.pool, thread_id)
+        .await
+        .unwrap()
+        .worktree_path
+        .expect("fixture threads run in a worktree");
+    let worktree = std::path::PathBuf::from(worktree);
+
+    // Turn 1, then create A; turn 2's checkpoint captures A. Create B, so turn
+    // 3's checkpoint captures A and B.
+    let mut prompts = Vec::new();
+    for _ in 0..3 {
+        let before = max_seq(&fixture.state.pool, thread_id).await;
+        fixture
+            .state
+            .agents
+            .ensure_started(thread_id)
+            .await
+            .unwrap();
+        fixture
+            .state
+            .agents
+            .send(thread_id, &fixture.user, "stream", None)
+            .await
+            .unwrap();
+        wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+            matches!(event, ThreadEvent::TurnEnded { .. })
+        })
+        .await;
+        prompts.push(before);
+        if prompts.len() == 1 {
+            tokio::fs::write(worktree.join("a.txt"), "from turn 1\n")
+                .await
+                .unwrap();
+        }
+        if prompts.len() == 2 {
+            tokio::fs::write(worktree.join("b.txt"), "from turn 2\n")
+                .await
+                .unwrap();
+        }
+    }
+    assert!(worktree.join("a.txt").is_file());
+    assert!(worktree.join("b.txt").is_file());
+
+    // The prompts in order, with their turn ids.
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT json_extract(payload_json, '$.messageId'),
+                json_extract(payload_json, '$.turnId')
+           FROM events WHERE thread_id = ? AND kind = 'turn_started' ORDER BY seq ASC",
+    )
+    .bind(thread_id)
+    .fetch_all(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 3, "three turns were started");
+    let (second_message, second_turn) = rows[1].clone();
+
+    // Each turn's span is the work done between its checkpoint and the next one,
+    // which is exactly what the Changes panel shows for "this turn".
+    let turn_ids: Vec<String> = rows.iter().map(|(_, turn)| turn.clone()).collect();
+    let row = threads::load_row(&fixture.state.pool, thread_id)
+        .await
+        .unwrap();
+    let first = threadbase_server::diff::turn_changes(&fixture.state.pool, &row, &turn_ids[0])
+        .await
+        .unwrap();
+    assert_eq!(
+        first
+            .files
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a.txt"],
+        "the file written after turn 1 belongs to turn 1"
+    );
+    let second = threadbase_server::diff::turn_changes(&fixture.state.pool, &row, &turn_ids[1])
+        .await
+        .unwrap();
+    assert_eq!(
+        second
+            .files
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["b.txt"]
+    );
+    let third = threadbase_server::diff::turn_changes(&fixture.state.pool, &row, &turn_ids[2])
+        .await
+        .unwrap();
+    assert!(third.files.is_empty(), "turn 3 wrote nothing");
+
+    let checkpoints_before: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?")
+            .bind(thread_id)
+            .fetch_one(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(checkpoints_before, 3, "one checkpoint per turn");
+
+    fixture
+        .state
+        .agents
+        .rewind_to_turn(thread_id, &second_message, &fixture.user)
+        .await
+        .unwrap();
+
+    // Turn 2's work stays; turn 3's file is gone.
+    assert!(
+        worktree.join("a.txt").is_file(),
+        "turn 2's checkpoint has a.txt"
+    );
+    assert!(
+        !worktree.join("b.txt").exists(),
+        "b.txt was created after the checkpoint"
+    );
+    // The log now ends before turn 2: only one turn_started remains.
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM events WHERE thread_id = ? AND kind = 'turn_started'",
+    )
+    .bind(thread_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining, 1, "the rewound turn and its successor are gone");
+    // Its own checkpoint row went with it, and the earlier one stayed.
+    let checkpoints: Vec<String> =
+        sqlx::query_scalar("SELECT turn_id FROM checkpoints WHERE thread_id = ?")
+            .bind(thread_id)
+            .fetch_all(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(checkpoints.len(), 1);
+    assert_ne!(checkpoints[0], second_turn);
+    // The next prompt must start a new conversation, not resume the discarded one.
+    let session: Option<String> =
+        sqlx::query_scalar("SELECT session_id FROM agent_bindings WHERE thread_id = ?")
+            .bind(thread_id)
+            .fetch_one(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert!(session.is_none(), "the ACP session was cleared");
+}
+
+/// The thread's permission mode reaches the agent itself: at launch, and again
+/// when it changes, so a long turn stops asking for what is already allowed.
+#[tokio::test]
+async fn a_permission_mode_is_applied_to_the_agent() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    let journal = fixture.state.config.data_dir.join("journal.log");
+    set_permission_mode(&fixture, thread_id, Some("full_access")).await;
+
+    fixture
+        .state
+        .agents
+        .ensure_started(thread_id)
+        .await
+        .unwrap();
+    let launched = std::fs::read_to_string(&journal).unwrap_or_default();
+    assert!(
+        launched.contains("session/set_mode") && launched.contains("agent-full-access"),
+        "the codex profile maps full access to agent-full-access:\n{launched}"
+    );
+
+    let changed = fixture
+        .state
+        .agents
+        .set_permission_mode(thread_id, threadbase_shared::PermissionMode::Supervised)
+        .await
+        .unwrap();
+    assert!(changed, "a live session exists");
+    let after = std::fs::read_to_string(&journal).unwrap_or_default();
+    assert!(
+        after.contains("\"agent\""),
+        "supervised maps to the agent mode:\n{after}"
+    );
+}
+
+/// An MCP tool call reaches the same code paths a click does, and leaves a line
+/// in the transcript so nobody wonders where the turn came from.
+#[tokio::test]
+async fn an_mcp_token_can_start_a_turn_and_leaves_a_trace() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    let principal = threadbase_server::mcp::Principal {
+        user: fixture.user.clone(),
+        scopes: vec![
+            threadbase_shared::McpScope::Read,
+            threadbase_shared::McpScope::Write,
+        ],
+        label: "test client".to_owned(),
+    };
+    let call = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "thread_prompt",
+            "arguments": { "thread_id": thread_id, "text": "stream" }
+        }
+    });
+    let reply = threadbase_server::mcp::handle(&fixture.state, &principal, &call)
+        .await
+        .expect("a call with an id gets a reply");
+    let text = reply["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    assert!(
+        reply["result"]["isError"] == false,
+        "the prompt was accepted: {reply}"
+    );
+    assert!(
+        !parsed["delivery"].is_null(),
+        "delivery is reported: {text}"
+    );
+
+    wait_for(&fixture.state.pool, thread_id, |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    })
+    .await;
+    let notice: String = sqlx::query_scalar(
+        "SELECT payload_json FROM events WHERE thread_id = ? AND kind = 'system_notice'
+          ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(thread_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert!(
+        notice.contains("through MCP") && notice.contains("test client"),
+        "the transcript names the client: {notice}"
+    );
 }

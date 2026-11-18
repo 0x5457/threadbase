@@ -34,6 +34,8 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::routes_fs::router())
         .merge(crate::routes_skills::router())
         .merge(crate::routes_terminal::router())
+        .merge(crate::routes_guest::router(state.config.guest_links))
+        .merge(crate::routes_mcp::router(state.config.mcp))
         .merge(crate::sessions::router())
         .route("/api/health", get(health))
         .route("/ws", get(crate::ws::handler))

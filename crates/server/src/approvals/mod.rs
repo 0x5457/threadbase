@@ -15,7 +15,7 @@ use threadbase_core::state::{
 };
 use threadbase_shared::{
     now_ms, Actor, ApiError, ApprovalDecision, ApprovalDto, ApprovalKind, ApprovalOption,
-    ApprovalScope, ApprovalStatus, ThreadEvent, ToolCallId, UserBrief,
+    ApprovalScope, ApprovalStatus, PermissionMode, ThreadEvent, ToolCallId, UserBrief,
 };
 
 #[derive(Debug, FromRow)]
@@ -176,7 +176,8 @@ pub async fn transition(
 pub struct Decision<'a> {
     pub decision: ApprovalDecision,
     pub scope: Option<&'a str>,
-    pub decided_by: &'a str,
+    /// `None` when a policy decided, not a person.
+    pub decided_by: Option<&'a str>,
     pub decided_at: i64,
     pub note: Option<&'a str>,
 }
@@ -230,6 +231,9 @@ pub async fn create(
     actor: Actor,
     meta: EventMeta,
 ) -> Result<ApprovalDto, ServerError> {
+    // A request for a person must never stay in a shelf: snoozing a running
+    // turn is legal, and the moment it asks something it belongs on screen.
+    crate::threads::wake(pool, projection, &approval.thread_id).await?;
     insert(pool, &approval).await?;
     let dto = to_dto(load(pool, &approval.id).await?);
     events
@@ -289,7 +293,7 @@ pub async fn decide(
         &Decision {
             decision,
             scope: scope.as_deref(),
-            decided_by: user.user.id.as_str(),
+            decided_by: Some(user.user.id.as_str()),
             decided_at: now,
             note,
         },
@@ -366,23 +370,57 @@ async fn resolve_scope(
     Ok(scope)
 }
 
+/// Why a request did not need a person.
+///
+/// A standing rule is a deliberate "always this" from one user and is recorded
+/// as their decision. A mode is the thread's posture and is recorded as the
+/// system's, so the transcript never claims a person approved something they
+/// never saw.
+#[derive(Debug, Clone)]
+pub enum AutoApproval {
+    Rule(MatchedRule),
+    Mode(PermissionMode),
+}
+
 pub async fn auto_allow(
     pool: &SqlitePool,
     projection: &Projection,
     events: &EventStore,
     approval_id: &str,
-    rule: &MatchedRule,
+    reason: &AutoApproval,
 ) -> Result<ApprovalDto, ServerError> {
     let row = load(pool, approval_id).await?;
     if row.status != "pending" {
         return Ok(to_dto(row));
     }
-    let owner = crate::auth::load_user_by_id(pool, &rule.created_by)
-        .await?
-        .ok_or_else(|| ServerError(ApiError::not_found("rule owner not found")))?;
-    let (decision, scope) = match rule.scope {
-        ApprovalScope::Thread => (ApprovalDecision::AllowThread, "thread"),
-        _ => (ApprovalDecision::AllowSession, "session"),
+    let (decision, scope, scope_dto, decided_by, note) = match reason {
+        AutoApproval::Rule(rule) => {
+            let decision = match rule.scope {
+                ApprovalScope::Thread => ApprovalDecision::AllowThread,
+                _ => ApprovalDecision::AllowSession,
+            };
+            let scope = match rule.scope {
+                ApprovalScope::Thread => "thread",
+                _ => "session",
+            };
+            (
+                decision,
+                Some(scope),
+                Some(rule.scope),
+                Some(rule.created_by.clone()),
+                "matched standing rule",
+            )
+        }
+        AutoApproval::Mode(mode) => (
+            ApprovalDecision::AllowOnce,
+            Some("once"),
+            None,
+            None,
+            match mode {
+                PermissionMode::AutoEdit => "allowed by auto-accept edits",
+                _ => "allowed by full access",
+            },
+        ),
     };
     apply_decision(
         pool,
@@ -391,15 +429,20 @@ pub async fn auto_allow(
         approval_id,
         &Decision {
             decision,
-            scope: Some(scope),
-            decided_by: &rule.created_by,
+            scope,
+            decided_by: decided_by.as_deref(),
             decided_at: now_ms(),
-            note: Some("matched standing rule"),
+            note: Some(note),
         },
     )
     .await?;
     crate::inbox::clear_for_approval(pool, projection, approval_id).await?;
-    let decided_by = UserBrief::from_user(&owner);
+    let decider = match decided_by.as_deref() {
+        Some(id) => crate::auth::load_user_by_id(pool, id)
+            .await?
+            .map(|user| UserBrief::from_user(&user)),
+        None => None,
+    };
     events
         .append(
             &row.thread_id.clone().into(),
@@ -407,8 +450,8 @@ pub async fn auto_allow(
             ThreadEvent::PermissionResolved {
                 approval_id: approval_id.to_owned().into(),
                 decision,
-                scope: Some(rule.scope),
-                decided_by: Some(decided_by.clone()),
+                scope: scope_dto,
+                decided_by: decider.clone(),
             },
             EventMeta {
                 tool_call_id: row.tool_call_id.clone(),
@@ -419,16 +462,16 @@ pub async fn auto_allow(
         .await?;
     crate::auth::audit(
         pool,
-        Some(rule.created_by.as_str()),
+        decided_by.as_deref(),
         "approval.auto_allowed",
         Some("approval"),
         Some(approval_id),
-        Some(scope),
+        scope,
         None,
     )
     .await;
     let mut resolved = to_dto(load(pool, approval_id).await?);
-    resolved.decided_by = Some(decided_by);
+    resolved.decided_by = decider;
     Ok(resolved)
 }
 

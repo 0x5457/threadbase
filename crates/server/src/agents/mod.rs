@@ -28,12 +28,14 @@ use threadbase_agent::{
     all_profiles, find_profile, AcpHarness, Harness, LaunchCtx, NewSession, PromptPart, SessionId,
     SteeringOutcome, TurnHandle,
 };
+use threadbase_core::permissions::PermissionPolicy;
 use threadbase_core::state::{ApprovalAction, SubagentMachine, ThreadAction};
 use threadbase_core::{resolve_delivery, DeliveryContext, SendAction};
 use threadbase_shared::api::{DeliveryMode, SendMessageResponse};
 use threadbase_shared::{
     now_ms, Actor, ApiError, ApprovalDecision as SharedDecision, AttachmentDto, Delivery,
-    ElicitationAction, MessageId, ThreadEvent, ThreadId, ThreadStatus, TurnId, UserBrief,
+    ElicitationAction, MessageId, PermissionMode, ThreadEvent, ThreadId, ThreadStatus, TurnId,
+    UserBrief,
 };
 use threadbase_workspace::git;
 use tokio::sync::{mpsc, Mutex, OwnedSemaphorePermit, Semaphore};
@@ -62,6 +64,8 @@ pub(crate) struct Inner {
     /// session's turn slot, so it is released exactly when the turn ends.
     pub(crate) turn_slots: Arc<Semaphore>,
     pub(crate) idle_session_ms: i64,
+    /// Permission ceiling and default, applied when a request comes in.
+    pub(crate) policy: PermissionPolicy,
 }
 
 /// Everything needed to start one turn, whichever input path produced it.
@@ -85,6 +89,7 @@ impl AgentManager {
         presence: PresenceHub,
         idle_session_seconds: i64,
         max_active_turns: usize,
+        policy: PermissionPolicy,
     ) -> Self {
         let (queue_tx, queue_rx) = mpsc::unbounded_channel::<String>();
         let capacity = if max_active_turns == 0 {
@@ -103,6 +108,7 @@ impl AgentManager {
             presence,
             turn_slots: Arc::new(Semaphore::new(capacity)),
             idle_session_ms: idle_session_seconds.saturating_mul(1000),
+            policy,
         });
         let manager = Self { inner };
         queue_worker::spawn(manager.clone(), queue_rx);
@@ -314,6 +320,16 @@ impl AgentManager {
         lifecycle::rewind_and_edit(self, thread_id, message_id, text, user).await
     }
 
+    /// Discard one turn and every turn after it, files included.
+    pub async fn rewind_to_turn(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+        user: &CurrentUser,
+    ) -> Result<(), ServerError> {
+        lifecycle::rewind_to_turn(self, thread_id, message_id, user).await
+    }
+
     /// Stop the current adapter on purpose. The closing flag keeps the exit
     /// monitor from treating this as a crash and reviving the session.
     async fn shutdown_session(&self, thread_id: &str) {
@@ -450,6 +466,8 @@ impl AgentManager {
         });
         let mut harness = Box::new(AcpHarness::new(profile));
         let events = harness.events();
+        let permission_mode =
+            threads::permission_mode(&self.inner.pool, thread_id, &self.inner.policy).await?;
         let ctx = LaunchCtx {
             thread_id: thread_id.to_owned(),
             cwd: PathBuf::from(&binding.cwd),
@@ -457,35 +475,37 @@ impl AgentManager {
             model: row.model.clone(),
             effort: row.effort.clone(),
             subagents: true,
+            permission_mode: Some(permission_mode),
             env: adapter_env(&binding.agent),
         };
         let capabilities = match harness.start(ctx).await {
             Ok(capabilities) => capabilities,
             Err(error) => {
-                lifecycle::mark_failed(
-                    &self.inner.pool,
-                    &self.inner.projection,
-                    &self.inner.events,
-                    thread_id,
-                    &error.to_string(),
-                )
-                .await?;
-                return Err(ServerError::internal(format!(
-                    "agent failed to start: {error}"
-                )));
+                let failure = ServerError::internal(format!("agent failed to start: {error}"));
+                report_start_failure(&self.inner, thread_id, &failure).await?;
+                return Err(failure);
             }
         };
         let mut reset_context = false;
-        let session_id = match binding.session_id.as_deref() {
+        let session_open = match binding.session_id.as_deref() {
             Some(saved) => match harness.load_session(&SessionId(saved.to_owned())).await {
-                Ok(()) => Some(SessionId(saved.to_owned())),
+                Ok(()) => Ok(Some(SessionId(saved.to_owned()))),
                 Err(error) => {
                     tracing::warn!(thread_id, session_id = saved, %error, "could not resume agent session");
                     reset_context = true;
-                    new_session(&mut *harness, &binding.cwd).await?
+                    new_session(&mut *harness, &binding.cwd).await
                 }
             },
-            None => new_session(&mut *harness, &binding.cwd).await?,
+            None => new_session(&mut *harness, &binding.cwd).await,
+        };
+        // A send does not wait for startup any more, so a failure that only
+        // reached the log would leave the message queued with no reason shown.
+        let session_id = match session_open {
+            Ok(session_id) => session_id,
+            Err(failure) => {
+                report_start_failure(&self.inner, thread_id, &failure).await?;
+                return Err(failure);
+            }
         };
         if let Some(session_id) = session_id.as_ref() {
             bindings::set_session(&self.inner.pool, thread_id, session_id.0.as_str()).await?;
@@ -549,6 +569,12 @@ impl AgentManager {
     }
 
     /// Send a message preserving the full list of draft-block authors.
+    ///
+    /// A cold thread does not launch its adapter inside the request: a process
+    /// start takes about a second and nothing about the send needs to wait for
+    /// it. The input is stored first and the adapter starts in the background,
+    /// the same handoff thread creation uses. A live session takes the prompt
+    /// immediately.
     pub async fn send_with_authors(
         &self,
         thread_id: &str,
@@ -559,14 +585,26 @@ impl AgentManager {
         attachments: &[AttachmentDto],
     ) -> Result<SendMessageResponse, ServerError> {
         watchers::watch(&self.inner.pool, thread_id, user.user.id.as_str()).await?;
-        self.ensure_started(thread_id).await?;
-        let session = self.session(thread_id).await?;
+        let status = threads::status(&self.inner.pool, thread_id).await?;
+        if status == ThreadStatus::Archived {
+            return Err(ServerError(ApiError::conflict(
+                "this thread is archived; unarchive it before sending",
+            )));
+        }
+        // A message is a reason to come back. Wake first so the new turn is
+        // visible in the active list while it runs, instead of disappearing into
+        // the shelf the thread was parked in.
+        threads::wake(&self.inner.pool, &self.inner.projection, thread_id).await?;
+        let Some(session) = self.inner.live_session(thread_id).await else {
+            return self
+                .queue_and_start(thread_id, user, text, authors, attachments)
+                .await;
+        };
         if !attachments.is_empty() && !session.capabilities.images {
             return Err(ServerError(ApiError::validation(
                 "this agent does not accept images",
             )));
         }
-        let status = threads::status(&self.inner.pool, thread_id).await?;
         let running = session
             .observe_running(status == ThreadStatus::Running)
             .await;
@@ -766,6 +804,55 @@ impl AgentManager {
         authors: &[UserBrief],
         attachments: &[AttachmentDto],
     ) -> Result<SendMessageResponse, ServerError> {
+        let position = self
+            .enqueue_input(thread_id, user, text, authors, attachments)
+            .await?;
+        // A thread that is idle must not wait for a turn end that will never
+        // come; the worker no-ops while a turn is running.
+        self.kick_queue(thread_id);
+        Ok(queued_response(position))
+    }
+
+    /// Store input for a thread with no live adapter and start that adapter in
+    /// the background. The worker only runs it once a session exists, so a
+    /// failed start leaves the message in the queue instead of losing it behind
+    /// a request that already returned.
+    async fn queue_and_start(
+        &self,
+        thread_id: &str,
+        user: &CurrentUser,
+        text: &str,
+        authors: &[UserBrief],
+        attachments: &[AttachmentDto],
+    ) -> Result<SendMessageResponse, ServerError> {
+        let position = self
+            .enqueue_input(thread_id, user, text, authors, attachments)
+            .await?;
+        let manager = self.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::spawn(async move {
+            match manager.ensure_started(&thread_id).await {
+                Ok(()) => manager.kick_queue(&thread_id),
+                Err(error) => tracing::warn!(
+                    %error,
+                    thread_id,
+                    "agent startup failed; the message stays queued"
+                ),
+            }
+        });
+        Ok(queued_response(position))
+    }
+
+    /// Persist one queued input and publish the new queue snapshot. Kicking is
+    /// the caller's job: a cold thread must start its adapter first.
+    async fn enqueue_input(
+        &self,
+        thread_id: &str,
+        user: &CurrentUser,
+        text: &str,
+        authors: &[UserBrief],
+        attachments: &[AttachmentDto],
+    ) -> Result<u32, ServerError> {
         let attachments_json = if attachments.is_empty() {
             None
         } else {
@@ -781,14 +868,7 @@ impl AgentManager {
         )
         .await?;
         let _ = queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
-        // A thread that is idle must not wait for a turn end that will never
-        // come; the worker no-ops while a turn is running.
-        self.kick_queue(thread_id);
-        Ok(SendMessageResponse {
-            delivery: Delivery::Queued,
-            queue_position: Some(position),
-            message_id: None,
-        })
+        Ok(position)
     }
 
     async fn start_turn(
@@ -857,6 +937,30 @@ impl AgentManager {
             .await
             .map_err(mapping::agent_error)?;
         Ok(true)
+    }
+
+    /// Push a permission mode to the running agent so it stops asking for what
+    /// the thread already allows.
+    ///
+    /// `Unavailable` is the normal answer for an adapter without provider-side
+    /// modes: the server's policy still answers every request, so this is not an
+    /// error. `Ok(false)` means there was no live session to tell.
+    pub async fn set_permission_mode(
+        &self,
+        thread_id: &str,
+        mode: PermissionMode,
+    ) -> Result<bool, ServerError> {
+        let Some(session) = self.inner.session(thread_id).await else {
+            return Ok(false);
+        };
+        if session.is_stopped() {
+            return Ok(false);
+        }
+        let mut harness = session.harness.lock().await;
+        match harness.set_permission_mode(mode).await {
+            Ok(()) | Err(threadbase_agent::HarnessError::Unavailable(_)) => Ok(true),
+            Err(error) => Err(mapping::agent_error(error)),
+        }
     }
 
     pub async fn cancel(&self, thread_id: &str) -> Result<(), ServerError> {
@@ -1034,6 +1138,14 @@ impl Inner {
         self.sessions.lock().await.get(thread_id).cloned()
     }
 
+    /// The session only while its adapter can still take ACP requests. A
+    /// stopped one is left for `ensure_started` to replace.
+    pub(crate) async fn live_session(&self, thread_id: &str) -> Option<Arc<Session>> {
+        self.session(thread_id)
+            .await
+            .filter(|session| !session.is_stopped())
+    }
+
     /// Drop a session only when it is still the current one; a restart may
     /// have installed a replacement already.
     pub(crate) async fn remove_session(&self, thread_id: &str, session: &Arc<Session>) {
@@ -1100,11 +1212,14 @@ async fn prepare_and_prompt(
     }
     // Git, title and event preparation happens before any harness lock.
     lifecycle::auto_title(&inner.pool, &inner.events, start.thread_id, start.prompt).await;
-    snapshot_worktree(inner, start.thread_id).await;
     // Read the attached images up front: a missing file must fail before the
-    // turn is recorded, not leave a turn with no prompt behind.
+    // turn is recorded, not leave a turn with no prompt behind — and before the
+    // snapshot, so a turn that never starts leaves no checkpoint behind either.
     let image_parts = crate::attachments::prompt_parts(&inner.pool, start.attachments).await?;
+    // The snapshot is the state *before* this turn, so it is named after the
+    // turn it will undo; that mapping is what rewind uses, not a timestamp.
     let turn_id = TurnId::new();
+    snapshot_worktree(inner, start.thread_id, turn_id.as_str()).await;
     let message_id = MessageId::new();
     inner
         .events
@@ -1202,7 +1317,10 @@ async fn prepare_and_prompt(
     Ok((handle, message_id))
 }
 
-async fn snapshot_worktree(inner: &Inner, thread_id: &str) {
+/// Capture the worktree before a turn runs and remember which turn it belongs
+/// to. A failure (no worktree, git error) is not fatal: the turn still runs, and
+/// a later rewind reports that this turn has no checkpoint instead of guessing.
+async fn snapshot_worktree(inner: &Inner, thread_id: &str, turn_id: &str) {
     let Some(worktree) = threads::load_row(&inner.pool, thread_id)
         .await
         .ok()
@@ -1215,12 +1333,30 @@ async fn snapshot_worktree(inner: &Inner, thread_id: &str) {
     else {
         return;
     };
+    let _ = sqlx::query(
+        "INSERT INTO checkpoints(thread_id, turn_id, sha, created_at) VALUES(?, ?, ?, ?)
+         ON CONFLICT(thread_id, turn_id) DO UPDATE SET sha = excluded.sha",
+    )
+    .bind(thread_id)
+    .bind(turn_id)
+    .bind(&snapshot)
+    .bind(now_ms())
+    .execute(&inner.pool)
+    .await;
     let _ = sqlx::query("UPDATE threads SET last_turn_sha = ?, updated_at = ? WHERE id = ?")
         .bind(snapshot)
         .bind(now_ms())
         .bind(thread_id)
         .execute(&inner.pool)
         .await;
+}
+
+fn queued_response(position: u32) -> SendMessageResponse {
+    SendMessageResponse {
+        delivery: Delivery::Queued,
+        queue_position: Some(position),
+        message_id: None,
+    }
 }
 
 async fn enqueue(
@@ -1242,6 +1378,24 @@ async fn enqueue(
             attachments_json,
             created_at: now_ms(),
         },
+    )
+    .await
+}
+
+/// Record a failed adapter start on the thread itself. A cold send starts its
+/// adapter in the background, so the thread log is the only place the sender can
+/// learn why the message did not run.
+async fn report_start_failure(
+    inner: &Inner,
+    thread_id: &str,
+    error: &ServerError,
+) -> Result<(), ServerError> {
+    lifecycle::mark_failed(
+        &inner.pool,
+        &inner.projection,
+        &inner.events,
+        thread_id,
+        &error.0.message,
     )
     .await
 }

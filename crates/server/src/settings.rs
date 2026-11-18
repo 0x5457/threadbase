@@ -4,7 +4,35 @@ use crate::auth::CurrentUser;
 use crate::error::ServerError;
 use sqlx::SqlitePool;
 use threadbase_shared::api::SettingsPatch;
-use threadbase_shared::{SettingsDto, StateResponse};
+use threadbase_shared::{PermissionPolicyDto, SettingsDto, StateResponse};
+
+/// What this instance allows, as the state payload reports it.
+///
+/// These come from configuration, not from the user's settings, but the client
+/// reads them together with the settings and both routes answer with the same
+/// envelope. Grouping them keeps "which features exist here" in one value instead
+/// of six positional booleans.
+#[derive(Debug, Clone, Copy)]
+pub struct Instance {
+    pub terminal: bool,
+    pub terminal_host: bool,
+    pub guest_links: bool,
+    pub mcp: bool,
+    pub policy: PermissionPolicyDto,
+}
+
+impl Instance {
+    #[must_use]
+    pub fn of(config: &crate::config::Config, policy: PermissionPolicyDto) -> Self {
+        Self {
+            terminal: config.terminal,
+            terminal_host: config.terminal_host,
+            guest_links: config.guest_links,
+            mcp: config.mcp,
+            policy,
+        }
+    }
+}
 
 pub async fn load(pool: &SqlitePool, user: &CurrentUser) -> Result<SettingsDto, ServerError> {
     let stored: String = sqlx::query_scalar("SELECT settings_json FROM users WHERE id = ?")
@@ -20,8 +48,7 @@ pub async fn update(
     pool: &SqlitePool,
     user: &CurrentUser,
     patch: SettingsPatch,
-    terminal: bool,
-    terminal_host: bool,
+    instance: Instance,
 ) -> Result<StateResponse, ServerError> {
     let mut settings = load(pool, user).await?;
     if let Some(theme) = patch.theme {
@@ -87,7 +114,10 @@ pub async fn update(
     Ok(StateResponse {
         settings,
         user: refreshed,
-        terminal,
-        terminal_host,
+        permissions: instance.policy,
+        terminal: instance.terminal,
+        terminal_host: instance.terminal_host,
+        guest_links: instance.guest_links,
+        mcp: instance.mcp,
     })
 }

@@ -30,7 +30,7 @@ pub struct Session {
 }
 
 /// 256 random bits from the operating system CSPRNG, hex-encoded.
-fn new_token() -> String {
+pub(crate) fn new_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rngs::SysRng
         .try_fill_bytes(&mut bytes)

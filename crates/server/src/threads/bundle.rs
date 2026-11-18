@@ -7,6 +7,7 @@ use crate::error::ServerError;
 use crate::projects;
 use crate::{queue, subagents};
 use sqlx::SqlitePool;
+use threadbase_core::permissions::PermissionPolicy;
 use threadbase_shared::{ChangeStats, ChangesDto, ThreadBundleDto};
 
 pub async fn bundle(
@@ -14,10 +15,11 @@ pub async fn bundle(
     thread_id: &str,
     user: &CurrentUser,
     include_changes: bool,
+    policy: &PermissionPolicy,
 ) -> Result<ThreadBundleDto, ServerError> {
     let role = authz::require_read(pool, thread_id, user).await?;
     let row = load_row(pool, thread_id).await?;
-    let thread = dto(pool, &row).await?;
+    let thread = dto(pool, &row, policy).await?;
     let project = projects::get(pool, &row.project_id).await?;
     let subagents = subagents::list(pool, thread_id).await?;
     let approvals = crate::approvals::list_pending_for_thread(pool, thread_id).await?;

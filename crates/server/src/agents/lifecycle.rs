@@ -64,6 +64,32 @@ pub(crate) async fn rewind_and_edit(
     let attachments = attachments.clone();
     let cutoff = turn.seq;
 
+    discard_tail(manager, thread_id, cutoff, turn.ts, status, None).await?;
+
+    let author = user_brief(user);
+    manager
+        .send_with_authors(thread_id, user, text, None, &[author], &attachments)
+        .await
+}
+
+/// Undo everything from `cutoff` onward, and optionally put the worktree back.
+///
+/// One implementation for the two rewinds: editing a message discards the tail
+/// and sends a replacement; rewinding to a turn discards the tail and resets the
+/// files to that turn's checkpoint. The order matters — the adapter is stopped
+/// first so it cannot write while the worktree moves, then the worktree is
+/// reset, then the log is cut. A failure to reset therefore leaves the log
+/// intact: the thread can be restarted and nothing claims files that are not
+/// there.
+async fn discard_tail(
+    manager: &AgentManager,
+    thread_id: &str,
+    cutoff: u64,
+    since_ts: i64,
+    status: ThreadStatus,
+    reset_to: Option<&str>,
+) -> Result<(), ServerError> {
+    let inner = &manager.inner;
     // Serialize against `ensure_started` (queue worker, concurrent sends).
     // Without this a worker that already read the old queue head could start
     // an adapter between our shutdown and the truncation, then send the
@@ -96,6 +122,19 @@ pub(crate) async fn rewind_and_edit(
         // cut. The timeout keeps a wedged adapter from blocking edit.
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), done.notified()).await;
     }
+    // The worktree moves while nothing can write to it. Doing this before the
+    // log is cut means a git failure leaves the transcript intact: the thread
+    // can be restarted, and no row claims files that were never restored.
+    if let Some(reference) = reset_to {
+        let row = threads::load_row(&inner.pool, thread_id).await?;
+        crate::diff::reset_worktree(&row, reference).await?;
+        sqlx::query("UPDATE threads SET last_turn_sha = ?, updated_at = ? WHERE id = ?")
+            .bind(reference)
+            .bind(now_ms())
+            .bind(thread_id)
+            .execute(&inner.pool)
+            .await?;
+    }
     queue::supersede(&inner.pool, &inner.projection, thread_id, None).await?;
     cancel_pending_approvals(inner, thread_id).await;
     cancel_pending_elicitations(inner, thread_id).await;
@@ -109,8 +148,8 @@ pub(crate) async fn rewind_and_edit(
         "DELETE FROM subagents WHERE thread_id = ? AND (created_at >= ? OR updated_at >= ?)",
     )
     .bind(thread_id)
-    .bind(turn.ts)
-    .bind(turn.ts)
+    .bind(since_ts)
+    .bind(since_ts)
     .execute(&inner.pool)
     .await?;
     sqlx::query("UPDATE threads SET current_turn_id = NULL, updated_at = ? WHERE id = ?")
@@ -124,13 +163,13 @@ pub(crate) async fn rewind_and_edit(
         "SELECT DISTINCT user_id FROM inbox WHERE thread_id = ? AND created_at >= ?",
     )
     .bind(thread_id)
-    .bind(turn.ts)
+    .bind(since_ts)
     .fetch_all(&inner.pool)
     .await
     .unwrap_or_default();
     sqlx::query("DELETE FROM inbox WHERE thread_id = ? AND created_at >= ?")
         .bind(thread_id)
-        .bind(turn.ts)
+        .bind(since_ts)
         .execute(&inner.pool)
         .await?;
     for user_id in inbox_users {
@@ -146,11 +185,106 @@ pub(crate) async fn rewind_and_edit(
     // list; the events before the cut still describe the old queue.
     let _ = crate::queue::publish(&inner.pool, &inner.events, thread_id).await;
     drop(start_guard);
+    Ok(())
+}
 
-    let author = user_brief(user);
-    manager
-        .send_with_authors(thread_id, user, text, None, &[author], &attachments)
-        .await
+/// Put the worktree and the log back to the state before a turn ran.
+///
+/// The checkpoint is the snapshot taken immediately before that turn started, so
+/// resetting to it undoes exactly that turn — and every later one, because the
+/// log is cut from the same point.
+pub(crate) async fn rewind_to_turn(
+    manager: &AgentManager,
+    thread_id: &str,
+    message_id: &str,
+    user: &CurrentUser,
+) -> Result<(), ServerError> {
+    let inner = &manager.inner;
+    if crate::setup::busy(&inner.pool, thread_id).await {
+        return Err(ServerError(ApiError::conflict(
+            "worktree setup is still running; wait for it to finish",
+        )));
+    }
+    let status = threads::status(&inner.pool, thread_id).await?;
+    match status {
+        ThreadStatus::Archived => {
+            return Err(ServerError(ApiError::conflict(
+                "this thread is archived; unarchive it before rewinding",
+            )));
+        }
+        ThreadStatus::Preparing => {
+            return Err(ServerError(ApiError::conflict(
+                "the agent is still starting; try again in a moment",
+            )));
+        }
+        _ => {}
+    }
+    let turn = inner
+        .events
+        .turn_started(&ThreadId::from(thread_id.to_owned()), message_id)
+        .await?
+        .ok_or_else(|| {
+            ServerError(ApiError::not_found(
+                "message not found or it is not a user prompt",
+            ))
+        })?;
+    let ThreadEvent::TurnStarted { turn_id, .. } = &turn.payload else {
+        return Err(ServerError::internal("turn_started payload was not a turn"));
+    };
+    let turn_id = turn_id.as_str();
+    // No checkpoint means the worktree could not be snapshotted (no worktree, or
+    // git refused). Rewinding the conversation while leaving the files behind is
+    // the one outcome that makes the transcript lie, so refuse instead.
+    let sha: Option<String> =
+        sqlx::query_scalar("SELECT sha FROM checkpoints WHERE thread_id = ? AND turn_id = ?")
+            .bind(thread_id)
+            .bind(turn_id)
+            .fetch_optional(&inner.pool)
+            .await?;
+    let Some(sha) = sha else {
+        return Err(ServerError(ApiError::conflict(
+            "this turn has no worktree checkpoint, so its file changes cannot be undone",
+        )));
+    };
+
+    // Read the cutoff before anything deletes rows: the checkpoint belonged to a
+    // turn that is about to stop existing, and so does every later one.
+    let discarded_from: i64 = sqlx::query_scalar(
+        "SELECT created_at FROM checkpoints WHERE thread_id = ? AND turn_id = ?",
+    )
+    .bind(thread_id)
+    .bind(turn_id)
+    .fetch_one(&inner.pool)
+    .await?;
+
+    discard_tail(manager, thread_id, turn.seq, turn.ts, status, Some(&sha)).await?;
+
+    sqlx::query("DELETE FROM checkpoints WHERE thread_id = ? AND created_at >= ?")
+        .bind(thread_id)
+        .bind(discarded_from)
+        .execute(&inner.pool)
+        .await?;
+
+    // The transcript now ends before this turn, so say what happened to the
+    // files: nothing else in the log would.
+    let who = user_brief(user);
+    let _ = inner
+        .events
+        .append(
+            &ThreadId::from(thread_id.to_owned()),
+            Actor::system(),
+            ThreadEvent::SystemNotice {
+                level: "info".to_owned(),
+                message: format!(
+                    "{} rewound this thread to before that turn: files were reset to the checkpoint and the agent's context was cleared.",
+                    who.display_name
+                ),
+            },
+            EventMeta::default(),
+        )
+        .await;
+    inner.projection.publish(thread_id).await;
+    Ok(())
 }
 
 /// Drop comments whose anchor no longer exists after a rewind. File and diff

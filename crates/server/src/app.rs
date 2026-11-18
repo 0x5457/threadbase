@@ -10,6 +10,7 @@ use crate::push::PushHub;
 use crate::terminal::TerminalHub;
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use threadbase_core::permissions::PermissionPolicy;
 use threadbase_shared::now_ms;
 use tokio::sync::broadcast;
 
@@ -25,6 +26,9 @@ pub struct AppState {
     pub push: Arc<PushHub>,
     pub terminal: Arc<TerminalHub>,
     pub started_at: i64,
+    /// Permission defaults and ceiling, resolved into every thread's DTO and
+    /// enforced on every agent permission request.
+    pub policy: PermissionPolicy,
 }
 
 impl AppState {
@@ -35,6 +39,7 @@ impl AppState {
                 "THREADBASE_TERMINAL_HOST is on: every member can attach to the host's tmux sessions"
             );
         }
+        let policy = PermissionPolicy::new(config.permission_mode, config.max_permission_mode);
         let events = EventStore::new(pool.clone());
         let (state_tx, _) = broadcast::channel(256);
         let projection = Projection::new(pool.clone(), state_tx);
@@ -52,6 +57,7 @@ impl AppState {
             presence.clone(),
             config.idle_session_seconds,
             config.max_active_turns,
+            policy,
         );
         Self {
             agents,
@@ -63,6 +69,7 @@ impl AppState {
             presence,
             started_at: now_ms(),
             config: Arc::new(config),
+            policy,
             pool,
         }
     }

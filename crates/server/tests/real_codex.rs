@@ -14,6 +14,10 @@ use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest};
 use threadbase_shared::ThreadEvent;
 use tokio::time::{sleep, Duration};
 
+fn policy() -> threadbase_core::permissions::PermissionPolicy {
+    threadbase_core::permissions::PermissionPolicy::default()
+}
+
 fn init_repo(path: &Path) {
     for args in [
         vec!["init", "-b", "main"],
@@ -122,6 +126,7 @@ async fn real_codex_streams_a_reply() {
             initial_prompt: None,
             worktree: None,
         },
+        &policy(),
     )
     .await
     .unwrap();

@@ -199,6 +199,79 @@ fn stats_of(files: &BTreeMap<String, FileChangeDto>) -> ChangeStats {
 
 /// A commit's own changes: its first parent to the commit. Root commits diff
 /// against the empty tree so the same code path serves every entry.
+/// The two refs a turn spans: the checkpoint taken before it ran, and the
+/// checkpoint after it (the worktree for the newest turn).
+///
+/// Both ends come from the `checkpoints` table, so the span is a fact about this
+/// worktree rather than a guess from commit times.
+pub async fn turn_span(
+    pool: &SqlitePool,
+    row: &ThreadRow,
+    turn_id: &str,
+) -> Result<(String, Option<String>), ServerError> {
+    let start: Option<(String, i64, i64)> = sqlx::query_as(
+        "SELECT sha, created_at, rowid FROM checkpoints WHERE thread_id = ? AND turn_id = ?",
+    )
+    .bind(&row.id)
+    .bind(turn_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((from, created_at, rowid)) = start else {
+        return Err(ServerError(ApiError::conflict(
+            "this turn has no worktree checkpoint",
+        )));
+    };
+    let next: Option<String> = sqlx::query_scalar(
+        "SELECT sha FROM checkpoints
+          WHERE thread_id = ? AND (created_at > ? OR (created_at = ? AND rowid > ?))
+          ORDER BY created_at ASC, rowid ASC LIMIT 1",
+    )
+    .bind(&row.id)
+    .bind(created_at)
+    .bind(created_at)
+    .bind(rowid)
+    .fetch_optional(pool)
+    .await?;
+    Ok((from, next))
+}
+
+/// What one turn changed, from its checkpoint to the next one (or the worktree
+/// when it is the latest turn). Uncommitted edits of the newest turn are
+/// included because the span ends at the worktree.
+pub async fn turn_changes(
+    pool: &SqlitePool,
+    row: &ThreadRow,
+    turn_id: &str,
+) -> Result<ChangesDto, ServerError> {
+    let worktree = worktree(row)?;
+    let (from, to) = turn_span(pool, row, turn_id).await?;
+    let files = collect_files(&worktree, &from, to.as_deref()).await?;
+    let stats = stats_of(&files);
+    let truncated = files.len() > MAX_CHANGE_FILES;
+    Ok(ChangesDto {
+        baseline: BaselineDto {
+            kind: BaselineKind::Turn,
+            commit: Some(from),
+        },
+        base_label: "this turn".to_owned(),
+        files: files.into_values().take(MAX_CHANGE_FILES).collect(),
+        stats,
+        commit: None,
+        truncated,
+    })
+}
+
+pub async fn turn_file_diff(
+    pool: &SqlitePool,
+    row: &ThreadRow,
+    turn_id: &str,
+    path: &str,
+) -> Result<FileDiffDto, ServerError> {
+    let worktree = worktree(row)?;
+    let (from, to) = turn_span(pool, row, turn_id).await?;
+    file_diff_between(&worktree, &from, to.as_deref(), path).await
+}
+
 pub async fn commit_changes(row: &ThreadRow, requested: &str) -> Result<ChangesDto, ServerError> {
     let worktree = worktree(row)?;
     let sha = resolve_commit(&worktree, requested).await?;
@@ -293,17 +366,30 @@ pub async fn file_diff(
 ) -> Result<FileDiffDto, ServerError> {
     let worktree = worktree(row)?;
     let resolved = resolve_baseline(&worktree, row, baseline).await?;
+    file_diff_between(&worktree, &resolved.reference, None, path).await
+}
+
+/// Diff one file between two refs. `to = None` means the worktree, which is the
+/// only case where an untracked file can appear.
+async fn file_diff_between(
+    worktree: &Path,
+    from: &str,
+    to: Option<&str>,
+    path: &str,
+) -> Result<FileDiffDto, ServerError> {
+    let worktree = worktree.to_path_buf();
     let full = ensure_within(&worktree, Path::new(path)).map_err(|_| {
         ServerError(ApiError::new(
             threadbase_shared::ErrorCode::PathOutsideWorkspace,
             "file path is outside the thread worktree",
         ))
     })?;
-    let untracked = git_stdout(&worktree, &["ls-files", "--others", "--exclude-standard"])
-        .await
-        .unwrap_or_default()
-        .lines()
-        .any(|line| line == path);
+    let untracked = to.is_none()
+        && git_stdout(&worktree, &["ls-files", "--others", "--exclude-standard"])
+            .await
+            .unwrap_or_default()
+            .lines()
+            .any(|line| line == path);
     if untracked {
         let content = tokio::fs::read(&full).await.unwrap_or_default();
         return Ok(FileDiffDto {
@@ -314,26 +400,20 @@ pub async fn file_diff(
             hunks: untracked_hunks(path, &content),
         });
     }
-    let patch = git_stdout(
-        &worktree,
-        &[
-            "diff",
-            "--no-color",
-            "--no-ext-diff",
-            "-U3",
-            &resolved.reference,
-            "--",
-            path,
-        ],
-    )
-    .await?;
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff", "-U3", from];
+    if let Some(to) = to {
+        args.push(to);
+    }
+    args.push("--");
+    args.push(path);
+    let patch = git_stdout(&worktree, &args).await?;
     let binary = patch.contains("Binary files") || is_binary_file(&full).await;
     let hunks = if binary {
         Vec::new()
     } else {
         parse_hunks(path, &patch)
     };
-    let status = file_status(&worktree, &resolved.reference, path).await;
+    let status = file_status(&worktree, from, path).await;
     Ok(FileDiffDto {
         path: path.to_owned(),
         old_path: None,
@@ -447,15 +527,24 @@ fn hunk_index_of(hunks: impl IntoIterator<Item = DiffHunkDto>) -> HashMap<String
 /// "revert conversation to cursor" action: it discards every agent edit in
 /// the worktree (tracked and untracked) without touching the project.
 pub async fn revert_to_base(row: &ThreadRow) -> Result<(), ServerError> {
-    let worktree = worktree(row)?;
     let reference = row
         .base_sha
         .clone()
         .unwrap_or_else(|| row.base_branch.clone());
+    reset_worktree(row, &reference).await
+}
+
+/// Hard-reset the thread worktree to `reference` and remove untracked files.
+///
+/// Shared by "revert this thread" and "rewind to a turn": both mean the same
+/// thing to the filesystem, so there is one implementation of "put the worktree
+/// back where it was" and one place that reports why git refused.
+pub async fn reset_worktree(row: &ThreadRow, reference: &str) -> Result<(), ServerError> {
+    let worktree = worktree(row)?;
     let reset = Command::new("git")
         .arg("-C")
         .arg(&worktree)
-        .args(["reset", "--hard", &reference])
+        .args(["reset", "--hard", reference])
         .output()
         .await
         .map_err(|error| ServerError::internal(format!("could not run git reset: {error}")))?;
@@ -712,6 +801,13 @@ async fn resolve_baseline(
                 .clone()
                 .unwrap_or_else(|| "HEAD".to_owned());
             (reference, "Last turn".to_owned())
+        }
+        // A turn span is resolved by the turn endpoints: it needs both ends,
+        // and a `BaselineDto` cannot carry the second one.
+        BaselineKind::Turn => {
+            return Err(ServerError(ApiError::validation(
+                "a turn span is not a single reference; use the turn endpoint",
+            )))
         }
         BaselineKind::Commit => {
             let commit = requested.commit.clone().ok_or_else(|| {
