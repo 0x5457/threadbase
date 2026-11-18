@@ -1,5 +1,9 @@
 # Threadbase
 
+[![CI](https://github.com/0x5457/threadbase/actions/workflows/ci.yml/badge.svg)](https://github.com/0x5457/threadbase/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/0x5457/threadbase)](https://github.com/0x5457/threadbase/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 A shared workbench for coding agents, built for small teams. Local projects
 become threads that the whole team can see: agent conversations, worktree
 diffs, approvals and questions, all in one place. Teammates watch a run live,
@@ -10,7 +14,24 @@ Codex, Claude Code, opencode, pi — through the
 [Agent Client Protocol](https://agentclientprotocol.com), and adds the layer
 they don't have: identity, presence, review, and a shared, ordered event log.
 
-![Threadbase](docs/assets/thread.png)
+<p align="center">
+  <img src="docs/assets/desktop-changes.png" width="920" alt="A Threadbase thread on the desktop: the agent's turn streams on the left while the changes panel reviews the diff it produced">
+</p>
+
+The same workspace on every screen:
+
+<table>
+  <thead>
+    <tr><th>Desktop</th><th>Tablet</th><th>Phone</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><img src="docs/assets/desktop-thread.png" width="360" alt="Threadbase thread view on a desktop"></td>
+      <td><img src="docs/assets/tablet-thread.png" width="220" alt="Threadbase thread view on a tablet"></td>
+      <td><img src="docs/assets/phone-thread.png" width="150" alt="Threadbase thread view on a phone"></td>
+    </tr>
+  </tbody>
+</table>
 
 ## Highlights
 
