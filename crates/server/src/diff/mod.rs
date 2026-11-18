@@ -197,13 +197,8 @@ fn stats_of(files: &BTreeMap<String, FileChangeDto>) -> ChangeStats {
     }
 }
 
-/// A commit's own changes: its first parent to the commit. Root commits diff
-/// against the empty tree so the same code path serves every entry.
-/// The two refs a turn spans: the checkpoint taken before it ran, and the
-/// checkpoint after it (the worktree for the newest turn).
-///
-/// Both ends come from the `checkpoints` table, so the span is a fact about this
-/// worktree rather than a guess from commit times.
+/// The two refs a turn spans: its own checkpoint, and the next one (the worktree
+/// for the newest turn).
 pub async fn turn_span(
     pool: &SqlitePool,
     row: &ThreadRow,
@@ -272,6 +267,8 @@ pub async fn turn_file_diff(
     file_diff_between(&worktree, &from, to.as_deref(), path).await
 }
 
+/// A commit's own changes: first parent to the commit. Root commits diff against
+/// the empty tree.
 pub async fn commit_changes(row: &ThreadRow, requested: &str) -> Result<ChangesDto, ServerError> {
     let worktree = worktree(row)?;
     let sha = resolve_commit(&worktree, requested).await?;

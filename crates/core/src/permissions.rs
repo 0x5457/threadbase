@@ -4,12 +4,10 @@ use std::path::Path;
 
 use threadbase_shared::{ApprovalKind, ApprovalScope, PermissionMode, Role};
 
-/// The instance's permission defaults, as the server enforces them.
+/// The instance's permission default and ceiling.
 ///
-/// Resolution is a pure fold with one clamp: a thread's own choice, else its
-/// project's, else the instance default, and never above the instance ceiling.
-/// The ceiling exists for the one case a product cannot talk its way out of:
-/// whoever runs the machine decides how much autonomy the machine hands out.
+/// A thread's choice wins, then its project's, then the default. The result is
+/// clamped to the ceiling, which the operator sets because they run the machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PermissionPolicy {
     pub default: PermissionMode,

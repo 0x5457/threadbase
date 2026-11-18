@@ -1,13 +1,8 @@
-//! Installing a new binary while nothing is running.
+//! Installs a staged binary, but only when no turn is running.
 //!
-//! The server is the thing being replaced, so it does the swap itself.
-//! `deploy.sh --stage` puts a built binary in `incoming/threadbase`; this loop
-//! installs it and restarts, but only when no turn is running. If something is
-//! running, it waits.
-//!
-//! "Idle" means the same thing as in `thread_wait`: no turn, no queued message,
-//! no running subagent, and no approval or question waiting for a person.
-//! A pending approval blocks the deploy because a restart would cancel it.
+//! `deploy.sh --stage` writes a binary to `incoming/threadbase`; this loop
+//! swaps it in and restarts. "Idle" is the same check `thread_wait` uses, and a
+//! pending approval counts as work because a restart cancels it.
 
 use crate::config::Config;
 use crate::error::ServerError;

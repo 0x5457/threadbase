@@ -15,13 +15,11 @@ use threadbase_shared::{
     now_ms, Actor, ApiError, CommentAnchor, EventEnvelope, ThreadEvent, ThreadId, ThreadStatus,
 };
 
-/// Replace one user prompt and discard everything that followed it.
+/// Replaces one user prompt and discards everything after it.
 ///
-/// The adapter keeps its own conversation state, so a rewind cannot resume the
-/// old ACP session: the next prompt starts a fresh one. All view state after
-/// the edited message (events, queued input, attention items, anchored
-/// comments, subagent rows) is removed together with the tail so the transcript
-/// and the agent cannot disagree about what happened.
+/// The ACP session cannot be rewound, so the next prompt starts a new one. The
+/// tail is removed with it, including queued input, approvals, comments and
+/// subagent rows.
 pub(crate) async fn rewind_and_edit(
     manager: &AgentManager,
     thread_id: &str,
@@ -72,15 +70,11 @@ pub(crate) async fn rewind_and_edit(
         .await
 }
 
-/// Undo everything from `cutoff` onward, and optionally put the worktree back.
+/// Drops everything from `cutoff` on, and at `reset_to` also resets the worktree.
 ///
-/// One implementation for the two rewinds: editing a message discards the tail
-/// and sends a replacement; rewinding to a turn discards the tail and resets the
-/// files to that turn's checkpoint. The order matters — the adapter is stopped
-/// first so it cannot write while the worktree moves, then the worktree is
-/// reset, then the log is cut. A failure to reset therefore leaves the log
-/// intact: the thread can be restarted and nothing claims files that are not
-/// there.
+/// Used by "edit this message" and "rewind to this turn". Order is stop the
+/// adapter, reset the worktree, then truncate the log: if git fails, the log is
+/// still intact and nothing claims the files were restored.
 async fn discard_tail(
     manager: &AgentManager,
     thread_id: &str,

@@ -1,8 +1,6 @@
-//! The MCP endpoint and token management.
+//! MCP endpoint and token management.
 //!
-//! `/mcp` authenticates with a bearer token and never reads a cookie, so a
-//! browser page cannot drive a thread through it. Tokens are created by a
-//! signed-in person on the settings page.
+//! `/mcp` reads a bearer token and no cookie, so a browser page cannot use it.
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;

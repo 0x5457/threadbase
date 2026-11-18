@@ -1,14 +1,8 @@
-//! The MCP endpoint, where an outside agent can drive threads.
+//! MCP endpoint for outside agents.
 //!
-//! A token is created by a signed-in person on the settings page. It has
-//! explicit scopes, is stored only as a hash, and can be revoked at any time.
-//! Every call runs as that person, so roles, permission modes and worktree
-//! checks apply exactly as they do in the browser.
-//!
-//! Calls that change something (prompt, approval) also leave a system notice in
-//! the thread, so the transcript shows that an outside agent started the turn.
-//! Read calls only go to the audit log; a notice per poll would flood the
-//! conversation.
+//! Tokens are created by a signed-in person, scoped, stored as hashes and
+//! revocable. Calls run as that person, so the normal permission checks apply.
+//! Calls that change something also leave a notice in the thread.
 
 use crate::app::AppState;
 use crate::auth::{self, CurrentUser};

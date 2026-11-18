@@ -1,9 +1,7 @@
-//! Per-thread draft document: one shared `Y.XmlFragment` edited by every
-//! client through the Tiptap collaboration binding, plus a `Y.Map` that records
-//! who contributed to the pending draft. The event log is deliberately not a
-//! CRDT.
+//! Per-thread draft: one shared `Y.XmlFragment` for the composer and a `Y.Map`
+//! of contributors. The event log is not a CRDT.
 //!
-//! Schema (shared with the web client in `web/src/lib/draft.ts`):
+//! Schema (shared with `web/src/lib/draft.ts`):
 //!
 //!   Y.Doc
 //!   ├─ XmlFragment "content"  – the composer document (y-prosemirror shape)

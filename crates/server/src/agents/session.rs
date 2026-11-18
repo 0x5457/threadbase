@@ -1,15 +1,8 @@
-//! Per-thread session state and its lock boundaries.
+//! Per-thread session state and its locks.
 //!
-//! Three concerns are deliberately separate so a slow turn cannot block
-//! approvals, config reads or cancellation:
-//! - `capabilities` is immutable after startup,
-//! - `harness` serializes ACP IPC,
-//! - `turn` only holds the single turn slot and is never held while a turn is
-//!   being prepared.
-//!
-//! A sender claims the `starting` slot before doing any git, database or
-//! prompt preparation. Other senders observe the claim as busy and queue
-//! instead, which preserves the single-turn invariant.
+//! `harness` serializes ACP calls, `turn` holds the single turn slot and is
+//! never held while a turn is prepared. A sender claims `starting` before any
+//! git or database work, so a second sender queues instead of racing.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;

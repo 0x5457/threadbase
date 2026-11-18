@@ -8,8 +8,8 @@
 #
 # Reports land in .quality/ (gitignored) for the review pass in review.md.
 #
-# A note on the complexity layer: the repo deliberately dropped eslint with the
-# v2 frontend (see scripts/verify.sh), and `typescript@7` ships no JavaScript
+# The complexity layer needs eslint, which the v2 frontend dropped (see
+# scripts/verify.sh). `typescript@7` ships no JavaScript
 # compiler API, so a hand-rolled AST script is not an option either. eslint and
 # typescript-eslint are therefore installed into a cache directory outside the
 # repository and never appear in web/package.json or pnpm-lock.yaml.

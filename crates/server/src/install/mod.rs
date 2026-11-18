@@ -1,11 +1,9 @@
-//! `threadbase install`: turn the running binary into a user service.
+//! `threadbase install`: installs the running binary as a user service.
 //!
-//! Lifecycle — write, enable, start, stop, status, uninstall — is delegated to
-//! the `service-manager` crate, which speaks launchd, systemd and friends
-//! behind one API. Only the *contents* of the service file live here: the
-//! crate's templates cannot express `KillMode=process` / `AbandonProcessGroup`
-//! (tmux servers must survive a restart, or the browser terminal drops on every
-//! deploy), a secrets file instead of inline values, or log destinations.
+//! Lifecycle comes from `service-manager`; only the service file contents are
+//! rendered here, because the crate's templates cannot express `KillMode=process`
+//! / `AbandonProcessGroup` (tmux must survive a restart), a secrets file, or log
+//! destinations.
 
 mod args;
 pub(crate) mod command;

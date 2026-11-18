@@ -541,12 +541,9 @@ fn compact_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
     out
 }
 
-/// Keep the newest whole turns until a cold page fits the transfer budget.
-/// Folding deltas already shrinks the log, but a single tool output can be
-/// megabytes; without this cap a refresh of a long, tool-heavy thread ships
-/// several megabytes and stalls the client on parse and fold. The client pulls
-/// the dropped turns back through "load earlier". A page never drops its last
-/// turn, even when that turn alone exceeds the budget.
+/// Keeps the newest whole turns until the page fits the transfer budget. The
+/// client loads earlier turns on demand. The last turn is always kept, however
+/// large.
 fn trim_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
     fn wire_len(event: &EventEnvelope) -> usize {
         // The envelope adds ids, actor and metadata around the payload.

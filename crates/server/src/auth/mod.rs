@@ -1,15 +1,9 @@
-//! Sign-in: Tailscale identity, plus a loopback-only development identity.
+//! Sign-in: the Tailscale login, plus a loopback-only development identity.
 //!
-//! There is no password and no OAuth app. The browser sends an `HttpOnly`
-//! session cookie (`auth_session`), and that cookie can only be created by a
-//! request that `tailscaled` proxied from the tailnet: the server listens on
-//! loopback and `tailscale serve` is the only way in. Signing in is one step:
-//! the tailnet login becomes a local account, and that login is the name
-//! everyone sees.
-//!
-//! `identity` owns the `users` table and administrator rules, `tailscale` owns
-//! the CLI calls that answer "who is this", and this file owns the extractor,
-//! access checks and audit.
+//! The browser sends an `HttpOnly` session cookie. That cookie is only created
+//! by a request proxied by `tailscale serve`, so the tailnet login identifies
+//! the account. Presentation, access checks and audit live here;
+//! `identity` owns the `users` table and `tailscale` owns the CLI calls.
 
 mod identity;
 mod tailscale;
@@ -141,17 +135,11 @@ fn is_direct_local_request(parts: &Parts) -> bool {
         .any(|name| parts.headers.contains_key(*name))
 }
 
-/// Best-effort client address for audit rows and rate limiting.
+/// Client address for audit rows.
 ///
-/// `axum-client-ip` only offers extractors that trust a header unconditionally
-/// or use the socket address, so it cannot express the conditional rule below;
-/// the check therefore stays explicit here.
-///
-/// `x-forwarded-for` is only honoured when the direct peer is loopback, which
-/// is where a local terminator (Tailscale Funnel, a reverse proxy) sits. A
-/// remote peer cannot spoof its address through the header; its socket address
-/// is used instead. The rightmost hop is the address appended by the trusted
-/// local proxy; an unparseable value falls back to the peer address.
+/// `x-forwarded-for` is only trusted from a loopback peer, which is where the
+/// local proxy sits. The rightmost hop is the one the proxy appended; anything
+/// unparseable falls back to the socket address.
 #[must_use]
 pub fn client_ip_for_headers(headers: &axum::http::HeaderMap, peer: Option<SocketAddr>) -> String {
     let peer_ip = peer.map(|addr| addr.ip());

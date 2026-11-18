@@ -141,18 +141,13 @@ impl AcpHarness {
             .map_err(|error| HarnessError::Protocol(error.to_string()))
     }
 
-    /// Push the launch-time model and effort onto the session that was created
-    /// or resumed.
+    /// Applies the thread's model and effort to the session just created or
+    /// resumed.
     ///
-    /// Both `session/new` and `session/load` hand back a session running the
-    /// agent's own default model. A thread only keeps its adapter while it is
-    /// busy — the idle reaper stops it — so without this the thread's choice
-    /// applies to the first session and every later resume quietly falls back
-    /// to that default: a thread pinned to `opencode-go/...` then runs, and
-    /// bills, whatever the agent happens to prefer.
-    ///
-    /// A rejected value is a warning, not a launch failure: the thread stays
-    /// usable and the transcript says which setting was ignored.
+    /// Both `session/new` and `session/load` start on the agent's own defaults,
+    /// and the idle reaper stops adapters, so without this every resume would
+    /// fall back to that default. A rejected value is a warning: the thread keeps
+    /// working.
     async fn apply_launch_config(&mut self) {
         if let Some(mode) = self.permission_mode {
             // A provider without an equivalent keeps asking; the server's policy

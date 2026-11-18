@@ -1,17 +1,9 @@
-//! Machine-readable lifecycle catalogue.
+//! Wire types for the lifecycle catalogue published by `threadbase-core`.
 //!
-//! The transition functions in `threadbase-core` are authoritative. They
-//! publish this description, so everyone reads the same model:
-//!
-//! - the web client decides which controls to render,
-//! - `threadbase machines` and `GET /api/machines` let a person or an agent
-//!   ask what can happen without grepping three languages,
-//! - the catalogue is exported to `web/src/api/state-machines.json` by a test,
-//!   so the copy the UI imports is generated, never hand-edited.
-//!
-//! `commands` are the actions a caller may choose. Facts (adapter reports such
-//! as `turn_ended`) are deliberately excluded: nobody can invoke them, so they
-//! must never appear as a button.
+//! One source: the machines. `threadbase machines`, `GET /api/machines` and
+//! `web/src/api/state-machines.json` (written by a test) all show the same copy.
+//! `commands` are invocable; facts such as `turn_ended` never appear as a
+//! button.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

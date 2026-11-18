@@ -1,13 +1,9 @@
-//! Offline maintenance for the append-only event log.
+//! Compacts the event log.
 //!
-//! Every token chunk is stored as its own row. Reads already fold those chunks
-//! into one block, but the rows keep accumulating: a single long turn can write
-//! tens of thousands of `thinking_delta` events. `Compact` rewrites the stored
-//! log with the same fold a cold page uses, so replays keep showing the same
-//! transcript while the table (and its index) shrinks.
-//!
-//! Usage and plan events are the exception: reads only need the newest, but the
-//! stored history is kept for reports, so those rows are never removed.
+//! Each token chunk is a row, so one long turn can write tens of thousands of
+//! `thinking_delta` events. `Compact` folds them with the same rules a cold load
+//! uses, so replays look identical and the table shrinks. Usage and plan rows are
+//! kept for reports.
 
 use crate::config::Config;
 use crate::db;

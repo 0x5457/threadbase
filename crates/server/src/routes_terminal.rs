@@ -1,12 +1,8 @@
-//! Browser terminal endpoints: sessions, attach tickets and the data socket.
+//! Terminal endpoints: sessions, attach tickets and the data socket.
 //!
 //! Workbench shells are admin-driven and member-watchable. Host tmux sessions
-//! are a separate, explicitly enabled feature: every member may list and attach
-//! to them, because they belong to the machine rather than to one thread. The
-//! POST endpoints exist for the same reason the rest of the API has them: a
-//! WebSocket upgrade cannot carry the `X-Requested-With` CSRF header, so a
-//! short-lived single-use ticket minted by a CSRF-guarded POST is the credential
-//! the socket presents.
+//! are a separate opt-in. A WebSocket upgrade cannot send the CSRF header, so the
+//! socket authenticates with a single-use ticket from a CSRF-guarded POST.
 
 use crate::app::AppState;
 use crate::auth::{load_user_briefs, load_user_by_id, CurrentUser};

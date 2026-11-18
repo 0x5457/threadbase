@@ -1,29 +1,16 @@
 #!/usr/bin/env bash
-# Build the current working tree and deploy it to the local user service
-# (`threadbase install` created it: systemd on Linux, launchd on macOS).
+# Builds the working tree and installs it as the user service.
+# The binary embeds web/dist, so the web bundle is rebuilt first.
 #
-# Why this exists: the release binary embeds `web/dist` at compile time
-# (crates/server/src/assets.rs), so a rebuild of the Rust side alone keeps
-# serving the old UI. This script always rebuilds the web bundle first.
+#   scripts/deploy.sh                 build + install + restart
+#   scripts/deploy.sh --no-restart    build + install only
+#   scripts/deploy.sh --wait-idle     wait until no turn is running, then deploy
+#   scripts/deploy.sh --stage         leave the build for the server to install
+#   scripts/deploy.sh --rollback      restore the last backup
+#   scripts/deploy.sh --dry-run       print the plan, change nothing
 #
-# Usage:
-#   scripts/deploy.sh                 # build + install + restart
-#   scripts/deploy.sh --no-restart    # build + install, leave the service alone
-#   scripts/deploy.sh --wait-idle     # wait until no turn is running, then deploy
-#   scripts/deploy.sh --stage         # hand the build to the server, which
-#                                     # installs it at the next idle window
-#   scripts/deploy.sh --rollback      # restore the most recent backup
-#   scripts/deploy.sh --dry-run       # print the plan, change nothing
-#
-# Environment:
-#   THREADBASE_UNIT       unit name / launchd label  (default: threadbase)
-#   THREADBASE_BIN        install path                (default: ~/.local/bin/threadbase)
-#   THREADBASE_BACKUPS    backup directory            (default: <data dir>/backups)
-#   THREADBASE_HEALTH_URL health endpoint             (default: http://127.0.0.1:7777/api/health)
-#   THREADBASE_KEEP       backups to keep             (default: 5)
-#   THREADBASE_DATA_DIR   data directory              (default: platform data dir)
-#   THREADBASE_AUTO_DEPLOY_PATH  where --stage drops the binary
-#   MBX_BLAZE             forwarded to cargo          (default: false)
+# Env: THREADBASE_UNIT, THREADBASE_BIN, THREADBASE_BACKUPS, THREADBASE_HEALTH_URL,
+#      THREADBASE_DATA_DIR, THREADBASE_AUTO_DEPLOY_PATH, THREADBASE_KEEP, MBX_BLAZE
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -137,7 +124,7 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
   # early, strings gets SIGPIPE, the pipeline "fails". Count instead.
   embedded="$(strings "$NEW_BIN" | grep -F -c -- "$asset" || true)"
   if [[ "${embedded:-0}" -eq 0 ]]; then
-    echo "deploy: release binary does not contain $asset — refusing to install." >&2
+    echo "deploy: release binary does not contain $asset; refusing to install." >&2
     exit 1
   fi
   printf '    embedded %s\n' "$asset"

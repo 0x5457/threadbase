@@ -1,9 +1,4 @@
-//! The Tailscale CLI: who a request comes from, and how the app is reachable.
-//!
-//! `whois` maps a tailnet address to a person; that is the only identity this
-//! product has. `serve` is the only way in: the server listens on loopback and
-//! `tailscaled` proxies it to the tailnet, so nothing is public and there is no
-//! tunnel to configure.
+//! Tailscale CLI calls: identity (`whois`) and ingress (`serve`).
 
 use crate::install::command;
 use std::net::IpAddr;

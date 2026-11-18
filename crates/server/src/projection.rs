@@ -201,7 +201,7 @@ fn summary_line(
     ))
 }
 
-/// `2 messages queued` — count plus the matching noun form.
+/// `2 messages queued`: count plus the matching noun.
 fn push_count(out: &mut Vec<String>, value: u32, one: &str, many: &str) {
     match value {
         0 => {}

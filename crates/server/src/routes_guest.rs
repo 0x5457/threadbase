@@ -1,9 +1,7 @@
-//! Guest endpoints: exchanging a link, what a guest can read, and the member
-//! side that sends or dismisses a draft.
+//! Guest endpoints: link exchange, guest reads, and the member side that sends
+//! or dismisses a draft.
 //!
-//! A guest is not a user. The thread comes from the cookie's link, so no handler
-//! here takes a thread id from a guest. The member endpoints use the normal
-//! `CurrentUser` extractor.
+//! No handler takes a thread id from a guest; it comes from the cookie's link.
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;

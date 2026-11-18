@@ -1,25 +1,11 @@
-//! Goal progress kept by the agent runtime inside the thread workspace.
+//! Goal progress written by the agent runtime in the thread workspace.
 //!
-//! pi's `pi-goal-x` extension writes one JSON record per open goal to
-//! `<cwd>/.pi/goals/active_goal_*.md` (the `.md` extension is historical: the
-//! record is a JSON object followed by a human-readable progress section). The
-//! file is the adapter's source of truth, so reading it gives the UI the
-//! objective, task list and usage without mining the transcript.
-//!
-//! Goals live in the *workspace*, not in a session: every thread pointed at the
-//! same directory would otherwise show — and claim to be working on — the same
-//! goal. The record names the session that drives it (`scheduler.owner`), which
-//! is the adapter session id threadbase keeps in the binding, so a goal is only
-//! reported to the thread that owns it.
-//!
-//! Completion is gated by an audit that the record itself does not describe: a
-//! goal whose tasks are all `complete` still reads `active` while it waits for
-//! the auditor or reworks a rejection. The project ledger
-//! (`.pi/goals/goal_events.jsonl`, append-only) carries those verdicts, so the
-//! newest one travels with the goal and the UI can say which of the two it is.
-//!
-//! Adapters that do not manage goals simply have no such directory, which is
-//! why every entry point returns `None` instead of an error.
+//! pi's `pi-goal-x` extension keeps one record per goal in
+//! `<cwd>/.pi/goals/active_goal_*.md`. A goal belongs to the workspace but names
+//! the session driving it (`scheduler.owner`), so only that thread reports it.
+//! The record does not say whether the goal passed its audit; the newest verdict
+//! in `.pi/goals/goal_events.jsonl` does. A missing directory means the adapter
+//! does not use goals, so every entry point returns `None`.
 
 use serde::Deserialize;
 use std::fs;
@@ -72,10 +58,8 @@ pub fn read(cwd: &Path, session: Option<&str>) -> Option<GoalDto> {
     newest.map(|goal| attach_audit(cwd, goal))
 }
 
-/// True when the workspace holds a goal that `session` keeps working on without
-/// prompts.
-///
-/// Such a session is never idle: the agent restarts work on its own, so evicting
+/// True when the workspace has a goal that `session` keeps working on without
+/// prompts, so the session is never idle. Evicting
 /// the process would drop its scheduler mid-run. Only the owning session is
 /// pinned — every other thread in the same directory must still be able to go
 /// idle, or one goal would keep a whole project's adapters alive.

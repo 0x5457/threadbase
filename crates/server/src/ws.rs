@@ -233,12 +233,9 @@ async fn thread_state(state: &AppState, thread_id: &ThreadId) -> Option<ServerWs
     Some(ServerWsMessage::ThreadState { state: snapshot })
 }
 
-/// Presence is broadcast per project, but a socket is only authorized for the
-/// threads it subscribed to. Keep project-level focus (`thread_id` is `None`),
-/// the viewer's own focus, and teammates' focus on subscribed threads. A
-/// teammate's focus on an unsubscribed thread is withheld: the tradeoff is
-/// that a user may miss an activity hint for a thread they have not opened
-/// yet, in exchange for not leaking which threads their teammates are viewing.
+/// Presence is broadcast per project, but a socket only reads the threads it
+/// subscribed to. Teammates' focus on other threads is dropped, so a viewer may
+/// miss an activity hint for a thread they have not opened.
 fn visible_presence(
     message: ServerWsMessage,
     subscriptions: &HashMap<String, u64>,

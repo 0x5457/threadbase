@@ -185,15 +185,11 @@ pub async fn set_archived(
     Ok(next)
 }
 
-/// Reset threads that were mid-turn when the previous server process stopped.
-/// Their agent processes died with the old process, so the persisted status
-/// would otherwise claim work nobody is doing: the UI spins forever and queued
-/// input is never picked up. The dangling turn is closed in the timeline with a
-/// `TurnError`, and the thread drops back to `idle`.
+/// Resets threads that were mid-turn when the server stopped.
 ///
-/// Returns the reconciled threads together with the turn that was cut off
-/// (`None` when the adapter was still starting and no turn had begun). The
-/// caller cancels approvals, closes elicitations and resumes the work.
+/// The agent died with the old process, so the stored status would show work
+/// nobody is doing. The dangling turn gets a `TurnError` and the thread goes back
+/// to idle. Returns each thread and the turn that was cut, if one had started.
 pub async fn reconcile_after_restart(
     pool: &SqlitePool,
     events: &EventStore,

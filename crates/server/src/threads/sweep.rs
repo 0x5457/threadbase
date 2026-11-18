@@ -1,15 +1,7 @@
-//! Background sweep: wake due snoozes and park idle threads.
+//! Wakes due snoozes and settles idle threads.
 //!
-//! Two rules:
-//!
-//! - a snooze whose deadline passed wakes the thread;
-//! - an idle thread that has been quiet longer than `THREADBASE_SETTLE_DAYS`,
-//!   with nothing queued, no running subagent and no unanswered request, is
-//!   settled.
-//!
-//! The decision lives in `threadbase-core` (`should_auto_settle`). This file
-//! only collects the facts and calls the same `place()` a click does, so a
-//! prompt that arrives at the same time wins and the sweep skips that thread.
+//! The rule is `should_auto_settle` in `threadbase-core`; this file collects the
+//! facts and calls the same `place()` a click does, so a concurrent prompt wins.
 
 use super::place;
 use crate::error::ServerError;

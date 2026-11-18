@@ -1,14 +1,8 @@
-//! Guest links: one thread, one person, no account.
+//! Guest links: one thread, no account.
 //!
-//! A link is a permission token, not a user. The thread comes from the link
-//! row, never from the request, so a guest cannot open another thread by
-//! changing a parameter. The token is 32 random bytes, stored only as a hash,
-//! and it expires. Revoking it ends every browser that used it.
-//!
-//! A guest can read the transcript and write a draft message. The draft waits
-//! until someone with an account sends or dismisses it, so a link alone can
-//! never start a turn. Guests see no diffs, files, terminal, approvals or
-//! comments.
+//! The thread comes from the link row, never from the request, so a guest
+//! cannot address another thread. Guests read the transcript and leave draft
+//! messages; a member has to send a draft before it becomes a turn.
 
 use crate::auth_session;
 use crate::error::ServerError;

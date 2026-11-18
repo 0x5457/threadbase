@@ -1,16 +1,9 @@
-//! Web terminal plumbing: tmux sessions, pty clients and attach tickets.
+//! Web terminal: tmux sessions, pty clients and attach tickets.
 //!
-//! Workbench sessions live on a private socket, not as children of the server.
-//! That buys three things for free: the shell survives a page reload or a
-//! server restart, scrollback lives in tmux (nothing is written to disk), and
-//! several browsers can attach to the same shell.
-//!
-//! A workbench room has exactly one driving browser: it gets a read/write tmux
-//! client, everyone else attaches with `tmux attach -r`, so read-only is
-//! enforced by tmux itself rather than by the frontend. Host rooms point at the
-//! machine user's own tmux servers and are shared, like several local `tmux
-//! attach` clients. The tmux client in turn runs inside a pty, because `tmux
-//! attach` insists on a real terminal.
+//! Sessions live on a private tmux socket, so they survive reloads and restarts,
+//! scrollback stays in memory and several browsers can attach. Read-only is
+//! `tmux attach -r`, enforced by tmux rather than the frontend. The tmux client
+//! needs a real terminal, so it runs inside a pty.
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use rand::TryRng;

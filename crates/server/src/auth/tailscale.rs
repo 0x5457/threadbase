@@ -1,12 +1,8 @@
-//! Reading the tailnet user from a request proxied by `tailscale serve`.
+//! Reads the tailnet user from a request proxied by `tailscale serve`.
 //!
-//! `tailscale serve` proxies to the loopback port and adds three headers naming
-//! the user. These are only accepted when the connection comes from loopback,
-//! i.e. from the local proxy. Anything that can reach the loopback port can
-//! already read the database, so that is the limit of what a header check buys.
-//!
-//! If the proxy also forwards `X-Forwarded-For`, the claimed login is checked
-//! against `tailscale whois` for that address. A mismatch is rejected.
+//! The three identity headers are only trusted when the connection comes from
+//! loopback. If `X-Forwarded-For` is present, the login is also checked with
+//! `tailscale whois` for that address.
 
 use crate::auth::Identity;
 use axum::http::HeaderMap;
