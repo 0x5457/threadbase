@@ -43,28 +43,6 @@ export async function request<T>(
   return (await response.json()) as T;
 }
 
-/** POST raw bytes (an attachment) and parse the JSON reply. */
-export async function binaryRequest<T>(
-  path: string,
-  body: Blob,
-  headers?: Record<string, string>,
-): Promise<T> {
-  const response = await fetch(path, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "x-requested-with": "threadbase",
-      "content-type": body.type || "application/octet-stream",
-      ...headers,
-    },
-    body,
-  });
-
-  if (!response.ok) return failure(response);
-
-  return (await response.json()) as T;
-}
-
 /** POST/PATCH/DELETE with a JSON body. */
 export function jsonRequest<T>(
   path: string,

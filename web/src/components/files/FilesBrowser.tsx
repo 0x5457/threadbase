@@ -1,8 +1,6 @@
 import {
   ActionIcon,
   Button,
-  Group,
-  Loader,
   ScrollArea,
   Text,
 } from "@mantine/core";
@@ -15,6 +13,9 @@ import { Breadcrumbs } from "./Breadcrumbs";
 import { EntryRow } from "./EntryRow";
 import { FilePreview } from "./FilePreview";
 import { baseName, directoryOf, pathCrumbs, sortEntries } from "./paths";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
+import { ListSkeleton } from "../loading/Skeleton";
+import { LoadError } from "../loading/LoadError";
 
 const pathTextStyle: CSSProperties = {
   flex: 1,
@@ -58,6 +59,7 @@ export function FilesBrowser({
     () => (listing.data ? sortEntries(listing.data.entries) : []),
     [listing.data],
   );
+  const showSkeleton = useDelayedFlag(listing.isPending, 300, 500);
 
   return (
     <div className="changes">
@@ -100,15 +102,27 @@ export function FilesBrowser({
           />
         </ScrollArea>
       ) : listing.isPending ? (
-        <Group className="changes-scroll" justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
+        showSkeleton ? (
+          <ListSkeleton
+            label="Loading folder"
+            rows={8}
+            avatar
+            avatarSize={13}
+            lines={1}
+            className="changes-scroll changes-files"
+            rowClassName="skeleton-file-row"
+          />
+        ) : null
       ) : listing.isError ? (
-        <Text size="sm" c="red" p="sm" className="changes-scroll">
-          {listing.error instanceof Error
-            ? listing.error.message
-            : "Cannot list this folder"}
-        </Text>
+        <div className="changes-scroll">
+          <LoadError
+            title="Cannot list this folder"
+            message={
+              listing.error instanceof Error ? listing.error.message : undefined
+            }
+            onRetry={() => void listing.refetch()}
+          />
+        </div>
       ) : entries.length === 0 ? (
         <Text size="sm" c="dimmed" ta="center" py="xl" className="changes-scroll">
           This folder is empty

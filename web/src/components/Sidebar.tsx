@@ -31,6 +31,9 @@ import { NewThreadModal } from "./NewThreadModal";
 import { ProjectSettingsModal } from "./ProjectSettingsModal";
 import { initials } from "../lib/initials";
 import { ProjectNode } from "./sidebar/ProjectNode";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { Bone, LoadingRegion } from "./loading/Skeleton";
+import { LoadError } from "./loading/LoadError";
 import { SidebarThreadRow } from "./sidebar/ThreadRow";
 import { ThreadActionSheet } from "./sidebar/ThreadActionSheet";
 
@@ -161,6 +164,11 @@ export const Sidebar = memo(function Sidebar({
   }, [projectsQuery.data]);
   const [shelfSheet, setShelfSheet] = useState<ThreadSummary | null>(null);
   const unread = inbox.data?.unread ?? 0;
+  const showProjectsSkeleton = useDelayedFlag(
+    projectsQuery.isPending && realProjects.length === 0,
+    300,
+    500,
+  );
   // One row shape for the groups above the project tree: the project name is the
   // context a lifted row would otherwise lose.
   const shelfRow = (thread: ThreadSummary) => (
@@ -263,13 +271,50 @@ export const Sidebar = memo(function Sidebar({
                 Projects
               </Text>
             </Group>
+            {projectsQuery.isError ? (
+              <LoadError
+                title="Could not load projects"
+                message={
+                  projectsQuery.error instanceof Error
+                    ? projectsQuery.error.message
+                    : undefined
+                }
+                onRetry={() => void projectsQuery.refetch()}
+                compact
+                className="sidebar-load-error"
+              />
+            ) : null}
+            {allThreads.isError ? (
+              <LoadError
+                title="Could not load threads"
+                message={
+                  allThreads.error instanceof Error
+                    ? allThreads.error.message
+                    : undefined
+                }
+                onRetry={() => void allThreads.refetch()}
+                compact
+                className="sidebar-load-error"
+              />
+            ) : null}
+            {showProjectsSkeleton ? (
+              <LoadingRegion label="Loading projects" className="sidebar-skeleton">
+                {[0, 1, 2].map((row) => (
+                  <div key={row} className="sidebar-skeleton-project">
+                    <Bone width={`${58 + row * 9}%`} height={12} />
+                    <Bone width={`${74 - row * 7}%`} height={10} />
+                    <Bone width={`${62 + row * 6}%`} height={10} />
+                  </div>
+                ))}
+              </LoadingRegion>
+            ) : null}
             {realProjects.map((project) => (
               <ProjectNode
                 key={project.id}
                 phone={phone}
                 project={project}
                 threads={projectThreads.get(project.id) ?? EMPTY_THREADS}
-                threadsLoading={allThreads.isLoading}
+                threadsLoading={allThreads.isPending}
                 selectedThreadId={selectedThreadId}
                 selectedSubagentId={selectedSubagentId}
                 activeProjectId={activeProjectId}
@@ -281,7 +326,9 @@ export const Sidebar = memo(function Sidebar({
                 onSettings={setSettingsProject}
               />
             ))}
-            {!projectsQuery.isPending && realProjects.length === 0 ? (
+            {!projectsQuery.isPending &&
+            !projectsQuery.isError &&
+            realProjects.length === 0 ? (
               <Text size="xs" c="dimmed" pl={10} py={4}>
                 No projects yet
               </Text>

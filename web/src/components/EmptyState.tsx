@@ -1,4 +1,4 @@
-import { Box, Loader, Stack, Text } from "@mantine/core";
+import { Box, Stack, Text } from "@mantine/core";
 import type { ReactNode } from "react";
 
 /**
@@ -11,7 +11,6 @@ export function EmptyState({
   children,
   hint,
   action,
-  loading = false,
 }: {
   icon?: ReactNode;
   title: string;
@@ -19,13 +18,12 @@ export function EmptyState({
   hint?: string;
   /** Optional next step, rendered below the copy. */
   action?: ReactNode;
-  loading?: boolean;
 }) {
   return (
     <Box className="empty-state">
       <Stack align="center" gap={8}>
         <span className="empty-state-icon">
-          {loading ? <Loader size={14} type="dots" /> : icon}
+          {icon}
         </span>
         <Text size="sm" fw={500} className="empty-state-title">
           {title}

@@ -35,7 +35,7 @@ export function agentItems(agents: AgentDto[] | undefined) {
     : FALLBACK_AGENT_ITEMS;
 }
 
-export const FALLBACK_AGENT_ITEMS = [
+const FALLBACK_AGENT_ITEMS = [
   { value: "codex", label: "Codex" },
   { value: "claude", label: "Claude Code" },
   { value: "opencode", label: "opencode" },

@@ -20,6 +20,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { ProgressHost, ProgressProvider } from "./components/loading/Progress";
 import { AuthGate } from "./components/AuthGate";
 import { installVisualViewportSync } from "./lib/viewport";
 import "./styles/base.css";
@@ -41,6 +42,7 @@ import "./styles/empty.css";
 import "./styles/frame.css";
 import "./styles/goal.css";
 import "./styles/responsive.css";
+import "./styles/loading.css";
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -246,10 +248,13 @@ createRoot(root).render(
       colorSchemeManager={colorSchemeManager}
     >
       <QueryClientProvider client={queryClient}>
-        <AuthGate>
-          <App />
-        </AuthGate>
-        <NotificationHost />
+        <ProgressProvider>
+          <AuthGate>
+            <App />
+          </AuthGate>
+          <NotificationHost />
+          <ProgressHost />
+        </ProgressProvider>
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,

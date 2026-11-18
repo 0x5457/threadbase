@@ -1,8 +1,8 @@
 import {
   Box,
+  Button,
   Combobox,
   Group,
-  Loader,
   ScrollArea,
   Text,
   UnstyledButton,
@@ -10,6 +10,8 @@ import {
 } from "@mantine/core";
 import { IconCheck, IconChevronDown, IconSearch } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { Bone } from "./loading/Skeleton";
 import {
   OTHER_GROUP,
   RECENT_GROUP,
@@ -31,10 +33,13 @@ interface ModelPickerProps {
   value: string | null;
   options: ModelChoice[];
   loading?: boolean;
+  error?: string | null;
   disabled?: boolean;
   onChange?: (value: string) => void;
   /** Called when the dropdown opens, before any choice is made. */
   onOpen?: () => void;
+  /** Retry a failed agent-config load. */
+  onRetry?: () => void;
   /** Label shown when nothing is selected, for example "Default effort". */
   placeholder?: string;
   /** A compact suffix shown next to the value, for example the effort. */
@@ -75,9 +80,11 @@ export function ModelPicker({
   value,
   options,
   loading = false,
+  error = null,
   disabled = false,
   onChange,
   onOpen,
+  onRetry,
   placeholder = "Default model",
   label: name = "Model",
   triggerLabel,
@@ -211,10 +218,12 @@ export function ModelPicker({
     );
 
   const selected = choices.find((choice) => choice.value === value);
-  const label =
-    selected?.name ??
-    value ??
-    (loading && choices.length === 0 ? "Loading…" : placeholder);
+  const label = selected?.name ?? value ?? placeholder;
+  const showLoading = useDelayedFlag(
+    loading && visible.length === 0,
+    300,
+    500,
+  );
 
   /** Keyboard order starts at the first match after every query change. */
   useEffect(() => {
@@ -352,15 +361,33 @@ export function ModelPicker({
                 </Combobox.Group>
               ),
             )}
-            {visible.length === 0 && loading ? (
-              <Group justify="center" gap={6} py="sm">
-                <Loader size="xs" />
-                <Text size="xs" c="dimmed">
-                  Reading agent models…
+            {visible.length === 0 && loading && showLoading ? (
+              <div className="model-picker-skeleton" aria-busy="true">
+                {[0, 1, 2].map((row) => (
+                  <div key={row} className="model-picker-skeleton-row">
+                    <Bone width={`${62 + row * 8}%`} height={11} />
+                    <Bone width={`${34 + row * 5}%`} height={9} />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {visible.length === 0 && !loading && error ? (
+              <Group className="model-picker-error" gap={8} p="sm" wrap="nowrap">
+                <Text size="xs" c="red" style={{ flex: 1 }}>
+                  {error}
                 </Text>
+                {onRetry ? (
+                  <Button
+                    variant="default"
+                    size="compact-xs"
+                    onClick={onRetry}
+                  >
+                    Retry
+                  </Button>
+                ) : null}
               </Group>
             ) : null}
-            {visible.length === 0 && !loading ? (
+            {visible.length === 0 && !loading && !error ? (
               <Combobox.Empty className="model-picker-empty">
                 {choices.length === 0
                   ? "This agent does not advertise models. Type a model id and press Enter."

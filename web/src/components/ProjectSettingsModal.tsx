@@ -14,6 +14,7 @@ import { IconAlertCircle, IconFolder } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { updateProject, type Project } from "../api";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
 import type { PermissionMode } from "../api/types/PermissionMode";
 import {
   PERMISSION_MODES,
@@ -47,6 +48,7 @@ export function ProjectSettingsModal({
   const [permissionMode, setPermissionMode] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const showSaving = useDelayedFlag(saving, 300, 500);
 
   useEffect(() => {
     if (!opened) return;
@@ -96,6 +98,9 @@ export function ProjectSettingsModal({
       size="md"
       centered
       fullScreen={phone}
+      closeOnClickOutside={!saving}
+      closeOnEscape={!saving}
+      withCloseButton={!saving}
     >
       <form
         onSubmit={(event) => {
@@ -177,14 +182,14 @@ export function ProjectSettingsModal({
             </Alert>
           ) : null}
           <Group justify="flex-end" gap="xs" mt={4}>
-            <Button variant="default" onClick={onClose}>
+            <Button variant="default" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
             <Button
               type="submit"
               color="dark"
-              loading={saving}
-              disabled={!canSave}
+              loading={showSaving}
+              disabled={saving || !canSave}
             >
               Save
             </Button>

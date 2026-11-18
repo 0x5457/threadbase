@@ -14,6 +14,7 @@ import {
 import { updateThread, type ThreadSummary } from "../../api";
 import { can } from "../../lib/machine";
 import { useThreadPlacement } from "../../lib/use-placement";
+import { optimisticThreadPatch } from "../../lib/thread-cache";
 import { pathFor } from "../../lib/router";
 import { ActionSheet } from "../ActionSheet";
 
@@ -43,13 +44,19 @@ export function ThreadActionSheet({
   const place = useThreadPlacement();
 
   const setAutoSettle = async (target: ThreadSummary) => {
+    const autoSettle = target.autoSettle === "never" ? "default" : "never";
+    const rollback = optimisticThreadPatch(
+      queryClient,
+      target.id,
+      { autoSettle },
+      target,
+    );
     try {
-      await updateThread(target.id, {
-        autoSettle: target.autoSettle === "never" ? "default" : "never",
-      });
+      await updateThread(target.id, { autoSettle });
       void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
       void queryClient.invalidateQueries({ queryKey: ["thread", target.id] });
     } catch (cause) {
+      rollback();
       notifications.show({
         message:
           cause instanceof Error ? cause.message : "Could not change auto-settle",
@@ -59,15 +66,23 @@ export function ThreadActionSheet({
   };
 
   const togglePin = async (target: ThreadSummary) => {
+    const pinned = !target.pinned;
+    const rollback = optimisticThreadPatch(
+      queryClient,
+      target.id,
+      { pinned },
+      target,
+    );
     try {
-      await updateThread(target.id, { pinned: !target.pinned });
+      await updateThread(target.id, { pinned });
       void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
       notifications.show({
-        message: target.pinned ? "Thread unpinned" : "Thread pinned",
+        message: pinned ? "Thread pinned" : "Thread unpinned",
         color: "teal",
       });
     } catch (cause) {
+      rollback();
       notifications.show({
         message:
           cause instanceof Error ? cause.message : "Could not update thread",

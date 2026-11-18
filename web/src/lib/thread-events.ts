@@ -35,6 +35,8 @@ export type ViewItem =
       avatarUrl: string | null;
       color: string;
       text: string;
+      /** Appended deltas, kept so the streamed answer can fade in pieces. */
+      chunks: string[];
       ts: number;
       streaming: boolean;
       attachments: AttachmentDto[];
@@ -163,6 +165,7 @@ export function extendThreadView(
     ts: number,
     streaming: boolean,
     attachments: AttachmentDto[] = [],
+    chunks?: string[],
   ) => {
     const existing = messageRows.get(id);
     if (existing === undefined) {
@@ -176,6 +179,7 @@ export function extendThreadView(
         avatarUrl,
         color,
         text: chunk,
+        chunks: chunks ?? (chunk === "" ? [] : [chunk]),
         ts,
         streaming,
         attachments,
@@ -185,6 +189,9 @@ export function extendThreadView(
     }
     const row = items[existing];
     if (row.kind !== "message") return;
+    const appended = chunk.startsWith(row.text)
+      ? chunk.slice(row.text.length)
+      : chunk;
     ownItems();
     items[existing] = {
       ...row,
@@ -192,6 +199,9 @@ export function extendThreadView(
         chunk.startsWith(row.text) || row.text === ""
           ? chunk
           : row.text + chunk,
+      chunks:
+        chunks ??
+        (appended === "" ? row.chunks : [...row.chunks, appended]),
       streaming,
       ts: row.ts,
       attachments: attachments.length ? attachments : row.attachments,
@@ -246,6 +256,7 @@ export function extendThreadView(
           event.ts,
           false,
           payload.attachments ?? [],
+          [visiblePrompt],
         );
         break;
       }
@@ -278,6 +289,7 @@ export function extendThreadView(
           message.createdAt,
           false,
           message.attachments ?? [],
+          [message.text],
         );
         break;
       }

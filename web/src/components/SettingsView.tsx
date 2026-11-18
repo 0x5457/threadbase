@@ -2,7 +2,6 @@ import {
   Button,
   Card,
   Group,
-  Loader,
   NumberInput,
   SegmentedControl,
   Select,
@@ -25,6 +24,9 @@ import {
 } from "../lib/push";
 import { PeopleSection } from "./PeopleSection";
 import { AgentsSection } from "./AgentsSection";
+import { LoadError } from "./loading/LoadError";
+import { SettingsSkeleton } from "./loading/Skeleton";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
 
 const baselines = [
   { value: "base_branch", label: "Base branch" },
@@ -55,10 +57,13 @@ export const SettingsView = memo(function SettingsView() {
   // and Discard has something to return to.
   const [saved, setSaved] = useState<Settings | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [pushState, setPushState] = useState<PushState>(() =>
     pushSupported() ? "off" : "unsupported",
   );
   const [pushBusy, setPushBusy] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const showPushBusy = useDelayedFlag(pushBusy, 300, 500);
 
   useEffect(() => {
     if (state.data) {
@@ -90,6 +95,7 @@ export const SettingsView = memo(function SettingsView() {
       theme: colorScheme === "dark" ? "dark" : "light",
     };
     setSaving(true);
+    setSaveError(null);
     try {
       await updateSettings(payload);
       // The state query refetch is async; mark this exact payload saved now so
@@ -107,21 +113,41 @@ export const SettingsView = memo(function SettingsView() {
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
       void queryClient.invalidateQueries({ queryKey: ["inbox-unread"] });
     } catch (cause) {
-      notifications.show({
-        message:
-          cause instanceof Error ? cause.message : "Could not save settings",
-        color: "red",
-      });
+      setSaveError(
+        cause instanceof Error ? cause.message : "Could not save settings",
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  if (state.isPending || !settings) {
+  const loading = state.isPending || !settings;
+  const showSkeleton = useDelayedFlag(loading, 300, 500);
+  const showSaving = useDelayedFlag(saving, 300, 500);
+
+  if (state.isError) {
     return (
-      <Group justify="center" py="xl">
-        <Loader size="sm" />
-      </Group>
+      <div className="settings-view">
+        <div className="settings-scroll settings-error-state">
+          <LoadError
+            title="Could not load settings"
+            message={
+              state.error instanceof Error
+                ? state.error.message
+                : "The server did not return workspace settings."
+            }
+            onRetry={() => void state.refetch()}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return showSkeleton ? (
+      <SettingsSkeleton />
+    ) : (
+      <div className="settings-view" aria-busy="true" />
     );
   }
 
@@ -317,22 +343,22 @@ export const SettingsView = memo(function SettingsView() {
                     size="xs"
                     variant={pushState === "on" ? "default" : "filled"}
                     color="dark"
-                    loading={pushBusy}
+                    loading={showPushBusy}
+                    disabled={pushBusy}
                     onClick={() => {
                       setPushBusy(true);
+                      setPushError(null);
                       const action =
                         pushState === "on" ? disablePush() : enablePush();
                       void action
                         .then(() => currentPushState())
                         .then(setPushState)
                         .catch((cause: unknown) =>
-                          notifications.show({
-                            message:
-                              cause instanceof Error
-                                ? cause.message
-                                : "Could not update push notifications",
-                            color: "red",
-                          }),
+                          setPushError(
+                            cause instanceof Error
+                              ? cause.message
+                              : "Could not update push notifications",
+                          ),
                         )
                         .finally(() => setPushBusy(false));
                     }}
@@ -341,6 +367,11 @@ export const SettingsView = memo(function SettingsView() {
                   </Button>
                 )}
               </Group>
+              {pushError ? (
+                <Text size="xs" c="red">
+                  {pushError}
+                </Text>
+              ) : null}
             </Stack>
           </Card>
 
@@ -352,9 +383,15 @@ export const SettingsView = memo(function SettingsView() {
       </div>
       {dirty ? (
         <div className="settings-savebar">
-          <Text size="xs" c="dimmed">
-            Unsaved changes
-          </Text>
+          {saveError ? (
+            <Text size="xs" c="red">
+              {saveError}
+            </Text>
+          ) : (
+            <Text size="xs" c="dimmed">
+              Unsaved changes
+            </Text>
+          )}
           <Group gap="xs">
             <Button
               variant="default"
@@ -371,7 +408,8 @@ export const SettingsView = memo(function SettingsView() {
             <Button
               color="dark"
               size="xs"
-              loading={saving}
+              loading={showSaving}
+              disabled={saving}
               onClick={() => void save()}
             >
               Save changes

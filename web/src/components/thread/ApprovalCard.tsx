@@ -1,5 +1,6 @@
 import { Box, Button, Card, Group, Stack, Text } from "@mantine/core";
 import type { Approval } from "../../api";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 
 type ApprovalOption = Approval["options"][number];
 
@@ -25,11 +26,15 @@ const FALLBACK_OPTIONS: ApprovalOption[] = [
 export function ApprovalCard({
   approval,
   busy,
+  pendingOptionId = null,
+  error = null,
   readOnly = false,
   onDecide,
 }: {
   approval: Approval;
   busy: boolean;
+  pendingOptionId?: string | null;
+  error?: string | null;
   readOnly?: boolean;
   onDecide: (option: ApprovalOption) => void;
 }) {
@@ -59,6 +64,9 @@ export function ApprovalCard({
   );
   const showCancel = denyOptions.length > 0 || !hasCancelChoice;
   const question = approval.kind === "other";
+  const showBusy = useDelayedFlag(busy, 300, 500);
+  const pending = (option: ApprovalOption) =>
+    showBusy && pendingOptionId === option.id;
 
   return (
     <div className="block">
@@ -108,8 +116,8 @@ export function ApprovalCard({
                     variant="default"
                     justify="flex-start"
                     fullWidth
-                    disabled={readOnly}
-                    loading={busy}
+                    disabled={readOnly || busy}
+                    loading={pending(option)}
                     onClick={() => onDecide(option)}
                   >
                     {option.label}
@@ -120,8 +128,8 @@ export function ApprovalCard({
                     <Button
                       variant="subtle"
                       color="gray"
-                      disabled={readOnly}
-                      loading={busy}
+                      disabled={readOnly || busy}
+                      loading={pending(denyOptions[0] ?? fallbackDeny)}
                       onClick={() => onDecide(denyOptions[0] ?? fallbackDeny)}
                     >
                       {denyOptions[0]?.label ?? fallbackDeny.label}
@@ -134,8 +142,8 @@ export function ApprovalCard({
                 {orderedOptions.map((option) => (
                   <Button
                     key={option.id}
-                    loading={busy}
-                    disabled={readOnly}
+                    loading={pending(option)}
+                    disabled={readOnly || busy}
                     variant={
                       option.kind === "deny"
                         ? "subtle"
@@ -157,6 +165,11 @@ export function ApprovalCard({
                 ))}
               </Group>
             )}
+            {error ? (
+              <Text size="xs" c="red" mt={8}>
+                {error}
+              </Text>
+            ) : null}
           </Box>
         </Card>
       </div>

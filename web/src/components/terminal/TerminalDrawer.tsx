@@ -43,6 +43,7 @@ import {
   HEARTBEAT_MS,
   RECONNECT_OPTIONS,
 } from "../../lib/live/transport";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 import { ViewerAvatars } from "../ViewerAvatars";
 
 type ServerMessage =
@@ -500,6 +501,7 @@ export function TerminalDrawer({
   };
 
   const canDrive = role === "controller" && can("terminal", phase, "drive");
+  const showLoading = useDelayedFlag(!ready, 300, 500);
   const driver = viewerUsers.find((user) => user.id === controller)?.displayName;
   const watchNote =
     target.kind === "host"
@@ -726,9 +728,11 @@ export function TerminalDrawer({
           if (canDrive) focus();
         }}
       >
-        {!ready ? (
-          <div className="terminal-loading" role="status">
-            {rendererError ? "Terminal renderer unavailable" : "Loading terminal…"}
+        {!ready && showLoading ? (
+          <div className="terminal-loading" role="status" aria-busy="true">
+            {rendererError
+              ? "Terminal renderer unavailable"
+              : "Connecting to the terminal…"}
           </div>
         ) : null}
       </div>

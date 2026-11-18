@@ -14,6 +14,7 @@ import type { DraftPhase } from "../../api/types/DraftPhase";
 import type { Usage } from "../../api/types/Usage";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ContextMeter } from "./ContextMeter";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 import type { ComposerDelivery } from "./useComposerSession";
 
 interface ComposerToolbarProps {
@@ -34,6 +35,7 @@ interface ComposerToolbarProps {
   effectiveEffort: string | null;
   effortOptions: ModelChoice[];
   configLoading: boolean;
+  configError?: string | null;
   writable: boolean;
   onModelChange?: (model: string) => void;
   onEffortChange?: (effort: string) => void;
@@ -67,6 +69,7 @@ export function ComposerToolbar({
   effectiveEffort,
   effortOptions,
   configLoading,
+  configError = null,
   writable,
   onModelChange,
   onEffortChange,
@@ -81,6 +84,9 @@ export function ComposerToolbar({
   onStop,
   onSend,
 }: ComposerToolbarProps) {
+  const showSending = useDelayedFlag(sending, 300, 500);
+  const showStopping = useDelayedFlag(stopping, 300, 500);
+
   return (
     <div className="composer-tools">
       {onThreadComment ? (
@@ -158,6 +164,11 @@ export function ComposerToolbar({
           </Group>
         </Tooltip>
       ) : null}
+      {draftActive && draftPhase !== "live" ? (
+        <Text size="xs" c="dimmed" className="draft-sync-label">
+          Syncing draft…
+        </Text>
+      ) : null}
       {draftActive ? (
         <Tooltip label={liveLabel}>
           <span
@@ -180,6 +191,7 @@ export function ComposerToolbar({
         delivery={delivery}
         onDeliveryChange={onDeliveryChange}
         loading={configLoading}
+        error={configError}
         writable={writable}
         onModelChange={onModelChange}
         onEffortChange={onEffortChange}
@@ -193,7 +205,8 @@ export function ComposerToolbar({
             color="red"
             size={26}
             radius="xl"
-            loading={stopping}
+            loading={showStopping}
+            disabled={stopping}
             onClick={onStop}
             className="stop-btn"
           >
@@ -210,7 +223,7 @@ export function ComposerToolbar({
               size={26}
               radius="xl"
               disabled={!hasText || sending || sendBlocked || !writable}
-              loading={sending}
+              loading={showSending}
               onClick={onSend}
               className="send-btn"
             >

@@ -1,11 +1,9 @@
 import {
   ActionIcon,
-  Alert,
   Badge,
   Box,
   Button,
   Group,
-  Loader,
   Modal,
   NavLink,
   ScrollArea,
@@ -17,7 +15,6 @@ import {
 import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
-  IconAlertCircle,
   IconArrowUp,
   IconBrandGit,
   IconChevronRight,
@@ -33,6 +30,9 @@ import {
   type Project,
 } from "../api";
 import { isImeConfirming } from "../lib/keyboard";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
+import { ListSkeleton } from "./loading/Skeleton";
+import { LoadError } from "./loading/LoadError";
 
 interface AddProjectModalProps {
   opened: boolean;
@@ -63,6 +63,8 @@ export function AddProjectModal({
   const [pathInput, setPathInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
+  const showSkeleton = useDelayedFlag(loading, 300, 500);
+  const showAdding = useDelayedFlag(adding, 300, 500);
   const [mode, setMode] = useState<Mode>("existing");
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<{ title: string; message: string } | null>(
@@ -160,6 +162,9 @@ export function AddProjectModal({
       size="md"
       centered
       fullScreen={phone}
+      closeOnClickOutside={!adding}
+      closeOnEscape={!adding}
+      withCloseButton={!adding}
     >
       <SegmentedControl
         fullWidth
@@ -243,21 +248,26 @@ export function AddProjectModal({
       </Group>
 
       {error ? (
-        <Alert
-          icon={<IconAlertCircle size={14} />}
-          color="red"
-          mb="xs"
-          title={error.title}
-        >
-          {error.message}
-        </Alert>
+        <Box mb="xs">
+          <LoadError
+            title={error.title}
+            message={error.message}
+            onRetry={() => void load(pathInput || listing?.path)}
+            compact
+          />
+        </Box>
       ) : null}
 
       <Box className="picker-list">
-        {loading ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-          </Group>
+        {loading && showSkeleton ? (
+          <ListSkeleton
+            label="Loading folders"
+            rows={7}
+            avatar
+            avatarSize={14}
+            lines={1}
+            className="picker-skeleton"
+          />
         ) : (
           <ScrollArea
             h={phone ? "calc(100dvh - 340px)" : mode === "new" ? 220 : 280}
@@ -329,14 +339,15 @@ export function AddProjectModal({
             : "Projects must be git repositories."}
         </Text>
         <Group gap="xs" wrap="nowrap">
-          <Button variant="default" onClick={onClose}>
+          <Button variant="default" onClick={onClose} disabled={adding}>
             Cancel
           </Button>
           <Button
             color="dark"
             onClick={() => void (mode === "new" ? createNew() : add())}
-            loading={adding}
+            loading={showAdding}
             disabled={
+              adding ||
               loading ||
               (mode === "new"
                 ? !listing || !validProjectName(newName.trim())

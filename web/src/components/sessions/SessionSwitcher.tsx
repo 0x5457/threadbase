@@ -1,8 +1,6 @@
 import {
   ActionIcon,
   Drawer,
-  Group,
-  Loader,
   Modal,
   ScrollArea,
   Text,
@@ -17,6 +15,9 @@ import { isImeConfirming } from "../../lib/keyboard";
 import { sessionKey, sessionMatches } from "../../lib/sessions";
 import { SheetGrabber } from "../SheetGrabber";
 import { SessionRow } from "./SessionRow";
+import { ListSkeleton } from "../loading/Skeleton";
+import { LoadError } from "../loading/LoadError";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 
 function SwitcherBody({
   opened,
@@ -50,6 +51,7 @@ function SwitcherBody({
     active < 0 || filtered.length === 0
       ? -1
       : Math.min(active, filtered.length - 1);
+  const showSkeleton = useDelayedFlag(sessions.isPending, 300, 500);
 
   useEffect(() => {
     listRef.current
@@ -100,15 +102,24 @@ function SwitcherBody({
         size="sm"
       />
       {sessions.isPending ? (
-        <Group justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
+        showSkeleton ? (
+          <ListSkeleton
+            label="Loading sessions"
+            rows={5}
+            avatar
+            avatarSize={14}
+            lines={2}
+          />
+        ) : null
       ) : sessions.isError ? (
-        <Text size="sm" c="red" py="md">
-          {sessions.error instanceof Error
-            ? sessions.error.message
-            : "Could not load sessions"}
-        </Text>
+        <LoadError
+          title="Could not load sessions"
+          message={
+            sessions.error instanceof Error ? sessions.error.message : undefined
+          }
+          onRetry={() => void sessions.refetch()}
+          compact
+        />
       ) : filtered.length === 0 ? (
         <Text size="sm" c="dimmed" py="md">
           {needle.trim() ? "No matching sessions." : "No sessions yet."}

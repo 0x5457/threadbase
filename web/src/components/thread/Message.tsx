@@ -1,11 +1,15 @@
-import { ActionIcon, Avatar, Text } from "@mantine/core";
+import { ActionIcon, Avatar, Button, Text } from "@mantine/core";
 import {
   IconAlertCircle,
   IconArrowBackUp,
+  IconCheck,
   IconClock,
+  IconCopy,
   IconFileText,
+  IconLoader2,
   IconMessagePlus,
   IconPencil,
+  IconRefresh,
 } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -30,6 +34,7 @@ export const Message = memo(function Message({
   onComment,
   onEdit,
   onRewind,
+  onRetry,
   onLongPress,
   active,
   continued = false,
@@ -39,6 +44,8 @@ export const Message = memo(function Message({
   onEdit?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   /** Undo this prompt's turn and every later one, files included. */
   onRewind?: (item: Extract<ViewItem, { kind: "message" }>) => void;
+  /** Re-run the prompt that produced this answer, after confirmation. */
+  onRetry?: () => void;
   onLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
   active: boolean;
   /** Same author as the row above: drop the repeated avatar and tighten up. */
@@ -53,6 +60,8 @@ export const Message = memo(function Message({
   // line inside the bubble; the prompt itself is already trimmed server-side.
   const text = agent ? item.text : item.text.replace(/^\n+|\n+$/g, "");
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const chunks = item.chunks ?? [];
   const imageAttachments = item.attachments.filter((attachment) =>
     isPreviewableImage(attachment.mimeType),
   );
@@ -142,6 +151,40 @@ export const Message = memo(function Message({
         >
           <IconMessagePlus size={12} stroke={1.5} />
         </ActionIcon>
+        {agent && !item.streaming && onRetry ? (
+          <ActionIcon
+            className="msg-retry-btn"
+            size={18}
+            aria-label="Retry this answer"
+            title="Retry this answer"
+            onClick={onRetry}
+          >
+            <IconRefresh size={12} stroke={1.6} />
+          </ActionIcon>
+        ) : null}
+        {agent && !item.streaming && text.trim() ? (
+          <ActionIcon
+            className="msg-copy-btn"
+            size={18}
+            aria-label={copied ? "Answer copied" : "Copy answer"}
+            title={copied ? "Copied" : "Copy answer"}
+            onClick={() => {
+              void navigator.clipboard
+                ?.writeText(item.text)
+                .then(() => {
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 1200);
+                })
+                .catch(() => undefined);
+            }}
+          >
+            {copied ? (
+              <IconCheck size={12} stroke={1.8} />
+            ) : (
+              <IconCopy size={12} stroke={1.5} />
+            )}
+          </ActionIcon>
+        ) : null}
         {imageAttachments.length ? (
           <div className="message-images">
             {imageAttachments.map((attachment) => {
@@ -187,7 +230,17 @@ export const Message = memo(function Message({
         <div className={streaming ? "prose streaming" : "prose"}>
           {agent ? (
             item.streaming ? (
-              <p className="prose-stream">{text}</p>
+              <p className="prose-stream">
+                {chunks.length > 0
+                  ? chunks.map((chunk, index) => (
+                      // Chunks are append-only; the index is the stable identity.
+                      // react-doctor-disable-next-line react-doctor/no-array-index-as-key
+                      <span key={index} className="stream-chunk">
+                        {chunk}
+                      </span>
+                    ))
+                  : text}
+              </p>
             ) : (
               markdown
             )
@@ -207,12 +260,18 @@ export const Thinking = memo(function Thinking({
   count = 1,
   tools = 0,
   text = "",
+  active = false,
 }: {
   count?: number;
   tools?: number;
   text?: string;
+  active?: boolean;
 }) {
-  const thought = count > 1 ? `Thought ${count} times` : "Thought for a moment";
+  const thought = active
+    ? "Thinking…"
+    : count > 1
+      ? `Thought ${count} times`
+      : "Thought for a moment";
   const ran =
     tools > 0 ? ` · ran ${tools} ${tools === 1 ? "tool" : "tools"}` : "";
   return (
@@ -225,7 +284,12 @@ export const Thinking = memo(function Thinking({
           className="thinking-row"
           title={text.trim().slice(0, 240) || undefined}
         >
-          <IconClock size={11} stroke={1.5} /> {thought}
+          {active ? (
+            <IconLoader2 size={11} className="tool-spinner" />
+          ) : (
+            <IconClock size={11} stroke={1.5} />
+          )}{" "}
+          {thought}
           {ran}
         </Text>
       </div>
@@ -235,8 +299,10 @@ export const Thinking = memo(function Thinking({
 
 export const Notice = memo(function Notice({
   item,
+  onRetry,
 }: {
   item: Extract<ViewItem, { kind: "notice" }>;
+  onRetry?: () => void;
 }) {
   return (
     <div className="block">
@@ -251,6 +317,17 @@ export const Notice = memo(function Notice({
             <IconAlertCircle size={12} stroke={1.5} />
           ) : null}
           {item.text}
+          {item.level === "error" && onRetry ? (
+            <Button
+              variant="subtle"
+              size="compact-xs"
+              color="gray"
+              ml={6}
+              onClick={onRetry}
+            >
+              Retry
+            </Button>
+          ) : null}
         </Text>
       </div>
     </div>

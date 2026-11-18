@@ -25,6 +25,10 @@ import { ThreadActionSheet } from "./ThreadActionSheet";
 import { useLongPress } from "../../lib/use-long-press";
 import { useOverlayBack } from "../../lib/overlay-back";
 import { ActionSheet } from "../ActionSheet";
+import { Bone } from "../loading/Skeleton";
+import { LoadError } from "../loading/LoadError";
+import { useProgressJobs } from "../loading/Progress";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 
 
 export const ProjectNode = memo(function ProjectNode({
@@ -66,6 +70,10 @@ export const ProjectNode = memo(function ProjectNode({
   const expanded = opened || active;
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const showRemoving = useDelayedFlag(removing, 300, 500);
+  const { start: startJob, finish: finishJob, fail: failJob } =
+    useProgressJobs();
   const [projectSheet, setProjectSheet] = useState(false);
   const [threadSheet, setThreadSheet] = useState<ThreadSummary | null>(null);
   const projectPress = useLongPress(() => setProjectSheet(true));
@@ -102,8 +110,16 @@ export const ProjectNode = memo(function ProjectNode({
 
   const remove = async () => {
     setRemoving(true);
+    setRemoveError(null);
+    const jobId = startJob({
+      key: `remove-project:${project.id}`,
+      title: `Removing ${project.name}`,
+      detail: "Deleting its threads, worktrees and branches",
+      onRetry: () => void remove(),
+    });
     try {
       await deleteProject(project.id);
+      finishJob(jobId, "Project removed");
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
       void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
@@ -113,6 +129,11 @@ export const ProjectNode = memo(function ProjectNode({
         navigate("/inbox");
         onNavigate();
       }
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : "Could not remove project";
+      setRemoveError(message);
+      failJob(jobId, message);
     } finally {
       setRemoving(false);
     }
@@ -164,12 +185,15 @@ export const ProjectNode = memo(function ProjectNode({
           {expanded ? (
             <>
               {threadsLoading && threads.length === 0 ? (
-                <NavLink
-                  component="button"
-                  className="side-nav"
-                  label="Loading…"
-                  disabled
-                />
+                <span className="sidebar-thread-skeleton" aria-busy="true">
+                  {[0, 1, 2].map((row) => (
+                    <Bone
+                      key={row}
+                      width={`${58 + row * 10}%`}
+                      height={10}
+                    />
+                  ))}
+                </span>
               ) : null}
               {activeThreads.map(row)}
               <ThreadShelf
@@ -276,6 +300,9 @@ export const ProjectNode = memo(function ProjectNode({
           title={`Remove ${project.name}?`}
           size="md"
           centered
+          closeOnClickOutside={!removing}
+          closeOnEscape={!removing}
+          withCloseButton={!removing}
         >
           <Stack gap="sm">
             <Text size="sm">
@@ -288,13 +315,30 @@ export const ProjectNode = memo(function ProjectNode({
                 {project.path}
               </Text>
             </Text>
+            {showRemoving ? (
+              <Text size="xs" c="dimmed" role="status">
+                Removing worktrees and branches…
+              </Text>
+            ) : null}
+            {removeError ? (
+              <LoadError
+                title="Could not remove project"
+                message={removeError}
+                compact
+              />
+            ) : null}
             <Group justify="flex-end" gap="xs" mt={4}>
-              <Button variant="default" onClick={() => setRemoveOpen(false)}>
+              <Button
+                variant="default"
+                onClick={() => setRemoveOpen(false)}
+                disabled={removing}
+              >
                 Cancel
               </Button>
               <Button
                 color="red"
-                loading={removing}
+                loading={showRemoving}
+                disabled={removing}
                 onClick={() => void remove()}
               >
                 Remove project

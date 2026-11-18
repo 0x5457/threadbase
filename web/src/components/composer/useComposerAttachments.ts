@@ -11,6 +11,7 @@ const MAX_COMPOSER_FILE_BYTES = 25 * 1024 * 1024;
 
 interface ComposerAttachment {
   key: string;
+  file: File;
   name: string;
   mimeType: string;
   byteSize: number;
@@ -18,13 +19,19 @@ interface ComposerAttachment {
   /** Object URL while uploading, the served image URL once ready. */
   url?: string;
   attachmentId: string | null;
-  status: "uploading" | "ready";
+  status: "uploading" | "ready" | "failed";
+  /** 0..1, only meaningful while uploading. */
+  progress: number;
+  error?: string;
 }
 
 /**
  * Pasted/picked files for the composer. Each file uploads as soon as it is
  * accepted, so the prompt only carries attachment ids and the send never blocks
  * on bytes. Images keep a local preview until the server URL is ready.
+ *
+ * Uploads report bytes and can be cancelled; a failed tile stays in place with
+ * Retry instead of disappearing behind a toast.
  */
 export function useComposerAttachments(
   threadId: string | undefined,
@@ -33,6 +40,7 @@ export function useComposerAttachments(
   const [items, setItems] = useState<ComposerAttachment[]>([]);
   const itemsRef = useRef<ComposerAttachment[]>([]);
   const objectUrls = useRef<Set<string>>(new Set());
+  const controllers = useRef<Map<string, AbortController>>(new Map());
 
   const commit = useCallback(
     (updater: (current: ComposerAttachment[]) => ComposerAttachment[]) => {
@@ -50,6 +58,8 @@ export function useComposerAttachments(
 
   const remove = useCallback(
     (key: string) => {
+      controllers.current.get(key)?.abort();
+      controllers.current.delete(key);
       commit((current) => {
         const removed = current.find((item) => item.key === key);
         if (removed) revoke(removed.url);
@@ -60,13 +70,109 @@ export function useComposerAttachments(
   );
 
   const clear = useCallback(() => {
+    for (const controller of controllers.current.values()) controller.abort();
+    controllers.current.clear();
     commit((current) => {
       for (const item of current) revoke(item.url);
       return [];
     });
   }, [commit, revoke]);
 
-  // A thread switch starts a fresh prompt; previews from the old one must go.
+  const startUpload = useCallback(
+    async (file: File, key: string): Promise<boolean> => {
+      if (!threadId) return false;
+      const controller = new AbortController();
+      controllers.current.set(key, controller);
+      try {
+        const attachment = await uploadAttachment(threadId, file, {
+          signal: controller.signal,
+          onProgress: (loaded, total) => {
+            if (controllers.current.get(key) !== controller) return;
+            commit((current) =>
+              current.map((item) =>
+                item.key === key
+                  ? {
+                      ...item,
+                      progress:
+                        total > 0 ? Math.min(1, loaded / total) : item.progress,
+                    }
+                  : item,
+              ),
+            );
+          },
+        });
+        if (controllers.current.get(key) !== controller) return false;
+        controllers.current.delete(key);
+        revoke(objectsFor(itemsRef.current, key));
+        const readyIsImage = isPreviewableImage(attachment.mimeType);
+        commit((current) =>
+          current.map((item) =>
+            item.key === key
+              ? {
+                  ...item,
+                  name: attachment.fileName ?? item.name,
+                  mimeType: attachment.mimeType,
+                  byteSize: attachment.byteSize,
+                  isImage: readyIsImage,
+                  url: readyIsImage
+                    ? `/api/attachments/${attachment.id}`
+                    : undefined,
+                  attachmentId: attachment.id,
+                  status: "ready",
+                  progress: 1,
+                  error: undefined,
+                }
+              : item,
+          ),
+        );
+        return true;
+      } catch (cause) {
+        if (controller.signal.aborted) return false;
+        controllers.current.delete(key);
+        commit((current) =>
+          current.map((item) =>
+            item.key === key
+              ? {
+                  ...item,
+                  status: "failed",
+                  attachmentId: null,
+                  error:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Upload failed",
+                }
+              : item,
+          ),
+        );
+        return false;
+      }
+    },
+    [commit, revoke, threadId],
+  );
+
+  const retry = useCallback(
+    (key: string) => {
+      const item = itemsRef.current.find((entry) => entry.key === key);
+      if (!item) return;
+      commit((current) =>
+        current.map((entry) =>
+          entry.key === key
+            ? {
+                ...entry,
+                status: "uploading",
+                progress: 0,
+                error: undefined,
+              }
+            : entry,
+        ),
+      );
+      void startUpload(item.file, key);
+    },
+    [commit, startUpload],
+  );
+
+  // A thread switch starts a fresh prompt; previews and uploads from the old
+  // one must go.
   useEffect(() => {
     clear();
   }, [clear, threadId]);
@@ -74,6 +180,8 @@ export function useComposerAttachments(
   // Nothing left behind when the composer unmounts mid-upload.
   useEffect(
     () => () => {
+      for (const controller of controllers.current.values()) controller.abort();
+      controllers.current.clear();
       for (const url of objectUrls.current) URL.revokeObjectURL(url);
       objectUrls.current.clear();
     },
@@ -138,53 +246,25 @@ export function useComposerAttachments(
             ...current,
             {
               key,
+              file,
               name: file.name || "attachment",
-              mimeType: inferredImage ?? (file.type || "application/octet-stream"),
+              mimeType:
+                inferredImage ?? (file.type || "application/octet-stream"),
               byteSize: file.size,
               isImage,
               url,
               attachmentId: null,
               status: "uploading",
+              progress: 0,
             },
           ]);
-          try {
-            const attachment = await uploadAttachment(threadId, file);
-            revoke(url);
-            const readyIsImage = isPreviewableImage(attachment.mimeType);
-            commit((current) =>
-              current.map((item) =>
-                item.key === key
-                  ? {
-                      ...item,
-                      name: attachment.fileName ?? item.name,
-                      mimeType: attachment.mimeType,
-                      byteSize: attachment.byteSize,
-                      isImage: readyIsImage,
-                      url: readyIsImage
-                        ? `/api/attachments/${attachment.id}`
-                        : undefined,
-                      attachmentId: attachment.id,
-                      status: "ready",
-                    }
-                  : item,
-              ),
-            );
-          } catch (cause) {
-            success = false;
-            remove(key);
-            notifications.show({
-              message:
-                cause instanceof Error
-                  ? cause.message
-                  : `${file.name || "File"} could not be attached`,
-              color: "red",
-            });
-          }
+          const uploaded = await startUpload(file, key);
+          if (!uploaded) success = false;
         }),
       );
       return success && accepted.length <= slots;
     },
-    [commit, remove, revoke, threadId, writable],
+    [commit, startUpload, threadId, writable],
   );
 
   const attachmentIds = items
@@ -192,5 +272,17 @@ export function useComposerAttachments(
     .map((item) => item.attachmentId as string);
   const uploading = items.some((item) => item.status === "uploading");
 
-  return { items, attachmentIds, uploading, accept, remove, clear };
+  return {
+    items,
+    attachmentIds,
+    uploading,
+    accept,
+    remove,
+    retry,
+    clear,
+  };
+}
+
+function objectsFor(items: ComposerAttachment[], key: string) {
+  return items.find((item) => item.key === key)?.url;
 }

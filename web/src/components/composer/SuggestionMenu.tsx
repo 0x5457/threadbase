@@ -8,6 +8,7 @@ import {
 } from "@mantine/core";
 import { IconCommand, IconFile, IconSparkles } from "@tabler/icons-react";
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
 import type { SuggestionOption } from "./commands";
 
 export interface SuggestionMenuHandle {
@@ -38,6 +39,7 @@ export const SuggestionMenu = forwardRef<
   ref,
 ) {
   const [active, setActive] = useState(0);
+  const showLoading = useDelayedFlag(loading, 300, 500);
 
   useEffect(() => {
     setActive(0);
@@ -135,7 +137,7 @@ export const SuggestionMenu = forwardRef<
             ) : null}
           </UnstyledButton>
         ))}
-        {loading ? (
+        {loading && showLoading ? (
           <Group justify="center" py="sm">
             <Loader size="xs" />
           </Group>

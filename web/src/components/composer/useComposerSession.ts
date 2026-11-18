@@ -126,6 +126,15 @@ export function useComposerSession({
   }, [ensureConfigRequest, onModelChange, threadId]);
   const configLoading =
     agentConfig.isFetching || ensureConfigRequest.isPending;
+  const configFailure = agentConfig.data
+    ? null
+    : (agentConfig.error ?? ensureConfigRequest.error);
+  const configError =
+    configFailure instanceof Error
+      ? configFailure.message
+      : configFailure
+        ? "Could not load the agent's models"
+        : null;
   const modelOption = agentConfig.data?.options.find(
     (option) => option.category === "model",
   );
@@ -239,6 +248,7 @@ export function useComposerSession({
     send,
     ensureConfig,
     configLoading,
+    configError,
     modelOption,
     effortOption,
     effectiveModel,

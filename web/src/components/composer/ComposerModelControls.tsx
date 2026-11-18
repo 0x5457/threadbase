@@ -11,6 +11,7 @@ interface ComposerModelControlsProps {
   delivery: ComposerDelivery;
   onDeliveryChange: (delivery: ComposerDelivery) => void;
   loading: boolean;
+  error?: string | null;
   writable: boolean;
   onModelChange?: (model: string) => void;
   onEffortChange?: (effort: string) => void;
@@ -34,6 +35,7 @@ export function ComposerModelControls({
   delivery,
   onDeliveryChange,
   loading,
+  error = null,
   writable,
   onModelChange,
   onEffortChange,
@@ -121,9 +123,11 @@ export function ComposerModelControls({
       value={effectiveModel}
       options={modelOptions}
       loading={loading}
+      error={error}
       disabled={!writable}
       onChange={onModelChange}
       onOpen={onOpen}
+      onRetry={onOpen}
       triggerLabel={`Agent settings: ${modelLabel}`}
       triggerTitle="Model, effort and delivery"
       badge={effectiveEffort}

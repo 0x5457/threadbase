@@ -1,4 +1,4 @@
-import { binaryRequest, jsonRequest, request } from "./client";
+import { ApiError, jsonRequest, request } from "./client";
 import type { AttachmentDto } from "./types/AttachmentDto";
 import type { ChangesDto } from "./types/ChangesDto";
 import type { CreateThreadRequest } from "./types/CreateThreadRequest";
@@ -264,15 +264,82 @@ export function sendMessage(
   );
 }
 
-/** Upload one pasted/picked file; the prompt references it by id. */
-export function uploadAttachment(threadId: string, file: Blob) {
+interface UploadAttachmentOptions {
+  onProgress?: (loaded: number, total: number) => void;
+  signal?: AbortSignal;
+}
+
+/**
+ * Upload one pasted/picked file; the prompt references it by id.
+ *
+ * XHR, not fetch, because an upload can be 25 MB and the composer needs the
+ * byte count and a real abort. The response shape is unchanged.
+ */
+export function uploadAttachment(
+  threadId: string,
+  file: Blob,
+  options: UploadAttachmentOptions = {},
+): Promise<ThreadAttachment> {
   const name =
     file instanceof File && file.name ? file.name : "attachment";
-  return binaryRequest<ThreadAttachment>(
-    `/api/threads/${threadId}/attachments`,
-    file,
-    { "x-attachment-name": encodeURIComponent(name) },
-  );
+  return new Promise<ThreadAttachment>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const abort = () => xhr.abort();
+    const cleanup = () => {
+      options.signal?.removeEventListener("abort", abort);
+    };
+    xhr.open("POST", `/api/threads/${threadId}/attachments`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("x-requested-with", "threadbase");
+    xhr.setRequestHeader(
+      "content-type",
+      file.type || "application/octet-stream",
+    );
+    xhr.setRequestHeader("x-attachment-name", encodeURIComponent(name));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        options.onProgress?.(event.loaded, event.total);
+      }
+    };
+    xhr.onload = () => {
+      cleanup();
+      let body: unknown = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        body = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as ThreadAttachment);
+        return;
+      }
+      const error = (body as {
+        error?: { code?: string; message?: string };
+      } | null)?.error;
+      reject(
+        new ApiError(
+          error?.message ?? `Upload failed (${xhr.status})`,
+          xhr.status,
+          error?.code ?? null,
+        ),
+      );
+    };
+    xhr.onerror = () => {
+      cleanup();
+      reject(new Error("Upload failed"));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(new DOMException("Upload cancelled", "AbortError"));
+    };
+    if (options.signal?.aborted) {
+      cleanup();
+      reject(new DOMException("Upload cancelled", "AbortError"));
+      return;
+    }
+    options.signal?.addEventListener("abort", abort, { once: true });
+    xhr.send(file);
+  });
 }
 
 /** Send the accumulated CRDT draft blocks, plus any attached images. */

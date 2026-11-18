@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Group,
-  Loader,
   ScrollArea,
   SegmentedControl,
   Stack,
@@ -24,6 +23,9 @@ import { useState } from "react";
 import { listSessions, type SessionSummary, type TmuxSessionSummary } from "../../api";
 import { sessionKey, sessionMatches } from "../../lib/sessions";
 import { EmptyState } from "../EmptyState";
+import { ListSkeleton } from "../loading/Skeleton";
+import { useDelayedFlag } from "../../lib/use-delayed-flag";
+import { useSpinningIcon } from "../../lib/use-spinning-icon";
 import { SessionRow } from "./SessionRow";
 import { ThreadFromTmuxDialog } from "./ThreadFromTmuxDialog";
 
@@ -70,6 +72,7 @@ export function SessionsView({
   const phone = useMediaQuery("(max-width: 47.99em)");
   const [filter, setFilter] = useState<Filter>("all");
   const [needle, setNeedle] = useState("");
+  const [manualRefresh, setManualRefresh] = useState(false);
   const [threadSession, setThreadSession] = useState<TmuxSessionSummary | null>(
     null,
   );
@@ -81,6 +84,8 @@ export function SessionsView({
     refetchInterval: 10_000,
     refetchIntervalInBackground: false,
   });
+  const refreshing = useSpinningIcon(manualRefresh);
+  const showSkeleton = useDelayedFlag(sessions.isPending, 300, 500);
   const all = sessions.data?.sessions ?? [];
   const filtered = all.filter(
     (session) =>
@@ -115,10 +120,18 @@ export function SessionsView({
           <Tooltip label="Refresh sessions">
             <ActionIcon
               aria-label="Refresh sessions"
-              loading={sessions.isFetching}
-              onClick={() => void sessions.refetch()}
+              aria-busy={manualRefresh}
+              disabled={manualRefresh}
+              onClick={() => {
+                setManualRefresh(true);
+                void sessions.refetch().finally(() => setManualRefresh(false));
+              }}
             >
-              <IconRefresh size={14} stroke={1.5} />
+              <IconRefresh
+                size={14}
+                stroke={1.5}
+                className={refreshing ? "icon-turn" : undefined}
+              />
             </ActionIcon>
           </Tooltip>
         </Group>
@@ -168,9 +181,16 @@ export function SessionsView({
       ) : null}
 
       {sessions.isPending ? (
-        <Group justify="center" py="xl">
-          <Loader size="sm" />
-        </Group>
+        showSkeleton ? (
+          <ListSkeleton
+            label="Loading sessions"
+            rows={6}
+            avatar
+            avatarSize={14}
+            lines={2}
+            className="sessions-scroll sessions-list"
+          />
+        ) : null
       ) : sessions.isError ? (
         <EmptyState
           icon={<IconLayoutList size={16} stroke={1.5} />}

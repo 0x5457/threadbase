@@ -15,6 +15,7 @@ import { IconAlertCircle, IconMessage } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { isImeConfirming } from "../lib/keyboard";
+import { useDelayedFlag } from "../lib/use-delayed-flag";
 import { readPick } from "../lib/model-prefs";
 import {
   agentItems,
@@ -50,6 +51,7 @@ export function NewThreadModal({
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const showSubmitting = useDelayedFlag(submitting, 300, 500);
 
   const stateQuery = useQuery({
     queryKey: ["state"],
@@ -112,6 +114,9 @@ export function NewThreadModal({
       size="md"
       centered
       fullScreen={phone}
+      closeOnClickOutside={!submitting}
+      closeOnEscape={!submitting}
+      withCloseButton={!submitting}
     >
       <Stack gap="sm">
         <TextInput
@@ -167,13 +172,19 @@ export function NewThreadModal({
             {error}
           </Alert>
         ) : null}
+        {showSubmitting ? (
+          <Text size="xs" c="dimmed" role="status">
+            Creating the branch and worktree…
+          </Text>
+        ) : null}
         <Group justify="flex-end" gap="xs" mt={4}>
-          <Button variant="default" onClick={onClose}>
+          <Button variant="default" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
           <Button
             color="dark"
-            loading={submitting}
+            loading={showSubmitting}
+            disabled={submitting}
             onClick={() => void create()}
           >
             Start thread
