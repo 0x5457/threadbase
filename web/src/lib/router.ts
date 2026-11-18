@@ -5,7 +5,7 @@ import { useLocation, useParams } from "react-router";
  * links, reloads and the back button all work without a custom history store.
  */
 
-type Route =
+export type Route =
   | { kind: "inbox" }
   | { kind: "sessions" }
   | { kind: "settings" }

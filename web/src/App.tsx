@@ -15,6 +15,7 @@ import {
 } from "@mantine/spotlight";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useThreadPlacement } from "./lib/use-placement";
+import { useSelectedThread } from "./lib/use-selected-thread";
 import {
   IconInbox,
   IconLayoutList,
@@ -43,27 +44,25 @@ import {
   useNavigate,
 } from "react-router";
 import {
-  ApiError,
   forkThread,
   getMe,
   getState,
   getThread,
   listTerminalSessions,
-  listAllThreads,
   listInbox,
   listProjects,
   markInboxRead,
   searchWorkspace,
   updateThread,
-  type CommitSummary,
   type InboxItem,
+  type Project,
   type SearchHit,
   type TerminalTarget,
   type ThreadSummary,
 } from "./api";
 import type { InboxPageDto } from "./api/types/InboxPageDto";
+import type { AsideTab, AsideView } from "./components/AsidePanels";
 import { DrawerResizeHandle } from "./components/DrawerResizeHandle";
-import { HistoryPanel } from "./components/HistoryPanel";
 import { InboxView } from "./components/InboxView";
 import { MobileTabBar } from "./components/MobileTabBar";
 import { ReviewDialog } from "./components/ReviewDialog";
@@ -96,19 +95,14 @@ const SubagentThreadView = lazy(() =>
     default: module.SubagentThreadView,
   })),
 );
-const RealChangesPanel = lazy(() =>
-  import("./components/RealChangesPanel").then((module) => ({
-    default: module.RealChangesPanel,
-  })),
-);
-const FilesPanel = lazy(() =>
-  import("./components/FilesPanel").then((module) => ({
-    default: module.FilesPanel,
-  })),
-);
 const SettingsView = lazy(() =>
   import("./components/SettingsView").then((module) => ({
     default: module.SettingsView,
+  })),
+);
+const AsidePanels = lazy(() =>
+  import("./components/AsidePanels").then((module) => ({
+    default: module.AsidePanels,
   })),
 );
 const TerminalDrawer = lazy(() =>
@@ -170,6 +164,184 @@ function withoutThreadInboxItems(
   };
 }
 
+type PaletteInputs = {
+  threads: ThreadSummary[];
+  projects: Project[];
+  hits: SearchHit[] | undefined;
+  query: string;
+  debounced: string;
+  dark: boolean;
+  terminalEnabled: boolean;
+  onThread: (thread: ThreadSummary) => void;
+  onSearchHit: (hit: SearchHit) => void;
+  onInbox: () => void;
+  onSessions: () => void;
+  onSettings: () => void;
+  onTerminal: () => void;
+  onSwitchSession: () => void;
+  onToggleTheme: () => void;
+  close: () => void;
+};
+
+/** The command palette as a pure function of its inputs, so the shell stays a
+ *  thin layer over its data. `debounced` matching `query` is the guard that
+ *  keeps stale search results out of the list. */
+function buildPaletteActions({
+  threads,
+  projects,
+  hits: searchHits,
+  query: rawQuery,
+  debounced,
+  dark,
+  terminalEnabled,
+  onThread,
+  onSearchHit,
+  onInbox,
+  onSessions,
+  onSettings,
+  onTerminal,
+  onSwitchSession,
+  onToggleTheme,
+  close,
+}: PaletteInputs): SpotlightActionData[] {
+  const names = new Map(projects.map((project) => [project.id, project.name]));
+  const text = rawQuery.trim();
+  const query = text.toLowerCase();
+  const matches = (value: string | undefined) =>
+    !query || (value ?? "").toLowerCase().includes(query);
+  const threadActions = (query ? [] : threads.slice(0, 20))
+    .filter(
+      (thread) =>
+        matches(thread.title) ||
+        matches(names.get(thread.projectId)) ||
+        matches(thread.agent),
+    )
+    .map((thread) => ({
+      id: `thread:${thread.id}`,
+      group: "Threads",
+      label: thread.title,
+      description: `${names.get(thread.projectId) ?? "Project"} · ${thread.agent} · ${thread.status.replaceAll("_", " ")}`,
+      leftSection: <IconMessage size={15} stroke={1.5} />,
+      onClick: () => {
+        onThread(thread);
+        close();
+      },
+    }));
+
+  const hits =
+    text && searchHits && debounced === text
+      ? searchHits.map((hit) => {
+          const threadLabel =
+            hit.kind === "thread" ? hit.threadTitle : hit.snippet;
+          return {
+            id: `hit:${hit.kind}:${hit.refId}`,
+            group:
+              hit.kind === "comment"
+                ? "Comments"
+                : hit.kind === "thread"
+                  ? "Thread titles"
+                  : "Messages",
+            label: (threadLabel || hit.threadTitle)
+              .replace(/\s+/g, " ")
+              .trim(),
+            description: `${hit.threadTitle} · ${hit.projectName}`,
+            leftSection: <IconMessage size={15} stroke={1.5} />,
+            onClick: () => {
+              void onSearchHit(hit);
+            },
+          };
+        })
+      : [];
+
+  const nav = [
+    {
+      id: "inbox",
+      group: "Navigate",
+      label: "Go to Inbox",
+      description: "Approvals, questions and mentions",
+      leftSection: <IconInbox size={16} stroke={1.5} />,
+      onClick: () => {
+        onInbox();
+        close();
+      },
+    },
+    ...(terminalEnabled
+      ? [
+          {
+            id: "terminal",
+            group: "Navigate",
+            label: "Open terminal",
+            description: "The current thread's shell, shared with the team",
+            leftSection: <IconTerminal2 size={16} stroke={1.5} />,
+            onClick: () => {
+              onTerminal();
+              close();
+            },
+          },
+          {
+            id: "sessions",
+            group: "Navigate",
+            label: "Go to Sessions",
+            description: "Threads and tmux shells on this machine",
+            leftSection: <IconLayoutList size={16} stroke={1.5} />,
+            onClick: () => {
+              onSessions();
+              close();
+            },
+          },
+          {
+            id: "switch-session",
+            group: "Navigate",
+            label: "Switch session",
+            description: "Jump to a thread or tmux shell",
+            leftSection: <IconLayoutList size={16} stroke={1.5} />,
+            onClick: () => {
+              onSwitchSession();
+              close();
+            },
+          },
+        ]
+      : []),
+    {
+      id: "settings",
+      group: "Navigate",
+      label: "Settings",
+      description: "Workspace, agents and appearance",
+      leftSection: <IconSettings size={16} stroke={1.5} />,
+      onClick: () => {
+        onSettings();
+        close();
+      },
+    },
+  ].filter(
+    (action) => matches(action.label) || matches(action.description),
+  );
+
+  return [
+    ...nav,
+    ...hits,
+    ...threadActions,
+    ...(text
+      ? []
+      : [
+          {
+            id: "theme",
+            group: "Appearance",
+            label: `Switch to ${dark ? "light" : "dark"} mode`,
+            leftSection: dark ? (
+              <IconSun size={16} stroke={1.5} />
+            ) : (
+              <IconMoon size={16} stroke={1.5} />
+            ),
+            onClick: () => {
+              onToggleTheme();
+              close();
+            },
+          },
+        ]),
+  ];
+}
+
 function Workspace() {
   const route = useRoute();
   const location = useLocation();
@@ -186,37 +358,27 @@ function Workspace() {
           : route.kind === "thread" || route.kind === "subagent"
             ? "thread"
             : "inbox";
-  const routeThreadId =
-    route.kind === "thread" || route.kind === "subagent" ? route.threadId : null;
-  const [selectedThreadState, setSelectedThread] =
-    useState<ThreadSummary | null>(null);
-  const allThreads = useQuery({
-    queryKey: ["threads-all"],
-    queryFn: listAllThreads,
-    staleTime: 10_000,
-    // The sidebar is the only consumer that needs this without a live socket.
-    // Ten seconds keeps other threads' status marks fresh without rebuilding
-    // the tree on every 5 s tick.
-    refetchInterval: 10_000,
-    refetchIntervalInBackground: false,
-  });
-  // The URL is authoritative, so resolve the open thread during render from
-  // the freshest cached copy. Waiting for an effect made every back gesture
-  // paint the placeholder first (and, when the route and state disagreed,
-  // briefly mount the previous thread's transcript).
-  const selectedThread = useMemo(() => {
-    if (routeThreadId === null) return null;
-    const known =
-      selectedThreadState?.id === routeThreadId ? selectedThreadState : null;
-    const listed =
-      allThreads.data?.threads.find((thread) => thread.id === routeThreadId) ??
-      null;
-    if (known === null) return listed;
-    // Local patches (pin, rename, archive) carry a newer timestamp than the
-    // polled list; once the list catches up it wins again.
-    if (listed === null) return known;
-    return known.updatedAt >= listed.updatedAt ? known : listed;
-  }, [allThreads.data, routeThreadId, selectedThreadState]);
+  /** History push guard: clicking the open thread twice must not stack
+   *  duplicate entries. The refs keep `go` stable across navigations so the
+   *  memoized sidebar tree is not invalidated by every route change. */
+  const pathnameRef = useRef(location.pathname + location.search);
+  const navigateRef = useRef(navigate);
+  useEffect(() => {
+    pathnameRef.current = location.pathname + location.search;
+    navigateRef.current = navigate;
+  }, [location.pathname, location.search, navigate]);
+  const go = useCallback(
+    (path: string, options?: { replace?: boolean }) => {
+      if (path === pathnameRef.current) return;
+      pathnameRef.current = path;
+      void navigateRef.current(path, options);
+    },
+    [],
+  );
+  // The open thread resolves from the URL during render, backed by the polled
+  // list; the hook also fetches a deep-linked thread the list has not seen.
+  const { routeThreadId, selectedThread, setSelectedThread, allThreads } =
+    useSelectedThread(route, go);
   const pendingInboxReads = useRef<Set<string>>(new Set());
   const [navOpened, nav] = useDisclosure(false);
   // A phone mounts the nav tree once — after the shell goes idle, or on the
@@ -249,17 +411,8 @@ function Workspace() {
       return true;
     }
   });
-  const [asideTab, setAsideTab] = useState<"changes" | "files" | "history">(
-    "changes",
-  );
-  // What the Changes panel is showing: the worktree, one commit, or one turn's
-  // span. A turn span is wider than a commit — it includes uncommitted edits and
-  // every commit the turn made — so it is its own view, not a baseline flag.
-  const [asideView, setAsideView] = useState<
-    | { kind: "current" }
-    | { kind: "commit"; commit: CommitSummary }
-    | { kind: "turn"; turnId: string; label: string }
-  >({ kind: "current" });
+  const [asideTab, setAsideTab] = useState<AsideTab>("changes");
+  const [asideView, setAsideView] = useState<AsideView>({ kind: "current" });
   // The file browser is mounted on first use only; until then it costs a
   // directory request and DOM that a thread open does not need.
   const [filesOpened, setFilesOpened] = useState(false);
@@ -381,7 +534,7 @@ function Workspace() {
   // the transcript so opening a thread never waits for the highlighter.
   useEffect(() => {
     if (!wide) return;
-    return whenIdle(() => void import("./components/RealChangesPanel"));
+    return whenIdle(() => void import("./components/AsidePanels"));
   }, [wide]);
 
   const projects = useQuery({
@@ -404,24 +557,6 @@ function Workspace() {
     enabled: paletteOpened && debouncedQuery.length >= 2,
     staleTime: 5_000,
   });
-
-  /** History push guard: clicking the open thread twice must not stack
-   *  duplicate entries. The refs keep `go` stable across navigations so the
-   *  memoized sidebar tree is not invalidated by every route change. */
-  const pathnameRef = useRef(location.pathname + location.search);
-  const navigateRef = useRef(navigate);
-  useEffect(() => {
-    pathnameRef.current = location.pathname + location.search;
-    navigateRef.current = navigate;
-  }, [location.pathname, location.search, navigate]);
-  const go = useCallback(
-    (path: string, options?: { replace?: boolean }) => {
-      if (path === pathnameRef.current) return;
-      pathnameRef.current = path;
-      void navigateRef.current(path, options);
-    },
-    [],
-  );
 
   // Back closes the topmost overlay instead of leaving the screen behind it.
   useOverlayBack(navOpened, nav.close);
@@ -619,52 +754,6 @@ function Workspace() {
     }
   };
 
-
-  // A thread URL is authoritative: fetch the bundle directly when neither the
-  // list nor a previous open already resolved it, so a deep link works before
-  // any list has loaded.
-  useEffect(() => {
-    if (routeThreadId === null) {
-      if (selectedThreadState !== null) setSelectedThread(null);
-      return;
-    }
-    if (selectedThreadState?.id === routeThreadId) return;
-    if (
-      allThreads.data?.threads.some((thread) => thread.id === routeThreadId)
-    ) {
-      // Render already resolves it from the list; no state copy needed.
-      return;
-    }
-    let cancelled = false;
-    void getThread(routeThreadId)
-      .then(({ thread }) => {
-        if (!cancelled) setSelectedThread(thread);
-      })
-      .catch((cause: unknown) => {
-        if (cancelled) return;
-        setSelectedThread(null);
-        if (!(cause instanceof ApiError) || cause.status !== 404) return;
-        notifications.show({
-          message: "Thread not found — showing its project",
-          color: "red",
-        });
-        if (route.kind === "thread") {
-          go(pathFor({ kind: "project", projectId: route.projectId }), {
-            replace: true,
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    allThreads.data,
-    go,
-    route.kind,
-    route.kind === "thread" ? route.projectId : null,
-    routeThreadId,
-    selectedThreadState,
-  ]);
 
   const subagentRoute = route.kind === "subagent";
   // Prefer the polling thread list: it carries fresher subagent statuses than
@@ -962,161 +1051,47 @@ function Workspace() {
     }
   };
 
-  const actions = useMemo<SpotlightActionData[]>(() => {
-    const names = new Map(
-      (projects.data?.projects ?? []).map((project) => [
-        project.id,
-        project.name,
-      ]),
-    );
-    const query = paletteQuery.trim().toLowerCase();
-    const matches = (value: string | undefined) =>
-      !query || (value ?? "").toLowerCase().includes(query);
-    const threadActions = (query ? [] : (allThreads.data?.threads ?? []).slice(0, 20))
-      .filter(
-        (thread) =>
-          matches(thread.title) ||
-          matches(names.get(thread.projectId)) ||
-          matches(thread.agent),
-      )
-      .map((thread) => ({
-        id: `thread:${thread.id}`,
-        group: "Threads",
-        label: thread.title,
-        description: `${names.get(thread.projectId) ?? "Project"} · ${thread.agent} · ${thread.status.replaceAll("_", " ")}`,
-        leftSection: <IconMessage size={15} stroke={1.5} />,
-        onClick: () => {
-          openThread(thread);
-          spotlight.close();
+  const actions = useMemo<SpotlightActionData[]>(
+    () =>
+      buildPaletteActions({
+        threads: allThreads.data?.threads ?? [],
+        projects: projects.data?.projects ?? [],
+        hits: search.data?.hits,
+        query: paletteQuery,
+        debounced: debouncedQuery,
+        dark,
+        terminalEnabled,
+        onThread: openThread,
+        onSearchHit: openSearchHit,
+        onInbox: openInbox,
+        onSessions: openSessions,
+        onSettings: openSettings,
+        onTerminal: () => {
+          if (tmuxRef) closeTmux();
+          setTerminalOpen(true);
         },
-      }));
-
-    const hits =
-      query && search.data && debouncedQuery === paletteQuery.trim()
-        ? search.data.hits.map((hit) => {
-            const threadLabel =
-              hit.kind === "thread" ? hit.threadTitle : hit.snippet;
-            return {
-              id: `hit:${hit.kind}:${hit.refId}`,
-              group:
-                hit.kind === "comment"
-                  ? "Comments"
-                  : hit.kind === "thread"
-                    ? "Thread titles"
-                    : "Messages",
-              label: (threadLabel || hit.threadTitle)
-                .replace(/\s+/g, " ")
-                .trim(),
-              description: `${hit.threadTitle} · ${hit.projectName}`,
-              leftSection: <IconMessage size={15} stroke={1.5} />,
-              onClick: () => {
-                void openSearchHit(hit);
-              },
-            };
-          })
-        : [];
-
-    const nav = [
-      {
-        id: "inbox",
-        group: "Navigate",
-        label: "Go to Inbox",
-        description: "Approvals, questions and mentions",
-        leftSection: <IconInbox size={16} stroke={1.5} />,
-        onClick: () => {
-          openInbox();
-          spotlight.close();
-        },
-      },
-      ...(terminalEnabled
-        ? [
-            {
-              id: "terminal",
-              group: "Navigate",
-              label: "Open terminal",
-              description: "The current thread's shell, shared with the team",
-              leftSection: <IconTerminal2 size={16} stroke={1.5} />,
-              onClick: () => {
-                if (tmuxRef) closeTmux();
-                setTerminalOpen(true);
-                spotlight.close();
-              },
-            },
-            {
-              id: "sessions",
-              group: "Navigate",
-              label: "Go to Sessions",
-              description: "Threads and tmux shells on this machine",
-              leftSection: <IconLayoutList size={16} stroke={1.5} />,
-              onClick: () => {
-                openSessions();
-                spotlight.close();
-              },
-            },
-            {
-              id: "switch-session",
-              group: "Navigate",
-              label: "Switch session",
-              description: "Jump to a thread or tmux shell",
-              leftSection: <IconLayoutList size={16} stroke={1.5} />,
-              onClick: () => {
-                setSessionSwitcherOpen(true);
-                spotlight.close();
-              },
-            },
-          ]
-        : []),
-      {
-        id: "settings",
-        group: "Navigate",
-        label: "Settings",
-        description: "Workspace, agents and appearance",
-        leftSection: <IconSettings size={16} stroke={1.5} />,
-        onClick: () => {
-          openSettings();
-          spotlight.close();
-        },
-      },
-    ].filter(
-      (action) => matches(action.label) || matches(action.description),
-    );
-
-    return [
-      ...nav,
-      ...hits,
-      ...threadActions,
-      ...(query
-        ? []
-        : [
-            {
-              id: "theme",
-              group: "Appearance",
-              label: `Switch to ${dark ? "light" : "dark"} mode`,
-              leftSection: dark ? (
-                <IconSun size={16} stroke={1.5} />
-              ) : (
-                <IconMoon size={16} stroke={1.5} />
-              ),
-              onClick: () => {
-                toggleColorScheme();
-                spotlight.close();
-              },
-            },
-          ]),
-    ];
-  }, [
-    allThreads.data,
-    dark,
-    debouncedQuery,
-    openInbox,
-    openSearchHit,
-    openSettings,
-    openThread,
-    paletteQuery,
-    projects.data,
-    search.data,
-    toggleColorScheme,
-  ]);
+        onSwitchSession: () => setSessionSwitcherOpen(true),
+        onToggleTheme: toggleColorScheme,
+        close: spotlight.close,
+      }),
+    [
+      allThreads.data,
+      dark,
+      debouncedQuery,
+      openInbox,
+      openSearchHit,
+      openSessions,
+      openSettings,
+      openThread,
+      paletteQuery,
+      projects.data,
+      search.data,
+      spotlight.close,
+      terminalEnabled,
+      tmuxRef,
+      toggleColorScheme,
+    ],
+  );
 
   return (
     <>
@@ -1400,65 +1375,23 @@ function Workspace() {
                 large. Mount the panels only while the aside is on screen. */}
             {selectedThread && hasWorktree && !asideCollapsed ? (
               <Suspense fallback={<ChunkLoading />}>
-                {/* Panels stay mounted: switching back to Changes reuses the
-                    parsed diff instead of re-tokenizing it on the main
-                    thread. */}
-                <div
-                  className="aside-panel"
-                  style={{
-                    display: asideTab === "changes" ? undefined : "none",
+                <AsidePanels
+                  key={selectedThread.id}
+                  threadId={selectedThread.id}
+                  tab={asideTab}
+                  view={asideView}
+                  filesOpened={filesOpened}
+                  historyOpened={historyOpened}
+                  showTurn={showTurn}
+                  showChanges={showChanges}
+                  showFiles={showFiles}
+                  showHistory={openHistory}
+                  onSelectCommit={(commit) => {
+                    setAsideView({ kind: "commit", commit });
+                    setAsideTab("changes");
                   }}
-                >
-                  <RealChangesPanel
-                    key={selectedThread.id}
-                    threadId={selectedThread.id}
-                    active={asideTab === "changes"}
-                    commit={asideView.kind === "commit" ? asideView.commit : null}
-                    turn={asideView.kind === "turn" ? asideView : null}
-                    onShowTurn={showTurn}
-                    onShowCurrent={showChanges}
-                    onShowFiles={showFiles}
-                    onShowHistory={openHistory}
-                    onClose={collapseAside}
-                  />
-                </div>
-                {filesOpened ? (
-                  <div
-                    className="aside-panel"
-                    style={{
-                      display: asideTab === "files" ? undefined : "none",
-                    }}
-                  >
-                    <FilesPanel
-                      key={selectedThread.id}
-                      threadId={selectedThread.id}
-                      onShowChanges={showChanges}
-                      onClose={collapseAside}
-                    />
-                  </div>
-                ) : null}
-                {historyOpened ? (
-                  <div
-                    className="aside-panel"
-                    style={{
-                      display: asideTab === "history" ? undefined : "none",
-                    }}
-                  >
-                    <HistoryPanel
-                      threadId={selectedThread.id}
-                      active={asideTab === "history"}
-                      selectedSha={
-                        asideView.kind === "commit" ? asideView.commit.sha : null
-                      }
-                      onSelect={(entry) => {
-                        setAsideView({ kind: "commit", commit: entry });
-                        setAsideTab("changes");
-                      }}
-                      onShowChanges={showChanges}
-                      onClose={collapseAside}
-                    />
-                  </div>
-                ) : null}
+                  onClose={collapseAside}
+                />
               </Suspense>
             ) : null}
           </AppShell.Aside>
@@ -1520,62 +1453,23 @@ function Workspace() {
             {phone ? <SheetGrabber onClose={changes.close} /> : null}
             {selectedThread ? (
               <Suspense fallback={<ChunkLoading />}>
-                <div
-                  className="aside-panel"
-                  style={{
-                    display: asideTab === "changes" ? undefined : "none",
+                <AsidePanels
+                  key={selectedThread.id}
+                  threadId={selectedThread.id}
+                  tab={asideTab}
+                  view={asideView}
+                  filesOpened={filesOpened}
+                  historyOpened={historyOpened}
+                  showTurn={showTurn}
+                  showChanges={showChanges}
+                  showFiles={showFiles}
+                  showHistory={openHistory}
+                  onSelectCommit={(commit) => {
+                    setAsideView({ kind: "commit", commit });
+                    setAsideTab("changes");
                   }}
-                >
-                  <RealChangesPanel
-                    key={selectedThread.id}
-                    threadId={selectedThread.id}
-                    active={asideTab === "changes"}
-                    commit={asideView.kind === "commit" ? asideView.commit : null}
-                    turn={asideView.kind === "turn" ? asideView : null}
-                    onShowTurn={showTurn}
-                    onShowCurrent={showChanges}
-                    onClose={changes.close}
-                    onShowFiles={showFiles}
-                    onShowHistory={openHistory}
-                  />
-                </div>
-                {filesOpened ? (
-                  <div
-                    className="aside-panel"
-                    style={{
-                      display: asideTab === "files" ? undefined : "none",
-                    }}
-                  >
-                    <FilesPanel
-                      key={selectedThread.id}
-                      threadId={selectedThread.id}
-                      onClose={changes.close}
-                      onShowChanges={showChanges}
-                    />
-                  </div>
-                ) : null}
-                {historyOpened ? (
-                  <div
-                    className="aside-panel"
-                    style={{
-                      display: asideTab === "history" ? undefined : "none",
-                    }}
-                  >
-                    <HistoryPanel
-                      threadId={selectedThread.id}
-                      active={asideTab === "history"}
-                      selectedSha={
-                        asideView.kind === "commit" ? asideView.commit.sha : null
-                      }
-                      onSelect={(entry) => {
-                        setAsideView({ kind: "commit", commit: entry });
-                        setAsideTab("changes");
-                      }}
-                      onShowChanges={showChanges}
-                      onClose={changes.close}
-                    />
-                  </div>
-                ) : null}
+                  onClose={changes.close}
+                />
               </Suspense>
             ) : null}
           </div>
