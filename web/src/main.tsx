@@ -21,6 +21,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { AuthGate } from "./components/AuthGate";
+import { GuestThread } from "./components/guest/GuestThread";
 import { installVisualViewportSync } from "./lib/viewport";
 import "./styles/base.css";
 import "./styles/header.css";
@@ -236,6 +237,10 @@ function NotificationHost() {
   return <Notifications position={phone ? "top-center" : "bottom-right"} />;
 }
 
+const guestToken = window.location.pathname.startsWith("/guest/")
+  ? window.location.pathname.slice("/guest/".length).split("/")[0]
+  : null;
+
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root");
 
@@ -247,9 +252,15 @@ createRoot(root).render(
       colorSchemeManager={colorSchemeManager}
     >
       <QueryClientProvider client={queryClient}>
-        <AuthGate>
-          <App />
-        </AuthGate>
+        {/* A guest link is its own surface: no account, no shell, one thread.
+            Keeping it outside `AuthGate` is what makes "no account" literal. */}
+        {guestToken ? (
+          <GuestThread token={guestToken} />
+        ) : (
+          <AuthGate>
+            <App />
+          </AuthGate>
+        )}
         <NotificationHost />
       </QueryClientProvider>
     </MantineProvider>

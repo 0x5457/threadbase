@@ -490,3 +490,172 @@
   flex: none;
   color: var(--ink-muted);
 }
+
+/* ── thread rows ────────────────────────────────────────────
+   Two lines: the task, then the context that tells two threads apart.
+   The right gutter carries exactly one signal, most urgent first. */
+
+.side-thread {
+  display: flex;
+  width: calc(100% - 12px);
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  margin: 1px 6px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.side-thread:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.side-thread[data-active] {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.side-thread-body {
+  display: flex;
+  overflow: hidden;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.side-thread-title {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-thread-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.side-thread-context {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-thread-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A separator dot belongs to the row, not to either half. */
+.side-thread-time::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--ink-faint);
+}
+
+.side-thread-status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-width: 12px;
+  justify-content: flex-end;
+}
+
+/* Requests waiting for a person: the one chip allowed to use colour. */
+.side-needs {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ── shelves ─────────────────────────────────────────────────
+   Parked work folds under its project instead of competing with the thread
+   someone is actually working on. */
+
+.side-shelf {
+  display: flex;
+  width: calc(100% - 12px);
+  align-items: center;
+  gap: 5px;
+  margin: 2px 6px 1px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.side-shelf:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  color: var(--ink-muted);
+}
+
+.side-shelf-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-shelf-count {
+  flex: none;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── undo toast ────────────────────────────────────────────── */
+
+.undo-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.undo-toast-action {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A project row carries the count of threads inside it that need a person, so
+   a collapsed folder still reports attention. */
+.side-project-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.side-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

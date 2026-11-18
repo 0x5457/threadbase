@@ -76,6 +76,8 @@ interface TitleBarProps {
   onFork: () => void;
   onRevert: () => void;
   onArchive: (archived: boolean) => void;
+  /** Move the thread between shelves; ids come from the placement machine. */
+  onPlacement: (action: string) => void;
 }
 
 export function TitleBar({
@@ -116,6 +118,7 @@ export function TitleBar({
   onFork,
   onRevert,
   onArchive,
+  onPlacement,
 }: TitleBarProps) {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const dark = colorScheme === "dark";
@@ -247,6 +250,7 @@ export function TitleBar({
           onFork={onFork}
           onRevert={onRevert}
           onArchive={onArchive}
+          onPlacement={onPlacement}
           onHistory={onOpenHistory}
         />
       </div>
@@ -295,6 +299,7 @@ export function TitleBar({
               onFork={onFork}
               onRevert={onRevert}
               onArchive={onArchive}
+              onPlacement={onPlacement}
               onHistory={onOpenHistory}
             />
           </Box>

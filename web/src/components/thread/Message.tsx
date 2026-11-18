@@ -1,6 +1,7 @@
 import { ActionIcon, Avatar, Text } from "@mantine/core";
 import {
   IconAlertCircle,
+  IconArrowBackUp,
   IconClock,
   IconFileText,
   IconMessagePlus,
@@ -28,14 +29,20 @@ export const Message = memo(function Message({
   item,
   onComment,
   onEdit,
+  onRewind,
   onLongPress,
+  showComment = true,
   active,
   continued = false,
 }: {
   item: Extract<ViewItem, { kind: "message" }>;
   onComment: (messageId: string) => void;
   onEdit?: (item: Extract<ViewItem, { kind: "message" }>) => void;
+  /** Undo this prompt's turn and every later one, files included. */
+  onRewind?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
+  /** Guests see the transcript, not the review tools. */
+  showComment?: boolean;
   active: boolean;
   /** Same author as the row above: drop the repeated avatar and tighten up. */
   continued?: boolean;
@@ -116,14 +123,26 @@ export const Message = memo(function Message({
             <IconPencil size={12} stroke={1.5} />
           </ActionIcon>
         ) : null}
-        <ActionIcon
-          className="msg-comment-btn"
-          size={18}
-          aria-label="Comment on message"
-          onClick={() => onComment(item.id)}
-        >
-          <IconMessagePlus size={12} stroke={1.5} />
-        </ActionIcon>
+        {!agent && onRewind ? (
+          <ActionIcon
+            className="msg-rewind-btn"
+            size={18}
+            aria-label="Rewind to before this turn"
+            onClick={() => onRewind(item)}
+          >
+            <IconArrowBackUp size={12} stroke={1.5} />
+          </ActionIcon>
+        ) : null}
+        {showComment ? (
+          <ActionIcon
+            className="msg-comment-btn"
+            size={18}
+            aria-label="Comment on message"
+            onClick={() => onComment(item.id)}
+          >
+            <IconMessagePlus size={12} stroke={1.5} />
+          </ActionIcon>
+        ) : null}
         {imageAttachments.length ? (
           <div className="message-images">
             {imageAttachments.map((attachment) => {

@@ -14,6 +14,7 @@ import {
   type SpotlightActionData,
 } from "@mantine/spotlight";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useThreadPlacement } from "./lib/use-placement";
 import {
   IconInbox,
   IconLayoutList,
@@ -251,9 +252,14 @@ function Workspace() {
   const [asideTab, setAsideTab] = useState<"changes" | "files" | "history">(
     "changes",
   );
-  // A checkpoint selected from History. When set, the Changes panel shows
-  // that commit's own diff instead of the worktree.
-  const [viewCommit, setViewCommit] = useState<CommitSummary | null>(null);
+  // What the Changes panel is showing: the worktree, one commit, or one turn's
+  // span. A turn span is wider than a commit — it includes uncommitted edits and
+  // every commit the turn made — so it is its own view, not a baseline flag.
+  const [asideView, setAsideView] = useState<
+    | { kind: "current" }
+    | { kind: "commit"; commit: CommitSummary }
+    | { kind: "turn"; turnId: string; label: string }
+  >({ kind: "current" });
   // The file browser is mounted on first use only; until then it costs a
   // directory request and DOM that a thread open does not need.
   const [filesOpened, setFilesOpened] = useState(false);
@@ -521,19 +527,30 @@ function Workspace() {
     setAsideTab("history");
   }, []);
   const showChanges = useCallback(() => {
-    setViewCommit(null);
+    setAsideView({ kind: "current" });
     setAsideTab("changes");
   }, []);
 
+  const showTurn = useCallback((turnId: string) => {
+    setAsideView((current) => ({
+      kind: "turn",
+      turnId,
+      label:
+        current.kind === "commit"
+          ? (current.commit.turnPrompt ?? current.commit.shortSha)
+          : "this turn",
+    }));
+    setAsideTab("changes");
+  }, []);
   // Opening a different thread must not leave the panel on a commit that
   // belongs to the previous worktree.
   useEffect(() => {
-    setViewCommit(null);
+    setAsideView({ kind: "current" });
   }, [selectedThread?.id]);
 
   const openChanges = () => {
     if (!hasWorktree) return;
-    setViewCommit(null);
+    setAsideView({ kind: "current" });
     setAsideTab("changes");
     blurActiveInput();
     // The desktop panel is persistent, not a drawer: reveal it in place.
@@ -913,6 +930,8 @@ function Workspace() {
     ],
   );
 
+  const place = useThreadPlacement();
+
   const refreshThreadLists = (thread?: ThreadSummary) => {
     void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
     void queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -1219,10 +1238,32 @@ function Workspace() {
               if (archived) openInbox();
               refreshThreadLists(selectedThread);
               notifications.show({
-                message: archived ? "Thread archived" : "Thread unarchived",
                 color: "teal",
+                message: (
+                  <span className="undo-toast">
+                    {archived ? "Thread archived" : "Thread unarchived"}
+                    <button
+                      type="button"
+                      className="undo-toast-action"
+                      onClick={() => {
+                        void runAction(async () => {
+                          await updateThread(selectedThread.id, {
+                            archived: !archived,
+                          });
+                          refreshThreadLists(selectedThread);
+                        });
+                      }}
+                    >
+                      Undo
+                    </button>
+                  </span>
+                ),
               });
             });
+          }}
+          onPlacement={(action) => {
+            if (!selectedThread) return;
+            void runAction(() => place(selectedThread, action));
           }}
         />
         {/* Mantine keeps a collapsed navbar's children mounted, so on a phone
@@ -1372,7 +1413,9 @@ function Workspace() {
                     key={selectedThread.id}
                     threadId={selectedThread.id}
                     active={asideTab === "changes"}
-                    commit={viewCommit}
+                    commit={asideView.kind === "commit" ? asideView.commit : null}
+                    turn={asideView.kind === "turn" ? asideView : null}
+                    onShowTurn={showTurn}
                     onShowCurrent={showChanges}
                     onShowFiles={showFiles}
                     onShowHistory={openHistory}
@@ -1404,9 +1447,11 @@ function Workspace() {
                     <HistoryPanel
                       threadId={selectedThread.id}
                       active={asideTab === "history"}
-                      selectedSha={viewCommit?.sha ?? null}
+                      selectedSha={
+                        asideView.kind === "commit" ? asideView.commit.sha : null
+                      }
                       onSelect={(entry) => {
-                        setViewCommit(entry);
+                        setAsideView({ kind: "commit", commit: entry });
                         setAsideTab("changes");
                       }}
                       onShowChanges={showChanges}
@@ -1485,7 +1530,9 @@ function Workspace() {
                     key={selectedThread.id}
                     threadId={selectedThread.id}
                     active={asideTab === "changes"}
-                    commit={viewCommit}
+                    commit={asideView.kind === "commit" ? asideView.commit : null}
+                    turn={asideView.kind === "turn" ? asideView : null}
+                    onShowTurn={showTurn}
                     onShowCurrent={showChanges}
                     onClose={changes.close}
                     onShowFiles={showFiles}
@@ -1517,9 +1564,11 @@ function Workspace() {
                     <HistoryPanel
                       threadId={selectedThread.id}
                       active={asideTab === "history"}
-                      selectedSha={viewCommit?.sha ?? null}
+                      selectedSha={
+                        asideView.kind === "commit" ? asideView.commit.sha : null
+                      }
                       onSelect={(entry) => {
-                        setViewCommit(entry);
+                        setAsideView({ kind: "commit", commit: entry });
                         setAsideTab("changes");
                       }}
                       onShowChanges={showChanges}
@@ -1579,7 +1628,7 @@ function Workspace() {
         onClose={review.close}
         onOpenChanges={() => {
           review.close();
-          setViewCommit(null);
+          setAsideView({ kind: "current" });
           setAsideTab("changes");
           // Let the review's history entry unwind before the drawer pushes its
           // own; otherwise the drawer can be dismissed by the review's back.

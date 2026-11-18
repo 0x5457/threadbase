@@ -3,6 +3,7 @@ import {
   Button,
   Group,
   Modal,
+  Select,
   Stack,
   Text,
   TextInput,
@@ -13,6 +14,14 @@ import { IconAlertCircle, IconFolder } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { updateProject, type Project } from "../api";
+import type { PermissionMode } from "../api/types/PermissionMode";
+import {
+  PERMISSION_MODES,
+  permissionModeHint,
+  permissionModeLabel,
+  permissionModeManaged,
+  usePermissionPolicy,
+} from "../lib/permissions";
 
 interface ProjectSettingsModalProps {
   opened: boolean;
@@ -28,12 +37,14 @@ export function ProjectSettingsModal({
   onSaved,
 }: ProjectSettingsModalProps) {
   const phone = useMediaQuery("(max-width: 47.99em)");
+  const permissions = usePermissionPolicy();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [verifyCommand, setVerifyCommand] = useState("");
   const [setupCommand, setSetupCommand] = useState("");
+  const [permissionMode, setPermissionMode] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +55,7 @@ export function ProjectSettingsModal({
     setRemoteUrl("");
     setVerifyCommand(project?.verifyCommand ?? "");
     setSetupCommand(project?.setupCommand ?? "");
+    setPermissionMode(project?.permissionMode ?? "");
     setError(null);
   }, [opened, project]);
 
@@ -63,6 +75,7 @@ export function ProjectSettingsModal({
         remoteUrl: trimmedRemote || undefined,
         verifyCommand: verifyCommand.trim(),
         setupCommand: setupCommand.trim(),
+        permissionMode,
       });
       notifications.show({ message: `${updated.name} updated`, color: "teal" });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -132,6 +145,27 @@ export function ProjectSettingsModal({
             placeholder="pnpm test"
             value={verifyCommand}
             onChange={(event) => setVerifyCommand(event.currentTarget.value)}
+          />
+          <Select
+            label="Permissions"
+            description="Default for new threads here. Each thread can still choose its own."
+            data={[
+              { value: "", label: "Inherit instance default" },
+              ...PERMISSION_MODES.map((mode) => ({
+                value: mode,
+                label: permissionModeManaged(mode, permissions.cap)
+                  ? `${permissionModeLabel(mode)} · managed`
+                  : permissionModeLabel(mode),
+                disabled: permissionModeManaged(mode, permissions.cap),
+              })),
+            ]}
+            value={permissionMode}
+            onChange={(value) => setPermissionMode(value ?? "")}
+            allowDeselect={false}
+            comboboxProps={{ withinPortal: false }}
+            title={permissionModeHint(
+              (permissionMode || permissions.defaultMode) as PermissionMode,
+            )}
           />
           {error ? (
             <Alert

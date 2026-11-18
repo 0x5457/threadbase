@@ -14,6 +14,7 @@ const BY_ID = new Map(MACHINES.map((machine) => [machine.id, machine]));
 
 type MachineId =
   | "thread"
+  | "placement"
   | "setup"
   | "approval"
   | "elicitation"

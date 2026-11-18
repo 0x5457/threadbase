@@ -8,6 +8,8 @@ import type { FileChangeDto } from "./types/FileChangeDto";
 import type { FileDiffDto } from "./types/FileDiffDto";
 import type { ForkThreadRequest } from "./types/ForkThreadRequest";
 import type { MergeBackResponse } from "./types/MergeBackResponse";
+import type { PlacementRequest } from "./types/PlacementRequest";
+import type { RewindRequest } from "./types/RewindRequest";
 import type { OkResponse } from "./types/OkResponse";
 import type { OlderEventsDto } from "./types/OlderEventsDto";
 import type { SendMessageResponse } from "./types/SendMessageResponse";
@@ -36,7 +38,7 @@ type ThreadAttachment = AttachmentDto;
 type UpdateThreadPatch = Partial<
   Pick<
     UpdateThreadRequest,
-    "title" | "pinned" | "archived" | "model" | "effort"
+    "title" | "pinned" | "archived" | "model" | "effort" | "autoSettle" | "permissionMode"
   >
 >;
 
@@ -108,6 +110,22 @@ export function getThreadGoal(threadId: string) {
   return request<ThreadGoalResponse>(`/api/threads/${threadId}/goal`);
 }
 
+/** Everything one turn changed: from its checkpoint to the next one. */
+export function getTurnChanges(threadId: string, turnId: string) {
+  return request<ChangesDto>(`/api/threads/${threadId}/turns/${turnId}/changes`);
+}
+
+export function getTurnFileDiff(
+  threadId: string,
+  turnId: string,
+  path: string,
+) {
+  const params = new URLSearchParams({ path });
+  return request<FileDiffDto>(
+    `/api/threads/${threadId}/turns/${turnId}/file?${params.toString()}`,
+  );
+}
+
 /** One commit's own diff: parent to commit. */
 export function getCommitChanges(threadId: string, sha: string) {
   return request<ChangesDto>(`/api/threads/${threadId}/commits/${sha}`);
@@ -139,6 +157,23 @@ export function createThread(projectId: string, input: CreateThreadInput) {
 
 export function updateThread(threadId: string, patch: UpdateThreadPatch) {
   return jsonRequest<ThreadResponse>(`/api/threads/${threadId}`, "PATCH", patch);
+}
+
+/**
+ * Move a thread between shelves. `action` is a command id from the published
+ * placement machine, so the machine stays the only list of legal moves.
+ */
+export function setThreadPlacement(
+  threadId: string,
+  action: string,
+  until?: number | null,
+) {
+  const body: PlacementRequest = { action, until: until ?? null };
+  return jsonRequest<ThreadResponse>(
+    `/api/threads/${threadId}/placement`,
+    "POST",
+    body,
+  );
 }
 
 export function retryThreadSetup(threadId: string) {
@@ -177,6 +212,19 @@ export function editThreadMessage(
     `/api/threads/${threadId}/messages/${messageId}/edit`,
     "POST",
     { text },
+  );
+}
+
+/**
+ * Discard one prompt's turn and every later one. The server resets the worktree
+ * to the checkpoint taken before that turn and clears the agent's context.
+ */
+export function rewindThread(threadId: string, messageId: string) {
+  const body: RewindRequest = { messageId };
+  return jsonRequest<OkResponse>(
+    `/api/threads/${threadId}/rewind`,
+    "POST",
+    body,
   );
 }
 

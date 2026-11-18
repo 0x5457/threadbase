@@ -30,6 +30,7 @@ export function updateProject(
     remoteUrl?: string | null;
     verifyCommand?: string | null;
     setupCommand?: string | null;
+    permissionMode?: string | null;
   },
 ) {
   return jsonRequest<ProjectResponse>(`/api/projects/${projectId}`, "PATCH", patch);

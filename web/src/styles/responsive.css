@@ -510,7 +510,8 @@
   }
 
   /* Phones have no hover row actions; editing lives in the long-press sheet. */
-  .msg-edit-btn {
+  .msg-edit-btn,
+  .msg-rewind-btn {
     display: none !important;
   }
 

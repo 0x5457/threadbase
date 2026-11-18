@@ -15,8 +15,6 @@ import {
   IconInbox,
   IconLayoutList,
   IconLogout,
-  IconMessage,
-  IconPencil,
   IconPlus,
   IconSettings,
 } from "@tabler/icons-react";
@@ -35,6 +33,8 @@ import { NewThreadModal } from "./NewThreadModal";
 import { ProjectSettingsModal } from "./ProjectSettingsModal";
 import { initials } from "../lib/initials";
 import { ProjectNode } from "./sidebar/ProjectNode";
+import { SidebarThreadRow } from "./sidebar/ThreadRow";
+import { ThreadActionSheet } from "./sidebar/ThreadActionSheet";
 
 /** Stable empty list for projects without threads. */
 const EMPTY_THREADS: ThreadSummary[] = [];
@@ -98,34 +98,6 @@ export const Sidebar = memo(function Sidebar({
     retry: false,
     staleTime: 10_000,
   });
-  // One query already carries every thread; project lists are a view of it,
-  // not a second request per project. Per-project array identity is preserved
-  // so a status change in one project does not re-render the other projects.
-  const groupedThreadsRef = useRef<Map<string, ThreadSummary[]>>(new Map());
-  const threadsByProject = useMemo(() => {
-    const next = new Map<string, ThreadSummary[]>();
-    for (const thread of allThreads.data?.threads ?? []) {
-      const list = next.get(thread.projectId);
-      if (list) list.push(thread);
-      else next.set(thread.projectId, [thread]);
-    }
-    for (const [id, list] of next) {
-      const previous = groupedThreadsRef.current.get(id);
-      if (
-        previous &&
-        previous.length === list.length &&
-        previous.every((thread, index) => thread === list[index])
-      ) {
-        next.set(id, previous);
-      }
-    }
-    return next;
-  }, [allThreads.data]);
-  // Persist the identity map after render; mutating a ref inside `useMemo`
-  // makes render impure and was the last blocker in the React Doctor gate.
-  useEffect(() => {
-    groupedThreadsRef.current = threadsByProject;
-  }, [threadsByProject]);
   // Shares the shell's cache entry and polling cadence: a second observer
   // here used to force the whole tree to re-render every five seconds.
   const inbox = useQuery({
@@ -146,9 +118,46 @@ export const Sidebar = memo(function Sidebar({
     );
   }, [projectsQuery.data, added]);
 
-  const pinned = (allThreads.data?.threads ?? []).filter(
-    (thread) => thread.pinned,
+  // The server decides the row; pinned work is lifted out of its project so it is
+  // not rendered twice. Per-project array identity is preserved so a status
+  // change in one project does not re-render the others.
+  const pinned = useMemo(
+    () => (allThreads.data?.threads ?? []).filter((thread) => thread.section === "pinned"),
+    [allThreads.data],
   );
+  const groupedThreadsRef = useRef<Map<string, ThreadSummary[]>>(new Map());
+  const projectThreads = useMemo(() => {
+    const next = new Map<string, ThreadSummary[]>();
+    for (const thread of allThreads.data?.threads ?? []) {
+      if (thread.section === "pinned") continue;
+      const list = next.get(thread.projectId);
+      if (list) list.push(thread);
+      else next.set(thread.projectId, [thread]);
+    }
+    for (const [id, list] of next) {
+      const previous = groupedThreadsRef.current.get(id);
+      if (
+        previous &&
+        previous.length === list.length &&
+        previous.every((thread, index) => thread === list[index])
+      ) {
+        next.set(id, previous);
+      }
+    }
+    return next;
+  }, [allThreads.data]);
+  // Persist the identity map after render; mutating a ref inside `useMemo` makes
+  // render impure and was the last blocker in the React Doctor gate.
+  useEffect(() => {
+    groupedThreadsRef.current = projectThreads;
+  }, [projectThreads]);
+  const projectName = useMemo(() => {
+    const names = new Map(
+      (projectsQuery.data?.projects ?? []).map((project) => [project.id, project.name]),
+    );
+    return (projectId: string) => names.get(projectId) ?? "";
+  }, [projectsQuery.data]);
+  const [pinnedSheet, setPinnedSheet] = useState<ThreadSummary | null>(null);
   const unread = inbox.data?.unread ?? 0;
 
   return (
@@ -212,28 +221,23 @@ export const Sidebar = memo(function Sidebar({
                 </Text>
               </Group>
               {pinned.map((thread) => (
-                <NavLink
+                <SidebarThreadRow
                   key={thread.id}
-                  component="button"
-                  className="side-nav"
-                  label={thread.title}
-                  active={thread.id === selectedThreadId}
-                  onClick={() => {
-                    onSelectThread(thread);
+                  thread={thread}
+                  selected={thread.id === selectedThreadId}
+                  selectedSubagentId={
+                    thread.id === selectedThreadId ? selectedSubagentId : null
+                  }
+                  projectName={projectName(thread.projectId)}
+                  onOpen={(next) => {
+                    onSelectThread(next);
                     onNavigate();
                   }}
-                  leftSection={<IconMessage size={13} stroke={1.5} />}
-                  rightSection={
-                    thread.hasDraft ? (
-                      <span
-                        className="thread-draft-mark"
-                        title="Draft saved"
-                        aria-label="Draft saved"
-                      >
-                        <IconPencil size={11} stroke={1.5} />
-                      </span>
-                    ) : null
-                  }
+                  onSelectSubagent={(next, subagent) => {
+                    onSelectSubagent(next, subagent);
+                    onNavigate();
+                  }}
+                  onLongPress={setPinnedSheet}
                 />
               ))}
             </div>
@@ -250,7 +254,7 @@ export const Sidebar = memo(function Sidebar({
                 key={project.id}
                 phone={phone}
                 project={project}
-                threads={threadsByProject.get(project.id) ?? EMPTY_THREADS}
+                threads={projectThreads.get(project.id) ?? EMPTY_THREADS}
                 threadsLoading={allThreads.isLoading}
                 selectedThreadId={selectedThreadId}
                 selectedSubagentId={selectedSubagentId}
@@ -343,6 +347,19 @@ export const Sidebar = memo(function Sidebar({
             ),
           );
           setSettingsProject(null);
+        }}
+      />
+
+      <ThreadActionSheet
+        thread={pinnedSheet}
+        projectId={pinnedSheet?.projectId ?? ""}
+        subtitle={pinnedSheet ? projectName(pinnedSheet.projectId) : undefined}
+        opened={pinnedSheet !== null}
+        onClose={() => setPinnedSheet(null)}
+        onOpen={(thread) => {
+          setPinnedSheet(null);
+          onSelectThread(thread);
+          onNavigate();
         }}
       />
 

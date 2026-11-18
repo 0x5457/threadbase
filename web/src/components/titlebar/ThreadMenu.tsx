@@ -4,6 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconArchive,
   IconArrowBackUp,
+  IconCalendarOff,
+  IconCheck,
+  IconLink,
+  IconLinkOff,
   IconBell,
   IconBellOff,
   IconDots,
@@ -11,21 +15,35 @@ import {
   IconGitMerge,
   IconHistory,
   IconListCheck,
+  IconMoon,
   IconPencil,
   IconPin,
   IconPlayerStop,
   IconRefresh,
+  IconSun,
 } from "@tabler/icons-react";
 import type { WatchState } from "../../api/types/WatchState";
 import {
   cancelThread,
+  createGuestLink,
+  getGuestLink,
+  getState,
+  revokeGuestLink,
+  updateThread,
   getThreadBundle,
   getThreadWatch,
   restartThread,
   retryThreadSetup,
   setThreadWatch,
 } from "../../api";
-import { actionLabel, threadCan } from "../../lib/machine";
+import { actionLabel, can, threadCan } from "../../lib/machine";
+import {
+  PERMISSION_MODES,
+  permissionModeHint,
+  permissionModeLabel,
+  permissionModeManaged,
+  usePermissionPolicy,
+} from "../../lib/permissions";
 import { useRoute } from "../../lib/router";
 
 export function ThreadMenu({
@@ -42,6 +60,7 @@ export function ThreadMenu({
   onFork,
   onRevert,
   onArchive,
+  onPlacement,
   onHistory,
 }: {
   canManage: boolean;
@@ -61,6 +80,8 @@ export function ThreadMenu({
   onFork: () => void;
   onRevert: () => void;
   onArchive: (archived: boolean) => void;
+  /** Move the thread between shelves; ids come from the placement machine. */
+  onPlacement: (action: string) => void;
   onHistory: () => void;
 }) {
   const route = useRoute();
@@ -135,10 +156,114 @@ export function ThreadMenu({
       });
     },
   });
+  const permissions = usePermissionPolicy();
+  const state = useQuery({
+    queryKey: ["state"],
+    queryFn: getState,
+    staleTime: 60_000,
+  });
+  const guestLinks = state.data?.guestLinks ?? false;
+  const guestLink = useQuery({
+    queryKey: ["guest-link", threadId],
+    queryFn: () => getGuestLink(threadId!),
+    enabled: guestLinks && threadId !== null,
+    staleTime: 10_000,
+  });
+  const share = useMutation({
+    mutationFn: async () => {
+      const link = await createGuestLink(threadId!);
+      await navigator.clipboard?.writeText(link.url).catch(() => {});
+      return link;
+    },
+    onSuccess: (link) => {
+      void queryClient.invalidateQueries({ queryKey: ["guest-link", threadId] });
+      notifications.show({
+        color: "teal",
+        message: `Guest link copied · expires ${new Date(link.expiresAt).toLocaleString()}`,
+      });
+    },
+    onError: (cause) => {
+      notifications.show({
+        message:
+          cause instanceof Error ? cause.message : "Could not create the link",
+        color: "red",
+      });
+    },
+  });
+  const stopSharing = useMutation({
+    mutationFn: () => revokeGuestLink(threadId!),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["guest-link", threadId] });
+      notifications.show({ color: "teal", message: "Guest link revoked" });
+    },
+    onError: (cause) => {
+      notifications.show({
+        message:
+          cause instanceof Error ? cause.message : "Could not revoke the link",
+        color: "red",
+      });
+    },
+  });
+  const permissionOverride =
+    bundle.data?.bundle.thread.permissionModeOverride ?? null;
+  const permissionMode =
+    bundle.data?.bundle.thread.permissionMode ?? permissions.defaultMode;
+  const setPermissionMode = useMutation({
+    mutationFn: (mode: string) =>
+      updateThread(threadId!, { permissionMode: mode }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
+      void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
+    },
+    onError: (cause) => {
+      notifications.show({
+        message:
+          cause instanceof Error ? cause.message : "Could not change permissions",
+        color: "red",
+      });
+    },
+  });
+  const neverSettle =
+    (bundle.data?.bundle.thread.autoSettle ?? "default") === "never";
+  const setAutoSettle = useMutation({
+    mutationFn: (never: boolean) =>
+      updateThread(threadId!, { autoSettle: never ? "never" : "default" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
+      void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
+    },
+    onError: (cause) => {
+      notifications.show({
+        message:
+          cause instanceof Error
+            ? cause.message
+            : "Could not change auto-settle",
+        color: "red",
+      });
+    },
+  });
   const canStop = threadId !== null && threadCan(actions, "cancel");
   const canRestart = threadId !== null && threadCan(actions, "restart");
   const canArchive = threadCan(actions, "archive");
   const canUnarchive = threadCan(actions, "unarchive");
+  const placement = bundle.data?.bundle.thread.placement ?? "active";
+  const placementItem = (action: string, label: string) =>
+    can("placement", placement, action) ? (
+      <Menu.Item
+        leftSection={
+          action === "settle" ? (
+            <IconArchive size={13} />
+          ) : action === "snooze" ? (
+            <IconMoon size={13} />
+          ) : (
+            <IconSun size={13} />
+          )
+        }
+        onClick={() => onPlacement(action)}
+      >
+        {label}
+      </Menu.Item>
+    ) : null;
 
   if (!canManage) return null;
   return (
@@ -225,6 +350,74 @@ export function ThreadMenu({
             {watchLabel}
           </Menu.Item>
         ) : null}
+        {guestLinks && threadId ? (
+          <>
+            <Menu.Divider />
+            <Menu.Item
+              leftSection={<IconLink size={13} />}
+              disabled={share.isPending}
+              onClick={() => share.mutate()}
+            >
+              Share with a guest…
+            </Menu.Item>
+            {guestLink.data?.active ? (
+              <Menu.Item
+                leftSection={<IconLinkOff size={13} />}
+                disabled={stopSharing.isPending}
+                onClick={() => stopSharing.mutate()}
+              >
+                Stop guest sharing
+              </Menu.Item>
+            ) : null}
+          </>
+        ) : null}
+        <Menu.Divider />
+        <Menu.Label>Permissions</Menu.Label>
+        <Menu.Item
+          rightSection={
+            permissionOverride === null ? <IconCheck size={13} /> : null
+          }
+          title={permissionModeHint(permissionMode)}
+          disabled={setPermissionMode.isPending}
+          onClick={() => setPermissionMode.mutate("")}
+        >
+          {`Inherit · ${permissionModeLabel(permissionMode)}`}
+        </Menu.Item>
+        {PERMISSION_MODES.map((mode) => {
+          const managed = permissionModeManaged(mode, permissions.cap);
+          return (
+            <Menu.Item
+              key={mode}
+              title={
+                managed
+                  ? "This machine's administrator capped the permission mode"
+                  : permissionModeHint(mode)
+              }
+              rightSection={
+                permissionOverride === mode ? <IconCheck size={13} /> : null
+              }
+              disabled={managed || setPermissionMode.isPending}
+              onClick={() => setPermissionMode.mutate(mode)}
+            >
+              {managed
+                ? `${permissionModeLabel(mode)} · managed`
+                : permissionModeLabel(mode)}
+            </Menu.Item>
+          );
+        })}
+        <Menu.Divider />
+        <Menu.Item
+          leftSection={<IconCalendarOff size={13} />}
+          rightSection={neverSettle ? <IconCheck size={13} /> : null}
+          disabled={setAutoSettle.isPending}
+          onClick={() => setAutoSettle.mutate(!neverSettle)}
+        >
+          Never auto-settle
+        </Menu.Item>
+        {placementItem("settle", "Settle thread")}
+        {placementItem("snooze", "Snooze for a day")}
+        {placementItem("unsettle", "Un-settle thread")}
+        {placementItem("wake", "Wake thread")}
         {canStop || canRestart ? <Menu.Divider /> : null}
         {canStop ? (
           <Menu.Item

@@ -29,6 +29,8 @@ import {
   getCommitFileDiff,
   getFileDiff,
   getThreadBundle,
+  getTurnChanges,
+  getTurnFileDiff,
   sendComment,
   updateComment,
   type Comment,
@@ -144,10 +146,12 @@ export const RealChangesPanel = memo(function RealChangesPanel({
   threadId,
   active = true,
   commit,
+  turn,
   onClose,
   onShowFiles,
   onShowHistory,
   onShowCurrent,
+  onShowTurn,
 }: {
   threadId: string;
   /**
@@ -158,10 +162,14 @@ export const RealChangesPanel = memo(function RealChangesPanel({
   active?: boolean;
   /** Non-null when the panel is showing one commit instead of the worktree. */
   commit?: CommitSummary | null;
+  /** Non-null when the panel is showing one turn's span. */
+  turn?: { turnId: string; label: string } | null;
   onClose?: () => void;
   onShowFiles?: () => void;
   onShowHistory?: () => void;
   onShowCurrent?: () => void;
+  /** Widen a commit to everything the turn that wrote it changed. */
+  onShowTurn?: (turnId: string) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
@@ -177,9 +185,9 @@ export const RealChangesPanel = memo(function RealChangesPanel({
     staleTime: 2_000,
     // A full bundle runs a git diff on the server. Ten seconds is still live
     // enough for a panel the user is staring at; hidden tabs do not poll.
-    refetchInterval: commit || !active ? false : 10_000,
+    refetchInterval: commit || turn || !active ? false : 10_000,
     refetchIntervalInBackground: false,
-    enabled: !commit && active,
+    enabled: !commit && !turn && active,
   });
   const commitChanges = useQuery({
     queryKey: ["commit-changes", threadId, commit?.sha],
@@ -187,15 +195,37 @@ export const RealChangesPanel = memo(function RealChangesPanel({
     enabled: Boolean(commit) && active,
     staleTime: Infinity,
   });
-  const changes = commit ? commitChanges.data : bundle.data?.bundle.changes;
-  const comments = commit ? [] : (bundle.data?.bundle.comments ?? []);
+  const turnChanges = useQuery({
+    queryKey: ["turn-changes", threadId, turn?.turnId],
+    queryFn: () => getTurnChanges(threadId, turn!.turnId),
+    enabled: Boolean(turn) && active,
+    staleTime: 5_000,
+    // The newest turn's span ends at the worktree, so it moves while the agent
+    // works; older turns are fixed and this poll is one cheap git call.
+    refetchInterval: turn && active ? 5_000 : false,
+    refetchIntervalInBackground: false,
+  });
+  const changes = commit
+    ? commitChanges.data
+    : turn
+      ? turnChanges.data
+      : bundle.data?.bundle.changes;
+  const comments = commit || turn ? [] : (bundle.data?.bundle.comments ?? []);
   const baseline = changes?.baseline;
   // Diff comments are reconciled against the base-branch diff on the server,
   // so a different baseline cannot host new line anchors.
   const canComment =
-    !commit && baseline?.kind === "base_branch" && Boolean(selected);
-  const loading = commit ? commitChanges.isPending : bundle.isPending;
-  const loadError = commit ? commitChanges.error : bundle.error;
+    !commit && !turn && baseline?.kind === "base_branch" && Boolean(selected);
+  const loading = commit
+    ? commitChanges.isPending
+    : turn
+      ? turnChanges.isPending
+      : bundle.isPending;
+  const loadError = commit
+    ? commitChanges.error
+    : turn
+      ? turnChanges.error
+      : bundle.error;
 
   const selectedIsCurrent =
     selected !== null &&
@@ -216,19 +246,23 @@ export const RealChangesPanel = memo(function RealChangesPanel({
   const diff = useQuery({
     queryKey: commit
       ? ["commit-file-diff", threadId, commit.sha, selected]
-      : ["file-diff", threadId, selected, baseline?.kind, baseline?.commit],
+      : turn
+        ? ["turn-file-diff", threadId, turn.turnId, selected]
+        : ["file-diff", threadId, selected, baseline?.kind, baseline?.commit],
     queryFn: () =>
       commit
         ? getCommitFileDiff(threadId, commit.sha, selected as string)
-        : getFileDiff(threadId, selected as string, {
-            kind: baseline?.kind,
-            commit: baseline?.commit,
-          }),
+        : turn
+          ? getTurnFileDiff(threadId, turn.turnId, selected as string)
+          : getFileDiff(threadId, selected as string, {
+              kind: baseline?.kind,
+              commit: baseline?.commit,
+            }),
     enabled:
       active &&
       selectedIsCurrent &&
       !selectedTooLarge &&
-      (commit ? true : Boolean(baseline)),
+      (commit || turn ? true : Boolean(baseline)),
     retry: false,
   });
 
@@ -476,16 +510,29 @@ export const RealChangesPanel = memo(function RealChangesPanel({
             −{changes?.stats.deletions ?? 0}
           </Text>
           <Box className="changes-head-gap" />
-          {commit && onShowCurrent ? (
+          {commit?.turnId && onShowTurn ? (
             <Button
               variant="subtle"
               size="compact-xs"
               color="gray"
-              leftSection={<IconArrowLeft size={12} stroke={1.5} />}
-              onClick={onShowCurrent}
+              leftSection={<IconHistory size={12} stroke={1.5} />}
+              onClick={() => onShowTurn(commit.turnId!)}
             >
-              Current
+              This turn
             </Button>
+          ) : null}
+          {commit || turn ? (
+            onShowCurrent ? (
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                color="gray"
+                leftSection={<IconArrowLeft size={12} stroke={1.5} />}
+                onClick={onShowCurrent}
+              >
+                Current
+              </Button>
+            ) : null
           ) : null}
           {!commit && onShowHistory ? (
             <ActionIcon
@@ -496,7 +543,7 @@ export const RealChangesPanel = memo(function RealChangesPanel({
               <IconHistory size={13} stroke={1.5} />
             </ActionIcon>
           ) : null}
-          {!commit && onShowFiles ? (
+          {!commit && !turn && onShowFiles ? (
             <Button
               variant="subtle"
               size="compact-xs"
@@ -509,7 +556,9 @@ export const RealChangesPanel = memo(function RealChangesPanel({
           ) : null}
           {onClose ? (
             <ActionIcon
-              aria-label={commit ? "Close commit" : "Close changes"}
+              aria-label={
+                commit ? "Close commit" : turn ? "Close turn" : "Close changes"
+              }
               data-autofocus
               size={22}
               onClick={onClose}
@@ -527,6 +576,10 @@ export const RealChangesPanel = memo(function RealChangesPanel({
               title={commit.turnPrompt ?? commit.subject}
             >
               {commit.turnPrompt ?? commit.subject}
+            </Text>
+          ) : turn ? (
+            <Text size="xs" c="dimmed" className="changes-commit-title">
+              Turn · {turn.label}
             </Text>
           ) : (
             <>
@@ -662,7 +715,11 @@ export const RealChangesPanel = memo(function RealChangesPanel({
         </div>
       ) : (
         <Text size="sm" c="dimmed" ta="center" py="xl" className="changes-scroll">
-          {commit ? "This commit has no changes" : "No changes yet"}
+          {commit
+            ? "This commit has no changes"
+            : turn
+              ? "This turn did not change any files"
+              : "No changes yet"}
         </Text>
       )}
     </div>

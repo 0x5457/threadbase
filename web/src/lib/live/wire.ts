@@ -55,6 +55,8 @@ export function parseThreadState(value: unknown): ThreadState | null {
   ) {
     return null;
   }
+  const placement = asString(record.placement);
+  const section = asString(record.section);
   return {
     threadId,
     revision,
@@ -65,6 +67,9 @@ export function parseThreadState(value: unknown): ThreadState | null {
     pendingElicitations: asNumber(record.pendingElicitations) ?? 0,
     queuedInputs: asNumber(record.queuedInputs) ?? 0,
     activeSubagents: asNumber(record.activeSubagents) ?? 0,
+    placement: (placement ?? "active") as ThreadState["placement"],
+    section: (section ?? "active") as ThreadState["section"],
+    snoozeUntil: asNumber(record.snoozeUntil),
   };
 }
 

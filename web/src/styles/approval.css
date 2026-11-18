@@ -526,3 +526,18 @@
     max-height: 160px;
   }
 }
+
+/* Rewind sits beside edit: both act on one prompt, and the destructive one is
+   the second, quieter icon. */
+.msg-rewind-btn {
+  position: absolute;
+  top: -1px;
+  right: 44px;
+  display: none;
+  color: var(--ink-muted);
+}
+
+.message-block:hover .msg-rewind-btn,
+.message-block:focus-within .msg-rewind-btn {
+  display: grid;
+}

@@ -3,13 +3,16 @@ import {
   Button,
   Group,
   Loader,
+  Modal,
   Skeleton,
+  Stack,
   Text,
   UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   IconAlertCircle,
+  IconArrowBackUp,
   IconArrowDown,
   IconChevronDown,
   IconCopy,
@@ -49,6 +52,7 @@ import {
   getThreadGoal,
   reorderQueue,
   respondElicitation,
+  rewindThread,
   restoreQueueItem,
   retryThreadSetup,
   restartThread,
@@ -67,6 +71,7 @@ import { useLiveThread } from "../lib/live-thread";
 import type { LivePanel } from "../lib/live/types";
 import { type ViewItem } from "../lib/thread-events";
 import { ActionSheet } from "./ActionSheet";
+import { GuestDrafts } from "./thread/GuestDrafts";
 import { AgentLog } from "./AgentLog";
 import { ComposerSkeleton } from "./composer/ComposerSkeleton";
 import { ApprovalCard } from "./thread/ApprovalCard";
@@ -121,6 +126,7 @@ function TimelineRowImpl({
   onToggleExpanded,
   onComment,
   onEditMessage,
+  onRewindMessage,
   onMessageLongPress,
   continued = false,
 }: {
@@ -141,6 +147,7 @@ function TimelineRowImpl({
   editor: (anchor: CommentAnchor) => ReactNode;
   onComment: (messageId: string) => void;
   onEditMessage?: (item: Extract<ViewItem, { kind: "message" }>) => void;
+  onRewindMessage?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   onMessageLongPress: (item: Extract<ViewItem, { kind: "message" }>) => void;
 }) {
   const toolRow = (tool: ToolItem, nested = false) => (
@@ -328,6 +335,7 @@ function TimelineRowImpl({
           continued={continued}
           onComment={onComment}
           onEdit={onEditMessage}
+          onRewind={onRewindMessage}
           onLongPress={onMessageLongPress}
         />
         {thread}
@@ -401,6 +409,7 @@ const TimelineRow = memo(
       prev.editor === next.editor &&
       prev.onComment === next.onComment &&
       prev.onEditMessage === next.onEditMessage &&
+      prev.onRewindMessage === next.onRewindMessage &&
       prev.onMessageLongPress === next.onMessageLongPress
     );
   },
@@ -451,6 +460,11 @@ export const RealThreadView = memo(function RealThreadView({
     ViewItem,
     { kind: "message" }
   > | null>(null);
+  const [rewinding, setRewinding] = useState<Extract<
+    ViewItem,
+    { kind: "message" }
+  > | null>(null);
+  const [rewindBusy, setRewindBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
   // A long session can hold thousands of blocks; Virtuoso mounts only what is
   // visible, so a 10k-event transcript costs the same as a short one.
@@ -898,6 +912,28 @@ export const RealThreadView = memo(function RealThreadView({
     },
     [],
   );
+
+  const openMessageRewind = useCallback(
+    (item: Extract<ViewItem, { kind: "message" }>) => {
+      setMessageSheet(null);
+      setRewinding(item);
+    },
+    [],
+  );
+
+  const confirmRewind = useCallback(async () => {
+    if (!rewinding) return;
+    setRewindBusy(true);
+    try {
+      await rewindThread(threadId, rewinding.id);
+      setRewinding(null);
+      refresh();
+    } catch (cause) {
+      reportFailure(cause, "Could not rewind the thread");
+    } finally {
+      setRewindBusy(false);
+    }
+  }, [refresh, reportFailure, rewinding, threadId]);
 
   const saveMessageEdit = useCallback(
     async (text: string) => {
@@ -1458,6 +1494,7 @@ export const RealThreadView = memo(function RealThreadView({
                 onToggleExpanded={toggleExpandedRow}
                 onComment={commentOnMessage}
                 onEditMessage={writable ? openMessageEdit : undefined}
+                onRewindMessage={writable ? openMessageRewind : undefined}
                 onMessageLongPress={openMessageSheet}
             />
             );
@@ -1500,6 +1537,12 @@ export const RealThreadView = memo(function RealThreadView({
                         icon: <IconPencil size={17} stroke={1.5} />,
                         onSelect: () => openMessageEdit(messageSheet),
                       },
+                      {
+                        label: "Rewind to before this turn",
+                        icon: <IconArrowBackUp size={17} stroke={1.5} />,
+                        destructive: true,
+                        onSelect: () => openMessageRewind(messageSheet),
+                      },
                     ]
                   : []),
                 {
@@ -1536,6 +1579,38 @@ export const RealThreadView = memo(function RealThreadView({
         onClose={() => setEditingMessage(null)}
         onSave={saveMessageEdit}
       />
+      <Modal
+        opened={rewinding !== null}
+        onClose={() => setRewinding(null)}
+        title="Rewind to before this turn?"
+        size="md"
+        centered
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            The worktree goes back to the checkpoint taken before this prompt,
+            and every later turn is discarded from the transcript. Untracked
+            files created after that point are removed.
+          </Text>
+          <Text size="sm" c="dimmed">
+            The agent&apos;s conversation cannot be rolled back, so its context is
+            cleared: the next message starts a fresh session with what remains
+            in the transcript.
+          </Text>
+          <Group justify="flex-end" gap="xs" mt={4}>
+            <Button variant="default" onClick={() => setRewinding(null)}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              loading={rewindBusy}
+              onClick={() => void confirmRewind()}
+            >
+              Rewind
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
       <div className="composer-stack">
         <AgentLog lines={diagnostics} />
         {goal ? (
@@ -1546,6 +1621,7 @@ export const RealThreadView = memo(function RealThreadView({
             onCommand={runGoalCommand}
           />
         ) : null}
+        <GuestDrafts threadId={threadId} canWrite={writable} />
         <QueueBar
           items={queue}
           busy={queueBusy}

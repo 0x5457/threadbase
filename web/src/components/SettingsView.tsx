@@ -24,6 +24,7 @@ import {
   type PushState,
 } from "../lib/push";
 import { PeopleSection } from "./PeopleSection";
+import { McpTokens } from "./settings/McpTokens";
 
 const agents = [
   { value: "codex", label: "Codex" },
@@ -194,6 +195,10 @@ export const SettingsView = memo(function SettingsView() {
               </Group>
             </Stack>
           </Card>
+
+          {state.data?.mcp ? (
+            <McpTokens endpoint={`${window.location.origin}/mcp`} />
+          ) : null}
 
           <Card withBorder p="md" className="settings-card">
             <Stack gap="sm">
