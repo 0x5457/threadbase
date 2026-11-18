@@ -246,10 +246,6 @@
     padding-bottom: var(--safe-bottom);
   }
 
-  .inbox-thread {
-    max-width: 150px;
-  }
-
   .block {
     grid-template-columns: 46px minmax(0, 1fr);
   }
@@ -260,12 +256,6 @@
 
   .run-body {
     margin-left: 48px;
-  }
-
-  /* The under-avatar time needs more than this gutter at the smallest text
-     size, and the full timestamp is in the avatar's title anyway. */
-  .msg-time {
-    display: none;
   }
 
   .prose {

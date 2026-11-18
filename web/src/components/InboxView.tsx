@@ -231,26 +231,31 @@ const InboxRow = memo(function InboxRow({
         }}
         onClick={() => onOpen(item)}
       >
-      <Box className="inbox-icon">{kindIcon(item.kind)}</Box>
+      <Box
+        className="inbox-icon"
+        role="img"
+        aria-label={kindLabel[item.kind]}
+      >
+        {kindIcon(item.kind)}
+      </Box>
       <Box className="inbox-body">
+        {/* The thread is what tells two rows apart; the event text is the same
+            sentence for every completion, so it can never be the headline. */}
         <Group gap={6} wrap="nowrap">
           <Text
             size="sm"
             fw={item.read ? 400 : 600}
-            className="inbox-summary"
+            className="inbox-title"
           >
-            {item.summary}
+            {item.threadTitle}
           </Text>
           {item.read ? null : <span className="dot" />}
         </Group>
-        <Group gap={6} wrap="nowrap">
-          <Text size="xs" c="dimmed" className="inbox-thread">
-            {item.threadTitle}
+        {item.kind === "completed" ? null : (
+          <Text size="xs" c="dimmed" className="inbox-summary">
+            {item.summary}
           </Text>
-          <Text size="xs" c="dimmed">
-            {kindLabel[item.kind]}
-          </Text>
-        </Group>
+        )}
       </Box>
       <Text size="xs" c="dimmed" className="inbox-time">
         {timeOf(item.createdAt)}

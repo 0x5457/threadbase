@@ -216,15 +216,16 @@
   flex: 1;
 }
 
-.inbox-summary {
+.inbox-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.inbox-thread {
+/* The event line: only the rows that carry a message of their own get one. */
+.inbox-summary {
+  display: block;
   overflow: hidden;
-  max-width: 280px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

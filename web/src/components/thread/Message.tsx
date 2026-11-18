@@ -94,23 +94,27 @@ export const Message = memo(function Message({
     >
       <div className="block-gutter" {...(agent ? press : {})}>
         {continued ? null : (
-          <>
-            <Avatar
-              size={32}
-              radius={agent ? 4 : "xl"}
-              color="gray"
-              variant="light"
-              src={item.avatarUrl ?? undefined}
-              title={`${item.name} · ${timeOf(item.ts)}`}
-              className={agent ? "avatar-agent" : "avatar-user"}
-            >
-              {agent ? "AI" : initials(item.name)}
-            </Avatar>
-            <span className="msg-time" title={new Date(item.ts).toLocaleString()}>
-              {timeOf(item.ts)}
-            </span>
-          </>
+          <Avatar
+            size={32}
+            radius={agent ? 4 : "xl"}
+            color="gray"
+            variant="light"
+            src={item.avatarUrl ?? undefined}
+            title={`${item.name} · ${timeOf(item.ts)}`}
+            className={agent ? "avatar-agent" : "avatar-user"}
+          >
+            {agent ? "AI" : initials(item.name)}
+          </Avatar>
         )}
+        {/* Every row is stamped, including the ones that drop the repeated
+            avatar: when a message landed is the one thing a reader scans for. */}
+        <time
+          className="msg-time"
+          dateTime={new Date(item.ts).toISOString()}
+          title={new Date(item.ts).toLocaleString()}
+        >
+          {timeOf(item.ts)}
+        </time>
       </div>
       <div className="block-body">
         {!agent && onEdit ? (

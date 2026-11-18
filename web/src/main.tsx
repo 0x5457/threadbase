@@ -41,6 +41,7 @@ import "./styles/empty.css";
 import "./styles/frame.css";
 import "./styles/goal.css";
 import "./styles/responsive.css";
+import "./styles/screen.css";
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {

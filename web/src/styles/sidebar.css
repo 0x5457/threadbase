@@ -110,6 +110,12 @@
   position: relative;
 }
 
+/* Thread rows line up with the project row they belong to. The list is a flat
+   stack under its project, so an indent would only shorten the hover rows. */
+.side-project .mantine-NavLink-children {
+  padding-left: 0;
+}
+
 .side-project-head {
   position: relative;
 }
@@ -146,19 +152,6 @@
 
 .avatar-stack .mantine-Indicator-root + .mantine-Indicator-root {
   margin-left: -4px;
-}
-
-.side-nav .mantine-NavLink-children {
-  position: relative;
-}
-
-.side-nav .mantine-NavLink-children::before {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 18px;
-  border-left: 1px solid var(--line);
-  content: "";
 }
 
 .side-nav.add-project .mantine-NavLink-label {

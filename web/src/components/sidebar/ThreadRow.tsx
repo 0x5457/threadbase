@@ -191,12 +191,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow({
 /** Collapse state is a per-device preference, like the shelf in a mail client. */
 const SHELF_KEY = "threadbase:shelves";
 
-function readShelf(key: string, fallback: boolean): boolean {
+function readShelf(key: string): boolean {
   try {
-    const stored = window.localStorage.getItem(`${SHELF_KEY}:${key}`);
-    return stored === null ? fallback : stored === "open";
+    return window.localStorage.getItem(`${SHELF_KEY}:${key}`) === "open";
   } catch {
-    return fallback;
+    return false;
   }
 }
 
@@ -216,36 +215,30 @@ export function ThreadShelf({
   shelfKey,
   label,
   count,
-  defaultOpen = false,
-  forceOpen = false,
   children,
 }: {
   shelfKey: string;
   label: string;
   count: number;
-  defaultOpen?: boolean;
-  /** The open thread lives here, so the shelf cannot stay folded. */
-  forceOpen?: boolean;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(() => readShelf(shelfKey, defaultOpen));
+  const [open, setOpen] = useState(() => readShelf(shelfKey));
   const toggle = useCallback(() => {
     setOpen((current) => {
       writeShelf(shelfKey, !current);
       return !current;
     });
   }, [shelfKey]);
-  const expanded = open || forceOpen;
   if (count === 0) return null;
   return (
     <>
       <button
         type="button"
         className="side-shelf"
-        aria-expanded={expanded}
+        aria-expanded={open}
         onClick={toggle}
       >
-        {expanded ? (
+        {open ? (
           <IconChevronDown size={11} stroke={1.5} />
         ) : (
           <IconChevronRight size={11} stroke={1.5} />
@@ -253,7 +246,7 @@ export function ThreadShelf({
         <span className="side-shelf-label">{label}</span>
         <span className="side-shelf-count">{count}</span>
       </button>
-      {expanded ? children : null}
+      {open ? children : null}
     </>
   );
 }

@@ -172,15 +172,10 @@ export const ProjectNode = memo(function ProjectNode({
                   disabled
                 />
               ) : null}
+              {/* Live work is the foreground, not a pile to fold away: a running
+                  thread reads above idle ones with its status dot as the marker. */}
+              {working.map(row)}
               {activeThreads.map(row)}
-              <ThreadShelf
-                shelfKey={`${project.id}:working`}
-                label="Working"
-                count={working.length}
-                forceOpen={working.some((thread) => thread.id === selectedThreadId)}
-              >
-                {working.map(row)}
-              </ThreadShelf>
               <ThreadShelf
                 shelfKey={`${project.id}:snoozed`}
                 label="Snoozed"
