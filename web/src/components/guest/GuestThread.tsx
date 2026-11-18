@@ -17,9 +17,8 @@ type Phase =
   | { kind: "error"; message: string };
 
 /**
- * The guest's whole product surface: one thread's transcript, and a draft that a
- * person has to send. There is no nav, no diff, no file tree, no terminal — a
- * link is a door, not a seat.
+ * Everything a guest sees: one thread's transcript, and a draft that a member
+ * has to send. No navigation, diffs, files or terminal.
  */
 export function GuestThread({ token }: { token: string }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
@@ -31,8 +30,8 @@ export function GuestThread({ token }: { token: string }) {
   const cursor = useRef(0);
   const scroller = useRef<HTMLDivElement | null>(null);
 
-  // The token in the URL is exchanged once for an HttpOnly cookie, so later
-  // polling does not carry the capability in a query string.
+  // The token is exchanged once for an HttpOnly cookie, so polling later does
+  // not carry it in a URL.
   useEffect(() => {
     let cancelled = false;
     void startGuestSession(token)
@@ -55,8 +54,8 @@ export function GuestThread({ token }: { token: string }) {
     };
   }, [token]);
 
-  // Poll for new events. A guest has no WebSocket: the live path is
-  // member-only, and one GET every two seconds is cheap next to a stream.
+  // Poll for new events. The WebSocket path requires an account, so a guest
+  // asks for the tail every two seconds.
   useEffect(() => {
     if (phase.kind !== "ready") return;
     const timer = window.setInterval(() => {

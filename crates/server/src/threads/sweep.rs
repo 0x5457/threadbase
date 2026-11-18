@@ -1,16 +1,15 @@
-//! The inactivity sweeper: the only thing that parks a thread without a person.
+//! Background sweep: wake due snoozes and park idle threads.
 //!
-//! Two rules run here, both driven by facts the write path already stores:
+//! Two rules:
 //!
-//! - a snooze deadline that has passed wakes the thread (`snooze_elapsed`);
-//! - a thread that has been idle for longer than the configured window, with no
-//!   queued input, live subagents or unanswered request, settles itself
-//!   (`auto_settle`).
+//! - a snooze whose deadline passed wakes the thread;
+//! - an idle thread that has been quiet longer than `THREADBASE_SETTLE_DAYS`,
+//!   with nothing queued, no running subagent and no unanswered request, is
+//!   settled.
 //!
-//! The decision itself is [`should_auto_settle`] in `threadbase-core`; this file
-//! only gathers the facts and applies the transition through the same
-//! `place()` write path a click uses. A race with a prompt therefore cannot park
-//! work: the guard rejects it and the sweep skips that thread.
+//! The decision lives in `threadbase-core` (`should_auto_settle`). This file
+//! only collects the facts and calls the same `place()` a click does, so a
+//! prompt that arrives at the same time wins and the sweep skips that thread.
 
 use super::place;
 use crate::error::ServerError;
@@ -21,8 +20,7 @@ use threadbase_core::state::{should_auto_settle, IdleFacts, PlacementAction};
 use threadbase_shared::{now_ms, ErrorCode, ThreadPlacement, ThreadStatus};
 use tokio::task::JoinHandle;
 
-/// One minute is short enough that a snooze wakes when it says it will, and
-/// long enough that the two queries stay irrelevant next to a running turn.
+/// How often both rules run.
 const PERIOD: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -31,9 +29,8 @@ pub struct SweepReport {
     pub settled: u32,
 }
 
-/// Run both rules once. `idle_ms` of `0` disables auto-settling but keeps
-/// snoozes working: pausing the sweeper must not strand a thread someone asked
-/// to see again.
+/// Runs both rules once. `idle_ms = 0` disables auto-settling; snoozes still
+/// wake, because a person asked to see the thread again.
 pub async fn sweep(
     pool: &SqlitePool,
     projection: &Projection,
@@ -64,8 +61,8 @@ pub async fn sweep(
         .await
         {
             Ok(_) => report.woken += 1,
-            // The thread moved (or was archived) between the query and the
-            // write; the next sweep will look again.
+            // The thread changed between the query and the write; the next
+            // run will pick it up.
             Err(error) if error.0.code == ErrorCode::Conflict => {}
             Err(error) => tracing::warn!(thread_id, %error, "could not wake a snoozed thread"),
         }
@@ -109,8 +106,8 @@ pub async fn sweep(
     Ok(report)
 }
 
-/// Spawn the background loop. The first pass waits one period so a restart does
-/// not front-load a wave of settlements into startup recovery.
+/// Starts the background loop. The first run waits one interval so a restart
+/// does not settle a wave of threads during startup recovery.
 #[must_use]
 pub fn spawn_sweeper(pool: SqlitePool, projection: Projection, idle_ms: i64) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -131,8 +128,7 @@ pub fn spawn_sweeper(pool: SqlitePool, projection: Projection, idle_ms: i64) -> 
     })
 }
 
-/// Idle threads the sweeper would consider. Everything else is filtered in SQL
-/// so the policy only ever sees plausible candidates.
+/// Idle threads the sweep may settle. The rest is filtered in SQL.
 #[derive(FromRow)]
 struct Candidate {
     id: String,

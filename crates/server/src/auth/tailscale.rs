@@ -1,25 +1,23 @@
-//! Turning a request that came through `tailscale serve` into a person.
+//! Reading the tailnet user from a request proxied by `tailscale serve`.
 //!
-//! `tailscale serve` is the only ingress, and it proxies from the local machine
-//! to the loopback port this server binds. A request therefore carries three
-//! headers naming the tailnet user. Those headers are only meaningful when the
-//! socket peer is loopback — that is the trust boundary: anything that can reach
-//! the loopback port can already read the database.
+//! `tailscale serve` proxies to the loopback port and adds three headers naming
+//! the user. These are only accepted when the connection comes from loopback,
+//! i.e. from the local proxy. Anything that can reach the loopback port can
+//! already read the database, so that is the limit of what a header check buys.
 //!
-//! When the proxy also forwards `X-Forwarded-For`, the claimed identity is
-//! checked against `tailscale whois` for that address, so a forged header from a
-//! local process that *does* forward an address is refused rather than believed.
+//! If the proxy also forwards `X-Forwarded-For`, the claimed login is checked
+//! against `tailscale whois` for that address. A mismatch is rejected.
 
 use crate::auth::Identity;
 use axum::http::HeaderMap;
 use std::net::{IpAddr, SocketAddr};
 
-/// Set by `tailscale serve` on every proxied request.
+/// Added by `tailscale serve` to every proxied request.
 pub const LOGIN_HEADER: &str = "tailscale-user-login";
 pub const NAME_HEADER: &str = "tailscale-user-name";
 pub const AVATAR_HEADER: &str = "tailscale-user-profile-pic";
 
-/// A tailnet identity presented by one request.
+/// A tailnet identity claimed by one request.
 #[derive(Debug, Clone)]
 pub struct Presentment {
     pub identity: Identity,
@@ -42,10 +40,9 @@ pub fn present(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<Presentm
     })
 }
 
-/// The address the proxy reported, if it forwarded one.
+/// The client address the proxy reported, if any.
 ///
-/// Only the rightmost hop is used: it is the address `tailscaled` appended, and
-/// the client cannot shorten it.
+/// Only the rightmost hop is used: that is the one `tailscaled` appended.
 #[must_use]
 pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<IpAddr> {
     if !peer.is_some_and(|addr| addr.ip().is_loopback()) {
@@ -68,11 +65,10 @@ fn header(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-/// Whether `whois` agrees that `client` is `login`.
+/// Whether `whois` says `client` belongs to `login`.
 ///
-/// `None` means whois could not answer — a peer that is not on the tailnet (a
-/// local test request) or a machine without the CLI. The caller decides how much
-/// to trust the header in that case; this function does not guess.
+/// `None` means whois could not answer: the address is not a tailnet peer, or
+/// the CLI is missing.
 #[must_use]
 pub fn whois_agrees(client: IpAddr, login: &str) -> Option<bool> {
     crate::tailscale::whois(client).map(|profile| profile.login.eq_ignore_ascii_case(login))
@@ -114,8 +110,7 @@ mod tests {
         );
     }
 
-    /// The header is only meaningful behind the local proxy. A remote peer
-    /// cannot claim an identity by sending it.
+    /// A remote peer cannot claim an identity by sending the header.
     #[test]
     fn a_remote_peer_cannot_present_an_identity() {
         let remote = Some(SocketAddr::from(([100, 64, 1, 2], 4321)));

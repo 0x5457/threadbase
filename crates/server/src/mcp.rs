@@ -1,15 +1,14 @@
-//! The MCP endpoint: an outside agent driving Threadbase.
+//! The MCP endpoint, where an outside agent can drive threads.
 //!
-//! This is the widest capability the product offers, so it is built from the
-//! narrow end: a token is minted by a signed-in person from the settings page, it
-//! carries explicit scopes, only its hash is stored, and it can be revoked at any
-//! time. Every tool call runs with that person's authority, which means the
-//! ordinary rules (roles, permission modes, worktree checks) apply unchanged.
+//! A token is created by a signed-in person on the settings page. It has
+//! explicit scopes, is stored only as a hash, and can be revoked at any time.
+//! Every call runs as that person, so roles, permission modes and worktree
+//! checks apply exactly as they do in the browser.
 //!
-//! Mutating calls leave a `SystemNotice` in the thread they touched, so a turn
-//! that an outside agent started is visible in the transcript next to everyone
-//! else's work. Reads are recorded in the audit log instead: writing to the
-//! event stream on every poll would bury the conversation.
+//! Calls that change something (prompt, approval) also leave a system notice in
+//! the thread, so the transcript shows that an outside agent started the turn.
+//! Read calls only go to the audit log; a notice per poll would flood the
+//! conversation.
 
 use crate::app::AppState;
 use crate::auth::{self, CurrentUser};
@@ -22,11 +21,10 @@ use threadbase_shared::McpScope;
 use threadbase_shared::{now_ms, Actor, ApiError, ApprovalDecision, ThreadEvent, ThreadId};
 use ulid::Ulid;
 
-/// Header the MCP client uses. There is no cookie path for this endpoint: a
-/// browser tab must not be able to drive a thread as `fetch()` on behalf of a
-/// page, and a bearer token makes that explicit.
+/// Header the MCP client sends. This endpoint never reads cookies, so a browser
+/// page cannot call it with the user's session.
 const BEARER: &str = "authorization";
-/// Longest a `thread_wait` call may block before answering with the state it has.
+/// Longest `thread_wait` may block.
 const MAX_WAIT_SECONDS: u64 = 300;
 
 pub fn enabled(config: &crate::config::Config) -> bool {
@@ -75,15 +73,14 @@ pub async fn mint(
             "a token needs the read scope to be useful",
         )));
     }
-    // Answering approvals on someone's behalf is the one scope that changes what
-    // runs on the machine without a turn being started deliberately.
+    // Approving lets an outside agent answer permission requests, so only an
+    // administrator may hand it out.
     if scopes.contains(&McpScope::Approve) && !principal.is_admin() {
         return Err(ServerError(ApiError::forbidden(
             "only an administrator can mint a token that answers approvals",
         )));
     }
-    // A read-only account cannot write anywhere, so a write scope would only be a
-    // promise the server refuses later.
+    // A read-only account cannot start turns, so a write scope would be useless.
     if scopes.contains(&McpScope::Write) && !principal.user.access.can_write() {
         return Err(ServerError(ApiError::forbidden(
             "this account cannot start turns, so it cannot mint a write token",
@@ -142,7 +139,7 @@ pub async fn revoke(pool: &SqlitePool, user_id: &str, id: &str) -> Result<(), Se
     Ok(())
 }
 
-/// Resolve a bearer token to the person it acts for.
+/// Returns the person a bearer token acts for.
 pub async fn authenticate(
     pool: &SqlitePool,
     headers: &axum::http::HeaderMap,
@@ -180,8 +177,8 @@ pub async fn authenticate(
                 "the person behind this token is gone",
             ))
         })?;
-    // A pending or read-only account keeps its restrictions: the token is not an
-    // escalation, it is the same person with a different client.
+    // A pending or disabled account keeps its restrictions: the token is another
+    // client for the same person, not more access.
     if !matches!(
         user.access,
         threadbase_shared::UserAccess::Member | threadbase_shared::UserAccess::ReadOnly
@@ -501,8 +498,8 @@ async fn thread_prompt(
     if text.trim().is_empty() {
         return Err(ServerError(ApiError::validation("text is required")));
     }
-    // The HTTP route checks this too; a tool call is another door into the same
-    // operation, so it checks the same rule instead of trusting the token.
+    // Same check the HTTP route does. A tool call is another way into the same
+    // operation, so it must not rely on the token alone.
     crate::authz::require_write_role(&state.pool, thread_id, &principal.user).await?;
     note(
         state,
@@ -630,7 +627,7 @@ async fn approval_decide(
     Ok(serde_json::to_value(approval).unwrap_or(Value::Null))
 }
 
-/// Leave a visible line in the thread an outside agent touched.
+/// Adds a visible line to the thread an outside agent touched.
 async fn note(state: &AppState, thread_id: &str, principal: &Principal, message: String) {
     let _ = state
         .events

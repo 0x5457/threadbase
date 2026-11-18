@@ -1,14 +1,13 @@
-//! Staged deploys during an idle window.
+//! Installing a new binary while nothing is running.
 //!
-//! A self-hosted server is also the thing being replaced, and the one thing a
-//! deploy must not do is cut a running turn in half. So the server does the
-//! swap, not the script: `deploy.sh --stage` drops a built binary in
-//! `incoming/threadbase`, and this loop installs it the moment nothing is
-//! happening — or waits, indefinitely, until that is true.
+//! The server is the thing being replaced, so it does the swap itself.
+//! `deploy.sh --stage` puts a built binary in `incoming/threadbase`; this loop
+//! installs it and restarts, but only when no turn is running. If something is
+//! running, it waits.
 //!
-//! "Nothing happening" is the same predicate `thread_wait` uses: no turn in
-//! flight, no queued input, no live subagents, and no unanswered approval or
-//! question. A pending approval is not idle: a restart would cancel it.
+//! "Idle" means the same thing as in `thread_wait`: no turn, no queued message,
+//! no running subagent, and no approval or question waiting for a person.
+//! A pending approval blocks the deploy because a restart would cancel it.
 
 use crate::config::Config;
 use crate::error::ServerError;
@@ -17,10 +16,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use threadbase_shared::now_ms;
 
-/// How often a staged binary is considered. Small enough that "it deploys when
-/// idle" feels immediate, large enough to be invisible.
+/// How often to look for a staged binary.
 const PERIOD: Duration = Duration::from_secs(15);
-/// Waiting for an idle window is normal, so say it once and then rarely.
+/// Waiting is normal, so log it at most every ten minutes.
 const REMIND_EVERY: i64 = 10 * 60 * 1000;
 
 #[derive(Debug, thiserror::Error)]
@@ -37,8 +35,7 @@ pub enum DeployError {
     },
 }
 
-/// Start the watcher when enabled. Returns `None` when the feature is off, which
-/// is the default.
+/// Starts the watcher when `THREADBASE_AUTO_DEPLOY` is on.
 #[must_use]
 pub fn spawn(config: &Config, pool: SqlitePool) -> Option<tokio::task::JoinHandle<()>> {
     if !config.auto_deploy {
@@ -68,7 +65,7 @@ pub fn spawn(config: &Config, pool: SqlitePool) -> Option<tokio::task::JoinHandl
                         announced = now;
                         tracing::info!(
                             staged = %staged.display(),
-                            "waiting for an idle window to install the staged binary"
+                            "a new binary is waiting; installing it when no turn is running"
                         );
                     }
                     continue;
@@ -85,10 +82,10 @@ pub fn spawn(config: &Config, pool: SqlitePool) -> Option<tokio::task::JoinHandl
                         backup = %backup.display(),
                         "installed the staged binary; restarting into it"
                     );
-                    // The restart stops this process, so nothing after this line
-                    // is guaranteed to run. `service::run` holds a service-manager
-                    // handle across an await and is therefore not `Send`; a
-                    // dedicated thread gives it a runtime of its own.
+                    // The restart ends this process, so code after this may not
+                    // run. `service::run` is not `Send` (it holds a
+                    // service-manager handle across an await), so it gets its
+                    // own thread and runtime.
                     let restart_unit = unit.clone();
                     let restarted = tokio::task::spawn_blocking(move || {
                         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -114,8 +111,8 @@ pub fn spawn(config: &Config, pool: SqlitePool) -> Option<tokio::task::JoinHandl
                     tracing::error!(%error, "could not install the staged binary");
                 }
             }
-            // Whether it worked or not, do not retry in a hot loop: the operator
-            // sees the log, and `deploy.sh --stage` can drop a fresh file.
+            // Do not retry in a loop: the error is in the log, and dropping a
+            // fresh file is the operator's decision.
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
     }))
@@ -129,7 +126,7 @@ pub fn staged_path(config: &Config) -> PathBuf {
         .unwrap_or_else(|| config.data_dir.join("incoming").join("threadbase"))
 }
 
-/// True when `path` is a file the server can plausibly run.
+/// Whether `path` is an executable file.
 pub async fn is_staged(path: &Path) -> bool {
     let Ok(metadata) = tokio::fs::metadata(path).await else {
         return false;
@@ -164,12 +161,11 @@ pub async fn busy(pool: &SqlitePool) -> Result<bool, ServerError> {
     Ok(count > 0)
 }
 
-/// Move `staged` over `target`, keeping the previous binary. Returns the backup
-/// path.
+/// Replaces `target` with `staged` and keeps the old binary as a backup.
 ///
-/// The order matters: the backup is taken first and the staged file is consumed
-/// by the move, so a failure cannot leave two half-written binaries or a staged
-/// file that installs itself again on the next tick.
+/// The backup is written first and the staged file is renamed afterwards, so a
+/// failure cannot leave a half-written binary or a staged file that installs
+/// itself again on the next loop.
 pub fn install(staged: &Path, target: &Path, backups: &Path) -> Result<PathBuf, DeployError> {
     std::fs::create_dir_all(backups).map_err(|source| DeployError::Write {
         path: backups.to_path_buf(),
@@ -198,7 +194,7 @@ pub fn install(staged: &Path, target: &Path, backups: &Path) -> Result<PathBuf, 
             },
         )?;
     }
-    // Consume the staged file so the same build cannot be installed twice.
+    // Rename the staged file so the same build cannot install twice.
     let consumed = staged.with_extension("installed");
     std::fs::rename(staged, &consumed).map_err(|source| DeployError::Write {
         path: staged.to_path_buf(),

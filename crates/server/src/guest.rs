@@ -1,15 +1,14 @@
 //! Guest links: one thread, one person, no account.
 //!
-//! A link is a capability, not a principal. Everything a guest can reach is
-//! derived from the link row — the thread id never comes from the request — so a
-//! guest cannot address another thread by changing a parameter. The token is a
-//! 256-bit random value stored only as a hash, it expires, and revoking it ends
-//! every browser that exchanged it.
+//! A link is a permission token, not a user. The thread comes from the link
+//! row, never from the request, so a guest cannot open another thread by
+//! changing a parameter. The token is 32 random bytes, stored only as a hash,
+//! and it expires. Revoking it ends every browser that used it.
 //!
-//! What a guest gets is deliberately narrow: the transcript window and the right
-//! to *draft* a message. The draft waits until someone with an account sends or
-//! dismisses it, so a link cannot start a turn on the machine by itself. No
-//! diffs, no files, no terminal, no approvals, no comments.
+//! A guest can read the transcript and write a draft message. The draft waits
+//! until someone with an account sends or dismisses it, so a link alone can
+//! never start a turn. Guests see no diffs, files, terminal, approvals or
+//! comments.
 
 use crate::auth_session;
 use crate::error::ServerError;
@@ -20,16 +19,16 @@ use threadbase_shared::GuestMessageStatus;
 use threadbase_shared::{now_ms, ApiError};
 use ulid::Ulid;
 
-/// Cookie a guest browser carries after exchanging its link.
+/// Cookie set after a guest exchanges its link.
 pub const COOKIE: &str = "threadbase_guest";
-/// How long a link lives. Short on purpose: it is a door, not a seat.
+/// How long a link works: 24 hours.
 pub const LINK_SECONDS: i64 = 24 * 60 * 60;
-/// One guest may have this many drafts waiting before we stop accepting more.
+/// How many drafts one guest may have waiting.
 const MAX_PENDING: i64 = 5;
 /// Longest draft accepted, matching what a member can type in one message.
 const MAX_TEXT: usize = 8_000;
 
-/// Everything the request needs, resolved from the cookie.
+/// What a guest request resolves to, from its cookie.
 #[derive(Debug, Clone, FromRow)]
 pub struct GuestContext {
     pub link_id: String,
@@ -43,14 +42,13 @@ pub fn enabled(config: &crate::config::Config) -> bool {
     config.guest_links
 }
 
-/// Creates a link and returns its one-time token. The caller builds the URL.
+/// Creates a link. The token is returned once, so the caller can build the URL.
 pub async fn create_link(
     pool: &SqlitePool,
     thread_id: &str,
     created_by: &str,
 ) -> Result<(String, i64), ServerError> {
-    // One live link per thread: re-sharing replaces the old door instead of
-    // leaving copies of it around.
+    // One live link per thread: sharing again replaces the previous link.
     revoke_thread_links(pool, thread_id).await?;
     let now = now_ms();
     let token = auth_session::new_token();
@@ -95,9 +93,8 @@ pub async fn revoke_thread_links(pool: &SqlitePool, thread_id: &str) -> Result<u
     Ok(links.rows_affected())
 }
 
-/// Exchanges a link token for a browser session. Returns the cookie value and the
-/// context it resolves to, so the first response does not have to read back a
-/// cookie the client has not received yet.
+/// Trades a link token for a browser session. Returns the cookie value and the
+/// context, so the first response does not need the cookie it is about to set.
 pub async fn exchange(
     pool: &SqlitePool,
     token: &str,
@@ -141,7 +138,7 @@ pub async fn exchange(
     ))
 }
 
-/// The live link for a thread, if any, so the member UI can offer to stop it.
+/// The live link for a thread, if any.
 pub async fn active_link(pool: &SqlitePool, thread_id: &str) -> Result<Option<i64>, ServerError> {
     let expires_at: Option<i64> = sqlx::query_scalar(
         "SELECT expires_at FROM guest_links
@@ -155,7 +152,7 @@ pub async fn active_link(pool: &SqlitePool, thread_id: &str) -> Result<Option<i6
     Ok(expires_at)
 }
 
-/// Resolves the guest cookie to a live session whose link is still valid.
+/// Reads the guest cookie and checks that its link still works.
 pub async fn context(pool: &SqlitePool, headers: &HeaderMap) -> Result<GuestContext, ServerError> {
     let Some(token) = auth_session::read_cookie(headers, COOKIE) else {
         return Err(ServerError(ApiError::forbidden(
@@ -178,7 +175,7 @@ pub async fn context(pool: &SqlitePool, headers: &HeaderMap) -> Result<GuestCont
     row.ok_or_else(|| ServerError(ApiError::forbidden("this link is no longer valid")))
 }
 
-/// A guest may only draft. The draft is stored, not sent: it waits for a person.
+/// Stores a draft. Nothing is sent until a member approves it.
 pub async fn draft(
     pool: &SqlitePool,
     context: &GuestContext,
@@ -242,8 +239,8 @@ pub async fn list_for_thread(
         .collect())
 }
 
-/// Claim a pending draft for sending. Only one caller can win the transition, so
-/// two people pressing Send cannot start two turns.
+/// Marks a draft as sent and returns its text. Only one caller can win, so two
+/// people pressing Send cannot start two turns.
 pub async fn claim(
     pool: &SqlitePool,
     thread_id: &str,
@@ -265,7 +262,7 @@ pub async fn claim(
     text.ok_or_else(|| ServerError(ApiError::conflict("that message is already handled")))
 }
 
-/// Put a claimed draft back when sending failed, so the request is not lost.
+/// Puts a claimed draft back when sending failed.
 pub async fn release(pool: &SqlitePool, message_id: &str) {
     let _ = sqlx::query(
         "UPDATE guest_messages SET status = 'pending', decided_at = NULL, decided_by = NULL

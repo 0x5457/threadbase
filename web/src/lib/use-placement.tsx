@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { setThreadPlacement } from "../api";
 import type { ThreadSummary } from "../api";
 
-/** What undoing a parking command means, and what to tell the person. */
+/** The message to show, and the command that undoes it. */
 const COPY: Record<
   string,
   { message: string; undo?: string; undoLabel?: string }
@@ -16,12 +16,10 @@ const COPY: Record<
 };
 
 /**
- * Move a thread between shelves, refresh the lists and offer the way back.
+ * Moves a thread between sections, refreshes the lists, and offers an undo.
  *
- * Every command here is reversible, so the notification carries the inverse
- * command instead of an "are you sure" dialog: settling is the kind of thing a
- * person does while scrolling, and a modal would be worse than a 5-second undo.
- */
+ * These actions are reversible, so a short toast replaces a confirmation
+ * dialog.
 export function useThreadPlacement() {
   const queryClient = useQueryClient();
   const place = useCallback(

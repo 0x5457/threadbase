@@ -17,14 +17,12 @@ import { useEffect, type ReactNode } from "react";
 import { getAuthStatus, getMe, logout, signInWithTailscale } from "../api";
 
 /**
- * The server accepts a tailnet session cookie or an explicitly configured
- * development identity, so the shell never renders data for an anonymous
- * caller.
+ * The server needs a session cookie, or a development identity on loopback, so
+ * the shell never renders data for an anonymous request.
  *
- * There is no sign-in form. If this request arrived through `tailscale serve`,
- * the server already knows who is asking, and the shell trades that for a
- * session on mount. Otherwise it explains that the app is reachable only over
- * Tailscale — which is true: the server listens on loopback.
+ * There is no sign-in form. If the request came through `tailscale serve`, the
+ * server already knows who is asking and the shell trades that for a session.
+ * Otherwise it says that the app is only reachable over Tailscale.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const me = useQuery({
@@ -124,9 +122,8 @@ function SignIn() {
   const identity = status.data?.status.identity;
   const reason = new URLSearchParams(window.location.search).get("auth_error");
 
-  // One exchange per mount: the server sets the cookie, then the session query
-  // is invalidated so the shell renders. A failure falls through to the
-  // explanation below instead of looping.
+  // One exchange per mount. On success the session query is refreshed; on
+  // failure the explanation below is shown instead of retrying.
   const exchange = useMutation({
     mutationFn: signInWithTailscale,
     onSuccess: () => {

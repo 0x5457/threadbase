@@ -29,9 +29,8 @@ const SCOPES: Array<{ value: McpScope; label: string; hint: string }> = [
 /**
  * Tokens for outside agents.
  *
- * A token is the person who minted it, with a subset of what they may do: the
- * same roles and permission modes apply, so this screen grants nothing extra. It
- * is shown once and can be revoked here, which is the whole management story.
+ * A token acts as the person who created it, so their roles and permission
+ * modes still apply. The token is shown once and can be revoked here.
  */
 export function McpTokens({ endpoint }: { endpoint: string }) {
   const queryClient = useQueryClient();
@@ -78,9 +77,9 @@ export function McpTokens({ endpoint }: { endpoint: string }) {
           Agent access (MCP)
         </Text>
         <Text size="xs" c="dimmed">
-          An outside agent can drive threads with a token. It acts as you, so
-          your roles and the thread&apos;s permission mode still apply. Every
-          turn it starts is named in the transcript.
+          A token lets an outside agent use Threadbase as you. Your roles and
+          the thread&apos;s permission mode still apply, and every turn it starts
+          is marked in the transcript.
         </Text>
         <Group gap={6}>
           <Text size="xs" c="dimmed">

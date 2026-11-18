@@ -4,11 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { decideGuestMessage, getState, listGuestMessages } from "../../api";
 
 /**
- * Drafts a guest left on this thread.
+ * Drafts left by guests on this thread.
  *
- * A guest cannot start a turn, so these sit here until someone with an account
- * sends or dismisses them. Sending runs the draft as the person who pressed
- * Send, because a guest has no credentials and no role.
+ * A guest cannot start a turn, so a draft waits here until a member sends or
+ * dismisses it. Sending runs it as the member who pressed Send.
  */
 export function GuestDrafts({
   threadId,

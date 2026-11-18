@@ -123,25 +123,17 @@ impl Projection {
         });
     }
 
-    /// Compact semantic summary injected at prompt start.
+    /// One sentence about this thread, added to the prompt so the model knows
+    /// what else is waiting. `None` when nothing is waiting.
     pub async fn summary(&self, thread_id: &str) -> Option<String> {
         let state = self.read(thread_id).await.ok()?;
-        if state.pending_approvals == 0
-            && state.pending_elicitations == 0
-            && state.queued_inputs == 0
-            && state.active_subagents == 0
-        {
-            return None;
-        }
-        Some(format!(
-            "[Thread state] status={}; current_turn={}; pending_approvals={}; pending_elicitations={}; queued_inputs={}; active_subagents={}",
-            thread_status_str(state.status),
-            state.current_turn.as_deref().unwrap_or("-"),
+        summary_line(
+            state.status,
             state.pending_approvals,
             state.pending_elicitations,
             state.queued_inputs,
-            state.active_subagents
-        ))
+            state.active_subagents,
+        )
     }
 
     async fn row(&self, thread_id: &str) -> Result<ProjectionRow, ServerError> {
@@ -167,6 +159,57 @@ impl Projection {
     }
 }
 
+/// The sentence `summary()` returns. Example:
+/// `This thread is running. Also: 1 approval waiting for a person, 2 messages queued.`
+fn summary_line(
+    status: ThreadStatus,
+    approvals: u32,
+    questions: u32,
+    queued: u32,
+    subagents: u32,
+) -> Option<String> {
+    let mut waiting = Vec::new();
+    push_count(
+        &mut waiting,
+        approvals,
+        "approval waiting for a person",
+        "approvals waiting for a person",
+    );
+    push_count(
+        &mut waiting,
+        questions,
+        "question waiting for an answer",
+        "questions waiting for an answer",
+    );
+    push_count(&mut waiting, queued, "message queued", "messages queued");
+    push_count(
+        &mut waiting,
+        subagents,
+        "subagent running",
+        "subagents running",
+    );
+    if waiting.is_empty() {
+        return None;
+    }
+    let status = match status {
+        ThreadStatus::RequiresAction => "waiting for a person",
+        other => thread_status_str(other),
+    };
+    Some(format!(
+        "This thread is {status}. Also: {}.",
+        waiting.join(", ")
+    ))
+}
+
+/// `2 messages queued` — count plus the matching noun form.
+fn push_count(out: &mut Vec<String>, value: u32, one: &str, many: &str) {
+    match value {
+        0 => {}
+        1 => out.push(format!("1 {one}")),
+        n => out.push(format!("{n} {many}")),
+    }
+}
+
 fn count(value: i64) -> u32 {
     u32::try_from(value).unwrap_or(0)
 }
@@ -183,4 +226,22 @@ pub async fn thread_status(
     let value = value.ok_or_else(|| ServerError::internal("thread not found"))?;
     parse_thread_status(&value)
         .ok_or_else(|| ServerError::internal(format!("unknown thread status: {value}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summary_reads_like_a_sentence() {
+        assert_eq!(summary_line(ThreadStatus::Idle, 0, 0, 0, 0), None);
+        assert_eq!(
+            summary_line(ThreadStatus::Running, 1, 0, 2, 0).unwrap(),
+            "This thread is running. Also: 1 approval waiting for a person, 2 messages queued."
+        );
+        assert_eq!(
+            summary_line(ThreadStatus::RequiresAction, 0, 1, 0, 1).unwrap(),
+            "This thread is waiting for a person. Also: 1 question waiting for an answer, 1 subagent running."
+        );
+    }
 }

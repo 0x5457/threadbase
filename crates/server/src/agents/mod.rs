@@ -1254,11 +1254,10 @@ async fn prepare_and_prompt(
     }
     let mut parts = vec![PromptPart::text(start.prompt)];
     parts.extend(image_parts);
-    // Mark the thread Running before the prompt is issued: any completion event
-    // from the harness then necessarily arrives after the Prompt transition.
-    // Read the summary after this transition too: built before it, the text
-    // said `status=idle` next to the turn id it had just written, which gave
-    // the agent a contradictory picture of its own thread.
+    // Mark the thread as running before sending the prompt, so any completion
+    // event arrives after this transition. The summary is read afterwards for
+    // the same reason: read earlier, it would say "idle" next to a turn that
+    // has already started.
     threads::transition(
         &inner.pool,
         &inner.projection,

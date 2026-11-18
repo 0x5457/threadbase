@@ -1,15 +1,15 @@
-//! Sign-in: Tailscale identity plus a loopback-only development identity.
+//! Sign-in: Tailscale identity, plus a loopback-only development identity.
 //!
-//! There is no password and no OAuth app. The browser proves who it is with an
-//! `HttpOnly` session cookie (`auth_session`), and that cookie can only be
-//! minted by a request that `tailscaled` proxied from the tailnet — the server
-//! binds a loopback port and `tailscale serve` is the only ingress. Signing in is
-//! therefore a one-step exchange: the tailnet identity becomes a local account,
-//! and the tailnet login is the name everyone sees.
+//! There is no password and no OAuth app. The browser sends an `HttpOnly`
+//! session cookie (`auth_session`), and that cookie can only be created by a
+//! request that `tailscaled` proxied from the tailnet: the server listens on
+//! loopback and `tailscale serve` is the only way in. Signing in is one step:
+//! the tailnet login becomes a local account, and that login is the name
+//! everyone sees.
 //!
 //! `identity` owns the `users` table and administrator rules, `tailscale` owns
-//! the CLI calls that answer "who is this", and this file owns the
-//! request-facing extractor, access enforcement and audit.
+//! the CLI calls that answer "who is this", and this file owns the extractor,
+//! access checks and audit.
 
 mod identity;
 mod tailscale;
@@ -175,9 +175,7 @@ pub fn client_ip_for_headers(headers: &axum::http::HeaderMap, peer: Option<Socke
 #[derive(Debug, Clone)]
 pub struct Identity {
     pub source: &'static str,
-    /// Stable primary key, for example `github:12345`. GitHub's numeric account
-    /// id never changes; the login is only a mutable label that can be renamed
-    /// or re-registered by someone else.
+    /// Stable primary key, for example `tailscale:ada@example.com`.
     pub key: String,
     /// Display handle without the provider prefix.
     pub login: String,
@@ -186,9 +184,9 @@ pub struct Identity {
 }
 
 impl Identity {
-    /// A tailnet user. The login is Tailscale's `LoginName` — an email, or a
-    /// provider-qualified handle like `someone@github` — and it is stable for the
-    /// life of the tailnet; it is the key and the display handle at once.
+    /// A tailnet user. The login is Tailscale's `LoginName`: an email, or a handle
+    /// like `someone@github`. It stays the same while the account exists, so it
+    /// is used as the key and as the display name.
     #[must_use]
     pub fn tailscale(login: &str, display_name: Option<&str>, avatar_url: Option<&str>) -> Self {
         let login = login.trim();

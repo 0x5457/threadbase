@@ -1,10 +1,9 @@
-//! The Tailscale CLI: where the identity comes from, and how the app is exposed.
+//! The Tailscale CLI: who a request comes from, and how the app is reachable.
 //!
-//! Two jobs, one dependency. `whois` turns a tailnet address into the person
-//! behind it, which is the only identity this product has. `serve` is the only
-//! supported ingress: the server binds a loopback port and `tailscaled` proxies
-//! it inside the tailnet, so there is no public surface and no tunnel to
-//! configure.
+//! `whois` maps a tailnet address to a person; that is the only identity this
+//! product has. `serve` is the only way in: the server listens on loopback and
+//! `tailscaled` proxies it to the tailnet, so nothing is public and there is no
+//! tunnel to configure.
 
 use crate::install::command;
 use std::net::IpAddr;
@@ -12,7 +11,7 @@ use std::net::IpAddr;
 use std::path::Path;
 use threadbase_agent::profile::find_in_path;
 
-/// HTTPS port `tailscale serve` terminates. 443 keeps the URL a bare hostname.
+/// Default HTTPS port for `tailscale serve`.
 pub const DEFAULT_HTTPS_PORT: u16 = 443;
 
 /// A tailnet user, as `whois` reports them.
@@ -52,7 +51,7 @@ pub fn host() -> Option<String> {
     (!dns.is_empty()).then(|| dns.to_owned())
 }
 
-/// Whether the local tailscaled is up. `serve` and `whois` both need it.
+/// Whether the local tailscaled is running.
 pub fn running() -> bool {
     command::stdout(&program(), &["status", "--json"])
         .and_then(|status| serde_json::from_str::<serde_json::Value>(&status).ok())
@@ -60,11 +59,10 @@ pub fn running() -> bool {
         .is_some_and(|state| state == "Running")
 }
 
-/// The person behind a tailnet address.
+/// The person behind a tailnet address, or `None` if the address is not a
+/// tailnet peer.
 ///
-/// This spawns the CLI, so it belongs on the sign-in path and nowhere else. It
-/// returns `None` for an address that is not a tailnet peer — which is the
-/// answer for a browser reaching the loopback port directly.
+/// This runs the CLI, so call it on sign-in only, not on every request.
 #[must_use]
 pub fn whois(ip: IpAddr) -> Option<Profile> {
     // `whois` wants a bare address; IPv6 in particular must not carry brackets.
@@ -90,8 +88,8 @@ pub fn whois(ip: IpAddr) -> Option<Profile> {
     })
 }
 
-/// The Tailscale CLI is not always on PATH: the macOS app bundles it inside
-/// `Tailscale.app`, and that is the build that can talk to the GUI daemon.
+/// Finds the Tailscale CLI. The macOS app keeps it inside `Tailscale.app`, and
+/// that copy is the one that can talk to the GUI daemon.
 pub(crate) fn program() -> String {
     if let Ok(explicit) = std::env::var("THREADBASE_TAILSCALE") {
         if !explicit.trim().is_empty() {

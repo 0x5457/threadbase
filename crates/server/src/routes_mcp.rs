@@ -1,9 +1,8 @@
-//! MCP endpoint and token management.
+//! The MCP endpoint and token management.
 //!
-//! The MCP path authenticates with a bearer token, never a cookie: a browser page
-//! must not be able to drive a thread by calling `fetch()` on this endpoint, and
-//! a bearer token makes the distinction explicit. Tokens are minted from the
-//! settings page by a signed-in person.
+//! `/mcp` authenticates with a bearer token and never reads a cookie, so a
+//! browser page cannot drive a thread through it. Tokens are created by a
+//! signed-in person on the settings page.
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;
@@ -18,9 +17,9 @@ use serde_json::Value;
 use threadbase_shared::api::{CreateMcpTokenRequest, CreatedMcpToken, McpTokensResponse};
 
 pub fn router(enabled: bool) -> Router<AppState> {
-    // The guard is a layer, not a check inside the handlers: axum runs the body
-    // extractor before a handler, so an inner check would answer 422 (or, through
-    // the SPA fallback, 200 with HTML) and confirm the endpoint exists.
+    // The guard is a layer, not a check inside each handler: axum parses the body
+    // before the handler runs, so an inner check would answer 422 (or 200 with
+    // HTML through the SPA fallback) and reveal that the endpoint exists.
     Router::new()
         .route("/mcp", post(handle))
         .route("/api/mcp/tokens", get(list_tokens).post(create_token))
@@ -44,7 +43,7 @@ async fn handle(
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, ServerError> {
     let principal = mcp::authenticate(&state.pool, &headers).await?;
-    // MCP clients may send one message or a batch; answer in the same shape.
+    // Clients may send one message or a batch; answer in the same shape.
     if let Some(batch) = payload.as_array() {
         let mut replies = Vec::new();
         for message in batch {

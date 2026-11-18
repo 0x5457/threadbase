@@ -1,10 +1,9 @@
-//! Guest endpoints: the link exchange, the guest's own read path, and the member
+//! Guest endpoints: exchanging a link, what a guest can read, and the member
 //! side that sends or dismisses a draft.
 //!
-//! Guest requests are not authenticated as a user. Everything a guest can reach
-//! is derived from the cookie's link, so no handler here accepts a thread id from
-//! a guest. Member endpoints live in the same module because they are the other
-//! half of one feature, and they use the ordinary `CurrentUser` extractor.
+//! A guest is not a user. The thread comes from the cookie's link, so no handler
+//! here takes a thread id from a guest. The member endpoints use the normal
+//! `CurrentUser` extractor.
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;
@@ -107,9 +106,8 @@ async fn guest_thread_at(
         .page(&ThreadId::from(context.thread_id.clone()), after, 200)
         .await
         .map_err(|error| ServerError::internal(error.to_string()))?;
-    // A guest reads the transcript, not the workbench. Filtering here rather than
-    // in the UI is what makes it a boundary: queued member drafts, approval
-    // requests, questions and subagent rows stay out of the payload entirely.
+    // Filter here, not in the UI: queued member messages, approvals, questions
+    // and subagent rows never reach the guest's browser.
     page.events
         .retain(|envelope| guest_visible(&envelope.payload));
     Ok(GuestThreadResponse {
@@ -121,8 +119,8 @@ async fn guest_thread_at(
     })
 }
 
-/// A guest may only leave a draft. Nothing runs until a person sends it.
-/// Events that belong to the shared story of a thread.
+/// A guest can only leave a draft. Nothing runs until a member sends it.
+/// Events a guest may see.
 fn guest_visible(payload: &threadbase_shared::ThreadEvent) -> bool {
     use threadbase_shared::ThreadEvent as E;
     matches!(
