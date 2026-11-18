@@ -130,6 +130,9 @@ const SessionSwitcher = lazy(() =>
 
 type View = "inbox" | "sessions" | "thread" | "settings" | "project";
 
+/** Where the desktop layout starts showing the diff aside. */
+const WIDE_QUERY = "(min-width: 1200px)";
+
 function blurActiveInput() {
   const active = document.activeElement;
   // The terminal's input is xterm's helper <textarea>. Blurring it would end
@@ -401,10 +404,10 @@ function Workspace() {
   const [asideCollapsed, setAsideCollapsed] = useState(() => {
     try {
       const stored = window.localStorage.getItem("threadbase.aside-collapsed");
-      // First visit: keep the transcript full-width. The 420px diff aside used
-      // to open on every worktree thread and squeeze the conversation, so it
-      // now opens on demand (⌘⇧B or the header toggle) and remembers the choice.
-      return stored === null ? true : stored === "1";
+      if (stored !== null) return stored === "1";
+      // First visit: a wide window has room for the diff aside. Narrower
+      // screens keep the transcript full-width until asked for the panel.
+      return !window.matchMedia(WIDE_QUERY).matches;
     } catch {
       return true;
     }
@@ -479,7 +482,7 @@ function Workspace() {
   });
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
   const queryClient = useQueryClient();
-  const wide = useMediaQuery("(min-width: 1200px)");
+  const wide = useMediaQuery(WIDE_QUERY);
   const phone = useMediaQuery("(max-width: 47.99em)");
   const tablet = useMediaQuery("(min-width: 48em) and (max-width: 74.99em)");
   const changesDrawerWidth = Math.max(
@@ -776,6 +779,20 @@ function Workspace() {
   // the menu item would leave a control that can only fail.
   const canRunSetup = Boolean(threadProject?.setupCommand?.trim());
 
+  // Crossing into the desktop layout with no stored choice opens the aside:
+  // a wide window has room for it. Once the user has toggled it, that choice
+  // wins on every later visit and resize.
+  useEffect(() => {
+    if (!wide) return;
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem("threadbase.aside-collapsed");
+    } catch {
+      // Private mode: fall back to the wide-window default.
+    }
+    if (stored === null) setAsideCollapsed(false);
+  }, [wide]);
+
   // ⌘/Ctrl+Shift+B hides or reveals the changes panel without leaving the
   // thread; the preference persists like the nav width.
   useEffect(() => {
@@ -965,6 +982,19 @@ function Workspace() {
       { queryKey: ["inbox-unread"] },
       (page) => (page ? withoutThreadInboxItems(page, threadId) : page),
     );
+    // The sidebar dot is the same fact; clear it without waiting for a poll.
+    queryClient.setQueryData<{ threads: ThreadSummary[] }>(
+      ["threads-all"],
+      (current) =>
+        current
+          ? {
+              ...current,
+              threads: current.threads.map((thread) =>
+                thread.id === threadId ? { ...thread, unread: 0 } : thread,
+              ),
+            }
+          : current,
+    );
     void markInboxRead(threadId)
       .then(() => {
         void queryClient.invalidateQueries({ queryKey: ["inbox"] });
@@ -984,6 +1014,15 @@ function Workspace() {
         pendingInboxReads.current.delete(threadId);
       });
   }, [queryClient]);
+
+  // Opening a thread means its notifications were seen. The server already
+  // skips notifications for the thread someone is looking at, so this only
+  // clears what piled up while they were elsewhere.
+  const selectedUnread = selectedThread?.unread ?? 0;
+  useEffect(() => {
+    if (!routeThreadId || selectedUnread === 0) return;
+    markInboxItemRead(routeThreadId);
+  }, [markInboxItemRead, routeThreadId, selectedUnread]);
 
   // The click is one history push: `navigate` ignores an identical path, so a
   // double-click cannot stack the same thread URL. The route effect above
@@ -1025,16 +1064,21 @@ function Workspace() {
     fail: failJob,
   } = useProgressJobs();
 
-  const refreshThreadLists = (thread?: ThreadSummary) => {
-    void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
-    void queryClient.invalidateQueries({ queryKey: ["projects"] });
-    if (thread) {
-      void queryClient.invalidateQueries({ queryKey: ["thread", thread.id] });
-      void queryClient.invalidateQueries({ queryKey: ["thread-events", thread.id] });
-    }
-  };
+  const refreshThreadLists = useCallback(
+    (thread?: ThreadSummary) => {
+      void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      if (thread) {
+        void queryClient.invalidateQueries({ queryKey: ["thread", thread.id] });
+        void queryClient.invalidateQueries({
+          queryKey: ["thread-events", thread.id],
+        });
+      }
+    },
+    [queryClient],
+  );
 
-  const runAction = async (action: () => Promise<void>) => {
+  const runAction = useCallback(async (action: () => Promise<void>) => {
     try {
       await action();
     } catch (cause) {
@@ -1043,7 +1087,31 @@ function Workspace() {
         color: "red",
       });
     }
-  };
+  }, []);
+
+  /**
+   * One fork path for the thread menu and the per-message action: a fork with
+   * a message keeps the transcript through that prompt's turn, a fork without
+   * one copies the whole thread. The callback identity stays stable so the
+   * memoized transcript does not re-render on every shell poll.
+   */
+  const forkThreadAt = useCallback(
+    async (messageId?: string) => {
+      if (!routeThreadId) return;
+      await runAction(async () => {
+        const { thread } = await forkThread(routeThreadId, { messageId });
+        openThread(thread);
+        refreshThreadLists(thread);
+        notifications.show({
+          message: messageId
+            ? "Thread forked from that message"
+            : "Thread forked",
+          color: "teal",
+        });
+      });
+    },
+    [openThread, refreshThreadLists, routeThreadId, runAction],
+  );
 
   const actions = useMemo<SpotlightActionData[]>(
     () =>
@@ -1396,6 +1464,7 @@ function Workspace() {
                 key={selectedThread.id}
                 threadId={selectedThread.id}
                 onPresence={setOnlineUserIds}
+                onForkMessage={forkThreadAt}
                 presencePanel={terminalVisible ? "terminal" : "transcript"}
               />
             </Suspense>

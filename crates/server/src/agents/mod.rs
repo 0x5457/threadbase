@@ -8,6 +8,7 @@
 //!   conversions.
 
 pub(crate) mod catalog;
+mod context;
 mod derived;
 mod lifecycle;
 mod mapping;
@@ -191,7 +192,9 @@ impl AgentManager {
                     .await
                     .map(|count| count > 0)
                     .unwrap_or(true)
-                || has_queued_input(&self.inner.pool, &thread_id).await
+                || queue::pending(&self.inner.pool, &thread_id)
+                    .await
+                    .unwrap_or(false)
                 || self.runs_autonomous_goal(&thread_id).await;
             if busy {
                 claim.release().await;
@@ -231,7 +234,7 @@ impl AgentManager {
             cancel_pending_elicitations(&self.inner, thread_id).await;
             // Newer input already waiting takes precedence over the turn that
             // was cut off; it was meant to run after that turn anyway.
-            if turn_id.is_some() && !has_queued_input(&self.inner.pool, thread_id).await {
+            if turn_id.is_some() && !queue::pending(&self.inner.pool, thread_id).await? {
                 self.queue_resume(thread_id).await?;
             }
             drain.insert(thread_id.clone());
@@ -245,7 +248,7 @@ impl AgentManager {
         .await?;
         drain.extend(queued);
         for thread_id in drain {
-            if has_queued_input(&self.inner.pool, &thread_id).await {
+            if queue::pending(&self.inner.pool, &thread_id).await? {
                 self.kick_queue(&thread_id);
             }
         }
@@ -284,6 +287,7 @@ impl AgentManager {
                 text: PROMPT,
                 authors_json: authors_json.as_deref(),
                 attachments_json: None,
+                starting: false,
                 created_at: now_ms(),
             },
         )
@@ -359,7 +363,7 @@ impl AgentManager {
             .execute(&self.inner.pool)
             .await?;
         self.ensure_started(thread_id).await?;
-        if has_queued_input(&self.inner.pool, thread_id).await {
+        if queue::pending(&self.inner.pool, thread_id).await? {
             self.kick_queue(thread_id);
         }
         Ok(())
@@ -400,7 +404,11 @@ impl AgentManager {
         }
         // Newer queued input takes precedence; it was meant to run after the
         // interrupted turn. Otherwise the turn itself is continued.
-        if had_turn && !has_queued_input(&self.inner.pool, thread_id).await {
+        if had_turn
+            && !queue::pending(&self.inner.pool, thread_id)
+                .await
+                .unwrap_or(false)
+        {
             if let Err(error) = self.queue_resume(thread_id).await {
                 tracing::warn!(thread_id, %error, "could not resume the interrupted turn");
             }
@@ -490,16 +498,21 @@ impl AgentManager {
             }
         };
         let mut reset_context = false;
+        let mut fresh_session = false;
         let session_open = match binding.session_id.as_deref() {
             Some(saved) => match harness.load_session(&SessionId(saved.to_owned())).await {
                 Ok(()) => Ok(Some(SessionId(saved.to_owned()))),
                 Err(error) => {
                     tracing::warn!(thread_id, session_id = saved, %error, "could not resume agent session");
                     reset_context = true;
+                    fresh_session = true;
                     new_session(&mut *harness, &binding.cwd).await
                 }
             },
-            None => new_session(&mut *harness, &binding.cwd).await,
+            None => {
+                fresh_session = true;
+                new_session(&mut *harness, &binding.cwd).await
+            }
         };
         // A send does not wait for startup any more, so a failure that only
         // reached the log would leave the message queued with no reason shown.
@@ -532,6 +545,18 @@ impl AgentManager {
         }
         let run = Arc::new(Mutex::new(RunState::default()));
         let session = Arc::new(Session::new(harness, capabilities, run.clone()));
+        // A fork's session starts empty while its transcript does not. Replay
+        // the copied conversation once so the adapter and the screen agree;
+        // a resumed session already has it and must not get it twice.
+        if fresh_session && row.parent_thread_id.is_some() {
+            match context::fork_history(&self.inner.pool, thread_id).await {
+                Ok(Some(history)) => session.set_history(history).await,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(thread_id, %error, "could not build fork context");
+                }
+            }
+        }
         pump::spawn(
             self.clone(),
             thread_id.to_owned(),
@@ -598,7 +623,7 @@ impl AgentManager {
         threads::wake(&self.inner.pool, &self.inner.projection, thread_id).await?;
         let Some(session) = self.inner.live_session(thread_id).await else {
             return self
-                .queue_and_start(thread_id, user, text, authors, attachments)
+                .queue_and_start(thread_id, status, user, text, authors, attachments)
                 .await;
         };
         if !attachments.is_empty() && !session.capabilities.images {
@@ -616,6 +641,17 @@ impl AgentManager {
                 steering_supported: session.capabilities.steering,
             },
         );
+        // Older input may still be waiting for a turn slot; a prompt issued now
+        // would overtake it and answer the newer message first.
+        let action = if action == SendAction::Prompt
+            && queue::pending(&self.inner.pool, thread_id)
+                .await
+                .unwrap_or(false)
+        {
+            SendAction::Queue
+        } else {
+            action
+        };
         match action {
             SendAction::Queue => {
                 self.queue(thread_id, user, text, authors, attachments)
@@ -805,8 +841,8 @@ impl AgentManager {
         authors: &[UserBrief],
         attachments: &[AttachmentDto],
     ) -> Result<SendMessageResponse, ServerError> {
-        let position = self
-            .enqueue_input(thread_id, user, text, authors, attachments)
+        let (_, position) = self
+            .enqueue_input(thread_id, user, text, authors, attachments, false)
             .await?;
         // A thread that is idle must not wait for a turn end that will never
         // come; the worker no-ops while a turn is running.
@@ -821,24 +857,88 @@ impl AgentManager {
     async fn queue_and_start(
         &self,
         thread_id: &str,
+        status: ThreadStatus,
         user: &CurrentUser,
         text: &str,
         authors: &[UserBrief],
         attachments: &[AttachmentDto],
     ) -> Result<SendMessageResponse, ServerError> {
-        let position = self
-            .enqueue_input(thread_id, user, text, authors, attachments)
+        // The first message of an idle thread is what starts it; it is not
+        // waiting behind anything, so the queue bar must not show it. Input
+        // behind another message keeps waiting visibly.
+        let starting = matches!(
+            status,
+            ThreadStatus::Idle | ThreadStatus::Error | ThreadStatus::Interrupted
+        ) && !crate::setup::busy(&self.inner.pool, thread_id).await
+            && !queue::pending(&self.inner.pool, thread_id)
+                .await
+                .unwrap_or(true);
+        let (item_id, position) = self
+            .enqueue_input(thread_id, user, text, authors, attachments, starting)
             .await?;
+        if starting {
+            // "preparing" is what this thread is doing: the sidebar spinner is
+            // the only feedback until the turn reaches the transcript.
+            if let Err(error) = threads::transition(
+                &self.inner.pool,
+                &self.inner.projection,
+                thread_id,
+                ThreadAction::Restart,
+            )
+            .await
+            {
+                // The send is being refused, so the stored message must not
+                // outlive the request as a phantom queue entry.
+                let _ = queue::remove(
+                    &self.inner.pool,
+                    &self.inner.projection,
+                    thread_id,
+                    &item_id,
+                )
+                .await;
+                return Err(error);
+            }
+        }
         let manager = self.clone();
         let thread_id = thread_id.to_owned();
         tokio::spawn(async move {
             match manager.ensure_started(&thread_id).await {
-                Ok(()) => manager.kick_queue(&thread_id),
-                Err(error) => tracing::warn!(
-                    %error,
-                    thread_id,
-                    "agent startup failed; the message stays queued"
-                ),
+                Ok(()) => {
+                    // A concurrent start may have inserted its session before
+                    // this task marked the thread preparing, and skipped the
+                    // flip back to idle. Ok promises the next prompt can run.
+                    if threads::status(&manager.inner.pool, &thread_id).await.ok()
+                        == Some(ThreadStatus::Preparing)
+                    {
+                        let _ = threads::transition(
+                            &manager.inner.pool,
+                            &manager.inner.projection,
+                            &thread_id,
+                            ThreadAction::StartSucceeded,
+                        )
+                        .await;
+                    }
+                    manager.kick_queue(&thread_id);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        thread_id,
+                        "agent startup failed; the message stays queued"
+                    );
+                    // The adapter never took it, so it is waiting after all.
+                    if let Err(reveal) = queue::reveal(
+                        &manager.inner.pool,
+                        &manager.inner.projection,
+                        &manager.inner.events,
+                        &thread_id,
+                        &item_id,
+                    )
+                    .await
+                    {
+                        tracing::warn!(%reveal, thread_id, "could not return the message to the queue");
+                    }
+                }
             }
         });
         Ok(queued_response(position))
@@ -853,23 +953,25 @@ impl AgentManager {
         text: &str,
         authors: &[UserBrief],
         attachments: &[AttachmentDto],
-    ) -> Result<u32, ServerError> {
+        starting: bool,
+    ) -> Result<(String, u32), ServerError> {
         let attachments_json = if attachments.is_empty() {
             None
         } else {
             Some(serde_json::to_string(attachments).unwrap_or_default())
         };
-        let position = enqueue(
+        let queued = enqueue(
             &self.inner.pool,
             thread_id,
             user,
             text,
             authors,
             attachments_json.as_deref(),
+            starting,
         )
         .await?;
         let _ = queue::publish(&self.inner.pool, &self.inner.events, thread_id).await;
-        Ok(position)
+        Ok(queued)
     }
 
     async fn start_turn(
@@ -1253,8 +1355,15 @@ async fn prepare_and_prompt(
         run.reset();
         run.turn_id = Some(turn_id);
     }
+    // A fork's inherited transcript rides on the first prompt of the fresh
+    // session; later turns are the adapter's own context. It follows the user
+    // prompt because adapters dispatch on the first text block.
+    let history = session.take_history().await;
     let mut parts = vec![PromptPart::text(start.prompt)];
     parts.extend(image_parts);
+    if let Some(history) = history.as_deref() {
+        parts.push(PromptPart::text(history));
+    }
     // Mark the thread as running before sending the prompt, so any completion
     // event arrives after this transition. The summary is read afterwards for
     // the same reason: read earlier, it would say "idle" next to a turn that
@@ -1278,6 +1387,7 @@ async fn prepare_and_prompt(
         Ok(handle) => handle,
         Err(error) => {
             session.run.lock().await.reset();
+            session.restore_history(history).await;
             let _ = sqlx::query("UPDATE threads SET current_turn_id = NULL WHERE id = ?")
                 .bind(start.thread_id)
                 .execute(&inner.pool)
@@ -1366,7 +1476,8 @@ async fn enqueue(
     text: &str,
     authors: &[UserBrief],
     attachments_json: Option<&str>,
-) -> Result<u32, ServerError> {
+    starting: bool,
+) -> Result<(String, u32), ServerError> {
     let authors_json = serde_json::to_string(authors).unwrap_or_else(|_| "[]".to_owned());
     queue::enqueue(
         pool,
@@ -1376,6 +1487,7 @@ async fn enqueue(
             text,
             authors_json: Some(&authors_json),
             attachments_json,
+            starting,
             created_at: now_ms(),
         },
     )
@@ -1412,17 +1524,6 @@ async fn new_session(
         .await
         .map(Some)
         .map_err(|error| ServerError::internal(format!("agent session failed: {error}")))
-}
-
-async fn has_queued_input(pool: &SqlitePool, thread_id: &str) -> bool {
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
-    )
-    .bind(thread_id)
-    .fetch_one(pool)
-    .await
-    .unwrap_or_default();
-    count > 0
 }
 
 async fn cancel_pending_approvals(inner: &Inner, thread_id: &str) {

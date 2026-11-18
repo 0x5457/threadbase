@@ -68,6 +68,11 @@ export type ThreadDto = {
   participants: Array<Participant>;
   pendingApprovals: number;
   /**
+   * Unread inbox items for the requesting user: a finished turn, a question,
+   * an approval or a mention they have not opened yet.
+   */
+  unread: number;
+  /**
    * Unanswered agent questions. Separate from approvals because a question
    * blocks the turn the same way but needs a different UI affordance.
    */

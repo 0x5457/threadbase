@@ -276,6 +276,12 @@
   background: var(--warning);
 }
 
+/* Unread notifications: one quiet dot, not a badge; the inbox owns counts. */
+.dot.unread {
+  background: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 16%, transparent);
+}
+
 .status-inline {
   flex: none;
 }

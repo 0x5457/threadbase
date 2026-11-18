@@ -23,6 +23,10 @@ pub(crate) struct Session {
     /// Set once the adapter is gone or being torn down, so a process exit is
     /// not mistaken for a crash and a dead session is never reused.
     stopped: AtomicBool,
+    /// Text a fresh session receives before its first prompt: a forked
+    /// thread's inherited transcript. Taken once, so a resumed session that
+    /// already knows the conversation never gets it twice.
+    history: Mutex<Option<String>>,
     /// Last harness interaction, used by the idle-session reaper.
     last_used_ms: AtomicI64,
 }
@@ -40,7 +44,25 @@ impl Session {
             run,
             pump_done: Arc::new(tokio::sync::Notify::new()),
             stopped: AtomicBool::new(false),
+            history: Mutex::new(None),
             last_used_ms: AtomicI64::new(now_ms()),
+        }
+    }
+
+    /// Hand the next prompt the transcript this session was forked from.
+    pub(crate) async fn set_history(&self, text: String) {
+        *self.history.lock().await = Some(text);
+    }
+
+    pub(crate) async fn take_history(&self) -> Option<String> {
+        self.history.lock().await.take()
+    }
+
+    /// Put the context back when the prompt never reached the adapter; the
+    /// next turn still needs the conversation the fork copied.
+    pub(crate) async fn restore_history(&self, text: Option<String>) {
+        if text.is_some() {
+            *self.history.lock().await = text;
         }
     }
 

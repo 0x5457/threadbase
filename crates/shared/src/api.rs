@@ -190,6 +190,9 @@ pub struct UpdateThreadRequest {
 #[ts(export)]
 pub struct ForkThreadRequest {
     pub title: Option<String>,
+    /// Keep the conversation up to and including this user prompt's turn.
+    /// Omitted forks the whole thread as it stands.
+    pub message_id: Option<String>,
 }
 
 /// Discard one turn and everything after it, files included.

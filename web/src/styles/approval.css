@@ -561,3 +561,18 @@
 .message-block:focus-within .msg-rewind-btn {
   display: grid;
 }
+
+/* Fork leaves the thread intact, so it sits beside rewind without the
+   destructive colour; the message sheet carries the same action on touch. */
+.msg-fork-btn {
+  position: absolute;
+  top: -1px;
+  right: 64px;
+  display: none;
+  color: var(--ink-muted);
+}
+
+.message-block:hover .msg-fork-btn,
+.message-block:focus-within .msg-fork-btn {
+  display: grid;
+}

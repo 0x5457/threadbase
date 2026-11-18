@@ -1,7 +1,7 @@
 //! Integration tests for projects, worktrees, diff review and thread lifecycle.
 
 use sqlx::SqlitePool;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 use threadbase_server::auth::CurrentUser;
@@ -12,8 +12,8 @@ use threadbase_shared::api::{
     UpdateProjectRequest, UpdateThreadRequest,
 };
 use threadbase_shared::{
-    Actor, BaselineDto, BaselineKind, CommentAnchor, CommentSide, ErrorCode, MessageId, Role,
-    ThreadEvent, ThreadStatus, TurnId, UserBrief,
+    now_ms, Actor, BaselineDto, BaselineKind, CommentAnchor, CommentSide, ErrorCode, MessageDto,
+    MessageId, MessageRole, Role, ThreadEvent, ThreadStatus, TurnId, UserBrief,
 };
 use tokio::process::Command as TokioCommand;
 
@@ -159,6 +159,7 @@ async fn restart_recovery_resets_interrupted_threads() {
             text: "after the restart",
             authors_json: None,
             attachments_json: None,
+            starting: false,
             created_at: threadbase_shared::now_ms(),
         },
     )
@@ -594,13 +595,25 @@ async fn project_validation_and_thread_lifecycle() {
     .await
     .unwrap();
     assert_eq!(archived.status, ThreadStatus::Archived);
-    let active = threads::list(&fixture.pool, project.id.as_str(), false, &policy())
-        .await
-        .unwrap();
+    let active = threads::list(
+        &fixture.pool,
+        project.id.as_str(),
+        false,
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
     assert!(active.is_empty());
-    let all = threads::list(&fixture.pool, project.id.as_str(), true, &policy())
-        .await
-        .unwrap();
+    let all = threads::list(
+        &fixture.pool,
+        project.id.as_str(),
+        true,
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
     assert_eq!(all.len(), 1);
 
     let unarchived = threads::update(
@@ -631,11 +644,15 @@ async fn project_validation_and_thread_lifecycle() {
     .unwrap();
     let fork = threads::fork(
         &fixture.pool,
+        &EventStore::new(fixture.pool.clone()),
         &test_projection(&fixture.pool),
         fixture.data.path(),
         thread.id.as_str(),
         &fixture.current,
-        &ForkThreadRequest { title: None },
+        &ForkThreadRequest {
+            title: None,
+            message_id: None,
+        },
         &policy(),
     )
     .await
@@ -665,6 +682,184 @@ async fn project_validation_and_thread_lifecycle() {
         .await
         .unwrap();
     assert!(!Path::new(fork_worktree).exists());
+}
+
+#[tokio::test]
+async fn fork_carries_the_conversation_up_to_the_chosen_turn() {
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let thread = create_thread(&fixture, project.id.as_str()).await;
+    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
+    let events = EventStore::new(fixture.pool.clone());
+    let base = thread.base_sha.clone().unwrap();
+
+    // The checkpoint of a turn is the state before it starts, so after turn 1
+    // the readme change becomes the checkpoint of turn 2.
+    let first_turn = TurnId::new();
+    let first_message = MessageId::new();
+    let first_message_id = first_message.0.clone();
+    sqlx::query("INSERT INTO checkpoints(thread_id, turn_id, sha, created_at) VALUES(?,?,?,?)")
+        .bind(thread.id.as_str())
+        .bind(first_turn.as_str())
+        .bind(&base)
+        .bind(now_ms())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    events
+        .append(
+            &thread.id,
+            Actor::system(),
+            ThreadEvent::TurnStarted {
+                turn_id: first_turn.clone(),
+                message_id: first_message.clone(),
+                author: UserBrief::from_user(&fixture.current.user),
+                authors: Vec::new(),
+                prompt: "first".into(),
+                attachments: Vec::new(),
+            },
+            EventMeta::default(),
+        )
+        .await
+        .unwrap();
+    events
+        .append(
+            &thread.id,
+            Actor::system(),
+            ThreadEvent::MessageCompleted {
+                message: MessageDto {
+                    id: MessageId::new(),
+                    thread_id: thread.id.clone(),
+                    turn_id: Some(first_turn.clone()),
+                    role: MessageRole::Agent,
+                    author: None,
+                    authors: Vec::new(),
+                    text: "first answer".into(),
+                    model: None,
+                    streaming: false,
+                    created_at: now_ms(),
+                    attachments: Vec::new(),
+                },
+            },
+            EventMeta::default(),
+        )
+        .await
+        .unwrap();
+    tokio::fs::write(worktree.join("README.md"), "one\nTWO\n")
+        .await
+        .unwrap();
+    git(&worktree, &["add", "-A"]);
+    git(&worktree, &["commit", "-m", "Threadbase turn snapshot"]);
+    let second_checkpoint = git_output(&worktree, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+
+    let second_turn = TurnId::new();
+    sqlx::query("INSERT INTO checkpoints(thread_id, turn_id, sha, created_at) VALUES(?,?,?,?)")
+        .bind(thread.id.as_str())
+        .bind(second_turn.as_str())
+        .bind(&second_checkpoint)
+        .bind(now_ms() + 1)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    events
+        .append(
+            &thread.id,
+            Actor::system(),
+            ThreadEvent::TurnStarted {
+                turn_id: second_turn,
+                message_id: MessageId::new(),
+                author: UserBrief::from_user(&fixture.current.user),
+                authors: Vec::new(),
+                prompt: "second".into(),
+                attachments: Vec::new(),
+            },
+            EventMeta::default(),
+        )
+        .await
+        .unwrap();
+    tokio::fs::write(worktree.join("src.txt"), "changed by turn two\n")
+        .await
+        .unwrap();
+
+    let fork = threads::fork(
+        &fixture.pool,
+        &events,
+        &test_projection(&fixture.pool),
+        fixture.data.path(),
+        thread.id.as_str(),
+        &fixture.current,
+        &ForkThreadRequest {
+            title: None,
+            message_id: Some(first_message.0),
+        },
+        &policy(),
+    )
+    .await
+    .unwrap();
+    // Transcript: the chosen turn and nothing after it.
+    let prompts: Vec<String> = sqlx::query_scalar(
+        "SELECT json_extract(payload_json, '$.prompt') FROM events
+          WHERE thread_id = ? AND kind = 'turn_started' ORDER BY seq",
+    )
+    .bind(fork.id.as_str())
+    .fetch_all(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(prompts, vec!["first"]);
+    let message_thread: String = sqlx::query_scalar(
+        "SELECT json_extract(payload_json, '$.message.threadId') FROM events
+          WHERE thread_id = ? AND kind = 'message_completed'",
+    )
+    .bind(fork.id.as_str())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(message_thread, fork.id.as_str());
+
+    // Files: the state after turn 1, not the uncommitted work of turn 2.
+    let fork_worktree = Path::new(fork.worktree_path.as_deref().unwrap());
+    assert_eq!(
+        tokio::fs::read_to_string(fork_worktree.join("README.md"))
+            .await
+            .unwrap(),
+        "one\nTWO\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(fork_worktree.join("src.txt"))
+            .await
+            .unwrap(),
+        "hello\n"
+    );
+    // The inherited turn keeps its checkpoint, so its per-turn diff still
+    // works inside the fork.
+    let checkpoints: Vec<(String, String)> = sqlx::query_as(
+        "SELECT turn_id, sha FROM checkpoints WHERE thread_id = ? ORDER BY created_at",
+    )
+    .bind(fork.id.as_str())
+    .fetch_all(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(checkpoints, vec![(first_turn.0, base)]);
+
+    // Rewinding an inherited turn would reset the tree behind the fork's own
+    // base and make the removed work look like new changes; it belongs to the
+    // source thread.
+    let manager = threadbase_server::agents::AgentManager::new(
+        fixture.pool.clone(),
+        EventStore::new(fixture.pool.clone()),
+        test_projection(&fixture.pool),
+        threadbase_server::presence::PresenceHub::new(),
+        0,
+        0,
+        policy(),
+    );
+    let err = manager
+        .rewind_to_turn(fork.id.as_str(), &first_message_id, &fixture.current)
+        .await
+        .unwrap_err();
+    assert_eq!(err.0.code, ErrorCode::Conflict);
 }
 
 #[tokio::test]
@@ -1282,9 +1477,15 @@ async fn placement_parks_threads_without_hiding_work() {
     )
     .await
     .unwrap();
-    let listed = threads::list(&fixture.pool, project.id.as_str(), false, &policy())
-        .await
-        .unwrap();
+    let listed = threads::list(
+        &fixture.pool,
+        project.id.as_str(),
+        false,
+        &fixture.current,
+        &policy(),
+    )
+    .await
+    .unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].placement, ThreadPlacement::Settled);
     assert_eq!(listed[0].section, ThreadSection::Settled);

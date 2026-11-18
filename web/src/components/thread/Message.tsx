@@ -6,6 +6,7 @@ import {
   IconClock,
   IconCopy,
   IconFileText,
+  IconGitFork,
   IconLoader2,
   IconMessagePlus,
   IconPencil,
@@ -33,6 +34,7 @@ export const Message = memo(function Message({
   item,
   onComment,
   onEdit,
+  onFork,
   onRewind,
   onRetry,
   onLongPress,
@@ -42,6 +44,8 @@ export const Message = memo(function Message({
   item: Extract<ViewItem, { kind: "message" }>;
   onComment: (messageId: string) => void;
   onEdit?: (item: Extract<ViewItem, { kind: "message" }>) => void;
+  /** Fork after this prompt's turn, keeping the conversation before it. */
+  onFork?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   /** Undo this prompt's turn and every later one, files included. */
   onRewind?: (item: Extract<ViewItem, { kind: "message" }>) => void;
   /** Re-run the prompt that produced this answer, after confirmation. */
@@ -123,7 +127,7 @@ export const Message = memo(function Message({
         </time>
       </div>
       <div className="block-body">
-        {!agent && onEdit ? (
+        {!agent && item.prompt && onEdit ? (
           <ActionIcon
             className="msg-edit-btn"
             size={18}
@@ -133,7 +137,7 @@ export const Message = memo(function Message({
             <IconPencil size={12} stroke={1.5} />
           </ActionIcon>
         ) : null}
-        {!agent && onRewind ? (
+        {!agent && item.prompt && onRewind ? (
           <ActionIcon
             className="msg-rewind-btn"
             size={18}
@@ -141,6 +145,16 @@ export const Message = memo(function Message({
             onClick={() => onRewind(item)}
           >
             <IconArrowBackUp size={12} stroke={1.5} />
+          </ActionIcon>
+        ) : null}
+        {!agent && item.prompt && onFork ? (
+          <ActionIcon
+            className="msg-fork-btn"
+            size={18}
+            aria-label="Fork from this message"
+            onClick={() => onFork(item)}
+          >
+            <IconGitFork size={12} stroke={1.5} />
           </ActionIcon>
         ) : null}
         <ActionIcon

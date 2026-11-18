@@ -241,7 +241,10 @@ async fn run(
         )
         .await;
         state.projection.publish(thread_id).await;
-        if has_queued_input(&state.pool, thread_id).await {
+        if crate::queue::pending(&state.pool, thread_id)
+            .await
+            .unwrap_or(false)
+        {
             state.agents.kick_queue(thread_id);
         }
         Ok(())
@@ -310,17 +313,6 @@ async fn append(state: &AppState, thread_id: &str, payload: ThreadEvent) {
             EventMeta::default(),
         )
         .await;
-}
-
-async fn has_queued_input(pool: &SqlitePool, thread_id: &str) -> bool {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM queued_inputs WHERE thread_id = ? AND status = 'queued'",
-    )
-    .bind(thread_id)
-    .fetch_one(pool)
-    .await
-    .unwrap_or_default()
-        > 0
 }
 
 /// Mark setup interrupted by a server restart as failed so the thread does not

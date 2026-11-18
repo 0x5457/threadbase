@@ -144,7 +144,8 @@ impl Projection {
                 (SELECT COUNT(*) FROM elicitations e
                   WHERE e.thread_id = t.id AND e.status = 'pending') AS pending_elicitations,
                 (SELECT COUNT(*) FROM queued_inputs q
-                  WHERE q.thread_id = t.id AND q.status = 'queued') AS queued_inputs,
+                  WHERE q.thread_id = t.id AND q.status = 'queued' AND q.starting = 0)
+                    AS queued_inputs,
                 (SELECT COUNT(*) FROM subagents s
                   WHERE s.thread_id = t.id AND s.status IN ('running','requires_action')) AS active_subagents
              FROM threads t WHERE t.id = ?",

@@ -40,6 +40,9 @@ export type ViewItem =
       ts: number;
       streaming: boolean;
       attachments: AttachmentDto[];
+      /** A user prompt that owns a turn; only these can be edited, rewound or
+       * forked. Messages injected mid-turn have no turn anchor of their own. */
+      prompt: boolean;
     }
   | {
       kind: "thinking";
@@ -166,6 +169,7 @@ export function extendThreadView(
     streaming: boolean,
     attachments: AttachmentDto[] = [],
     chunks?: string[],
+    prompt = false,
   ) => {
     const existing = messageRows.get(id);
     if (existing === undefined) {
@@ -183,6 +187,7 @@ export function extendThreadView(
         ts,
         streaming,
         attachments,
+        prompt,
       });
       if (streaming) streamingRows.add(id);
       return;
@@ -205,6 +210,7 @@ export function extendThreadView(
       streaming,
       ts: row.ts,
       attachments: attachments.length ? attachments : row.attachments,
+      prompt: row.prompt || prompt,
     };
     if (streaming) streamingRows.add(id);
     else streamingRows.delete(id);
@@ -257,6 +263,7 @@ export function extendThreadView(
           false,
           payload.attachments ?? [],
           [visiblePrompt],
+          true,
         );
         break;
       }

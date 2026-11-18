@@ -85,7 +85,8 @@ notifications. Approvals, questions, @mentions, finished turns and errors
 notify the thread's unwatched-muted watchers, never the whole workspace, and
 never the person currently looking at that thread (except errors). The inbox
 pages through `GET /api/inbox`; unread counts arrive over each user's own
-WebSocket.
+WebSocket. A thread with unread inbox rows also shows a dot in the sidebar;
+opening the thread marks those rows read, like clicking them in the inbox.
 
 The page is an installable PWA: the server generates and stores its own
 VAPID keys on first use, and Web Push delivers the same notifications when the
@@ -99,8 +100,9 @@ fall back to `npx`, which adds about a second per start — `threadbase doctor`
 flags adapters still on npx.
 
 - **Lazy start.** Creating a thread does not start a process; the first
-  prompt does. Cold-start messages queue visibly instead of blocking the
-  send; a failed start leaves them queued, not lost.
+  prompt does. The message that starts the adapter is not shown as queued: it
+  is the thing being started, and the thread reads `preparing` until the turn
+  begins. A failed start puts it back in the queue instead of losing it.
 - **Idle shutdown.** Sessions close after `THREADBASE_IDLE_SESSION_SECS`
   (default 900, `0` = never); the binding remembers the ACP session id and
   resumes transparently, falling back to a context-reset notice if that
@@ -160,6 +162,23 @@ checkpoint. From there:
   `git clean -fd`, then truncate the log — in that order, so a git failure
   leaves a consistent, restartable thread. Rewinding writes a system notice;
   without a checkpoint the server returns 409 instead of guessing.
+
+## Forking
+
+**Fork thread** (thread menu) copies the worktree, the agent binding and the
+whole conversation into a new thread. **Fork from here** (on any of your user
+messages) stops the transcript after that prompt's turn and starts the new
+worktree at that turn's checkpoint, so the files and the conversation describe
+the same moment. When the source has no checkpoint there — it runs directly in
+the project, or git could not snapshot — the fork keeps the earlier transcript
+and copies the source's current files, with a system notice saying so.
+
+The fork gets its own ACP session, which cannot be branched. The copied
+transcript therefore rides once with the first prompt as bounded context
+(newest turns first, at most 48k characters); later turns are the adapter's
+own. Checkpoints for the copied turns travel with it, so their per-turn diffs
+still work; rewinding one of those turns is refused, because those files
+belong to the thread the fork came from.
 
 **Apply changes** (top menu) is deliberately local: it requires a clean
 project tree on the thread's base branch, warns when the base has moved

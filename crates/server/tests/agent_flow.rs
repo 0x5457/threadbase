@@ -7,8 +7,10 @@ use tempfile::TempDir;
 use threadbase_server::app::AppState;
 use threadbase_server::auth::CurrentUser;
 use threadbase_server::events::EventStore;
-use threadbase_server::{agents, auth, db, projects, threads};
-use threadbase_shared::api::{CreateProjectRequest, CreateThreadRequest, UpdateThreadRequest};
+use threadbase_server::{agents, auth, db, projects, queue, threads};
+use threadbase_shared::api::{
+    CreateProjectRequest, CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest,
+};
 use threadbase_shared::{ApprovalDecision, ElicitationAction, ThreadEvent, ThreadStatus};
 use tokio::time::{sleep, Duration};
 
@@ -974,6 +976,165 @@ async fn editing_a_prompt_rewinds_the_tail_and_starts_a_new_session() {
         matches!(event, ThreadEvent::TurnEnded { .. })
     })
     .await;
+}
+
+/// A fork gets a new ACP session, so the copied transcript has to be sent to
+/// the adapter once; otherwise the screen shows a conversation the model has
+/// never seen.
+#[tokio::test]
+async fn fork_replays_the_copied_conversation_into_the_first_prompt() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "stream", None)
+        .await
+        .unwrap();
+    wait_for(&fixture.state.pool, thread_id, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+
+    let fork = threads::fork(
+        &fixture.state.pool,
+        &fixture.state.events,
+        &fixture.state.projection,
+        &fixture.state.config.data_dir,
+        thread_id,
+        &fixture.user,
+        &ForkThreadRequest {
+            title: None,
+            message_id: None,
+        },
+        &policy(),
+    )
+    .await
+    .unwrap();
+    let fork_id = fork.id.as_str();
+    let fork_seq = max_seq(&fixture.state.pool, fork_id).await;
+
+    fixture
+        .state
+        .agents
+        .send(fork_id, &fixture.user, "stream", None)
+        .await
+        .unwrap();
+    wait_for_after(&fixture.state.pool, fork_id, fork_seq, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+
+    let journal = std::fs::read_to_string(fixture.data.path().join("journal.log")).unwrap();
+    assert!(
+        journal.contains("This thread is a fork"),
+        "the first prompt must carry the inherited transcript; journal:\n{journal}"
+    );
+    assert!(
+        journal.contains("Ada: stream"),
+        "the inherited prompt must be part of the replay; journal:\n{journal}"
+    );
+}
+
+/// Sending the first message to a cold thread must not show it as queued: it
+/// is the message starting the thread, not work waiting behind a turn.
+#[tokio::test]
+async fn the_first_message_of_a_cold_thread_skips_the_visible_queue() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.0.clone();
+    fixture
+        .state
+        .agents
+        .send(&thread_id, &fixture.user, "stream", None)
+        .await
+        .unwrap();
+    wait_for(&fixture.state.pool, &thread_id, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+
+    let snapshots: Vec<String> = sqlx::query_scalar(
+        "SELECT payload_json FROM events WHERE thread_id = ? AND kind = 'queue_updated'",
+    )
+    .bind(&thread_id)
+    .fetch_all(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert!(
+        snapshots.iter().all(|payload| !payload.contains("stream")),
+        "the first message must never enter the queue bar: {snapshots:?}"
+    );
+    let journal = std::fs::read_to_string(fixture.data.path().join("journal.log")).unwrap();
+    assert!(
+        !journal.contains("Also:"),
+        "a starting message is not queued behind anything; journal:\n{journal}"
+    );
+}
+
+/// A prompt sent while older input is still waiting must not be answered first:
+/// the queue worker may be between attempts (a global turn slot, a restart).
+#[tokio::test]
+async fn a_direct_send_does_not_overtake_queued_input() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.0.clone();
+    fixture
+        .state
+        .agents
+        .ensure_started(&thread_id)
+        .await
+        .unwrap();
+    let before = max_seq(&fixture.state.pool, &thread_id).await;
+    queue::enqueue(
+        &fixture.state.pool,
+        queue::NewQueuedInput {
+            thread_id: &thread_id,
+            author_id: fixture.user.user.id.as_str(),
+            text: "older",
+            authors_json: None,
+            attachments_json: None,
+            starting: false,
+            created_at: threadbase_shared::now_ms(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let response = fixture
+        .state
+        .agents
+        .send(&thread_id, &fixture.user, "newer", None)
+        .await
+        .unwrap();
+    assert_eq!(response.delivery, threadbase_shared::Delivery::Queued);
+    assert_eq!(response.queue_position, Some(2));
+
+    for _ in 0..600 {
+        let prompts: Vec<String> = sqlx::query_scalar(
+            "SELECT json_extract(payload_json, '$.prompt') FROM events
+              WHERE thread_id = ? AND kind = 'turn_started' AND seq > ?
+              ORDER BY seq",
+        )
+        .bind(&thread_id)
+        .bind(before)
+        .fetch_all(&fixture.state.pool)
+        .await
+        .unwrap();
+        if prompts.len() >= 2 {
+            assert_eq!(prompts, vec!["older", "newer"]);
+            return;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the queued messages never ran");
 }
 
 #[tokio::test]
