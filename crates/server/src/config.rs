@@ -1,6 +1,7 @@
 use axum::http::uri::Authority;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use threadbase_shared::PermissionMode;
 
 /// GitHub OAuth application used by the sign-in flow.
 ///
@@ -55,8 +56,32 @@ pub struct Config {
     /// Maximum number of agent turns running at once across all threads.
     /// `0` means unlimited.
     pub max_active_turns: usize,
+    /// Idle threads settle themselves after this many days; `0` disables the
+    /// rule. Snooze deadlines keep waking regardless, because a person asked
+    /// to see the thread again.
+    pub settle_days: i64,
+    /// Mode a thread starts in when neither it nor its project chose one.
+    pub permission_mode: PermissionMode,
+    /// Ceiling no thread may exceed. Whoever runs the machine decides how much
+    /// autonomy the machine hands out; the UI renders modes above it as managed.
+    pub max_permission_mode: PermissionMode,
+    /// Guest links are a capability that bypasses accounts, so they are opt-in.
+    /// With this off every guest endpoint answers 404 and the UI hides its
+    /// entry points.
+    pub guest_links: bool,
+    /// The MCP endpoint lets an outside agent drive threads. Off by default: it
+    /// is the widest capability the product offers.
+    pub mcp: bool,
     /// Worktree setup commands are killed after this many seconds.
     pub setup_timeout_seconds: i64,
+    /// Secrets file loaded into the environment at startup. Both service
+    /// managers use this one file, so no unit ever contains a secret.
+    pub env_file: PathBuf,
+    /// Optional log file. Daily rotation keeps one week; `None` means the
+    /// service manager's own log (journald on Linux).
+    pub log_file: Option<PathBuf>,
+    /// Hold a power assertion so a dedicated Mac does not sleep.
+    pub keep_awake: bool,
 }
 
 /// Test and tooling defaults. Production always goes through [`Config::load`],
@@ -83,7 +108,15 @@ impl Default for Config {
             terminal_socket: crate::terminal::SOCKET.to_owned(),
             idle_session_seconds: 15 * 60,
             max_active_turns: 4,
+            settle_days: 7,
+            permission_mode: PermissionMode::Supervised,
+            max_permission_mode: PermissionMode::FullAccess,
+            guest_links: false,
+            mcp: false,
             setup_timeout_seconds: 15 * 60,
+            env_file: PathBuf::from("/tmp/threadbase/env"),
+            log_file: None,
+            keep_awake: false,
         }
     }
 }
@@ -105,6 +138,23 @@ pub enum ConfigError {
 }
 
 impl Config {
+    /// Load `THREADBASE_ENV_FILE` (default `~/.config/threadbase/env`) into the
+    /// process environment.
+    ///
+    /// launchd has no `EnvironmentFile=`, and systemd's is not visible to a
+    /// manually started binary, so the file belongs to the process. Call this
+    /// once from `main` **before** the async runtime starts: `setenv` is only
+    /// sound while the process is single-threaded.
+    pub fn load_env_file() -> anyhow::Result<()> {
+        let path = env_file_path();
+        if !path.exists() {
+            return Ok(());
+        }
+        dotenvy::from_path(&path)
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+        Ok(())
+    }
+
     pub fn load() -> Result<Self, ConfigError> {
         let data_dir = match std::env::var_os("THREADBASE_DATA_DIR") {
             Some(value) => PathBuf::from(value),
@@ -184,10 +234,31 @@ impl Config {
         let max_active_turns = non_empty("THREADBASE_MAX_ACTIVE_TURNS")
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(4);
+        let permission_mode = non_empty("THREADBASE_PERMISSION_MODE")
+            .and_then(|value| value.parse::<PermissionMode>().ok())
+            .unwrap_or(PermissionMode::Supervised);
+        let max_permission_mode = non_empty("THREADBASE_MAX_PERMISSION_MODE")
+            .and_then(|value| value.parse::<PermissionMode>().ok())
+            .unwrap_or(PermissionMode::FullAccess);
+        let mcp = std::env::var("THREADBASE_MCP")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        let guest_links = std::env::var("THREADBASE_GUEST_LINKS")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        let settle_days = non_empty("THREADBASE_SETTLE_DAYS")
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|value| *value >= 0)
+            .unwrap_or(7);
         let setup_timeout_seconds = non_empty("THREADBASE_SETUP_TIMEOUT_SECS")
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(15 * 60);
+        let env_file = env_file_path();
+        let log_file = flag_path("THREADBASE_LOG_FILE").or_else(default_log_file);
+        let keep_awake = std::env::var("THREADBASE_KEEP_AWAKE")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
         Ok(Self {
             data_dir,
             db_path,
@@ -208,7 +279,15 @@ impl Config {
             terminal_socket,
             idle_session_seconds,
             max_active_turns,
+            settle_days,
+            permission_mode,
+            max_permission_mode,
+            guest_links,
+            mcp,
             setup_timeout_seconds,
+            env_file,
+            log_file,
+            keep_awake,
         })
     }
 
@@ -248,6 +327,37 @@ impl Config {
     pub fn github_ready(&self) -> bool {
         self.github.is_some() && self.callback_url().is_some()
     }
+}
+
+/// Home directory without trusting `HOME` alone: service managers set it, but
+/// a stripped environment may not.
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
+}
+
+/// Secrets file, overridable so one checkout can serve several instances.
+pub fn env_file_path() -> PathBuf {
+    flag_path("THREADBASE_ENV_FILE")
+        .or_else(|| home_dir().map(|home| home.join(".config/threadbase/env")))
+        .unwrap_or_else(|| PathBuf::from(".config/threadbase/env"))
+}
+
+/// journald already owns log files on Linux, so a file is only the default on
+/// macOS where launchd only appends to whatever path the plist names.
+fn default_log_file() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    Some(home_dir()?.join("Library/Logs/threadbase/threadbase.log"))
+}
+
+fn flag_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
 }
 
 fn list_env(name: &str) -> Vec<String> {

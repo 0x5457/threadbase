@@ -3,7 +3,21 @@
 use anyhow::bail;
 use std::time::Duration;
 
-pub(crate) async fn check(port: u16) -> anyhow::Result<()> {
+/// One request, used by `threadbase service status`.
+pub(crate) async fn probe(port: u16) -> anyhow::Result<()> {
+    let url = format!("http://127.0.0.1:{port}/api/health");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()?;
+    let response = client.get(&url).send().await?;
+    if !response.status().is_success() {
+        bail!("{url} returned {}", response.status());
+    }
+    Ok(())
+}
+
+/// Polls until the freshly activated service answers.
+pub(crate) async fn check(port: u16, hint: &str) -> anyhow::Result<()> {
     let url = format!("http://127.0.0.1:{port}/api/health");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
@@ -21,5 +35,5 @@ pub(crate) async fn check(port: u16) -> anyhow::Result<()> {
             Err(_) => continue,
         }
     }
-    bail!("service did not answer on {url}; check `journalctl --user -u` output")
+    bail!("service did not answer on {url}; check `{hint}`")
 }

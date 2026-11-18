@@ -6,20 +6,23 @@ pub const DEFAULT_PORT: u16 = 7777;
 pub const DEFAULT_HTTPS_PORT: u16 = 8443;
 
 const INSTALL_AFTER_HELP: &str = "\
-Secrets belong in ~/.config/threadbase/env (the unit loads it with
-EnvironmentFile= and never stores them itself):
+Runs the current binary as a user service: a systemd unit on Linux, a launchd
+agent on macOS. Nothing is built, copied or downloaded.
+
+Secrets belong in ~/.config/threadbase/env (or THREADBASE_ENV_FILE). The
+service file only names that path; the binary loads it at startup:
 
   THREADBASE_GITHUB_CLIENT_ID=...
   THREADBASE_GITHUB_CLIENT_SECRET=...
   THREADBASE_GITHUB_ALLOW=octocat,ada
 
-The unit is written to ~/.config/systemd/user/<unit>.service and enabled with
-lingering so it survives logout and reboot. Data is left untouched.";
+The unit is written to ~/.config/systemd/user/<unit>.service or
+~/Library/LaunchAgents/<unit>.plist. Data is left untouched.";
 
 #[derive(Debug, Clone, clap::Args)]
 #[command(after_help = INSTALL_AFTER_HELP)]
 pub struct Options {
-    /// systemd unit name (default: threadbase)
+    /// Service unit / launchd label (default: threadbase)
     #[arg(long, default_value = "threadbase")]
     pub unit: String,
     /// Loopback port the server binds
@@ -34,11 +37,15 @@ pub struct Options {
     /// Pin THREADBASE_PUBLIC_ORIGIN instead of deriving it
     #[arg(long)]
     pub public_origin: Option<String>,
-    /// Expose publicly with `tailscale funnel` (GitHub OAuth needs this);
+    /// Expose publicly with `tailscale funnel` (Tailscale only);
     /// default is tailnet-only `tailscale serve`
     #[arg(long)]
     pub funnel: bool,
-    /// Do not touch `tailscale serve` / `tailscale funnel`
+    /// Keep a dedicated host awake (power assertion; macOS)
+    #[arg(long = "keep-awake")]
+    pub keep_awake: bool,
+    /// Do not touch `tailscale serve` / `tailscale funnel`; use this when
+    /// another process owns the public endpoint, and pass --public-origin
     #[arg(long = "no-serve")]
     pub skip_serve: bool,
     /// Write the unit but do not enable or start it
@@ -61,12 +68,36 @@ impl Default for Options {
             admin: None,
             public_origin: None,
             funnel: false,
+            keep_awake: false,
             skip_serve: false,
             skip_start: false,
             print_only: false,
             uninstall: false,
         }
     }
+}
+
+/// One name for the systemd unit and the launchd label. Accepts the decorated
+/// forms people already have in scripts (`threadbase.service`) and rejects path
+/// separators, because the name becomes a file name.
+pub fn normalize_label(raw: &str) -> anyhow::Result<String> {
+    let label = raw
+        .trim()
+        .trim_end_matches(".service")
+        .trim_end_matches(".plist")
+        .trim();
+    if label.is_empty() {
+        anyhow::bail!("unit name cannot be empty");
+    }
+    // No dots: `service-manager` splits a dotted label into organization +
+    // application and would rename the Linux unit behind our back.
+    if !label
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "-_".contains(character))
+    {
+        anyhow::bail!("invalid unit name {raw:?}: use letters, digits, '_' or '-'");
+    }
+    Ok(label.to_owned())
 }
 
 #[derive(Debug, Parser)]
@@ -103,6 +134,7 @@ mod tests {
             "--admin",
             "octocat",
             "--funnel",
+            "--keep-awake",
             "--no-serve",
             "--print",
         ])
@@ -111,6 +143,7 @@ mod tests {
         assert_eq!(options.https_port, 9443);
         assert_eq!(options.admin.as_deref(), Some("octocat"));
         assert!(options.funnel);
+        assert!(options.keep_awake);
         assert!(options.skip_serve);
         assert!(options.print_only);
         assert!(!options.uninstall);
@@ -125,5 +158,19 @@ mod tests {
     #[test]
     fn unknown_option_is_rejected() {
         assert!(parse(&["--nope"]).is_err());
+    }
+
+    #[test]
+    fn labels_are_one_name_for_both_managers() {
+        assert_eq!(normalize_label("threadbase").unwrap(), "threadbase");
+        assert_eq!(normalize_label("threadbase.service").unwrap(), "threadbase");
+        assert_eq!(
+            normalize_label("threadbase-dev.plist").unwrap(),
+            "threadbase-dev"
+        );
+        assert!(normalize_label("../../etc/passwd").is_err());
+        assert!(normalize_label("  ").is_err());
+        // Dotted labels are re-split by service-manager into org + app.
+        assert!(normalize_label("dev.threadbase").is_err());
     }
 }

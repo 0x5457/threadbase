@@ -3,13 +3,17 @@ use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 use threadbase_server::app::AppState;
 use threadbase_server::config::Config;
-use threadbase_server::{db, doctor, install, maintenance, routes, service, upgrade};
-use tracing_subscriber::EnvFilter;
+use threadbase_server::{
+    db, doctor, install, logging, maintenance, power, routes, service, upgrade,
+};
 
 const ENV_HELP: &str = "\
 Environment:
   THREADBASE_DATA_DIR          Data directory (default: platform data dir)
   THREADBASE_BIND              Loopback address (default: 127.0.0.1:7777)
+  THREADBASE_ENV_FILE          Secrets file (default: ~/.config/threadbase/env)
+  THREADBASE_LOG_FILE          Also write logs to this file (daily rotation, 7 kept)
+  THREADBASE_KEEP_AWAKE        Hold a power assertion so the host cannot idle-sleep
   THREADBASE_PUBLIC_ORIGIN     Public HTTPS origin; required for GitHub sign-in
   THREADBASE_GITHUB_CLIENT_ID  GitHub OAuth app client id
   THREADBASE_GITHUB_CLIENT_SECRET
@@ -26,6 +30,7 @@ Environment:
                                (development only; ignored behind a tunnel)
   THREADBASE_LOG_JSON          Set to 1 for JSON logs
   THREADBASE_ACP_COMMAND       Override the ACP adapter command (development)
+  THREADBASE_TAILSCALE         Path to the Tailscale CLI (default: PATH, then the macOS app)
   THREADBASE_RELEASE_BASE      Override the release download base URL";
 
 #[derive(Debug, Parser)]
@@ -56,15 +61,19 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
-    /// One-command systemd deployment plus an HTTPS tunnel
+    /// One-command deployment plus an HTTPS tunnel
     ///
-    /// Configure a systemd user service for this binary and expose it over HTTPS.
-    /// Nothing is built, copied or downloaded: the unit runs the current executable.
+    /// Configure a user service for this binary (systemd or launchd) and expose
+    /// it over HTTPS. Nothing is built, copied or downloaded: the unit runs the
+    /// current executable.
     Install(install::Options),
-    /// Write a launchd/systemd user unit
+    /// Control the installed user service
     Service {
         #[command(subcommand)]
         command: ServiceCommand,
+        /// Service unit / launchd label
+        #[arg(long, default_value = "threadbase", global = true)]
+        unit: String,
     },
     /// Fold superseded stream rows in the event log and reclaim disk
     ///
@@ -97,16 +106,23 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum ServiceCommand {
-    /// Write a launchd/systemd user unit
-    Install {
-        /// Print the unit and change nothing
-        #[arg(long)]
-        print: bool,
+    /// Start the service that `threadbase install` created
+    Start,
+    /// Stop it (stops the tunnel's upstream, not the tunnel)
+    Stop,
+    /// Restart it
+    Restart,
+    /// Report whether the service and the health endpoint answer
+    Status,
+    /// Print recent log lines
+    Logs {
+        /// Number of lines
+        #[arg(short = 'n', long, default_value_t = 80)]
+        lines: usize,
     },
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {
@@ -125,7 +141,23 @@ async fn main() -> ExitCode {
             };
         }
     };
-    match run(cli).await {
+    // The env file is loaded before the runtime starts: `setenv` is only sound
+    // while the process is single-threaded.
+    if let Err(error) = Config::load_env_file() {
+        eprintln!("threadbase: {error:#}");
+        return ExitCode::FAILURE;
+    }
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("threadbase: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(run(cli)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("threadbase: {error:#}");
@@ -194,16 +226,22 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             );
             return Ok(());
         }
-        Some(Command::Service { command }) => {
-            let ServiceCommand::Install { print } = command;
-            service::install(print)?;
+        Some(Command::Service { command, unit }) => {
+            let command = match command {
+                ServiceCommand::Start => service::Command::Start,
+                ServiceCommand::Stop => service::Command::Stop,
+                ServiceCommand::Restart => service::Command::Restart,
+                ServiceCommand::Status => service::Command::Status,
+                ServiceCommand::Logs { lines } => service::Command::Logs { lines },
+            };
+            service::run(command, &unit).await?;
             return Ok(());
         }
         Some(Command::Serve) | None => {}
     }
 
     let config = Config::load().context("invalid configuration")?;
-    init_tracing(config.log_json);
+    let _log_guard = logging::init(config.log_json, config.log_file.as_deref());
     tokio::fs::create_dir_all(&config.data_dir)
         .await
         .with_context(|| format!("create data directory {}", config.data_dir.display()))?;
@@ -239,12 +277,21 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
     });
     state.push.spawn();
+    // Parking idle work and waking due snoozes happen without a client; the
+    // decision itself lives in `threadbase-core`, the loop only supplies facts.
+    let _sweeper = threadbase_server::threads::spawn_sweeper(
+        state.pool.clone(),
+        state.projection.clone(),
+        state.config.settle_days.saturating_mul(24 * 60 * 60 * 1000),
+    );
     let agents = state.agents.clone();
     let app = routes::router(state);
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("bind {}", config.bind))?;
     let local = format!("http://{}", config.bind);
+    // Keep the assertion for as long as the server serves.
+    let _awake = power::hold(config.keep_awake)?;
     tracing::info!(
         url = %local,
         data_dir = %config.data_dir.display(),
@@ -257,6 +304,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
     println!("Data directory: {}", config.data_dir.display());
+    if let Some(path) = &config.log_file {
+        println!("Log file: {}", path.display());
+    }
     if config.github_ready() {
         println!(
             "Sign-in: GitHub OAuth, callback {}",
@@ -314,17 +364,6 @@ fn print_machines(catalogue: &[threadbase_shared::MachineSpec]) {
 fn format_bytes(bytes: u64) -> String {
     let mib = bytes as f64 / (1024.0 * 1024.0);
     format!("{mib:.1} MiB")
-}
-
-fn init_tracing(json: bool) {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("threadbase=info,tower_http=info"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
-    if json {
-        builder.json().init();
-    } else {
-        builder.init();
-    }
 }
 
 async fn shutdown_signal() {

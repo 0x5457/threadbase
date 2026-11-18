@@ -58,3 +58,33 @@ jobs:
         run: |
           cargo build -p threadbase
           test -f web/dist/index.html
+
+  # The install command has a launchd backend that only compiles on macOS.
+  # Compiling it (clippy checks all targets) is the point; running the Linux
+  # test suite here would only add pty flakiness.
+  check-macos:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # rust-embed needs web/dist at compile time; the real bundle is built by
+      # the Linux job and the release workflow.
+      - name: Stub web assets
+        run: |
+          mkdir -p web/dist
+          printf '<!doctype html>\n' > web/dist/index.html
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings

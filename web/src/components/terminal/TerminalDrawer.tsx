@@ -594,10 +594,13 @@ export function TerminalDrawer({
         role="group"
         aria-label="Terminal session"
         ref={containerRef}
-        onPointerDown={() => {
-          if (canDrive) focus();
+        onPointerDown={(event) => {
+          // Touch focus waits for the tap (below): a drag starts the same way,
+          // and opening the soft keyboard mid-scroll would refit the terminal
+          // under the finger.
+          if (event.pointerType !== "touch" && canDrive) focus();
         }}
-        onTouchStart={() => {
+        onClick={() => {
           if (canDrive) focus();
         }}
       >

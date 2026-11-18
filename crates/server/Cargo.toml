@@ -27,6 +27,7 @@ clap.workspace = true
 content_inspector.workspace = true
 cookie = "0.18"
 directories = "6.0"
+dotenvy.workspace = true
 futures-util.workspace = true
 governor.workspace = true
 gray_matter.workspace = true
@@ -44,6 +45,7 @@ rust-embed.workspace = true
 self-replace.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+service-manager.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 strum.workspace = true
@@ -51,6 +53,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
+tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 ulid.workspace = true
 unidiff.workspace = true
@@ -59,6 +62,11 @@ web-push.workspace = true
 which.workspace = true
 yrs.workspace = true
 y-sync.workspace = true
+
+# A dedicated Mac must not sleep under the team; the assertion is held by the
+# server itself, which is the only cross-platform-safe place for it.
+[target.'cfg(target_os = "macos")'.dependencies]
+keepawake = "0.6"
 
 [dev-dependencies]
 tempfile.workspace = true

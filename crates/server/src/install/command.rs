@@ -1,6 +1,7 @@
 //! Small process helpers shared by the deployment commands.
 
 use anyhow::{bail, Context};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// Trimmed stdout of a successful command, for probes such as `--version` or
@@ -42,22 +43,10 @@ pub(crate) fn run_quiet(program: &str, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn ensure_systemctl() -> anyhow::Result<()> {
-    if Command::new("systemctl")
-        .args(["--user", "show-environment"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-    {
-        return Ok(());
-    }
-    bail!(
-        "`systemctl --user` is unavailable. This usually means systemd is not \
-         running or XDG_RUNTIME_DIR is unset; run install from a normal login \
-         session on a systemd host."
-    )
+/// Print the tail of a log file. Both supported platforms ship `tail`, and it
+/// streams instead of loading a multi-megabyte file into memory.
+pub(crate) fn tail(path: &Path, lines: usize) -> anyhow::Result<()> {
+    run_checked("tail", &["-n", &lines.to_string(), &path.to_string_lossy()])
 }
 
 #[cfg(test)]

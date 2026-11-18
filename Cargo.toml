@@ -32,6 +32,7 @@ axum = { version = "0.8", features = ["macros", "ws"] }
 axum-extra = { version = "0.12", features = ["cookie"] }
 clap = { version = "4.6", features = ["derive"] }
 content_inspector = "0.2"
+dotenvy = "0.15"
 futures-util = { version = "0.3", features = ["sink"] }
 governor = "0.10"
 gray_matter = "0.3"
@@ -49,6 +50,7 @@ rust-embed = "8.13"
 self-replace = "1.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+service-manager = "0.11"
 sha2 = "0.10"
 similar = "3.2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "derive", "macros"] }
@@ -59,6 +61,7 @@ tokio = { version = "1.54", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["compression-gzip", "fs", "trace", "timeout"] }
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 ts-rs = { version = "12.0", features = ["format", "no-serde-warnings", "serde-json-impl"] }
 ulid = "1.2"

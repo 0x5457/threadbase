@@ -15,34 +15,46 @@ pub async fn report(config: &Config) -> DoctorReport {
     if git.is_none() {
         warnings.push("git is not installed".to_owned());
     }
-    let agents: Vec<AgentInfoDto> = all_profiles()
-        .iter()
-        .map(|profile| {
-            let resolved = resolve(profile);
-            let installed = if resolved.via_npx {
-                find_in_path("npx").is_some()
-            } else {
-                find_in_path(&resolved.program).is_some()
-            };
-            let adapter = profile
-                .npm_package
-                .map(|package| format!("{package}@{}", profile.npm_version.unwrap_or("latest")));
-            AgentInfoDto {
-                id: profile.id.to_owned(),
-                label: profile.label.to_owned(),
-                installed,
-                version: None,
-                adapter,
-                adapter_version: profile.npm_version.map(ToOwned::to_owned),
-                supports_steering: matches!(profile.id, "codex" | "claude"),
-                supports_subagents: matches!(profile.id, "codex" | "claude" | "opencode"),
-                supports_elicitation: matches!(profile.id, "codex" | "claude"),
-                identity: None,
-            }
-        })
-        .collect();
+    let mut npx_fallback = Vec::new();
+    let mut agents = Vec::with_capacity(all_profiles().len());
+    for profile in all_profiles() {
+        let resolved = resolve(profile);
+        let installed = if resolved.via_npx {
+            find_in_path("npx").is_some()
+        } else {
+            find_in_path(&resolved.program).is_some()
+        };
+        // npx works, but every adapter start pays its resolution cost and
+        // leaves an npm process resident. The doctor says so out loud instead
+        // of reporting a slow fallback as healthy.
+        if resolved.via_npx && installed {
+            npx_fallback.push(profile.command);
+        }
+        let adapter = profile
+            .npm_package
+            .map(|package| format!("{package}@{}", profile.npm_version.unwrap_or("latest")));
+        agents.push(AgentInfoDto {
+            id: profile.id.to_owned(),
+            label: profile.label.to_owned(),
+            installed,
+            version: None,
+            adapter,
+            adapter_version: profile.npm_version.map(ToOwned::to_owned),
+            supports_steering: matches!(profile.id, "codex" | "claude"),
+            supports_subagents: matches!(profile.id, "codex" | "claude" | "opencode"),
+            supports_elicitation: matches!(profile.id, "codex" | "claude"),
+            identity: None,
+        });
+    }
     if agents.iter().all(|agent| !agent.installed) {
         warnings.push("No agent adapter is installed".to_owned());
+    }
+    if !npx_fallback.is_empty() {
+        warnings.push(format!(
+            "Started through npx instead of a local binary: {}. Installing it on PATH saves \
+             about a second per adapter start and a resident npm process",
+            npx_fallback.join(", ")
+        ));
     }
     if config.github.is_some() && config.public_origin.is_none() {
         warnings.push(

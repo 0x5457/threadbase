@@ -12,6 +12,8 @@ type Options = {
 const FONT_STACK =
   '"Threadbase Nerd Mono", ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, monospace';
 const FONT_SIZE = 12.5;
+/** How far a finger travels before a tap becomes a scroll. */
+const TOUCH_SLOP = 6;
 
 /** Terminal colours follow the app palette instead of shipping a theme. */
 function readTheme() {
@@ -215,6 +217,77 @@ export function useXterm({ disabled, onData, onResize }: Options) {
   useEffect(() => {
     if (termRef.current) termRef.current.options.disableStdin = disabled;
   }, [disabled]);
+
+  /**
+   * xterm has no touch scrolling: only a wheel moves its buffer, and tmux only
+   * moves its own scrollback for wheel events. A one-finger drag therefore
+   * stands in for the wheel — same events, same decision inside xterm about
+   * whether they scroll the buffer or go to the application — so a phone gets
+   * the drawer's scrollback and not a frozen screen.
+   */
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let origin: number | null = null;
+    let lastY = 0;
+    let scrolling = false;
+
+    const stop = () => {
+      origin = null;
+      scrolling = false;
+    };
+
+    const onStart = (event: TouchEvent) => {
+      // A second finger is a pinch, not a scroll; drop whatever the first one
+      // had already claimed.
+      if (event.touches.length !== 1) {
+        stop();
+        return;
+      }
+      origin = lastY = event.touches[0].clientY;
+    };
+
+    const onMove = (event: TouchEvent) => {
+      if (origin === null || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      if (!scrolling) {
+        if (Math.abs(touch.clientY - origin) < TOUCH_SLOP) return;
+        scrolling = true;
+      }
+      const dy = touch.clientY - lastY;
+      lastY = touch.clientY;
+      // The browser would otherwise pan the page under the finger, or stop
+      // sending moves to us once it thinks the gesture is its own.
+      event.preventDefault();
+      if (dy === 0) return;
+      const screen = container.querySelector(".xterm-screen");
+      if (!screen) return;
+      screen.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+          // Dragging down reveals older lines, which is a wheel-up in xterm.
+          deltaY: -dy,
+          // xterm reports the wheel at the pointer, and tmux scrolls the pane
+          // under it, so the synthetic event has to name the finger.
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        }),
+      );
+    };
+
+    container.addEventListener("touchstart", onStart, { passive: true });
+    container.addEventListener("touchmove", onMove, { passive: false });
+    container.addEventListener("touchend", stop, { passive: true });
+    container.addEventListener("touchcancel", stop, { passive: true });
+    return () => {
+      container.removeEventListener("touchstart", onStart);
+      container.removeEventListener("touchmove", onMove);
+      container.removeEventListener("touchend", stop);
+      container.removeEventListener("touchcancel", stop);
+    };
+  }, []);
 
   const write = useCallback((data: string) => {
     termRef.current?.write(data);

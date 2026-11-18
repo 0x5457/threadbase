@@ -170,12 +170,22 @@
   height: 100%;
 }
 
-/* Scrollback lives in tmux and the wheel is forwarded to it, so xterm's own
-   viewport scrollbar is dead weight: it also paints a strip below the screen. */
+/* xterm keeps an empty `.xterm-viewport` layer for the overview ruler. Its
+   forced native scrollbar and black background would paint a dead strip and
+   sheet beside a screen whose scrolling lives in the scrollable element (and,
+   with tmux's mouse on, in tmux itself). */
 .terminal-body .xterm-viewport {
   overflow: hidden !important;
   background-color: transparent !important;
   scrollbar-width: none;
+}
+
+/* A vertical drag belongs to the terminal's own scroll (see use-xterm); the
+   browser may still claim a pinch, and a horizontal swipe has nowhere to go. */
+@media (pointer: coarse) {
+  .terminal-body {
+    touch-action: pan-x pinch-zoom;
+  }
 }
 
 .terminal-keys {

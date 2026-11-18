@@ -1,0 +1,6 @@
+- Avoid writing overly defensive code.
+- Write framework-quality code with clear abstractions, consistent conventions, and well-defined responsibilities, without overengineering.
+- Embrace **Clean Code** and **Software Craftsmanship**. Think from first principles and treat code as a work of art. Prioritize correctness, security, performance, and readability while striving for simplicity, clarity, consistency, and elegance. Minimize necessary complexity and maintenance burden. Every abstraction must justify its existence, every module must have a clear responsibility, and every line of code must serve a purpose. Favor thoughtful design over cleverness, and essential simplicity over superficial brevity.
+- Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
+- Test only complex or high-risk changes, or when explicitly requested. Batch focused test runs at a meaningful milestone; rerun only to investigate a failure or verify its fix.
+- The primary agent owns architecture, planning, task decomposition, test strategy, scenario design, scope, and acceptance criteria. Do not delegate planning or final decisions.
