@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片/文件附件与大文本粘贴、presence/跟随、线程关注/静音、全文搜索、线程历史与行级 diff 评论、Worktree 初始化钩子、PWA/Web Push、CLI 与发布工作流。
+v1 已实现并通过验证。包含 Rust 单二进制服务、React 工作台、真实 ACP 会话、SQLite 事件日志、CRDT 草稿、审批/提问、Changes 审阅、评论、图片/文件附件与大文本粘贴、presence/跟随、线程关注/静音、全文搜索、线程历史与行级 diff 评论、Worktree 初始化钩子、PWA/Web Push、屏幕共享（可选）、CLI 与发布工作流。
 
 质量门由 `scripts/verify.sh` 统一执行；界面审计记录保留在 `web/audit/`。
 
@@ -162,86 +162,6 @@ archived > pinned > snoozed > settled > working > active
 - approval 或提问出现时也会唤醒：把正在跑的线程 snooze 掉是允许的，但它一旦开口问人就必须回到眼前；
 - 左栏的 `Working` / `Snoozed` / `Settled` 是折叠货架，折叠状态按设备存在 localStorage；如果当前打开的线程在被折叠的货架里，货架自动展开；
 - 项目行上的琥珀色数字是该项目里"需要你"的线程数，折叠起来的项目也会报数。
-
-### 让外部 agent 驱动线程（MCP，默认关闭）
-
-```bash
-THREADBASE_MCP=1 cargo run -p threadbase
-```
-
-服务在 `/mcp` 暴露 MCP（JSON-RPC over HTTP）。关掉时这个路由由一层中间件直接回 404——不是"注册了再拒绝"，因为 axum 会先跑 body extractor，那样会用 422 告诉你端点存在。
-
-**令牌不是 cookie。** 令牌在设置页由登录的人创建（`POST /api/mcp/tokens`），只显示一次、只存哈希、带显式 scope、随时可撤销。请求必须用 `Authorization: Bearer <token>`；`/mcp` 是唯一一条豁免 CSRF 头的写路径，因为它不读 cookie，跨站请求借不到任何人的权限（MCP 客户端也没法带上我们自定义的头）。
-
-**令牌就是那个人**，不是旁路：`pending` / `read_only` 账号驱动不了线程；被停用的账号，它的令牌立刻失效（401）；每个工具内部仍然走 `authz` 与线程的权限模式。`approve` scope 只有管理员能签发，`read_only` 账号签不出 `write`。
-
-| 工具 | 需要的 scope | 做什么 |
-| --- | --- | --- |
-| `threads_list` | read | 最近活动倒序列出线程（可按项目过滤） |
-| `thread_read` | read | 线程元信息 + transcript 事件（`after` 增量） |
-| `thread_prompt` | write | 以令牌持有人的身份发消息，起一个 turn |
-| `thread_wait` | read | 等到线程空闲或需要人（默认 60s，上限 300s） |
-| `approvals_list` | read | 某线程待处理审批 |
-| `approval_decide` | approve | 回答审批（管理员签发的令牌才有） |
-
-`thread_wait` 是这套东西的价值所在：外部 agent 可以"发一条、等它跑完、看结果"，而不是轮询。它读的是投影（状态 + 待处理 + 队列 + 子 agent），与左上角看到的是同一份。
-
-**留痕**：`thread_prompt` 与 `approval_decide` 会在目标线程里写一条 `SystemNotice`（"Development sent this turn through MCP (token "cli")"），并在 `audit_log` 里记一条；只读调用只进 audit，不进事件流——否则每次轮询都会污染对话。
-
-客户端配置（以 Claude Code 这类支持 HTTP MCP 的客户端为例）：
-
-```json
-{
-  "mcpServers": {
-    "threadbase": {
-      "type": "http",
-      "url": "https://threadbase.example.com/mcp",
-      "headers": { "Authorization": "Bearer <token>" }
-    }
-  }
-}
-```
-
-### 访客链接（beta，默认关闭）
-
-给一个**没有账号的人**看某个 thread，并允许他提问。设计上它是一条能力，不是一个用户：
-
-```bash
-THREADBASE_GUEST_LINKS=1 cargo run -p threadbase
-```
-
-默认关闭，因为它绕过账号体系、把对话内容交给一个不受管理的浏览器；这条信任边界该由运行这台机器的人来划，而不是由默认值来划。
-
-**能力边界**
-
-- 链接属于**一个 thread**，24 小时过期，只存哈希（`guest_links.token_hash`），一个 thread 同时只有一条有效链接（再分享会作废旧链接）。
-- 打开链接时令牌换成 `HttpOnly` cookie（`threadbase_guest`），之后轮询不再把令牌放在 URL 上；`Referrer-Policy: same-origin` 保证它不会随外链泄漏。
-- 访客**只能读和起草**。他发的内容进 `guest_messages`（`pending`），团队成员点 Send 才变成一个 turn，点 Dismiss 就删掉。起草上限：同时 5 条、单条 8000 字符、**不支持附件**。
-- 服务端按**白名单**过滤事件：只给 `turn_started` / 消息 / 思考 / 工具调用 / 计划 / usage / 回合结束 / 系统通知。排队中的成员消息、审批请求与决定、提问、子 agent 行、评论都不在响应里——这是在服务端过滤而不是在 UI 里隐藏，否则"看不见"只是假象。
-- 看不到 diff、文件、终端、其他 thread。访客发起的 turn 由点 Send 的人署名执行（他没有角色、没有凭据），transcript 里是一次正常回合。
-
-**撤销**
-
-- `DELETE /api/threads/{id}/guest-link`：作废链接并把所有已经换过 cookie 的浏览器立刻踢掉（`guest_sessions.expires_at = now`），同时丢弃该 thread 上还在等待的草稿。
-- 归档/删除 thread、删除项目会连带清理（外键 `ON DELETE CASCADE`）。
-- 菜单里 `Share with a guest…` 生成并复制链接（创建即替换旧的），`Stop guest sharing` 撤销。
-
-**为什么不需要额外的限流**
-
-令牌是 256 位随机值，猜不出来；真正的滥用面是"握有链接的人刷草稿"，而那被 5 条待处理上限和成员的 Dismiss 动作夹住。若将来开放附件或提高配额，再引入按链接的固定窗口限流。
-
-**接口**
-
-| 方法 | 路径 | 谁 |
-| --- | --- | --- |
-| `POST` | `/api/guest/session` | 持链接的人（令牌换 cookie） |
-| `GET` | `/api/guest/thread?after=<seq>` | 访客（cookie） |
-| `POST` | `/api/guest/messages` | 访客（cookie） |
-| `GET/POST/DELETE` | `/api/threads/{id}/guest-link` | 成员（状态 / 新建 / 撤销） |
-| `GET` | `/api/threads/{id}/guest-messages` | 成员（待处理草稿） |
-| `POST` | `/api/threads/{id}/guest-messages/{mid}` | 成员（`{"action":"send"\|"dismiss"}`） |
-
-开关关闭时这些路由**根本不注册**（不是返回 404 的 handler），所以连 422 都不会泄漏它们存在。
 
 ### 权限模式
 
@@ -438,6 +358,38 @@ cargo run -p threadbase
 - **单浏览器 driver**：同一时刻只有一个浏览器持有键盘，其他浏览器是 watching，点提示条里的 **Take over** 就可以在没有重连的情况下接管；前一个 driver 的输入会立即被服务端丢掉。抽屉头部显示当前 viewers 头像和谁在 driving。本机已经 attach 的 tmux client 不受这个仲裁控制，仍然可以输入。
 - **窗口尺寸**：tmux 默认 `window-size latest`，浏览器抽屉的 pty 尺寸会成为最新 client 的尺寸，可能让你本机终端短暂重排。介意的话在 `~/.tmux.conf` 用 `set -g window-size largest` 或 `manual`；Threadbase 不会改宿主机的 tmux 全局选项。
 - **安全边界**：这个开关等价于“把服务账号在这台机器上的交互式 shell，以可接管方式给所有 member”。只对可信团队打开；不想给了就删掉 `THREADBASE_TERMINAL_HOST` 并重启。宿主机会话的内容不写日志、不落盘。
+
+### 屏幕共享（默认关闭）
+
+thread 有对话、有 diff、有终端，但没有**像素**。agent 卡在浏览器登录、验证码或只有 GUI 才能做的一步时，人得放下工作台另开一个远程桌面——这个开关补的就是这一段。
+
+```bash
+cargo install voxl-server        # 需要 x264/libyuv/opus/esbuild；缺失时 doctor 会报
+THREADBASE_SCREEN=1 cargo run -p threadbase
+```
+
+编码与输入注入由 [voxl](https://github.com/tembo/voxl) 完成。它是 **sidecar，不是依赖**：voxl 链接 x264（GPL-2.0），内嵌进单二进制会让 Apache-2.0 的分发变成 GPL；它的构建链也和“一条命令装好”冲突。服务端只通过 HTTP/WebSocket 跟它说话，所以屏幕在另一台机器上也成立。
+
+**形态：一次共享会话，不是模式**
+
+- **只有发起人能看见。** 整屏会露出通知、私信和密钥，所以它不共享给团队：`/screen/stream/*` 由本服务代理，其他账号（含 `read_only`、待批准、访客链接）连状态都拿不到。换人看要靠对方自己发起共享。
+- **有时限。** `THREADBASE_SCREEN_TTL_SECS`（默认 1800 秒）到期自动停；浏览器上可以一键续期。停止就是杀掉编码进程，不留下“还在共享但没人知道”的状态。
+- **同一时刻只有一个设备持有键盘。** 第二台设备连上是观看，点 **Take control** 接管。输入在服务端按查看者过滤——voxl 的 `--read-only` 是进程级开关，分不出谁在看。控制权变化会让页面重载，因为 voxl 只在新连接建立时才知道自己能输入。
+- **必须同源代理。** WebCodecs 只在 HTTPS 或 localhost 下解码，隧道对面就是 HTTPS；而且“谁能看、谁能输入”只能在我们这一层判定。voxl 的密码留在服务端，浏览器拿不到。
+- 关掉时路由不注册，和终端一致；`threadbase machines` 里有 `screen` 这一台机器（`idle → starting → live → stopping`）。
+
+**平台**
+
+- macOS 可用（ScreenCaptureKit），首次需要在系统设置里给屏幕录制授权。
+- Linux 只支持 X11：服务进程的环境里要有 `DISPLAY`，或用 `THREADBASE_SCREEN_DISPLAY` 指定（Xvfb 也可以）。Wayland 会话只能看到 XWayland 窗口，`doctor` 会直说。
+- 机器必须**已登录且不锁屏**：macOS 的锁屏界面抓不到，Wayland 锁屏同理。常开主机的推荐部署（自动登录 + `--keep-awake`）正好满足；手机因此可以冷启动一次共享，不需要先走到机器前。
+
+| 变量 | 默认 | |
+| --- | --- | --- |
+| `THREADBASE_SCREEN` | 关 | 是否挂载屏幕共享路由 |
+| `THREADBASE_SCREEN_DISPLAY` | 继承 `DISPLAY` | 传给 voxl 的显示；macOS 上作为 `--display` |
+| `THREADBASE_SCREEN_TTL_SECS` | `1800` | 一次共享的时限，`0` 表示直到手动停止 |
+| `THREADBASE_VOXL` | `PATH` | voxl 可执行文件路径 |
 
 ### Sessions 视图
 
