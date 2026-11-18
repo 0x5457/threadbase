@@ -2,13 +2,14 @@
 
 export type AuthStatusDto = {
   /**
-   * GitHub OAuth is configured, so a sign-in redirect is available.
+   * This request arrived through `tailscale serve`, so the shell can exchange
+   * the tailnet identity for a session without asking anything.
    */
-  github: boolean;
+  tailscale: boolean;
+  /**
+   * The tailnet login being presented, for the "signing in as…" line.
+   */
+  identity: string | null;
   devIdentity: boolean;
   needsAdmin: boolean;
-  /**
-   * Where to send the browser to start a GitHub sign-in.
-   */
-  loginUrl: string | null;
 };

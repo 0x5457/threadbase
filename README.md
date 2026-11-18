@@ -35,54 +35,46 @@ pnpm --dir web dev   # http://127.0.0.1:5173，/api 与 /ws 代理到 7777
 
 数据目录默认是平台数据目录下的 `threadbase/`（Linux 为 `~/.local/share/threadbase/`，macOS 为 `~/Library/Application Support/threadbase/`），可用 `THREADBASE_DATA_DIR` 覆盖。服务固定绑定回环地址，`THREADBASE_BIND` 只接受回环地址。
 
-## 部署模型：本机服务，GitHub 登录，HTTPS 隧道对外
+## 部署模型：只经由 Tailscale，身份就是 Tailscale
 
-服务跑在开发机上，只监听回环地址；对外由任意 HTTPS 隧道终结 TLS 并转发到 `127.0.0.1:7777`。Tailscale Funnel 是最省事的一种，而且不需要自己的域名：
-
-```bash
-tailscale funnel --bg --https=443 http://127.0.0.1:7777
-```
-
-其他设备（不需要装 Tailscale，也不需要加入 tailnet）访问 `https://<machine>.<tailnet>.ts.net`，用 GitHub 账号登录。只想给 tailnet 用就把 `funnel` 换成 `serve`。
-
-### 登录：GitHub OAuth + 服务端会话
-
-- 应用不保存密码。浏览器通过 GitHub OAuth（授权码 + PKCE）登录，服务端在 `auth_sessions` 里存会话，只把哈希入库；浏览器拿到的 Cookie 是 `HttpOnly; SameSite=Lax`，生产环境再加 `Secure`。
-- **完全不信任任何身份请求头。** 之前 `Tailscale-User-Login` 那套已经删除，公网隧道上伪造请求头无法提权。
-- 需要在 GitHub 注册一个 **OAuth App**（不是 GitHub App）：`Settings → Developer settings → OAuth Apps → New OAuth App`，回调地址填 `https://<公开域名>/api/auth/github/callback`，权限不勾任何 scope。一个 OAuth App 只能填一个回调地址，多台机器各开一个。
+服务只监听回环地址，对外**只有一条路**：`tailscale serve`。它把 tailnet 的 HTTPS 请求代理到 `127.0.0.1:7777`，顺带告诉你来人是谁。没有公网入口，没有隧道服务商，没有 OAuth 应用，没有密码。
 
 ```bash
-export THREADBASE_PUBLIC_ORIGIN=https://machine.tailnet.ts.net
-export THREADBASE_GITHUB_CLIENT_ID=...
-export THREADBASE_GITHUB_CLIENT_SECRET=...
-export THREADBASE_GITHUB_ALLOW=octocat,ada      # 谁可以登录
-export THREADBASE_ADMINS=octocat                # 谁永远是管理员
-cargo run -p threadbase
+threadbase install --admin you@example.com   # 写服务 + `tailscale serve --bg --https=443`
+# 然后打开 https://<machine>.<tailnet>.ts.net
 ```
 
-- 登录策略：管理员名单 > 允许名单 > 已存在用户 > 实例尚未有管理员时自动放行第一个登录者（引导）。因此公开隧道不会变成「任何 GitHub 用户都能进」。
-- 首次登录的身份自动成为管理员；`THREADBASE_ADMINS` 可指定固定管理员。
-- 新账号默认 `pending`，管理员在用户页批准后才算 member；`github_allow` 只决定「能不能登录」，不代替批准。
-- 会话默认 30 天，边用边续期（`THREADBASE_SESSION_DAYS` 可改）；退出登录会撤销服务端会话。
-- 想撤销某人访问：从 `THREADBASE_GITHUB_ALLOW` 移除并在用户页取消管理员，或直接删 `auth_sessions` 里的会话；想重置本机开发环境，直接删 `threadbase.db`。
+### 身份：Tailscale 登录，服务端会话
+
+- 打开 ts.net 地址即登录。`tailscale serve` 在代理时带上 `Tailscale-User-Login` / `Tailscale-User-Name` / `Tailscale-User-Profile-Pic`，服务端用它们建立或更新本地账号。
+- **这些头只在 socket 对端是回环时才算数**——也就是只认本机的 `tailscaled` 代理。能连上回环端口的进程本来就能读数据库，所以这条边界是诚实的，而不是「信任任意请求头」。如果代理转发了 `X-Forwarded-For`，声明的身份还会用 `tailscale whois` 核对那个地址；对不上直接拒绝（403）。
+- 会话仍然由服务端签发：`auth_sessions` 只存哈希，浏览器拿 `HttpOnly; SameSite=Lax`（HTTPS 下再加 `Secure`）的 Cookie。签入本身是一个 POST：`/api/auth/tailscale`，身份换会话，没有表单。
+- 首个登录的人成为管理员；`THREADBASE_ADMINS=you@example.com,teammate@example.com` 可固定管理员（比较时忽略大小写）。之后登录的新账号是 `pending`，管理员在用户页批准；被停用的账号，其会话立即失效。
+- 想撤销某人：在用户页取消批准或设成 disabled。想重置整台机器：删 `threadbase.db`。
+
+```bash
+export THREADBASE_PUBLIC_ORIGIN=https://machine.tailnet.ts.net   # 决定 Cookie 是否 Secure、Host 校验
+export THREADBASE_ADMINS=you@example.com
+cargo run -p threadbase                                          # 本机开发，见下方“本机开发”
+```
 
 ### 一键部署（systemd / launchd）
 
 一条命令把**当前这个二进制**配置成用户服务：Linux 用 systemd，macOS 用 launchd。生命周期交给 [`service-manager`](https://crates.io/crates/service-manager)，只有服务文件的内容是本项目渲染的（见下方“为什么不是现成模板”）。
 
 ```bash
-threadbase install --admin octocat        # 默认只暴露到 tailnet
-threadbase install --funnel               # 需要公网访问时（GitHub OAuth 回调必须是公开 HTTPS）
+threadbase install --admin you@example.com      # tailnet 内可见，443 由 tailscale serve 终结
+threadbase install --no-serve --no-start        # 只写服务文件，自己去配代理
 ```
 
 它会：
 
 - 写 `~/.config/systemd/user/threadbase.service` 或 `~/Library/LaunchAgents/threadbase.plist`，`ExecStart` / `ProgramArguments` 就是当前进程的可执行文件路径（不拷贝、不构建、不下载）
-- 带上绑定地址、数据目录、`THREADBASE_PUBLIC_ORIGIN`（`--public-origin` > `THREADBASE_PUBLIC_ORIGIN` > 从 `tailscale status` 推导）、`THREADBASE_ADMINS` 与去重后的 `PATH`（agent CLI 常在 mise/nvm/Homebrew 路径下）
-- 只把 `THREADBASE_ENV_FILE` 指向 `~/.config/threadbase/env`：**GitHub 的 client secret 放这个文件，服务文件里没有密钥**。这个文件由二进制自己加载（`dotenvy`），所以手动 `cargo run` 与 `threadbase doctor` 也读同一份
+- 带上绑定地址、数据目录、`THREADBASE_PUBLIC_ORIGIN`（`THREADBASE_PUBLIC_ORIGIN` > 从 `tailscale status --json` 的 `Self.DNSName` 推导）、`THREADBASE_ADMINS` 与去重后的 `PATH`（agent CLI 常在 mise/nvm/Homebrew 路径下）
+- 只把 `THREADBASE_ENV_FILE` 指向 `~/.config/threadbase/env`：**可选开关、允许名单、任何 secret 都放这个文件，服务文件里没有密钥**。这个文件由二进制自己加载（`dotenvy`），所以手动 `cargo run` 与 `threadbase doctor` 也读同一份
 - Linux：`loginctl enable-linger` + `systemctl --user enable/start`
 - macOS：`launchctl load/start`，并设置 `AbandonProcessGroup`（等价 `KillMode=process`，重启时 tmux 会话存活）、`KeepAlive{SuccessfulExit:false}`、`ThrottleInterval`、`ProcessType=Interactive`、`ExitTimeOut`
-- `tailscale serve|funnel --bg --https=<port> http://127.0.0.1:7777`（`--funnel` 才公开；用别的隧道就传 `--no-serve --public-origin <你的 URL>`）
+- `tailscale serve --bg --https=<port> http://127.0.0.1:7777`（只有 tailnet，不碰 funnel；要自己接代理就传 `--no-serve`）
 - 轮询 `/api/health` 确认真的起来了
 
 升级 = 替换二进制再 `threadbase service restart`（`threadbase upgrade` 只负责换文件）：
@@ -100,7 +92,7 @@ threadbase install --print                   # 只打印服务文件与命令，
 threadbase install --port 7788 --https-port 9443 --unit threadbase-dev
 threadbase install --no-serve --no-start     # 只写服务文件
 threadbase install --keep-awake              # macOS：持有电源断言，机器不空闲睡眠
-threadbase install --uninstall               # 停用并删除服务文件、关掉 serve/funnel（保留数据与二进制）
+threadbase install --uninstall               # 停用并删除服务文件、关掉 serve（保留数据与二进制）
 ```
 
 unit 名默认 `threadbase`；`--unit` 可在同一台机器上跑多个实例（名字会直接成为文件名，只允许字母、数字、`_`、`-`）。
@@ -135,7 +127,7 @@ scripts/deploy.sh --wait-idle   # 直接读数据库判断空闲，然后照旧�
 
 - **登录会话**：LaunchAgent 只在用户登录后运行。常开机器需要在“系统设置 → 用户与群组 → 自动登录”里配置自动登录；开启 FileVault 会阻止自动登录。`threadbase install` 会检测并提示。
 - **防止睡眠**：`--keep-awake` 让服务进程自己持有 IOKit 电源断言（等价 `caffeinate -s`，进程退出即失效），不需要额外 launchd job。合盖仍然会睡，笔记本不适合当常开主机。
-- **Tailscale CLI**：GUI/App Store 版的 CLI 在 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`，不一定在 `PATH` 里；程序会自动回退到这个路径，也可用 `THREADBASE_TAILSCALE` 指定。也可以用 `tailscale serve` 只暴露给 tailnet。
+- **Tailscale CLI**：GUI/App Store 版的 CLI 在 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`，不一定在 `PATH` 里；程序会自动回退到这个路径，也可用 `THREADBASE_TAILSCALE` 指定。它同时负责入站（`serve`）和身份（`whois`），所以必须能找到。
 - **日志**：macOS 默认写 `~/Library/Logs/threadbase/threadbase.log`（按天轮转，保留 7 份，另有 `threadbase.log` 软链指向当天），另有两个 `launchd.*.log` 只收启动早期输出与 panic。Linux 默认仍走 journald，设置 `THREADBASE_LOG_FILE` 也可改用文件。
 - **签名**：release 里的 darwin 二进制未签名未公证；`curl` 下载不带 quarantine 可以直接跑，浏览器/AirDrop 传过去的需要 `xattr -d com.apple.quarantine`。
 
@@ -411,7 +403,7 @@ threadbase compact --vacuum    # 重建数据库文件回收磁盘
 
 ### 网页终端（默认关闭）
 
-`THREADBASE_TERMINAL=1` 才挂载终端路由，且默认**只有管理员能驱动**：其他 `member` 账号打开同一个终端只能看（tmux 只读客户端，服务端不接收其按键），`read_only` 账号连入口都没有。`THREADBASE_TERMINAL_DRIVERS=0x5459,alice` 可以给指定 GitHub 登录（逗号分隔，大小写不敏感）驱动权限，不必把整个账号提成管理员。关掉这个功能时相关路由返回 404，不暴露存在性。
+`THREADBASE_TERMINAL=1` 才挂载终端路由，且默认**只有管理员能驱动**：其他 `member` 账号打开同一个终端只能看（tmux 只读客户端，服务端不接收其按键），`read_only` 账号连入口都没有。`THREADBASE_TERMINAL_DRIVERS=you@example.com,teammate@example.com` 可以给指定 Tailscale 登录（逗号分隔，大小写不敏感）驱动权限，不必把整个账号提成管理员。关掉这个功能时相关路由返回 404，不暴露存在性。
 
 ```bash
 THREADBASE_TERMINAL=1 cargo run -p threadbase
@@ -445,7 +437,7 @@ cargo run -p threadbase
 - 目标一律用 tmux 的 `$N` session id，不用名字；名字可以包含 `:`、`.` 等 target 语法字符，只用于展示。
 - **单浏览器 driver**：同一时刻只有一个浏览器持有键盘，其他浏览器是 watching，点提示条里的 **Take over** 就可以在没有重连的情况下接管；前一个 driver 的输入会立即被服务端丢掉。抽屉头部显示当前 viewers 头像和谁在 driving。本机已经 attach 的 tmux client 不受这个仲裁控制，仍然可以输入。
 - **窗口尺寸**：tmux 默认 `window-size latest`，浏览器抽屉的 pty 尺寸会成为最新 client 的尺寸，可能让你本机终端短暂重排。介意的话在 `~/.tmux.conf` 用 `set -g window-size largest` 或 `manual`；Threadbase 不会改宿主机的 tmux 全局选项。
-- **安全边界**：这个开关等价于“把服务账号在这台机器上的交互式 shell，以可接管方式给所有 member”。只对可信团队打开，隧道入口建议再加 Tailscale ACL；不想给了就删掉 `THREADBASE_TERMINAL_HOST` 并重启。宿主机会话的内容不写日志、不落盘。
+- **安全边界**：这个开关等价于“把服务账号在这台机器上的交互式 shell，以可接管方式给所有 member”。只对可信团队打开；不想给了就删掉 `THREADBASE_TERMINAL_HOST` 并重启。宿主机会话的内容不写日志、不落盘。
 
 ### Sessions 视图
 
@@ -469,11 +461,11 @@ cargo run -p threadbase
 THREADBASE_DEV_IDENTITY=dev cargo run -p threadbase
 ```
 
-开发身份只在「回环 peer + 无 `X-Forwarded-*` 头」时生效，因此经隧道进来的请求永远不会命中它。不要在生产实例上设置该变量。
+开发身份只在「回环 peer + 无 `X-Forwarded-*` 头」时生效，因此经由 `tailscale serve` 进来的请求永远不会命中它。不要在生产实例上设置该变量。
 
 ### CSRF 与 Cookie
 
-写操作要求 `Origin` 与 `Host` 一致（或等于 `THREADBASE_PUBLIC_ORIGIN`）并带 `X-Requested-With: threadbase`。隧道会保留浏览器的 Host，因此通常无需额外配置；如果前面还有别的反代改写了 Host，就设置 `THREADBASE_PUBLIC_ORIGIN=https://<公开域名>`。该变量同时是 OAuth 回调地址的来源；Cookie 的 `Secure` 标志由它推导（`THREADBASE_COOKIE_SECURE` 可覆盖）。
+写操作要求 `Origin` 与 `Host` 一致（或等于 `THREADBASE_PUBLIC_ORIGIN`）并带 `X-Requested-With: threadbase`；`/mcp` 是唯一的例外（它只认 bearer 令牌，不读 Cookie）。`tailscale serve` 会保留浏览器的 Host，所以通常无需额外配置。`THREADBASE_PUBLIC_ORIGIN` 同时决定 Cookie 的 `Secure` 标志（`THREADBASE_COOKIE_SECURE` 可覆盖）。
 
 ## 技术栈
 
@@ -542,7 +534,7 @@ threadbase machines --json   # 与 GET /api/machines 完全相同
 - 后端 Rust，单二进制分发；前端 Vite + React 19 + Mantine 9。
 - 首发 agent 为 Codex，通过 ACP v1 接入；同时提供 Claude Code、opencode、pi 的 adapter profile。
 - 开源，Apache-2.0；v1 支持 macOS 与 Linux。
-- 服务固定绑回环，由外部 HTTPS 隧道（如 Tailscale Funnel）终结 TLS；身份只来自 GitHub OAuth 会话。
+- 服务固定绑回环，只由 `tailscale serve` 代理进 tailnet；身份只来自 Tailscale（`serve` 的头 + `whois` 核对），没有 OAuth、没有密码、没有公网入口。
 - 草稿层用 CRDT；事件日志仍由服务端定序。
 - 焦点共享走 presence，可跟随成员；子 agent 用左栏树 + tab，审批只阻塞发起的子 agent。
 - UI 交互语义参考 Delta，视觉以 Linear/Apple Notes 与 Mantine 为准。

@@ -1,17 +1,18 @@
-//! Sign-in: GitHub OAuth sessions plus a loopback-only development identity.
+//! Sign-in: Tailscale identity plus a loopback-only development identity.
 //!
-//! Nothing about identity is trusted from request headers any more. A browser
-//! proves who it is with an `HttpOnly` session cookie (`auth_session`), and the
-//! only other accepted identity is an explicitly configured development login
-//! reached over a direct loopback connection with no proxy markers. Because the
-//! server never binds a public interface, an attacker cannot forge either.
+//! There is no password and no OAuth app. The browser proves who it is with an
+//! `HttpOnly` session cookie (`auth_session`), and that cookie can only be
+//! minted by a request that `tailscaled` proxied from the tailnet — the server
+//! binds a loopback port and `tailscale serve` is the only ingress. Signing in is
+//! therefore a one-step exchange: the tailnet identity becomes a local account,
+//! and the tailnet login is the name everyone sees.
 //!
-//! `identity` owns the `users` table and administrator rules, `github_routes`
-//! owns the OAuth browser flow, and this file owns the request-facing
-//! extractor, access enforcement and audit.
+//! `identity` owns the `users` table and administrator rules, `tailscale` owns
+//! the CLI calls that answer "who is this", and this file owns the
+//! request-facing extractor, access enforcement and audit.
 
-mod github_routes;
 mod identity;
+mod tailscale;
 
 use crate::app::AppState;
 use crate::auth_session;
@@ -25,14 +26,14 @@ use threadbase_shared::{
     now_ms, ApiError, AuthMeDto, AuthStatusDto, AuthStatusResponse, UserAccess, UserDto,
 };
 
-pub(crate) use github_routes::router as github_router;
 pub use identity::{
     ensure_identity_user, ensure_pending_identity, list_users, load_user_briefs, load_user_by_id,
     load_user_by_identity, load_user_by_username, needs_admin, update_user,
 };
+pub use tailscale::{present as tailnet_present, whois_agrees as tailnet_whois_agrees};
 
 /// Methods reported by `/api/auth/me`.
-pub const METHOD_GITHUB: &str = "github";
+pub const METHOD_TAILSCALE: &str = "tailscale";
 pub const METHOD_DEV: &str = "dev";
 
 #[derive(Debug, Clone)]
@@ -116,7 +117,7 @@ impl FromRequestParts<AppState> for CurrentUser {
 fn method_static(value: &str) -> &'static str {
     match value {
         METHOD_DEV => METHOD_DEV,
-        _ => METHOD_GITHUB,
+        _ => METHOD_TAILSCALE,
     }
 }
 
@@ -185,16 +186,15 @@ pub struct Identity {
 }
 
 impl Identity {
+    /// A tailnet user. The login is Tailscale's `LoginName` — an email, or a
+    /// provider-qualified handle like `someone@github` — and it is stable for the
+    /// life of the tailnet; it is the key and the display handle at once.
     #[must_use]
-    pub fn github(
-        id: i64,
-        login: &str,
-        display_name: Option<&str>,
-        avatar_url: Option<&str>,
-    ) -> Self {
+    pub fn tailscale(login: &str, display_name: Option<&str>, avatar_url: Option<&str>) -> Self {
+        let login = login.trim();
         Self {
-            source: "github",
-            key: github_key(id),
+            source: "tailscale",
+            key: tailscale_key(login),
             login: login.to_owned(),
             display_name: display_name.map(ToOwned::to_owned),
             avatar_url: avatar_url.map(ToOwned::to_owned),
@@ -213,34 +213,22 @@ impl Identity {
     }
 }
 
-/// Canonical identity key for a GitHub account id.
+/// Canonical identity key for a tailnet login.
 #[must_use]
-pub fn github_key(id: i64) -> String {
-    format!("github:{id}")
+pub fn tailscale_key(login: &str) -> String {
+    format!("tailscale:{}", login.trim().to_ascii_lowercase())
 }
 
-/// Pre-migration identity key, derived from the mutable GitHub login. Used to
-/// find and upgrade rows created before numeric ids were stored, and for
-/// provisional accounts created when an invite only knows the login.
+/// Provisional identity for a tailnet login that has not signed in yet, used when
+/// someone is added to a thread by name.
 #[must_use]
-pub(crate) fn github_login_key(login: &str) -> String {
-    format!("github:{}", login.trim().to_ascii_lowercase())
+pub fn tailscale_invited(login: &str, display_name: Option<&str>) -> Identity {
+    Identity::tailscale(login, display_name, None)
 }
 
-/// Provisional identity for an invited login that has not signed in yet.
-///
-/// The numeric id is unknown until the first sign-in, so the row is keyed by
-/// the login; `ensure_identity_user` upgrades it in place when that login
-/// presents its numeric id.
-#[must_use]
-pub fn github_invited(login: &str, display_name: Option<&str>) -> Identity {
-    Identity {
-        source: "github",
-        key: github_login_key(login),
-        login: login.trim().to_owned(),
-        display_name: display_name.map(ToOwned::to_owned),
-        avatar_url: None,
-    }
+fn matches_login(list: &[String], login: &str) -> bool {
+    list.iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(login.trim()))
 }
 
 /// Endpoints a signed-in account can reach before it has been approved, and
@@ -285,17 +273,22 @@ fn enforce_access(parts: &Parts, user: &UserDto) -> Result<(), ServerError> {
     Ok(())
 }
 
+/// What the shell needs before it can sign anyone in.
+///
+/// `tailscale` tells the client this request arrived with a tailnet identity, so
+/// it should exchange it for a session instead of showing anything. There is no
+/// login URL: nothing to redirect to, nothing to type.
 pub async fn auth_status(
     pool: &SqlitePool,
-    github_ready: bool,
+    tailscale_identity: Option<&str>,
     dev_identity: bool,
 ) -> Result<AuthStatusResponse, ServerError> {
     Ok(AuthStatusResponse {
         status: AuthStatusDto {
-            github: github_ready,
+            tailscale: tailscale_identity.is_some(),
+            identity: tailscale_identity.map(ToOwned::to_owned),
             dev_identity,
             needs_admin: needs_admin(pool).await?,
-            login_url: github_ready.then(|| "/api/auth/github/start".to_owned()),
         },
     })
 }
@@ -306,51 +299,6 @@ pub async fn me(pool: &SqlitePool, user: &CurrentUser) -> Result<AuthMeDto, Serv
         auth_method: user.method.to_owned(),
         needs_admin: needs_admin(pool).await?,
     })
-}
-
-/// Sign-in policy for a verified GitHub identity.
-///
-/// Allowed when a configured admin or allowlist entry names the login
-/// (case-insensitive, trimmed), the canonical `github:<id>` key, or the bare
-/// numeric id; when an account already exists for `github:<id>` or for the
-/// pre-migration `github:<login>` key; or when the instance has no administrator
-/// yet. The first unowned instance can therefore be claimed once, by anyone.
-pub async fn may_sign_in(
-    pool: &SqlitePool,
-    id: i64,
-    login: &str,
-    admins: &[String],
-    allow: &[String],
-) -> Result<bool, ServerError> {
-    if matches_identity(admins, id, login) || matches_identity(allow, id, login) {
-        return Ok(true);
-    }
-    let known: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM users WHERE identity_key IN (?, ?) LIMIT 1")
-            .bind(github_key(id))
-            .bind(github_login_key(login))
-            .fetch_optional(pool)
-            .await?;
-    if known.is_some() {
-        return Ok(true);
-    }
-    Ok(needs_admin(pool).await?)
-}
-
-pub(crate) fn matches_identity(list: &[String], id: i64, login: &str) -> bool {
-    let key = github_key(id);
-    let bare_id = id.to_string();
-    list.iter().any(|candidate| {
-        let candidate = candidate.trim();
-        candidate.eq_ignore_ascii_case(login.trim())
-            || candidate.eq_ignore_ascii_case(&key)
-            || candidate == bare_id
-    })
-}
-
-fn matches_login(list: &[String], login: &str) -> bool {
-    list.iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(login.trim()))
 }
 
 pub async fn audit(
@@ -386,20 +334,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn identity_keys_use_the_immutable_github_id() {
-        let identity = Identity::github(12345, "octocat", None, None);
-        assert_eq!(identity.key, "github:12345");
-        assert_eq!(identity.login, "octocat");
-        assert_eq!(identity.source, "github");
-        // A rename keeps the same account key.
+    fn a_tailnet_login_is_the_account_key() {
+        let identity = Identity::tailscale("ada@example.com", Some("Ada"), None);
+        assert_eq!(identity.key, "tailscale:ada@example.com");
+        assert_eq!(identity.login, "ada@example.com");
+        assert_eq!(identity.source, "tailscale");
+        // Logins are case-insensitive in the tailnet; one account, not two.
         assert_eq!(
-            Identity::github(12345, "renamed", None, None).key,
-            "github:12345"
-        );
-        // A different account that re-registers the freed login gets a
-        // different key, so it cannot reach the original account.
-        assert_ne!(
-            Identity::github(67890, "octocat", None, None).key,
+            Identity::tailscale("Ada@Example.com", None, None).key,
             identity.key
         );
         assert_eq!(Identity::dev("ada").key, "dev:ada");
@@ -422,70 +364,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sign_in_policy_accepts_ids_and_legacy_keys() {
+    async fn a_configured_admin_is_named_by_their_tailnet_login() {
         let pool = crate::db::connect_memory().await.unwrap();
-        let owner = ensure_identity_user(&pool, &Identity::github(1, "owner", None, None), &[])
-            .await
-            .unwrap();
-        assert!(owner.is_admin);
-
-        assert!(!may_sign_in(&pool, 2, "stranger", &[], &[]).await.unwrap());
-        assert!(
-            may_sign_in(&pool, 2, "stranger", &["github:2".to_owned()], &[])
-                .await
-                .unwrap()
-        );
-        assert!(may_sign_in(&pool, 3, "stranger", &[], &["3".to_owned()])
-            .await
-            .unwrap());
-        assert!(
-            may_sign_in(&pool, 4, "Invited", &[], &["invited".to_owned()])
-                .await
-                .unwrap()
-        );
-
-        let known = ensure_identity_user(&pool, &Identity::github(5, "known", None, None), &[])
-            .await
-            .unwrap();
-        assert_eq!(known.access, UserAccess::Pending);
-        // The account is found by immutable id even after a login rename.
-        assert!(may_sign_in(&pool, 5, "renamed-login", &[], &[])
-            .await
-            .unwrap());
-
-        // A pre-migration row is still recognised by its login key.
-        sqlx::query("UPDATE users SET identity_key = 'github:known' WHERE id = ?")
-            .bind(known.id.as_str())
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(may_sign_in(&pool, 5, "known", &[], &[]).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn configured_admins_can_be_named_by_github_id() {
-        let pool = crate::db::connect_memory().await.unwrap();
-        let _owner = ensure_identity_user(&pool, &Identity::github(1, "owner", None, None), &[])
-            .await
-            .unwrap();
-
-        let by_key = ensure_identity_user(
+        let _owner = ensure_identity_user(
             &pool,
-            &Identity::github(9, "renamed-admin", None, None),
-            &["github:9".to_owned()],
+            &Identity::tailscale("owner@example.com", None, None),
+            &[],
         )
         .await
         .unwrap();
-        assert!(by_key.is_admin);
-        assert_eq!(by_key.access, UserAccess::Member);
 
-        let by_bare_id = ensure_identity_user(
+        let admin = ensure_identity_user(
             &pool,
-            &Identity::github(10, "another-admin", None, None),
-            &["10".to_owned()],
+            &Identity::tailscale("ADA@example.com", None, None),
+            &["ada@example.com".to_owned()],
         )
         .await
         .unwrap();
-        assert!(by_bare_id.is_admin);
+        assert!(admin.is_admin);
+        assert_eq!(admin.access, UserAccess::Member);
     }
 }

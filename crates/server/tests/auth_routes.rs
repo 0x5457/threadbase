@@ -11,7 +11,7 @@ use std::net::{IpAddr, SocketAddr};
 use threadbase_server::app::AppState;
 use threadbase_server::auth;
 use threadbase_server::auth_session;
-use threadbase_server::config::{Config, GitHubOAuth};
+use threadbase_server::config::Config;
 use threadbase_server::db;
 use threadbase_server::routes;
 use threadbase_shared::now_ms;
@@ -79,7 +79,7 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
 async fn session_token(pool: &SqlitePool, login: &str) -> String {
     let user = auth::ensure_identity_user(
         pool,
-        &auth::Identity::github(1, login, Some(login), None),
+        &auth::Identity::tailscale(&format!("{login}@example.com"), Some(login), None),
         &[],
     )
     .await
@@ -87,7 +87,7 @@ async fn session_token(pool: &SqlitePool, login: &str) -> String {
     auth_session::create(
         pool,
         user.id.as_str(),
-        auth::METHOD_GITHUB,
+        auth::METHOD_TAILSCALE,
         None,
         None,
         3600,
@@ -97,13 +97,9 @@ async fn session_token(pool: &SqlitePool, login: &str) -> String {
 }
 
 #[tokio::test]
-async fn status_reports_github_and_dev_options() {
+async fn status_reports_the_identity_the_proxy_proved() {
     let (app, _pool, _data) = test_app_with(Config {
         public_origin: Some("https://machine.example.ts.net".to_owned()),
-        github: Some(GitHubOAuth {
-            client_id: "id".to_owned(),
-            client_secret: "secret".to_owned(),
-        }),
         ..Config::default()
     })
     .await;
@@ -114,33 +110,29 @@ async fn status_reports_github_and_dev_options() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
-    assert_eq!(body["status"]["github"], true);
-    assert_eq!(body["status"]["loginUrl"], "/api/auth/github/start");
+    assert_eq!(body["status"]["tailscale"], false);
+    assert!(body["status"]["identity"].is_null());
     assert_eq!(body["status"]["needsAdmin"], true);
 
     let response = app
-        .oneshot(request(Method::GET, "/api/auth/status", None))
+        .oneshot(request(
+            Method::GET,
+            "/api/auth/status",
+            Some("ada@example.com"),
+        ))
         .await
         .unwrap();
     let body = body_json(response).await;
+    assert_eq!(body["status"]["tailscale"], true);
+    assert_eq!(body["status"]["identity"], "ada@example.com");
     assert_eq!(body["status"]["devIdentity"], false);
 }
 
+/// The identity headers are names, not credentials: they only buy a session
+/// through the exchange, and that exchange requires the local proxy.
 #[tokio::test]
-async fn status_without_github_configuration_offers_no_login_url() {
-    let (app, _pool, _data) = test_app().await;
-    let response = app
-        .oneshot(request(Method::GET, "/api/auth/status", None))
-        .await
-        .unwrap();
-    let body = body_json(response).await;
-    assert_eq!(body["status"]["github"], false);
-    assert!(body["status"]["loginUrl"].is_null());
-}
-
-#[tokio::test]
-async fn tailscale_headers_no_longer_sign_anyone_in() {
-    let (app, _pool, _data) = test_app().await;
+async fn a_proxied_identity_becomes_a_session() {
+    let (app, pool, _data) = test_app().await;
     let response = app
         .clone()
         .oneshot(request(
@@ -152,11 +144,56 @@ async fn tailscale_headers_no_longer_sign_anyone_in() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
-    // An older deployment's identity column must not be usable either.
     let response = app
-        .oneshot(request(Method::GET, "/api/auth/me", Some("root")))
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/api/auth/tailscale",
+            Some("ada@example.com"),
+        ))
         .await
         .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(cookie.starts_with("threadbase_session="), "{cookie}");
+
+    let body = body_json(response).await;
+    assert_eq!(body["authMethod"], "tailscale");
+    assert_eq!(
+        body["user"]["isAdmin"], true,
+        "the first identity owns the instance"
+    );
+
+    let response = app
+        .oneshot(with_session(
+            request(Method::GET, "/api/auth/me", None),
+            cookie.split('=').nth(1).unwrap(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["authMethod"], "tailscale");
+    let _ = pool;
+}
+
+/// A remote peer cannot present an identity, so nothing outside the local proxy
+/// can mint a session.
+#[tokio::test]
+async fn a_remote_peer_cannot_exchange_an_identity() {
+    let (app, _pool, _data) = test_app().await;
+    let mut request = request(Method::POST, "/api/auth/tailscale", Some("ada@example.com"));
+    request.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::from([100, 64, 1, 2]),
+        1234,
+    )));
+    let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -186,11 +223,14 @@ async fn only_the_first_identity_becomes_admin() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    // A GitHub sign-in afterwards must not inherit admin.
-    let other =
-        auth::ensure_identity_user(&pool, &auth::Identity::github(2, "bob", None, None), &[])
-            .await
-            .unwrap();
+    // A second tailnet sign-in afterwards must not inherit admin.
+    let other = auth::ensure_identity_user(
+        &pool,
+        &auth::Identity::tailscale("bob@example.com", None, None),
+        &[],
+    )
+    .await
+    .unwrap();
     assert!(!other.is_admin);
 }
 
@@ -199,12 +239,12 @@ async fn sessions_authenticate_and_logout_revokes_them() {
     let (app, pool, _data) = test_app().await;
     let user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github(1, "ada", Some("Ada"), None),
+        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
         &[],
     )
     .await
     .unwrap();
-    let token = auth_session::create(&pool, user.id.as_str(), "github", None, None, 3600)
+    let token = auth_session::create(&pool, user.id.as_str(), "tailscale", None, None, 3600)
         .await
         .unwrap();
 
@@ -212,7 +252,7 @@ async fn sessions_authenticate_and_logout_revokes_them() {
     let response = app.clone().oneshot(authed).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
-    assert_eq!(body["authMethod"], "github");
+    assert_eq!(body["authMethod"], "tailscale");
     assert_eq!(body["user"]["username"], "ada");
 
     let logout = with_session(request(Method::POST, "/api/auth/logout", None), &token);
@@ -234,11 +274,14 @@ async fn sessions_authenticate_and_logout_revokes_them() {
 #[tokio::test]
 async fn expired_session_cookie_is_rejected() {
     let (app, pool, _data) = test_app().await;
-    let user =
-        auth::ensure_identity_user(&pool, &auth::Identity::github(1, "ada", None, None), &[])
-            .await
-            .unwrap();
-    let token = auth_session::create(&pool, user.id.as_str(), "github", None, None, -1)
+    let user = auth::ensure_identity_user(
+        &pool,
+        &auth::Identity::tailscale("ada@example.com", None, None),
+        &[],
+    )
+    .await
+    .unwrap();
+    let token = auth_session::create(&pool, user.id.as_str(), "tailscale", None, None, -1)
         .await
         .unwrap();
 
@@ -290,15 +333,21 @@ async fn disabled_user_is_forbidden_outside_self_service_routes() {
 #[tokio::test]
 async fn pending_and_read_only_access_are_enforced() {
     let (app, pool, _data) = test_app().await;
-    let _admin =
-        auth::ensure_identity_user(&pool, &auth::Identity::github(1, "ada", None, None), &[])
-            .await
-            .unwrap();
-    let pending =
-        auth::ensure_identity_user(&pool, &auth::Identity::github(2, "bob", None, None), &[])
-            .await
-            .unwrap();
-    let token = auth_session::create(&pool, pending.id.as_str(), "github", None, None, 3600)
+    let _admin = auth::ensure_identity_user(
+        &pool,
+        &auth::Identity::tailscale("ada@example.com", None, None),
+        &[],
+    )
+    .await
+    .unwrap();
+    let pending = auth::ensure_identity_user(
+        &pool,
+        &auth::Identity::tailscale("bob@example.com", None, None),
+        &[],
+    )
+    .await
+    .unwrap();
+    let token = auth_session::create(&pool, pending.id.as_str(), "tailscale", None, None, 3600)
         .await
         .unwrap();
 
@@ -371,152 +420,6 @@ async fn session_cookie_slides_its_expiry() {
 }
 
 #[tokio::test]
-async fn callback_without_a_handshake_cookie_is_rejected() {
-    let (app, _pool, _data) = test_app_with(Config {
-        public_origin: Some("https://machine.example.ts.net".to_owned()),
-        github: Some(GitHubOAuth {
-            client_id: "id".to_owned(),
-            client_secret: "secret".to_owned(),
-        }),
-        ..Config::default()
-    })
-    .await;
-    let response = app
-        .oneshot(request(
-            Method::GET,
-            "/api/auth/github/callback?code=abc&state=xyz",
-            None,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let location = response
-        .headers()
-        .get("location")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    assert!(location.starts_with("/?auth_error="), "{location}");
-}
-
-#[tokio::test]
-async fn callback_state_must_match_the_handshake_cookie() {
-    let (app, _pool, _data) = test_app_with(Config {
-        public_origin: Some("https://machine.example.ts.net".to_owned()),
-        github: Some(GitHubOAuth {
-            client_id: "id".to_owned(),
-            client_secret: "secret".to_owned(),
-        }),
-        ..Config::default()
-    })
-    .await;
-    let mut request = request(
-        Method::GET,
-        "/api/auth/github/callback?code=abc&state=attacker",
-        None,
-    );
-    request.headers_mut().insert(
-        "cookie",
-        "threadbase_oauth=expected:verifier".parse().unwrap(),
-    );
-    let response = app.oneshot(request).await.unwrap();
-    let location = response
-        .headers()
-        .get("location")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    assert!(location.contains("state+did+not+match"), "{location}");
-}
-
-#[tokio::test]
-async fn start_redirects_to_github_with_pkce_and_sets_the_handshake_cookie() {
-    let (app, _pool, _data) = test_app_with(Config {
-        public_origin: Some("https://machine.example.ts.net".to_owned()),
-        github: Some(GitHubOAuth {
-            client_id: "the-client".to_owned(),
-            client_secret: "secret".to_owned(),
-        }),
-        ..Config::default()
-    })
-    .await;
-    let response = app
-        .oneshot(request(Method::GET, "/api/auth/github/start", None))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let location = response
-        .headers()
-        .get("location")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    assert!(
-        location.starts_with("https://github.com/login/oauth/authorize?"),
-        "{location}"
-    );
-    assert!(location.contains("code_challenge_method=S256"));
-    assert!(location.contains("client_id=the-client"));
-    let cookie = response
-        .headers()
-        .get("set-cookie")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    assert!(cookie.starts_with("threadbase_oauth="), "{cookie}");
-    assert!(cookie.contains("HttpOnly"));
-    assert!(cookie.contains("Path=/api/auth/github"), "{cookie}");
-}
-
-#[tokio::test]
-async fn start_without_configuration_explains_itself() {
-    let (app, _pool, _data) = test_app().await;
-    let response = app
-        .oneshot(request(Method::GET, "/api/auth/github/start", None))
-        .await
-        .unwrap();
-    let location = response
-        .headers()
-        .get("location")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    assert!(location.contains("not+configured"), "{location}");
-}
-
-#[tokio::test]
-async fn sign_in_policy_covers_allowlists_and_existing_users() {
-    let (_app, pool, _data) = test_app().await;
-    let empty: Vec<String> = Vec::new();
-
-    // An unowned instance accepts the first login.
-    assert!(auth::may_sign_in(&pool, 1, "ada", &empty, &empty)
-        .await
-        .unwrap());
-
-    let _admin =
-        auth::ensure_identity_user(&pool, &auth::Identity::github(1, "ada", None, None), &[])
-            .await
-            .unwrap();
-    // Once owned, strangers need an allowlist entry.
-    assert!(!auth::may_sign_in(&pool, 2, "stranger", &empty, &empty)
-        .await
-        .unwrap());
-    // Existing users keep access.
-    assert!(auth::may_sign_in(&pool, 1, "ada", &empty, &empty)
-        .await
-        .unwrap());
-    let allow = vec!["invited".to_owned()];
-    assert!(auth::may_sign_in(&pool, 3, "invited", &empty, &allow)
-        .await
-        .unwrap());
-    let admins = vec!["Owner".to_owned()];
-    assert!(auth::may_sign_in(&pool, 4, "owner", &admins, &empty)
-        .await
-        .unwrap());
-}
-
-#[tokio::test]
 async fn password_endpoints_are_gone() {
     let (app, _pool, _data) = test_app().await;
     for path in ["/api/auth/setup", "/api/auth/logout-all"] {
@@ -542,15 +445,15 @@ fn json_request(method: Method, uri: &str, body: serde_json::Value) -> Request<B
     request
 }
 
-async fn sign_in(pool: &SqlitePool, id: i64, login: &str) -> (threadbase_shared::UserDto, String) {
+async fn sign_in(pool: &SqlitePool, login: &str) -> (threadbase_shared::UserDto, String) {
     let user = auth::ensure_identity_user(
         pool,
-        &auth::Identity::github(id, login, Some(login), None),
+        &auth::Identity::tailscale(&format!("{login}@example.com"), Some(login), None),
         &[],
     )
     .await
     .unwrap();
-    let token = auth_session::create(pool, user.id.as_str(), "github", None, None, 3600)
+    let token = auth_session::create(pool, user.id.as_str(), "tailscale", None, None, 3600)
         .await
         .unwrap();
     (user, token)
@@ -578,9 +481,9 @@ async fn set_access(
 #[tokio::test]
 async fn pending_account_is_signed_in_but_sees_no_workspace_data() {
     let (app, pool, _data) = test_app().await;
-    let (admin, _admin_token) = sign_in(&pool, 1, "ada").await;
+    let (admin, _admin_token) = sign_in(&pool, "ada").await;
     assert!(admin.is_admin);
-    let (bob, token) = sign_in(&pool, 2, "bob").await;
+    let (bob, token) = sign_in(&pool, "bob").await;
     assert_eq!(bob.access, threadbase_shared::UserAccess::Pending);
 
     let response = app
@@ -632,8 +535,8 @@ async fn pending_account_is_signed_in_but_sees_no_workspace_data() {
 #[tokio::test]
 async fn read_only_account_can_read_but_not_write() {
     let (app, pool, _data) = test_app().await;
-    let (_admin, admin_token) = sign_in(&pool, 1, "ada").await;
-    let (bob, _) = sign_in(&pool, 2, "bob").await;
+    let (_admin, admin_token) = sign_in(&pool, "ada").await;
+    let (bob, _) = sign_in(&pool, "bob").await;
 
     let response = set_access(
         app.clone(),
@@ -654,7 +557,7 @@ async fn read_only_account_can_read_but_not_write() {
         .unwrap();
     assert_eq!(updated["access"], "read_only");
 
-    let token = auth_session::create(&pool, bob.id.as_str(), "github", None, None, 3600)
+    let token = auth_session::create(&pool, bob.id.as_str(), "tailscale", None, None, 3600)
         .await
         .unwrap();
 
@@ -696,8 +599,8 @@ async fn read_only_account_can_read_but_not_write() {
 #[tokio::test]
 async fn revoking_access_ends_live_sessions() {
     let (app, pool, _data) = test_app().await;
-    let (_admin, admin_token) = sign_in(&pool, 1, "ada").await;
-    let (bob, old_token) = sign_in(&pool, 2, "bob").await;
+    let (_admin, admin_token) = sign_in(&pool, "ada").await;
+    let (bob, old_token) = sign_in(&pool, "bob").await;
 
     let response = set_access(
         app.clone(),
@@ -721,7 +624,7 @@ async fn revoking_access_ends_live_sessions() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     // A fresh sign-in can see the revoked state, but no workspace data.
-    let new_token = auth_session::create(&pool, bob.id.as_str(), "github", None, None, 3600)
+    let new_token = auth_session::create(&pool, bob.id.as_str(), "tailscale", None, None, 3600)
         .await
         .unwrap();
     let response = app
@@ -749,7 +652,7 @@ async fn revoking_access_ends_live_sessions() {
 #[tokio::test]
 async fn admins_cannot_reduce_their_own_access() {
     let (app, pool, _data) = test_app().await;
-    let (admin, admin_token) = sign_in(&pool, 1, "ada").await;
+    let (admin, admin_token) = sign_in(&pool, "ada").await;
     assert!(admin.is_admin);
 
     let response = set_access(

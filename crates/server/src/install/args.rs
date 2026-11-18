@@ -37,10 +37,6 @@ pub struct Options {
     /// Pin THREADBASE_PUBLIC_ORIGIN instead of deriving it
     #[arg(long)]
     pub public_origin: Option<String>,
-    /// Expose publicly with `tailscale funnel` (Tailscale only);
-    /// default is tailnet-only `tailscale serve`
-    #[arg(long)]
-    pub funnel: bool,
     /// Keep a dedicated host awake (power assertion; macOS)
     #[arg(long = "keep-awake")]
     pub keep_awake: bool,
@@ -67,7 +63,6 @@ impl Default for Options {
             https_port: DEFAULT_HTTPS_PORT,
             admin: None,
             public_origin: None,
-            funnel: false,
             keep_awake: false,
             skip_serve: false,
             skip_start: false,
@@ -133,7 +128,6 @@ mod tests {
             "9443",
             "--admin",
             "octocat",
-            "--funnel",
             "--keep-awake",
             "--no-serve",
             "--print",
@@ -142,7 +136,6 @@ mod tests {
         assert_eq!(options.port, 7788);
         assert_eq!(options.https_port, 9443);
         assert_eq!(options.admin.as_deref(), Some("octocat"));
-        assert!(options.funnel);
         assert!(options.keep_awake);
         assert!(options.skip_serve);
         assert!(options.print_only);

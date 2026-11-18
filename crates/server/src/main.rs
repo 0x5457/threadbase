@@ -14,20 +14,23 @@ Environment:
   THREADBASE_ENV_FILE          Secrets file (default: ~/.config/threadbase/env)
   THREADBASE_LOG_FILE          Also write logs to this file (daily rotation, 7 kept)
   THREADBASE_KEEP_AWAKE        Hold a power assertion so the host cannot idle-sleep
-  THREADBASE_PUBLIC_ORIGIN     Public HTTPS origin; required for GitHub sign-in
-  THREADBASE_GITHUB_CLIENT_ID  GitHub OAuth app client id
-  THREADBASE_GITHUB_CLIENT_SECRET
-                               GitHub OAuth app client secret
-  THREADBASE_GITHUB_ALLOW      Comma-separated GitHub logins allowed to sign in
-  THREADBASE_ADMINS            Comma-separated GitHub logins that are always admins
-  THREADBASE_TERMINAL_DRIVERS  GitHub logins allowed to drive the browser terminal
+  THREADBASE_PUBLIC_ORIGIN     HTTPS origin the tailnet reaches this service at
+  THREADBASE_ADMINS            Comma-separated tailnet logins that are always admins
+  THREADBASE_TERMINAL_DRIVERS  Tailnet logins allowed to drive the browser terminal
+  THREADBASE_GUEST_LINKS       Set to 1 to allow guest links (default off)
+  THREADBASE_MCP               Set to 1 to expose the MCP endpoint (default off)
+  THREADBASE_AUTO_DEPLOY       Set to 1 to install a staged binary when idle
+  THREADBASE_AUTO_DEPLOY_PATH  Where a staged binary is expected
+  THREADBASE_PERMISSION_MODE   Default permission mode (supervised/auto_edit/full_access)
+  THREADBASE_MAX_PERMISSION_MODE  Ceiling no thread may exceed
+  THREADBASE_SETTLE_DAYS       Idle threads settle after N days (default 7, 0=off)
   THREADBASE_IDLE_SESSION_SECS Idle agent sessions shut down after N seconds (default 900, 0=off)
   THREADBASE_MAX_ACTIVE_TURNS  Concurrent agent turns across all threads (default 4, 0=unlimited)
   THREADBASE_SETUP_TIMEOUT_SECS Worktree setup command timeout (default 900)
   THREADBASE_SESSION_DAYS      Session lifetime in days (default 30)
   THREADBASE_COOKIE_SECURE     Force the Secure cookie flag on or off
   THREADBASE_DEV_IDENTITY      Identity accepted from direct local connections
-                               (development only; ignored behind a tunnel)
+                               (development only; ignored behind `tailscale serve`)
   THREADBASE_LOG_JSON          Set to 1 for JSON logs
   THREADBASE_ACP_COMMAND       Override the ACP adapter command (development)
   THREADBASE_TAILSCALE         Path to the Tailscale CLI (default: PATH, then the macOS app)
@@ -309,22 +312,15 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     if let Some(path) = &config.log_file {
         println!("Log file: {}", path.display());
     }
-    if config.github_ready() {
-        println!(
-            "Sign-in: GitHub OAuth, callback {}",
-            config.callback_url().unwrap_or_default()
-        );
-    } else if config.github.is_some() {
-        println!("Sign-in: GitHub client configured but THREADBASE_PUBLIC_ORIGIN is missing.");
-        println!("         Set it to the public HTTPS origin so the OAuth callback resolves.");
-    } else {
-        println!("Sign-in: GitHub OAuth is not configured; only local development works.");
-        println!("         Set THREADBASE_GITHUB_CLIENT_ID and THREADBASE_GITHUB_CLIENT_SECRET.");
+    match config.public_origin.as_deref() {
+        Some(origin) => println!("Sign-in: Tailscale identity via `tailscale serve` ({origin})"),
+        None => {
+            println!("Sign-in: reachable on the loopback port only.");
+            println!("         Run `threadbase install` to expose it on the tailnet.");
+        }
     }
     if config.dev_identity.is_some() {
-        println!(
-            "Warning: THREADBASE_DEV_IDENTITY is set; direct local requests skip GitHub sign-in."
-        );
+        println!("Warning: THREADBASE_DEV_IDENTITY is set; direct local requests skip sign-in.");
     }
 
     axum::serve(

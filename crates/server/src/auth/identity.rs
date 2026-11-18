@@ -55,9 +55,8 @@ pub async fn needs_admin(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
 
 /// Creates or refreshes the local user for a verified identity.
 ///
-/// GitHub identities are keyed by the immutable numeric id. Rows created before
-/// numeric ids were stored are keyed by the mutable login, so a matching legacy
-/// row is upgraded in place the first time that login signs in again.
+/// A tailnet login is the key: Tailscale logins are stable for the life of the
+/// tailnet, so there is no separate numeric id to carry.
 pub async fn ensure_identity_user(
     pool: &SqlitePool,
     identity: &Identity,
@@ -67,24 +66,25 @@ pub async fn ensure_identity_user(
 
     let user = match existing {
         Some(user) => {
+            // The row may have new display fields; the DTO in hand was read
+            // before the update.
             refresh_profile(pool, user.id.as_str(), identity).await?;
-            user
+            load_user_by_id(pool, user.id.as_str())
+                .await?
+                .ok_or_else(|| ServerError::internal("user disappeared during sign-in"))?
         }
-        None => match migrate_legacy_identity(pool, identity, admins).await? {
-            Some(user) => user,
-            None => {
-                // The first identity on a fresh instance becomes the administrator
-                // and is active immediately. Development identities are trusted
-                // local loops. Every other new account waits for approval.
-                let first_admin = needs_admin(pool).await?;
-                let access = if first_admin || identity.source == "dev" {
-                    UserAccess::Member
-                } else {
-                    UserAccess::Pending
-                };
-                create_identity_user(pool, identity, access).await?
-            }
-        },
+        None => {
+            // The first identity on a fresh instance becomes the administrator and
+            // is active immediately. Development identities are trusted local
+            // loops. Every other new account waits for approval.
+            let first_admin = needs_admin(pool).await?;
+            let access = if first_admin || identity.source == "dev" {
+                UserAccess::Member
+            } else {
+                UserAccess::Pending
+            };
+            create_identity_user(pool, identity, access).await?
+        }
     };
 
     if user.is_admin || !should_be_admin(pool, identity, admins).await? {
@@ -108,109 +108,6 @@ pub async fn ensure_identity_user(
     load_user_by_id(pool, user.id.as_str())
         .await?
         .ok_or_else(|| ServerError::internal("promoted user could not be loaded"))
-}
-
-/// Finds a row keyed by the old `github:<login>` key and rewrites it to
-/// `github:<id>` in one transaction.
-///
-/// The numeric id cannot be recovered from a legacy row, so the first sign-in
-/// that presents the same login adopts it. The conditional update is the first
-/// statement in the transaction, so concurrent sign-ins cannot both read the
-/// legacy row and then race to rewrite it. If another sign-in wins anyway, the
-/// unique index rejects the update and the row is reloaded by the new key.
-async fn migrate_legacy_identity(
-    pool: &SqlitePool,
-    identity: &Identity,
-    admins: &[String],
-) -> Result<Option<UserDto>, ServerError> {
-    if identity.source != "github" {
-        return Ok(None);
-    }
-    let legacy_key = super::github_login_key(&identity.login);
-    // Adopting an administrator row by mutable login is the one case where a
-    // re-registered login could inherit elevated rights. On a locked-down
-    // instance (an explicit admin list) only a listed login may adopt it; a
-    // fresh instance has no other administrator, so the bootstrap admin must
-    // still be preserved. Non-admin legacy rows keep sliding with their owner.
-    let legacy_is_admin: Option<i64> =
-        sqlx::query_scalar("SELECT is_admin FROM users WHERE identity_key = ?")
-            .bind(&legacy_key)
-            .fetch_optional(pool)
-            .await?;
-    if legacy_is_admin == Some(1)
-        && !admins.is_empty()
-        && !admins
-            .iter()
-            .any(|candidate| candidate.eq_ignore_ascii_case(identity.login.trim()))
-    {
-        tracing::warn!(
-            login = %identity.login,
-            "legacy admin identity is not on the configured admin list; not migrating it"
-        );
-        return Ok(None);
-    }
-    let display = identity
-        .display_name
-        .as_deref()
-        .filter(|value| !value.trim().is_empty());
-    let mut tx = pool.begin().await?;
-
-    let updated = sqlx::query(
-        "UPDATE users SET
-             identity_key = ?,
-             display_name = COALESCE(?, display_name),
-             avatar_url = COALESCE(?, avatar_url)
-         WHERE identity_key = ?",
-    )
-    .bind(&identity.key)
-    .bind(display)
-    .bind(identity.avatar_url.as_deref())
-    .bind(&legacy_key)
-    .execute(&mut *tx)
-    .await;
-    let row = match updated {
-        Ok(result) if result.rows_affected() == 0 => {
-            tx.rollback().await?;
-            return Ok(None);
-        }
-        Ok(_) => match load_user_row_by_identity(&mut tx, &identity.key).await? {
-            Some(row) => row,
-            None => {
-                tx.rollback().await?;
-                return Err(ServerError::internal("migrated user could not be loaded"));
-            }
-        },
-        Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
-            // Another sign-in migrated or created the new key first.
-            tx.rollback().await?;
-            return load_user_by_identity(pool, &identity.key)
-                .await?
-                .map(Some)
-                .ok_or_else(|| {
-                    ServerError::internal("github identity migration race could not be resolved")
-                });
-        }
-        Err(error) => {
-            tx.rollback().await?;
-            return Err(error.into());
-        }
-    };
-    tx.commit().await?;
-
-    audit(
-        pool,
-        Some(row.id.as_str()),
-        "user.identity_migrated",
-        Some("user"),
-        Some(row.id.as_str()),
-        Some(identity.login.as_str()),
-        None,
-    )
-    .await;
-    load_user_by_id(pool, &row.id)
-        .await?
-        .map(Some)
-        .ok_or_else(|| ServerError::internal("migrated user could not be loaded"))
 }
 
 async fn refresh_profile(
@@ -246,14 +143,7 @@ async fn should_be_admin(
     identity: &Identity,
     configured_admins: &[String],
 ) -> Result<bool, ServerError> {
-    let configured = identity
-        .key
-        .strip_prefix("github:")
-        .and_then(|id| id.parse::<i64>().ok())
-        .map_or_else(
-            || matches_login(configured_admins, &identity.login),
-            |id| super::matches_identity(configured_admins, id, &identity.login),
-        );
+    let configured = matches_login(configured_admins, &identity.login);
     if configured {
         return Ok(true);
     }
@@ -313,7 +203,7 @@ async fn create_identity_user(
     Err(ServerError::internal("could not allocate a username"))
 }
 
-/// Creates a pending account for a GitHub login that has never signed in, or
+/// Creates a pending account for a tailnet login that has never signed in, or
 /// returns the existing user untouched.
 ///
 /// Adding someone as a thread member must not grant workspace access before
@@ -324,7 +214,7 @@ pub async fn ensure_pending_identity(
     login: &str,
     display_name: Option<&str>,
 ) -> Result<UserDto, ServerError> {
-    let identity = super::github_invited(login, display_name);
+    let identity = super::tailscale_invited(login, display_name);
     if let Some(user) = load_user_by_identity(pool, &identity.key).await? {
         return Ok(user);
     }
@@ -564,129 +454,104 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_login_identity_migrates_to_the_numeric_id() {
+    async fn the_first_identity_becomes_the_administrator() {
         let pool = db::connect_memory().await.unwrap();
-        sqlx::query(
-            "INSERT INTO users(id, username, display_name, avatar_url, is_admin, created_at, identity_source, identity_key)
-             VALUES('u-legacy', 'octocat', 'Octocat', NULL, 1, 0, 'github', 'github:octocat')",
+        let first = ensure_identity_user(
+            &pool,
+            &Identity::tailscale("ada@example.com", Some("Ada"), None),
+            &[],
         )
-        .execute(&pool)
         .await
         .unwrap();
+        assert!(first.is_admin);
+        assert_eq!(first.access, threadbase_shared::UserAccess::Member);
 
-        let user = ensure_identity_user(
+        let second = ensure_identity_user(
             &pool,
-            &Identity::github(12345, "Octocat", Some("The Octocat"), None),
+            &Identity::tailscale("bob@example.com", Some("Bob"), None),
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(!second.is_admin);
+        assert_eq!(second.access, threadbase_shared::UserAccess::Pending);
+    }
+
+    #[tokio::test]
+    async fn a_configured_admin_is_promoted_on_first_sign_in() {
+        let pool = db::connect_memory().await.unwrap();
+        let _owner = ensure_identity_user(
+            &pool,
+            &Identity::tailscale("owner@example.com", None, None),
             &[],
         )
         .await
         .unwrap();
 
-        assert_eq!(user.id.as_str(), "u-legacy");
-        assert!(user.is_admin);
-        assert_eq!(user.display_name, "The Octocat");
-        let key: Option<String> =
-            sqlx::query_scalar("SELECT identity_key FROM users WHERE id = 'u-legacy'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(key.as_deref(), Some("github:12345"));
-        let detail: Option<String> = sqlx::query_scalar(
-            "SELECT detail_json FROM audit_log WHERE action = 'user.identity_migrated'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(detail.as_deref(), Some("Octocat"));
-    }
-
-    #[tokio::test]
-    async fn legacy_admin_is_not_adopted_by_an_unlisted_login() {
-        let pool = db::connect_memory().await.unwrap();
-        sqlx::query(
-            "INSERT INTO users(id, username, display_name, avatar_url, is_admin, created_at, identity_source, identity_key)
-             VALUES('u-legacy', 'octocat', 'Octocat', NULL, 1, 0, 'github', 'github:octocat')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // The instance is locked down to another administrator: a login that
-        // merely matches the legacy row's old handle must not inherit it.
-        let user = ensure_identity_user(
+        let admin = ensure_identity_user(
             &pool,
-            &Identity::github(12345, "Octocat", None, None),
-            &["someone-else".to_owned()],
+            &Identity::tailscale("Ada@Example.com", Some("Ada"), None),
+            &["ada@example.com".to_owned()],
         )
         .await
         .unwrap();
-
-        assert_ne!(user.id.as_str(), "u-legacy");
-        assert!(!user.is_admin);
-        assert_eq!(user.access, threadbase_shared::UserAccess::Pending);
-        let key: Option<String> =
-            sqlx::query_scalar("SELECT identity_key FROM users WHERE id = 'u-legacy'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(key.as_deref(), Some("github:octocat"));
+        assert!(admin.is_admin);
+        assert_eq!(admin.access, threadbase_shared::UserAccess::Member);
     }
 
     #[tokio::test]
-    async fn legacy_admin_is_adopted_when_the_login_is_listed() {
-        let pool = db::connect_memory().await.unwrap();
-        sqlx::query(
-            "INSERT INTO users(id, username, display_name, avatar_url, is_admin, created_at, identity_source, identity_key)
-             VALUES('u-legacy', 'octocat', 'Octocat', NULL, 1, 0, 'github', 'github:octocat')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let user = ensure_identity_user(
-            &pool,
-            &Identity::github(12345, "Octocat", None, None),
-            &["OCTOCAT".to_owned()],
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(user.id.as_str(), "u-legacy");
-        assert!(user.is_admin);
-    }
-
-    #[tokio::test]
-    async fn a_reclaimed_login_does_not_take_over_the_old_account() {
+    async fn a_known_login_keeps_its_row_and_profile_is_refreshed() {
         let pool = db::connect_memory().await.unwrap();
         let original = ensure_identity_user(
             &pool,
-            &Identity::github(12345, "octocat", Some("Octo"), None),
+            &Identity::tailscale("ada@example.com", Some("Ada"), None),
             &[],
         )
         .await
         .unwrap();
 
-        // Someone else now registers the freed login: a different id is a
-        // different account, even though the display login matches.
-        let impostor = ensure_identity_user(
+        // Same login, new display name and picture: one row, updated in place.
+        let again = ensure_identity_user(
             &pool,
-            &Identity::github(67890, "octocat", Some("New Octo"), None),
+            &Identity::tailscale(
+                "ada@example.com",
+                Some("Ada Lovelace"),
+                Some("https://a/b.png"),
+            ),
             &[],
         )
         .await
         .unwrap();
-        assert_ne!(original.id, impostor.id);
-        assert_ne!(original.username, impostor.username);
-        assert_eq!(impostor.access, UserAccess::Pending);
+        assert_eq!(again.id, original.id);
+        assert_eq!(again.display_name, "Ada Lovelace");
+        assert_eq!(again.avatar_url.as_deref(), Some("https://a/b.png"));
+    }
 
-        // A rename of the original account keeps the original row.
-        let renamed = ensure_identity_user(
+    #[tokio::test]
+    async fn an_invited_login_waits_for_approval() {
+        let pool = db::connect_memory().await.unwrap();
+        // Adding someone to a thread happens on an instance that already has an
+        // owner, so the bootstrap rule cannot apply to the invite.
+        let _owner = ensure_identity_user(
             &pool,
-            &Identity::github(12345, "octo-renamed", Some("Octo"), None),
+            &Identity::tailscale("owner@example.com", None, None),
             &[],
         )
         .await
         .unwrap();
-        assert_eq!(renamed.id, original.id);
+        let invited = ensure_pending_identity(&pool, "bob@example.com", Some("Bob"))
+            .await
+            .unwrap();
+        assert_eq!(invited.access, threadbase_shared::UserAccess::Pending);
+        // Signing in does not approve them.
+        let signed_in = ensure_identity_user(
+            &pool,
+            &Identity::tailscale("bob@example.com", Some("Bob"), None),
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(signed_in.id, invited.id);
+        assert_eq!(signed_in.access, threadbase_shared::UserAccess::Pending);
     }
 }

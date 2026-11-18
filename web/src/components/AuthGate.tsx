@@ -11,20 +11,20 @@ import {
   ThemeIcon,
   Title,
 } from "@mantine/core";
-import {
-  IconBrandGithub,
-  IconLockAccess,
-  IconShieldLock,
-} from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
-import { getAuthStatus, getMe, logout } from "../api";
+import { IconLockAccess, IconShieldLock } from "@tabler/icons-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, type ReactNode } from "react";
+import { getAuthStatus, getMe, logout, signInWithTailscale } from "../api";
 
 /**
- * The server accepts either a GitHub session cookie or an explicitly
- * configured development identity, so the shell never renders data for an
- * anonymous caller. The sign-in screen explains which of the two is available
- * and surfaces whatever reason the OAuth callback redirected back with.
+ * The server accepts a tailnet session cookie or an explicitly configured
+ * development identity, so the shell never renders data for an anonymous
+ * caller.
+ *
+ * There is no sign-in form. If this request arrived through `tailscale serve`,
+ * the server already knows who is asking, and the shell trades that for a
+ * session on mount. Otherwise it explains that the app is reachable only over
+ * Tailscale — which is true: the server listens on loopback.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const me = useQuery({
@@ -113,15 +113,30 @@ function AccessScreen({
 }
 
 function SignIn() {
+  const queryClient = useQueryClient();
   const status = useQuery({
     queryKey: ["auth-status"],
     queryFn: getAuthStatus,
     retry: false,
     staleTime: 60_000,
   });
+  const onTailnet = status.data?.status.tailscale === true;
+  const identity = status.data?.status.identity;
   const reason = new URLSearchParams(window.location.search).get("auth_error");
-  const github = status.data?.status.github === true;
-  const loginUrl = status.data?.status.loginUrl;
+
+  // One exchange per mount: the server sets the cookie, then the session query
+  // is invalidated so the shell renders. A failure falls through to the
+  // explanation below instead of looping.
+  const exchange = useMutation({
+    mutationFn: signInWithTailscale,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+      void queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+    },
+  });
+  useEffect(() => {
+    if (onTailnet && exchange.isIdle) exchange.mutate();
+  }, [onTailnet, exchange]);
 
   return (
     <Center h="100dvh" px="md" className="auth-screen">
@@ -130,13 +145,22 @@ function SignIn() {
           <IconShieldLock size={18} stroke={1.5} />
         </ThemeIcon>
         <Title order={2} size="h4">
-          Sign in to this workspace
+          {onTailnet ? "Signing in…" : "Open this through Tailscale"}
         </Title>
-        <Text size="sm" c="dimmed" ta="center">
-          Threadbase keeps a server-side session after you authorize with
-          GitHub. No Tailscale client is required on the device you browse
-          from.
-        </Text>
+        {onTailnet ? (
+          <Text size="sm" c="dimmed" ta="center">
+            {identity ? `Recognized as ${identity}.` : "Recognized on the tailnet."}
+            {exchange.isPending ? " Creating your session…" : null}
+          </Text>
+        ) : (
+          <Text size="sm" c="dimmed" ta="center">
+            Threadbase listens on the machine&apos;s loopback port and is
+            reachable only through <Code>tailscale serve</Code>. Open the
+            tailnet URL for this machine — the address comes from{" "}
+            <Code>tailscale status</Code> — and you are signed in as your
+            Tailscale identity.
+          </Text>
+        )}
 
         {reason ? (
           <Alert color="red" variant="light" w="100%" p="xs">
@@ -144,29 +168,24 @@ function SignIn() {
           </Alert>
         ) : null}
 
-        {status.isPending ? <Loader size="xs" /> : null}
-
-        {github && loginUrl ? (
-          <Box mt={4}>
-            <Button
-              leftSection={<IconBrandGithub size={16} stroke={1.5} />}
-              onClick={() => {
-                window.location.href = loginUrl;
-              }}
-            >
-              Continue with GitHub
-            </Button>
-          </Box>
+        {exchange.isError ? (
+          <Alert color="red" variant="light" w="100%" p="xs">
+            <Text size="xs">
+              {exchange.error instanceof Error
+                ? exchange.error.message
+                : "Could not sign in."}
+            </Text>
+          </Alert>
         ) : null}
 
-        {status.isSuccess && !github ? (
+        {status.isPending || exchange.isPending ? <Loader size="xs" /> : null}
+
+        {status.isSuccess && !onTailnet ? (
           <Stack align="center" gap={4}>
             <Text size="xs" c="dimmed" ta="center">
-              GitHub sign-in is not configured on this server. Set{" "}
-              <Code>THREADBASE_GITHUB_CLIENT_ID</Code>,{" "}
-              <Code>THREADBASE_GITHUB_CLIENT_SECRET</Code> and{" "}
-              <Code>THREADBASE_PUBLIC_ORIGIN</Code>, or use{" "}
-              <Code>THREADBASE_DEV_IDENTITY</Code> while developing locally.
+              Developing on this machine? Set <Code>THREADBASE_DEV_IDENTITY</Code>{" "}
+              and start the server directly; the shell signs itself in over
+              loopback.
             </Text>
             <Group mt={4}>
               <Button

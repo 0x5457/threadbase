@@ -51,16 +51,22 @@ async fn start() -> Server {
     });
     let user = threadbase_server::auth::ensure_identity_user(
         &state.pool,
-        &threadbase_server::auth::Identity::github(1, "ada", Some("Ada"), None),
+        &threadbase_server::auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
         &[],
     )
     .await
     .unwrap();
     let user_id = user.id.to_string();
-    let token =
-        threadbase_server::auth_session::create(&state.pool, &user_id, "github", None, None, 3600)
-            .await
-            .unwrap();
+    let token = threadbase_server::auth_session::create(
+        &state.pool,
+        &user_id,
+        "tailscale",
+        None,
+        None,
+        3600,
+    )
+    .await
+    .unwrap();
     let project_id = ulid::Ulid::new().to_string();
     let thread_id = ulid::Ulid::new().to_string();
     let now = now_ms();

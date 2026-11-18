@@ -1473,12 +1473,13 @@ pub struct AuthMeDto {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AuthStatusDto {
-    /// GitHub OAuth is configured, so a sign-in redirect is available.
-    pub github: bool,
+    /// This request arrived through `tailscale serve`, so the shell can exchange
+    /// the tailnet identity for a session without asking anything.
+    pub tailscale: bool,
+    /// The tailnet login being presented, for the "signing in as…" line.
+    pub identity: Option<String>,
     pub dev_identity: bool,
     pub needs_admin: bool,
-    /// Where to send the browser to start a GitHub sign-in.
-    pub login_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

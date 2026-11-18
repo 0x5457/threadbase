@@ -36,14 +36,14 @@ async fn fixture(enabled: bool) -> Fixture {
     let pool = db::connect_memory().await.unwrap();
     let user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github(1, "ada", Some("Ada"), None),
+        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
         &[],
     )
     .await
     .unwrap();
     let current = CurrentUser {
         user,
-        method: "github",
+        method: "tailscale",
     };
     let state = threadbase_server::app::AppState::new(
         Config {
@@ -346,7 +346,7 @@ async fn granting_write_needs_an_account_that_can_write() {
         .unwrap();
     let principal = CurrentUser {
         user: read_only,
-        method: "github",
+        method: "tailscale",
     };
     let error = mcp::mint(
         &fixture.pool,
@@ -370,7 +370,7 @@ async fn approving_needs_the_approve_scope_and_an_admin_mint() {
     // The fixture's first user is the instance admin; a second member is not.
     let member = auth::ensure_identity_user(
         &fixture.pool,
-        &auth::Identity::github(2, "bob", Some("Bob"), None),
+        &auth::Identity::tailscale("bob@example.com", Some("Bob"), None),
         &[],
     )
     .await
@@ -386,7 +386,7 @@ async fn approving_needs_the_approve_scope_and_an_admin_mint() {
             .await
             .unwrap()
             .unwrap(),
-        method: "github",
+        method: "tailscale",
     };
     let error = mcp::mint(
         &fixture.pool,

@@ -56,16 +56,18 @@ pub async fn report(config: &Config) -> DoctorReport {
             npx_fallback.join(", ")
         ));
     }
-    if config.github.is_some() && config.public_origin.is_none() {
+    // Tailscale is the only ingress and the only identity. Without it nobody can
+    // sign in, so say which half is missing instead of failing at the browser.
+    if !crate::tailscale::running() {
         warnings.push(
-            "THREADBASE_GITHUB_CLIENT_ID is set but THREADBASE_PUBLIC_ORIGIN is missing; \
-             the OAuth callback cannot be built"
+            "Tailscale is not running; `tailscale serve` cannot proxy the tailnet to this \
+             server and no one can sign in"
                 .to_owned(),
         );
-    }
-    if config.github.is_none() {
+    } else if crate::tailscale::host().is_none() {
         warnings.push(
-            "GitHub sign-in is not configured; only THREADBASE_DEV_IDENTITY can sign in".to_owned(),
+            "Could not read this machine's tailnet DNS name from `tailscale status --json`"
+                .to_owned(),
         );
     }
     if config

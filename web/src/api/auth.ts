@@ -30,6 +30,15 @@ export function getAuthStatus() {
 }
 
 /**
+ * Trades the tailnet identity `tailscale serve` proved for a session cookie.
+ * There is nothing to type: if the request did not come through the proxy, the
+ * server refuses it and the shell says so.
+ */
+export function signInWithTailscale() {
+  return jsonRequest<Me>("/api/auth/tailscale", "POST", {});
+}
+
+/**
  * Revokes the server-side session. Uses a bare fetch because the endpoint
  * answers 204 with no body, which the JSON helper cannot parse.
  */

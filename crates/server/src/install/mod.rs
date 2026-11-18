@@ -13,8 +13,8 @@ pub(crate) mod health;
 mod launchd;
 mod spec;
 mod systemd;
-mod tailscale;
 
+use crate::tailscale;
 use anyhow::{bail, Context};
 use service_manager::{
     RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager,
@@ -87,23 +87,23 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
     let home = spec::home()?;
     let exe = spec::current_binary();
     let config = crate::config::Config::load().context("invalid configuration")?;
-    // A deployment that owns its own tunnel names the origin with
-    // --public-origin (or THREADBASE_PUBLIC_ORIGIN) and passes --no-serve; only
-    // ask Tailscale when this install exposes the service itself.
+    // Tailscale is the only ingress, so the tailnet name is the origin unless the
+    // environment already names one (a hand-written unit, or `--no-serve` behind
+    // the operator's own proxy).
     let tailnet_host = if options.skip_serve {
         None
     } else {
         tailscale::host()
     };
-    let public_origin = options
+    let public_origin = config
         .public_origin
         .clone()
-        .or_else(|| config.public_origin.clone())
         .or_else(|| {
             tailnet_host
                 .as_deref()
                 .map(|host| origin(host, options.https_port))
-        });
+        })
+        .or_else(|| options.public_origin.clone());
     let path_env = std::env::var("PATH").ok();
     let shell = std::env::var("SHELL")
         .ok()
@@ -122,7 +122,7 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
         keep_awake: options.keep_awake,
     };
     let artifact = artifact(&spec);
-    let serve_args = tailscale::expose_arguments(options.funnel, options.https_port, options.port);
+    let serve_args = tailscale::serve_arguments(options.https_port, options.port);
 
     if options.uninstall {
         return uninstall(&spec, &artifact, &options);
@@ -172,41 +172,25 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
             tailscale::program()
         );
     }
-    if public_origin.is_none() {
-        eprintln!(
-            "warning: no public origin: pass --public-origin https://your.domain so the session \
-             cookie is Secure and requests pass the host check"
-        );
-    }
 
     if options.skip_serve {
-        println!("Skipped `tailscale serve` / `tailscale funnel` (--no-serve).");
+        println!("Skipped `tailscale serve` (--no-serve).");
     } else {
-        match tailscale::enable(&serve_args) {
+        match tailscale::enable_serve(&serve_args) {
             Ok(()) => println!(
-                "Exposed {}: https://{}:{}",
-                if options.funnel {
-                    "publicly with Tailscale Funnel"
-                } else {
-                    "on the tailnet"
-                },
+                "Exposed on the tailnet: https://{}:{}",
                 tailnet_host
                     .as_deref()
                     .unwrap_or("<machine>.<tailnet>.ts.net"),
                 options.https_port
             ),
             Err(error) => {
-                eprintln!("warning: `tailscale {}` failed: {error}", serve_args[0]);
+                eprintln!("warning: `tailscale serve` failed: {error}");
                 eprintln!(
                     "         run: sudo {} {}",
                     tailscale::program(),
                     serve_args.join(" ")
                 );
-                if options.funnel {
-                    eprintln!(
-                        "         Funnel also needs the `funnel` node attribute in the tailscale ACL."
-                    );
-                }
             }
         }
     }
@@ -450,7 +434,7 @@ fn uninstall(spec: &ServiceSpec<'_>, artifact: &Artifact, options: &Options) -> 
         let _ = command::run_checked("systemctl", &["--user", "daemon-reload"]);
     }
     if !options.skip_serve {
-        tailscale::disable(options.https_port);
+        tailscale::disable_serve(options.https_port);
         println!(
             "Turned off the Tailscale endpoint on port {}",
             options.https_port

@@ -29,7 +29,7 @@ async fn fixture() -> Fixture {
     let pool = db::connect_memory().await.unwrap();
     let owner_user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github(1, "ada", Some("Ada"), None),
+        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
         &[],
     )
     .await
@@ -66,11 +66,11 @@ async fn fixture() -> Fixture {
         pool,
         owner: CurrentUser {
             user: owner_user,
-            method: "github",
+            method: "tailscale",
         },
         viewer: CurrentUser {
             user: viewer_user,
-            method: "github",
+            method: "tailscale",
         },
         project,
         thread,

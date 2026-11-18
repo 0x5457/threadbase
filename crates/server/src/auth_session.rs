@@ -181,9 +181,9 @@ pub fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 /// `Set-Cookie` value for a session or handshake cookie.
 ///
-/// `SameSite=Lax` keeps the value available on top-level OAuth redirects back
-/// from GitHub while still blocking cross-site form posts; every mutating
-/// request is additionally checked by the CSRF middleware.
+/// `SameSite=Lax` is enough for a same-site app while still blocking cross-site
+/// form posts; every mutating request is additionally checked by the CSRF
+/// middleware.
 #[must_use]
 pub fn cookie_header(name: &str, value: &str, secure: bool, max_age_seconds: i64) -> String {
     cookie_header_at(name, value, secure, max_age_seconds, "/")
@@ -267,12 +267,12 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let token = create(&pool, "u1", "github", Some("127.0.0.1"), None, 3600)
+        let token = create(&pool, "u1", "tailscale", Some("127.0.0.1"), None, 3600)
             .await
             .unwrap();
         let session = lookup(&pool, &token, 3600).await.unwrap().unwrap();
         assert_eq!(session.user_id, "u1");
-        assert_eq!(session.method, "github");
+        assert_eq!(session.method, "tailscale");
 
         // The raw token is never stored.
         let stored: Option<String> =
@@ -295,7 +295,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let token = create(&pool, "u1", "github", None, None, 3600)
+        let token = create(&pool, "u1", "tailscale", None, None, 3600)
             .await
             .unwrap();
         let token_hash = hash(&token);

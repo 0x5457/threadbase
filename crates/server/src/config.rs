@@ -21,14 +21,13 @@ pub struct Config {
     pub bind: SocketAddr,
     /// Public HTTPS origin, for example the Funnel hostname.
     pub public_origin: Option<String>,
-    /// GitHub logins that are always administrators.
+    /// Tailnet logins that are always administrators.
     pub admins: Vec<String>,
     /// Optional identity accepted from direct local connections (development).
     pub dev_identity: Option<String>,
     /// `None` when GitHub sign-in is not configured; dev identity still works.
-    pub github: Option<GitHubOAuth>,
+
     /// GitHub logins allowed to sign in even when no account exists yet.
-    pub github_allow: Vec<String>,
     /// Session lifetime; sessions slide forward while in use.
     pub session_seconds: i64,
     /// `Secure` cookie flag. Derived from `public_origin`, overridable.
@@ -104,8 +103,6 @@ impl Default for Config {
             public_origin: None,
             admins: Vec::new(),
             dev_identity: None,
-            github: None,
-            github_allow: Vec::new(),
             session_seconds: 30 * 24 * 60 * 60,
             cookie_secure: false,
             log_json: false,
@@ -191,21 +188,10 @@ impl Config {
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
         let admins = list_env("THREADBASE_ADMINS");
-        let github_allow = list_env("THREADBASE_GITHUB_ALLOW");
         let dev_identity = std::env::var("THREADBASE_DEV_IDENTITY")
             .ok()
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
-        let client_id = non_empty("THREADBASE_GITHUB_CLIENT_ID");
-        let client_secret = non_empty("THREADBASE_GITHUB_CLIENT_SECRET");
-        let github = match (client_id, client_secret) {
-            (Some(client_id), Some(client_secret)) => Some(GitHubOAuth {
-                client_id,
-                client_secret,
-            }),
-            (None, None) => None,
-            _ => return Err(ConfigError::GitHubIncomplete),
-        };
         let session_days = match non_empty("THREADBASE_SESSION_DAYS") {
             Some(value) => value
                 .parse::<i64>()
@@ -283,8 +269,6 @@ impl Config {
             public_origin,
             admins,
             dev_identity,
-            github,
-            github_allow,
             session_seconds: session_days * 24 * 60 * 60,
             cookie_secure,
             log_json,
@@ -332,20 +316,6 @@ impl Config {
             .and_then(|origin| url::Url::parse(origin).ok())
             .and_then(|origin| origin.host_str().and_then(normalize_host))
             .is_some_and(|public_host| public_host == host)
-    }
-
-    /// OAuth callback registered on the GitHub app.
-    #[must_use]
-    pub fn callback_url(&self) -> Option<String> {
-        self.public_origin
-            .as_ref()
-            .map(|origin| format!("{origin}{}", crate::auth_github::CALLBACK_PATH))
-    }
-
-    /// True when a GitHub sign-in round trip can actually be completed.
-    #[must_use]
-    pub fn github_ready(&self) -> bool {
-        self.github.is_some() && self.callback_url().is_some()
     }
 }
 
@@ -499,20 +469,16 @@ mod tests {
         assert!(!config.is_allowed_host("other.example"));
     }
 
+    /// The session cookie is only `Secure` when the operator named an https
+    /// origin — which `threadbase install` derives from Tailscale.
     #[test]
-    fn callback_url_requires_a_public_origin() {
-        let mut config = Config::default();
-        assert_eq!(config.callback_url(), None);
-        assert!(!config.github_ready());
-        config.public_origin = Some("https://machine.example.ts.net".to_owned());
-        assert_eq!(
-            config.callback_url().as_deref(),
-            Some("https://machine.example.ts.net/api/auth/github/callback")
-        );
-        config.github = Some(GitHubOAuth {
-            client_id: "id".to_owned(),
-            client_secret: "secret".to_owned(),
-        });
-        assert!(config.github_ready());
+    fn cookie_secure_follows_the_public_origin() {
+        let config = Config::default();
+        assert!(!config.cookie_secure);
+        let config = Config {
+            public_origin: Some("https://machine.example.ts.net".to_owned()),
+            ..Config::default()
+        };
+        assert!(config.is_allowed_host("machine.example.ts.net"));
     }
 }

@@ -66,16 +66,16 @@ fn fixture_binary() -> Option<PathBuf> {
 }
 
 /// Issues a real session cookie value for an identity created by `fixture`.
-async fn session_for(fixture: &Fixture, github_id: i64) -> String {
+async fn session_for(fixture: &Fixture, login: &str) -> String {
     let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE identity_key = ?")
-        .bind(format!("github:{github_id}"))
+        .bind(format!("tailscale:{login}@example.com"))
         .fetch_one(&fixture.state.pool)
         .await
         .unwrap();
     threadbase_server::auth_session::create(
         &fixture.state.pool,
         &user_id,
-        "github",
+        "tailscale",
         None,
         None,
         3600,
@@ -95,14 +95,14 @@ async fn fixture() -> Option<Fixture> {
     let pool = db::connect_memory().await.unwrap();
     let user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github(1, "ada", Some("Ada"), None),
+        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
         &[],
     )
     .await
     .unwrap();
     let current = CurrentUser {
         user: user.clone(),
-        method: "github",
+        method: "tailscale",
     };
     let state = AppState::new(
         threadbase_server::config::Config {
@@ -811,11 +811,11 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
-    // A fresh GitHub account lands on `pending` access, which authz clamps to
+    // A fresh tailnet account lands on `pending` access, which authz clamps to
     // viewer: no thread-level grant is needed to read, and none can raise it.
     auth::ensure_identity_user(
         &fixture.state.pool,
-        &auth::Identity::github(3, "viewer", Some("Viewer"), None),
+        &auth::Identity::tailscale("viewer@example.com", Some("Viewer"), None),
         &[],
     )
     .await
@@ -846,7 +846,7 @@ async fn viewer_cannot_unblock_a_tool_through_the_http_route() {
     };
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let viewer_session = session_for(&fixture, 3).await;
+    let viewer_session = session_for(&fixture, "viewer").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/approvals/{}/decide", approval.id))
@@ -1341,7 +1341,7 @@ async fn draft_route_preserves_multiple_authors() {
     };
     let bob = auth::ensure_identity_user(
         &fixture.state.pool,
-        &auth::Identity::github(4, "bob", Some("Bob"), None),
+        &auth::Identity::tailscale("bob@example.com", Some("Bob"), None),
         &[],
     )
     .await
@@ -1370,7 +1370,7 @@ async fn draft_route_preserves_multiple_authors() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, 1).await;
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1422,7 +1422,7 @@ async fn queued_draft_route_preserves_multiple_authors() {
     };
     let bob = auth::ensure_identity_user(
         &fixture.state.pool,
-        &auth::Identity::github(4, "bob", Some("Bob"), None),
+        &auth::Identity::tailscale("bob@example.com", Some("Bob"), None),
         &[],
     )
     .await
@@ -1450,7 +1450,7 @@ async fn queued_draft_route_preserves_multiple_authors() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, 1).await;
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1510,7 +1510,7 @@ async fn empty_draft_send_returns_already_sent() {
         .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, 1).await;
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1574,7 +1574,7 @@ async fn failed_start_keeps_the_message_queued() {
     .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, 1).await;
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{}/messages", fixture.thread.id))
@@ -1782,7 +1782,7 @@ async fn uploaded_files_download_and_reach_the_prompt() {
         return;
     };
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, 1).await;
+    let session = session_for(&fixture, "ada").await;
     let body = b"# Notes\nhello from a file";
 
     let mut upload = Request::builder()
@@ -1876,7 +1876,7 @@ async fn pasted_images_upload_serve_and_reach_the_agent() {
         .await
         .unwrap();
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, 1).await;
+    let session = session_for(&fixture, "ada").await;
     let png: &[u8] = b"\x89PNG\r\n\x1a\nimage-bytes";
 
     let mut upload = Request::builder()
@@ -2198,7 +2198,7 @@ async fn send_now_interrupts_a_non_steering_agent() {
     .unwrap();
 
     let app = threadbase_server::routes::router(fixture.state.clone());
-    let session = session_for(&fixture, 1).await;
+    let session = session_for(&fixture, "ada").await;
     let mut request = Request::builder()
         .method("POST")
         .uri(format!("/api/threads/{thread_id}/queue/{item_id}/steer"))

@@ -82,14 +82,14 @@ async fn real_codex_streams_a_reply() {
     let pool = db::connect_memory().await.unwrap();
     let user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github(1, "ada", Some("Ada"), None),
+        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
         &[],
     )
     .await
     .unwrap();
     let current = CurrentUser {
         user: user.clone(),
-        method: "github",
+        method: "tailscale",
     };
     let state = AppState::new(
         threadbase_server::config::Config {

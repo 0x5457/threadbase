@@ -35,14 +35,14 @@ async fn fixture() -> Fixture {
     let pool = db::connect_memory().await.unwrap();
     let user = auth::ensure_identity_user(
         &pool,
-        &auth::Identity::github(1, "ada", Some("Ada"), None),
+        &auth::Identity::tailscale("ada@example.com", Some("Ada"), None),
         &[],
     )
     .await
     .unwrap();
     let current = auth::CurrentUser {
         user: user.clone(),
-        method: "github",
+        method: "tailscale",
     };
     let state = threadbase_server::app::AppState::new(
         Config {

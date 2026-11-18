@@ -189,7 +189,7 @@ async fn thread_archived(
 
 impl Fixture {
     async fn token(&self, user: &str) -> String {
-        auth_session::create(&self.pool, user, "github", None, None, 3600)
+        auth_session::create(&self.pool, user, "tailscale", None, None, 3600)
             .await
             .unwrap()
     }
