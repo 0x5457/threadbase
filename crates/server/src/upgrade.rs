@@ -3,7 +3,7 @@
 use anyhow::Context;
 use sha2::{Digest, Sha256};
 
-const DEFAULT_BASE: &str = "https://github.com/threadbase/threadbase/releases/latest/download";
+const DEFAULT_BASE: &str = "https://github.com/0x5457/threadbase/releases/latest/download";
 
 /// Replace this binary with the published release for this platform.
 pub async fn run(check_only: bool) -> anyhow::Result<()> {

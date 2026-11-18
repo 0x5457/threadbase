@@ -89,7 +89,7 @@ threadbase service restart      # then bounce the service
 ```
 
 Releases come from GitHub Releases (`threadbase upgrade --check` to peek).
-Fresh installs: `curl -fsSL https://raw.githubusercontent.com/threadbase/threadbase/main/scripts/install.sh | sh`.
+Fresh installs: `curl -fsSL https://raw.githubusercontent.com/0x5457/threadbase/main/scripts/install.sh | sh`.
 Linux binaries are portable; the darwin binaries are unsigned, so a
 browser-transferred copy needs `xattr -d com.apple.quarantine`.
 

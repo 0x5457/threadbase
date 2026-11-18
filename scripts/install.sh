@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-BASE="${THREADBASE_RELEASE_BASE:-https://github.com/threadbase/threadbase/releases/latest/download}"
+BASE="${THREADBASE_RELEASE_BASE:-https://github.com/0x5457/threadbase/releases/latest/download}"
 BIN_DIR="${THREADBASE_BIN_DIR:-$HOME/.local/bin}"
 
 os="$(uname -s)"
