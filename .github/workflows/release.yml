@@ -18,9 +18,9 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -38,15 +38,21 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - name: Build binary
-        run: cargo build --release -p threadbase
+        run: cargo build --release -p threadbase --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
           mkdir -p dist
-          cp target/release/threadbase "dist/threadbase-${{ matrix.target }}"
-          sha256sum "dist/threadbase-${{ matrix.target }}" | awk '{print $1}' > "dist/threadbase-${{ matrix.target }}.sha256"
+          cp "target/${{ matrix.target }}/release/threadbase" "dist/threadbase-${{ matrix.target }}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "dist/threadbase-${{ matrix.target }}" | awk '{print $1}'
+          else
+            shasum -a 256 "dist/threadbase-${{ matrix.target }}" | awk '{print $1}'
+          fi > "dist/threadbase-${{ matrix.target }}.sha256"
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
