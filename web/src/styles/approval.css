@@ -99,7 +99,7 @@
 .message-user .block-body {
   width: fit-content;
   max-width: 100%;
-  padding: 8px 13px 9px;
+  padding: 8px 13px 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--ink) 4.5%, var(--paper));
