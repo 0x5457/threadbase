@@ -26,6 +26,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use threadbase_agent::{
     all_profiles, AcpHarness, Harness, LaunchCtx, NewSession, PromptPart, SessionId,
     SteeringOutcome, TurnHandle,
@@ -44,6 +45,9 @@ use tokio::sync::{mpsc, Mutex, OwnedSemaphorePermit, Semaphore};
 
 pub use mapping::{briefs_by_ids, user_brief};
 pub(crate) use session::{RunState, Session, TurnInstall, TurnStartClaim};
+
+/// Longest the process waits for adapters to go away when it exits.
+const STOP_DEADLINE: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct AgentManager {
@@ -126,13 +130,32 @@ impl AgentManager {
     /// Stop every live adapter before the process exits. The systemd unit uses
     /// `KillMode=process` so tmux servers survive a restart; that also means
     /// agent children must be reaped explicitly here.
+    ///
+    /// Concurrently and under one deadline, never per session: a service
+    /// manager kills a stop that takes too long, and that kill also drops the
+    /// queued start of a new binary. An adapter that will not die is worth a
+    /// warning, not a dead workspace.
     pub async fn shutdown_all(&self) {
-        let ids: Vec<String> = {
-            let sessions = self.inner.sessions.lock().await;
-            sessions.keys().cloned().collect()
+        let sessions: Vec<Arc<Session>> = self
+            .inner
+            .sessions
+            .lock()
+            .await
+            .drain()
+            .map(|(_, session)| session)
+            .collect();
+        let teardown = async {
+            let mut stopping = tokio::task::JoinSet::new();
+            for session in sessions {
+                stopping.spawn(async move { session.stop().await });
+            }
+            while stopping.join_next().await.is_some() {}
         };
-        for thread_id in ids {
-            self.shutdown_session(&thread_id).await;
+        if tokio::time::timeout(STOP_DEADLINE, teardown).await.is_err() {
+            tracing::warn!(
+                deadline = ?STOP_DEADLINE,
+                "an agent adapter did not stop in time; exiting anyway"
+            );
         }
     }
 
@@ -340,9 +363,7 @@ impl AgentManager {
     async fn shutdown_session(&self, thread_id: &str) {
         let session = self.inner.sessions.lock().await.remove(thread_id);
         if let Some(session) = session {
-            session.mark_stopped();
-            let mut harness = session.harness.lock().await;
-            let _ = harness.shutdown().await;
+            session.stop().await;
         }
     }
 

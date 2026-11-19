@@ -133,3 +133,76 @@ async fn a_non_executable_or_missing_file_is_not_staged() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(deploy::is_staged(&path).await);
 }
+
+/// The deploy loop must not restart the service itself: a restart stops this
+/// unit and waits for this process to exit, so it cannot return while it is
+/// still awaited. It installs, exits, and the service manager starts the new
+/// binary — the path that used to deadlock until systemd killed the stop and
+/// dropped the queued start.
+#[test]
+fn a_staged_binary_exits_for_the_service_manager_to_restart() {
+    let data = TempDir::new().unwrap();
+    let incoming = data.path().join("incoming");
+    std::fs::create_dir_all(&incoming).unwrap();
+    let staged = incoming.join("threadbase");
+    // The real staged file is a build of this server, and `install` renames it
+    // over the running executable, so it has to be this very binary.
+    std::fs::copy(env!("CARGO_BIN_EXE_threadbase"), &staged).unwrap();
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A stub service manager, so a regression fails here instead of bouncing
+    // whatever unit happens to be installed on this machine.
+    let bin = data.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let calls = data.path().join("service-manager-calls");
+    for tool in ["systemctl", "launchctl"] {
+        let stub = bin.join(tool);
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\necho {tool} \"$@\" >> {}\nexit 0\n",
+                calls.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_threadbase"))
+        .arg("serve")
+        .env("THREADBASE_DATA_DIR", data.path())
+        .env("THREADBASE_BIND", "127.0.0.1:0")
+        .env("THREADBASE_ENV_FILE", data.path().join("no-env-file"))
+        .env("THREADBASE_AUTO_DEPLOY", "1")
+        .env("THREADBASE_AUTO_DEPLOY_PATH", &staged)
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("RUST_LOG", "threadbase=warn")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn threadbase serve");
+
+    // One poll interval plus startup.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the deploy loop did not exit; it must not restart itself");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+
+    assert_eq!(
+        status.code(),
+        Some(threadbase_server::deploy::EXIT_RESTART),
+        "a deploy exits with the restart code so the unit comes back"
+    );
+    assert!(
+        !calls.exists(),
+        "the deploy must not ask the service manager to restart it"
+    );
+}
