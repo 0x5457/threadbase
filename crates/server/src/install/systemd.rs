@@ -88,7 +88,10 @@ pub(crate) fn unit_file(spec: &ServiceSpec<'_>) -> String {
         "Environment=\"PATH={}\"\n",
         escape_quoted(&path.join(":"))
     ));
-    unit.push_str("Restart=on-failure\n");
+    // A deploy installs a binary and exits; a socket the kernel dropped while
+    // the host slept leaves the process dead. Both need the unit back, so it
+    // restarts on any exit — a `systemctl stop` is a stop job, not an exit.
+    unit.push_str("Restart=always\n");
     unit.push_str("RestartSec=2\n");
     // Tmux servers are daemonized children. A normal restart must detach the
     // browser clients, not kill the shells; adapters are stopped explicitly by

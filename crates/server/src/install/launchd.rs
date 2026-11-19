@@ -138,7 +138,8 @@ pub(crate) fn plist_file(spec: &ServiceSpec<'_>) -> String {
     );
 
     root.insert("RunAtLoad".to_owned(), Value::Boolean(true));
-    // Mirror `Restart=on-failure`: restart only when the process fails.
+    // Restart when the process fails, which covers a deploy: it installs the
+    // new binary and exits 75 on purpose. A clean exit stays final.
     let mut keep_alive = plist::Dictionary::new();
     keep_alive.insert("SuccessfulExit".to_owned(), Value::Boolean(false));
     root.insert("KeepAlive".to_owned(), Value::Dictionary(keep_alive));

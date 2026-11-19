@@ -56,9 +56,6 @@ pub struct Config {
     /// Where a staged binary is expected. `None` means
     /// `<data dir>/incoming/threadbase`.
     pub auto_deploy_path: Option<PathBuf>,
-    /// Service unit to restart after installing. Only matters when one machine
-    /// runs several instances.
-    pub unit: String,
     /// Worktree setup commands are killed after this many seconds.
     pub setup_timeout_seconds: i64,
     /// Secrets file loaded into the environment at startup. Both service
@@ -98,7 +95,6 @@ impl Default for Config {
             max_permission_mode: PermissionMode::FullAccess,
             auto_deploy: false,
             auto_deploy_path: None,
-            unit: "threadbase".to_owned(),
             setup_timeout_seconds: 15 * 60,
             env_file: PathBuf::from("/tmp/threadbase/env"),
             log_file: None,
@@ -215,7 +211,6 @@ impl Config {
             .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
         let auto_deploy_path = non_empty("THREADBASE_AUTO_DEPLOY_PATH").map(PathBuf::from);
-        let unit = non_empty("THREADBASE_UNIT").unwrap_or_else(|| "threadbase".to_owned());
         let settle_days = non_empty("THREADBASE_SETTLE_DAYS")
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|value| *value >= 0)
@@ -252,7 +247,6 @@ impl Config {
             max_permission_mode,
             auto_deploy,
             auto_deploy_path,
-            unit,
             setup_timeout_seconds,
             env_file,
             log_file,

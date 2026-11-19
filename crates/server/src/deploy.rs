@@ -1,9 +1,11 @@
 //! Installs a staged binary, but only when no turn is running.
 //!
 //! `deploy.sh --stage` writes a binary to `incoming/threadbase`; this loop
-//! swaps it in and restarts. "Idle" is the same check `thread_wait` uses, and a
-//! pending approval counts as work because a restart cancels it.
+//! swaps it in and exits, so the service manager restarts into it. "Idle" is the
+//! same check `thread_wait` uses, and a pending approval counts as work because
+//! a restart cancels it.
 
+use crate::agents::AgentManager;
 use crate::config::Config;
 use crate::error::ServerError;
 use sqlx::SqlitePool;
@@ -15,6 +17,12 @@ use threadbase_shared::now_ms;
 const PERIOD: Duration = Duration::from_secs(15);
 /// Waiting is normal, so log it at most every ten minutes.
 const REMIND_EVERY: i64 = 10 * 60 * 1000;
+/// Exit code that means "a new binary is installed, start it".
+///
+/// Non-zero on purpose: units installed before `Restart=always` still use
+/// `Restart=on-failure`, and launchd's `KeepAlive.SuccessfulExit=false` reads a
+/// clean exit as final. 75 is `EX_TEMPFAIL` and says what happened in a journal.
+pub const EXIT_RESTART: i32 = 75;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DeployError {
@@ -32,18 +40,20 @@ pub enum DeployError {
 
 /// Starts the watcher when `THREADBASE_AUTO_DEPLOY` is on.
 #[must_use]
-pub fn spawn(config: &Config, pool: SqlitePool) -> Option<tokio::task::JoinHandle<()>> {
+pub fn spawn(
+    config: &Config,
+    pool: SqlitePool,
+    agents: AgentManager,
+) -> Option<tokio::task::JoinHandle<()>> {
     if !config.auto_deploy {
         return None;
     }
     let staged = staged_path(config);
     let target = std::env::current_exe().ok()?;
     let backups = config.data_dir.join("backups");
-    let unit = config.unit.clone();
     tracing::info!(
         staged = %staged.display(),
         target = %target.display(),
-        unit,
         "auto-deploy is on: a staged binary installs when no turn is running"
     );
     Some(tokio::spawn(async move {
@@ -75,32 +85,17 @@ pub fn spawn(config: &Config, pool: SqlitePool) -> Option<tokio::task::JoinHandl
                 Ok(backup) => {
                     tracing::warn!(
                         backup = %backup.display(),
-                        "installed the staged binary; restarting into it"
+                        "installed the staged binary; exiting so the service manager starts it"
                     );
-                    // The restart ends this process, so code after this may not
-                    // run. `service::run` is not `Send` (it holds a
-                    // service-manager handle across an await), so it gets its
-                    // own thread and runtime.
-                    let restart_unit = unit.clone();
-                    let restarted = tokio::task::spawn_blocking(move || {
-                        let runtime = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()?;
-                        runtime.block_on(crate::service::run(
-                            crate::service::Command::Restart,
-                            &restart_unit,
-                        ))
-                    })
-                    .await;
-                    match restarted {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => {
-                            tracing::error!(%error, "installed but could not restart the service")
-                        }
-                        Err(error) => {
-                            tracing::error!(%error, "restart task failed after installing")
-                        }
-                    }
+                    // Never restart from here: a restart stops this unit and
+                    // waits for this process to exit, so it cannot return while
+                    // it is still awaited, and the service manager kills the
+                    // stop after 90 s and drops the queued start. Exiting is the
+                    // restart both systemd and launchd pick up. The unit's
+                    // `KillMode=process` leaves tmux alone, so the adapters are
+                    // stopped here before the process goes.
+                    agents.shutdown_all().await;
+                    std::process::exit(EXIT_RESTART);
                 }
                 Err(error) => {
                     tracing::error!(%error, "could not install the staged binary");

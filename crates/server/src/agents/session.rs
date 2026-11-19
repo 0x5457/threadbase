@@ -88,6 +88,14 @@ impl Session {
         self.stopped.load(Ordering::SeqCst)
     }
 
+    /// Kill the adapter behind this session. `mark_stopped` comes first so the
+    /// dying process is not read as a crash and the session is never reused.
+    pub(crate) async fn stop(&self) {
+        self.mark_stopped();
+        let mut harness = self.harness.lock().await;
+        let _ = harness.shutdown().await;
+    }
+
     /// Claim the right to prepare the next turn. The returned token must be
     /// handed to `begin_turn` or released; it is the only way to start a
     /// prompt, so two input paths cannot prepare turns concurrently.

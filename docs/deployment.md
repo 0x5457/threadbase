@@ -109,10 +109,14 @@ The server polls `<data dir>/incoming/` every 15 s. A staged binary is
 installed only when nothing is running or waiting: no
 `preparing/running/requires_action` threads, no pending approvals or
 questions, no queued input, no live subagents. A pending approval blocks the
-swap by design. It backs up the current binary, replaces, consumes the staged
-file, and restarts via the service manager. If it stays busy, it just waits and
-logs; failed restarts are reported, not retried blindly. `GET /api/health`
-exposes `deployStaged` so you can see it arrived.
+swap by design. It backs up the current binary, replaces it, consumes the
+staged file, stops the agent adapters and exits with code 75. The service
+manager starts the new binary; the server never restarts itself, because a
+restart issued from the process being stopped cannot complete (it waits for
+that process to exit). `Restart=always` on systemd and
+`KeepAlive.SuccessfulExit=false` on launchd both read that exit as "start me
+again". If it stays busy, it just waits and logs. `GET /api/health` exposes
+`deployStaged` so you can see it arrived.
 
 Prefer manual control? `scripts/deploy.sh --wait-idle` builds first, then
 polls the database until the same idle predicate holds (gives up after two
