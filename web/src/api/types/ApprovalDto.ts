@@ -18,6 +18,10 @@ export type ApprovalDto = {
   toolCallId: ToolCallId | null;
   agent: string;
   title: string;
+  /**
+   * Supporting copy for the decision, from the agent's permission request.
+   */
+  description?: string | null;
   kind: ApprovalKind;
   command: string | null;
   cwd: string | null;
