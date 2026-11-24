@@ -31,6 +31,7 @@ struct ProjectionRow {
     pending_elicitations: i64,
     queued_inputs: i64,
     active_subagents: i64,
+    peer_active: i64,
     placement: String,
     pinned: i64,
     snooze_until: Option<i64>,
@@ -75,6 +76,7 @@ impl Projection {
             pending_elicitations: count(row.pending_elicitations),
             queued_inputs,
             active_subagents,
+            peer_active: row.peer_active != 0,
             placement,
             section: threadbase_core::state::section(
                 status,
@@ -147,7 +149,9 @@ impl Projection {
                   WHERE q.thread_id = t.id AND q.status = 'queued' AND q.starting = 0)
                     AS queued_inputs,
                 (SELECT COUNT(*) FROM subagents s
-                  WHERE s.thread_id = t.id AND s.status IN ('running','requires_action')) AS active_subagents
+                  WHERE s.thread_id = t.id AND s.status IN ('running','requires_action')) AS active_subagents,
+                COALESCE((SELECT b.peer_active FROM agent_bindings b WHERE b.thread_id = t.id), 0)
+                    AS peer_active
              FROM threads t WHERE t.id = ?",
         )
         .bind(thread_id)

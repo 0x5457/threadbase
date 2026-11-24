@@ -94,18 +94,20 @@ tab is closed (iOS needs Add to Home Screen first).
 
 ## Agent sessions
 
-Adapters are expected as commands on `PATH` (e.g.
-`npm i -g @agentclientprotocol/codex-acp`); only when missing does the server
-fall back to `npx`, which adds about a second per start — `threadbase doctor`
-flags adapters still on npx.
+Codex and Claude Code run through their own CLIs (`codex`, `claude`) and
+protocols: threadbase shares their session store, imports an existing session
+when a thread is created, and resumes the same session afterwards. opencode and
+pi speak ACP (`opencode acp`, `pi-acp`); only missing npm adapters fall back to
+`npx`, which adds about a second per start — `threadbase doctor` flags adapters
+still on npx.
 
 - **Lazy start.** Creating a thread does not start a process; the first
   prompt does. The message that starts the adapter is not shown as queued: it
   is the thing being started, and the thread reads `preparing` until the turn
   begins. A failed start puts it back in the queue instead of losing it.
 - **Idle shutdown.** Sessions close after `THREADBASE_IDLE_SESSION_SECS`
-  (default 900, `0` = never); the binding remembers the ACP session id and
-  resumes transparently, falling back to a context-reset notice if that
+  (default 900, `0` = never); the binding remembers the native or ACP session
+  id and resumes transparently, falling back to a context-reset notice if that
   fails.
 - **Concurrency.** `THREADBASE_MAX_ACTIVE_TURNS` (default 512, `0` unlimited)
   caps turns running at once; sends past the cap become queued input, drained

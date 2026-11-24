@@ -13,11 +13,13 @@ use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
 use serde::Deserialize;
+use std::path::Path as FsPath;
+use threadbase_agent::SessionId;
 use threadbase_core::state::PlacementMachine;
 use threadbase_shared::api::{
-    CreateProjectRequest, CreateThreadRequest, ForkThreadRequest, MergeBackRequest,
-    PlacementRequest, RewindRequest, SeenRequest, ThreadState, UpdateProjectRequest,
-    UpdateThreadRequest,
+    AgentSessionDto, AgentSessionsResponse, AttachThreadRequest, CreateProjectRequest,
+    CreateThreadRequest, ForkThreadRequest, MergeBackRequest, PlacementRequest, RewindRequest,
+    SeenRequest, ThreadState, UpdateProjectRequest, UpdateThreadRequest,
 };
 use threadbase_shared::{
     Actor, ApiError, BaselineDto, BaselineKind, ChangesDto, FileDiffDto, MergeBackResponse,
@@ -55,10 +57,22 @@ pub fn router() -> Router<AppState> {
             get(list_threads).post(create_thread),
         )
         .route(
+            "/api/projects/{project_id}/agent-sessions",
+            get(list_agent_sessions),
+        )
+        .route(
+            "/api/projects/{project_id}/threads/attach",
+            post(attach_thread),
+        )
+        .route(
             "/api/threads/{thread_id}",
             get(get_thread).patch(update_thread).delete(delete_thread),
         )
         .route("/api/threads/{thread_id}/fork", post(fork_thread))
+        .route(
+            "/api/threads/{thread_id}/attach",
+            post(attach_existing_thread),
+        )
         .route("/api/threads/{thread_id}/placement", post(set_placement))
         .route("/api/threads/{thread_id}/rewind", post(rewind_thread))
         .route(
@@ -191,6 +205,170 @@ async fn create_thread(
     Json(request): Json<CreateThreadRequest>,
 ) -> Result<Json<ThreadResponse>, ServerError> {
     let thread = create_thread_and_start(&state, &user, &project_id, &request).await?;
+    Ok(Json(ThreadResponse { thread }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSessionsQuery {
+    agent: Option<String>,
+}
+
+async fn list_agent_sessions(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Path(project_id): Path<String>,
+    Query(query): Query<AgentSessionsQuery>,
+) -> Result<Json<AgentSessionsResponse>, ServerError> {
+    let project = projects::row(&state.pool, &project_id).await?;
+    let agent = query.agent.as_deref().unwrap_or("codex");
+    let sessions =
+        crate::agents::native::list(&state.agents, agent, FsPath::new(&project.path)).await?;
+    Ok(Json(AgentSessionsResponse {
+        sessions: sessions
+            .into_iter()
+            .map(|session| AgentSessionDto {
+                id: session.id,
+                title: session.title,
+                cwd: session.cwd,
+                updated_at: session.updated_at,
+            })
+            .collect(),
+    }))
+}
+
+/// Create a thread bound to an existing native session. It runs in the
+/// session's own directory, so no worktree is created and the native id keeps
+/// pointing at the same conversation.
+async fn attach_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(project_id): Path<String>,
+    Json(request): Json<AttachThreadRequest>,
+) -> Result<Json<ThreadResponse>, ServerError> {
+    let project = projects::row(&state.pool, &project_id).await?;
+    let agent = request.agent.as_deref().unwrap_or("codex");
+    let cwd = FsPath::new(&project.path);
+    let session = SessionId(request.session_id);
+    let sessions = crate::agents::native::list(&state.agents, agent, cwd).await?;
+    let found = sessions
+        .iter()
+        .find(|candidate| candidate.id == session.0)
+        .ok_or_else(|| {
+            ServerError(ApiError::validation(
+                "the agent does not know that session in this project",
+            ))
+        })?;
+    if session_owner(&state, &session).await?.is_some() {
+        return Err(ServerError(ApiError::conflict(
+            "that agent session is already attached to a thread",
+        )));
+    }
+    let thread = create_thread_and_start(
+        &state,
+        &user,
+        &project_id,
+        &CreateThreadRequest {
+            title: Some(
+                request
+                    .title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or(&found.title)
+                    .to_owned(),
+            ),
+            agent: Some(agent.to_owned()),
+            model: None,
+            effort: None,
+            base_branch: None,
+            initial_prompt: None,
+            worktree: Some(false),
+        },
+    )
+    .await?;
+    crate::agents::native::import(&state.agents, &thread.id.0, &session).await?;
+    Ok(Json(ThreadResponse { thread }))
+}
+
+async fn session_owner(
+    state: &AppState,
+    session: &SessionId,
+) -> Result<Option<String>, ServerError> {
+    Ok(sqlx::query_scalar(
+        "SELECT thread_id FROM agent_bindings WHERE session_id = ? AND native = 1 LIMIT 1",
+    )
+    .bind(&session.0)
+    .fetch_optional(&state.pool)
+    .await?)
+}
+
+#[derive(Debug, Deserialize)]
+struct AttachExistingSession {
+    session_id: String,
+}
+
+/// Bind an already-created, empty thread to a native session. The same rules
+/// as the project-level attach apply: no worktree, the session's own directory,
+/// and no existing transcript.
+async fn attach_existing_thread(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(thread_id): Path<String>,
+    Json(request): Json<AttachExistingSession>,
+) -> Result<Json<ThreadResponse>, ServerError> {
+    authz::require_write_role(&state.pool, &thread_id, &user).await?;
+    let binding = crate::bindings::load(&state.pool, &thread_id)
+        .await?
+        .ok_or_else(|| ServerError(ApiError::not_found("thread not found")))?;
+    if binding.session_id.is_some() {
+        return Err(ServerError(ApiError::conflict(
+            "this thread already has an agent session",
+        )));
+    }
+    let thread = threads::get(&state.pool, &thread_id, &user, &state.policy).await?;
+    if thread.worktree_path.is_some() {
+        return Err(ServerError(ApiError::validation(
+            "attaching requires a thread without a worktree",
+        )));
+    }
+    if matches!(
+        thread.status,
+        threadbase_shared::ThreadStatus::Preparing
+            | threadbase_shared::ThreadStatus::Running
+            | threadbase_shared::ThreadStatus::RequiresAction
+    ) {
+        return Err(ServerError(ApiError::conflict(
+            "wait for the current turn to finish before attaching",
+        )));
+    }
+    let cwd = FsPath::new(&binding.cwd);
+    let session = SessionId(request.session_id);
+    let sessions = crate::agents::native::list(&state.agents, &binding.agent, cwd).await?;
+    if !sessions.iter().any(|candidate| candidate.id == session.0) {
+        return Err(ServerError(ApiError::validation(
+            "the agent does not know that session in this project",
+        )));
+    }
+    if session_owner(&state, &session).await?.is_some() {
+        return Err(ServerError(ApiError::conflict(
+            "that agent session is already attached to a thread",
+        )));
+    }
+    let used: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM events WHERE thread_id = ?
+          AND kind IN ('message_delta','message_completed','turn_started',
+                       'tool_call','tool_call_update')",
+    )
+    .bind(&thread_id)
+    .fetch_one(&state.pool)
+    .await?;
+    if used > 0 {
+        return Err(ServerError(ApiError::validation(
+            "this thread already has a transcript; attach a new thread instead",
+        )));
+    }
+    crate::agents::native::import(&state.agents, &thread_id, &session).await?;
+    let thread = threads::get(&state.pool, &thread_id, &user, &state.policy).await?;
     Ok(Json(ThreadResponse { thread }))
 }
 

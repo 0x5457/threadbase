@@ -11,7 +11,7 @@ import {
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconAlertCircle, IconMessage } from "@tabler/icons-react";
+import { IconAlertCircle, IconHistory, IconMessage } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { isImeConfirming } from "../lib/keyboard";
@@ -31,6 +31,7 @@ interface NewThreadModalProps {
   project: Project | null;
   onClose: () => void;
   onCreated: (thread: ThreadSummary) => void;
+  onImport: (project: Project) => void;
 }
 
 export function NewThreadModal({
@@ -38,6 +39,7 @@ export function NewThreadModal({
   project,
   onClose,
   onCreated,
+  onImport,
 }: NewThreadModalProps) {
   const phone = useMediaQuery("(max-width: 47.99em)");
   const [title, setTitle] = useState("");
@@ -140,6 +142,20 @@ export function NewThreadModal({
           onChange={(value) => setAgent(value ?? "codex")}
           allowDeselect={false}
         />
+        <Button
+          variant="light"
+          leftSection={<IconHistory size={14} stroke={1.5} />}
+          onClick={() => {
+            if (project) onImport(project);
+          }}
+          fullWidth
+        >
+          Continue an existing session
+        </Button>
+        <Text size="xs" c="dimmed">
+          Already have a Codex or Claude Code conversation in this folder?
+          Import it instead of starting a new one.
+        </Text>
         <Checkbox
           checked={worktree}
           onChange={(event) => {

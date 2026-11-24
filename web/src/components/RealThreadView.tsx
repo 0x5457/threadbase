@@ -1298,7 +1298,8 @@ export const RealThreadView = memo(function RealThreadView({
     live.threadState?.allowedActions ?? bundle?.thread.allowedActions;
   const archived = threadCan(actions, "unarchive");
   const canStop = threadCan(actions, "cancel");
-  const writable = canWrite && !setupActive && !archived;
+  const peerActive = live.threadState?.peerActive ?? false;
+  const writable = canWrite && !setupActive && !archived && !peerActive;
   const retrySetup = useCallback(() => {
     void retryThreadSetup(threadId)
       .then(() => refresh())
@@ -2140,6 +2141,12 @@ export const RealThreadView = memo(function RealThreadView({
           onReorder={reorder}
           error={queueError}
         />
+        {peerActive ? (
+          <Text size="xs" c="dimmed" px="md" pb={4}>
+            Another client is driving this thread. Input is disabled here to
+            avoid two writers; watch the transcript or stop it there.
+          </Text>
+        ) : null}
         <Suspense
           fallback={<ComposerSkeleton agent={bundle?.thread.agent} />}
         >

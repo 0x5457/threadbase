@@ -66,6 +66,41 @@ fn fixture_binary() -> Option<PathBuf> {
         .clone()
 }
 
+/// The native Codex fixture, for tests that must not be forced onto ACP.
+fn codex_fixture_binary() -> Option<PathBuf> {
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(dir) = current.parent().and_then(Path::parent) {
+            let candidate = dir.join("threadbase_codex_fixture");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let status = Command::new("cargo")
+        .current_dir(&root)
+        .args([
+            "build",
+            "-p",
+            "threadbase-agent",
+            "--bin",
+            "threadbase_codex_fixture",
+        ])
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    let path = root.join("target/debug/threadbase_codex_fixture");
+    path.is_file().then_some(path)
+}
+
+/// A fixture that runs the codex profile natively against the codex fixture.
+async fn fixture_native() -> Option<Fixture> {
+    std::env::set_var("THREADBASE_NATIVE_FIXTURE", "1");
+    fixture().await
+}
+
 /// Issues a real session cookie value for an identity created by `fixture`.
 async fn session_for(fixture: &Fixture, login: &str) -> String {
     let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE identity_key = ?")
@@ -86,10 +121,20 @@ async fn session_for(fixture: &Fixture, login: &str) -> String {
 }
 
 async fn fixture() -> Option<Fixture> {
-    let binary = fixture_binary()?;
-    std::env::set_var("THREADBASE_ACP_COMMAND", &binary);
+    let native = std::env::var_os("THREADBASE_NATIVE_FIXTURE").is_some();
     let repo = TempDir::new().unwrap();
     init_repo(repo.path());
+    if native {
+        std::env::remove_var("THREADBASE_ACP_COMMAND");
+        std::env::set_var("THREADBASE_CODEX_BIN", codex_fixture_binary()?);
+        std::env::set_var(
+            "CODEX_FIXTURE_CWD",
+            repo.path().to_string_lossy().to_string(),
+        );
+    } else {
+        let binary = fixture_binary()?;
+        std::env::set_var("THREADBASE_ACP_COMMAND", &binary);
+    }
     let data = TempDir::new().unwrap();
     let journal_path = data.path().join("journal.log");
     std::env::set_var("FAKE_AGENT_JOURNAL", &journal_path);
@@ -2756,4 +2801,168 @@ async fn a_permission_mode_is_applied_to_the_agent() {
         after.contains("\"agent\""),
         "supervised maps to the agent mode:\n{after}"
     );
+}
+/// Attaching a native Codex session copies its transcript, binds the thread to
+/// the same native id, and never creates a worktree.
+#[tokio::test]
+async fn attaching_a_native_codex_session_imports_its_history() {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let Some(fixture) = fixture_native().await else {
+        eprintln!("skipping: codex fixture binary could not be built");
+        return;
+    };
+    let app = threadbase_server::routes::router(fixture.state.clone());
+    let session = session_for(&fixture, "ada").await;
+    let cookie = format!("threadbase_session={session}");
+    let list_uri = format!(
+        "/api/projects/{}/agent-sessions?agent=codex",
+        fixture.project.id
+    );
+    let mut request = Request::builder()
+        .method("GET")
+        .uri(list_uri)
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("cookie", cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let sessions: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(sessions["sessions"][0]["id"], "thread-0");
+
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/api/projects/{}/threads/attach",
+            fixture.project.id
+        ))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "application/json")
+        .header("cookie", cookie.clone())
+        .body(Body::from(
+            serde_json::json!({"sessionId": "thread-0", "agent": "codex"}).to_string(),
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let thread: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let thread_id = thread["thread"]["id"].as_str().expect("thread id");
+
+    let (native, session_id): (i64, Option<String>) =
+        sqlx::query_as("SELECT native, session_id FROM agent_bindings WHERE thread_id = ?")
+            .bind(thread_id)
+            .fetch_one(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(native, 1);
+    assert_eq!(session_id.as_deref(), Some("thread-0"));
+
+    let texts: Vec<String> = sqlx::query_scalar(
+        "SELECT json_extract(payload_json, '$.message.text') FROM events
+          WHERE thread_id = ? AND kind = 'message_completed'",
+    )
+    .bind(thread_id)
+    .fetch_all(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert!(texts.iter().any(|text| text == "old question"));
+    assert!(texts.iter().any(|text| text == "old answer"));
+    let tools: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM events WHERE thread_id = ? AND kind = 'tool_call'",
+    )
+    .bind(thread_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(tools, 1);
+
+    // The same flow on an already-created empty thread, with another session.
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/projects/{}/threads", fixture.project.id))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "application/json")
+        .header("cookie", cookie.clone())
+        .body(Body::from(
+            serde_json::json!({"worktree": false, "agent": "codex"}).to_string(),
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let empty_thread: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let empty_id = empty_thread["thread"]["id"].as_str().expect("thread id");
+
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/threads/{empty_id}/attach"))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("content-type", "application/json")
+        .header("cookie", cookie)
+        .body(Body::from(
+            serde_json::json!({"session_id": "thread-1"}).to_string(),
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (native, session_id): (i64, Option<String>) =
+        sqlx::query_as("SELECT native, session_id FROM agent_bindings WHERE thread_id = ?")
+            .bind(empty_id)
+            .fetch_one(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(native, 1);
+    assert_eq!(session_id.as_deref(), Some("thread-1"));
+    let imported: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM events WHERE thread_id = ? AND kind = 'message_completed'",
+    )
+    .bind(empty_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert!(imported >= 2);
 }

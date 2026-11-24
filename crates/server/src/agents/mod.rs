@@ -12,6 +12,7 @@ mod context;
 mod derived;
 mod lifecycle;
 mod mapping;
+pub(crate) mod native;
 mod pump;
 mod queue_worker;
 mod session;
@@ -339,6 +340,15 @@ impl AgentManager {
     ///
     /// The mechanics live in [`lifecycle::rewind_and_edit`]; this facade keeps
     /// the public surface on the manager.
+    async fn reject_native_rewind(&self, thread_id: &str) -> Result<(), ServerError> {
+        if native::is_native_thread(&self.inner.pool, thread_id).await {
+            return Err(ServerError(ApiError::validation(
+                "this thread continues a native agent session; rewind it in the agent itself",
+            )));
+        }
+        Ok(())
+    }
+
     pub async fn rewind_and_edit(
         &self,
         thread_id: &str,
@@ -346,6 +356,7 @@ impl AgentManager {
         text: &str,
         user: &CurrentUser,
     ) -> Result<SendMessageResponse, ServerError> {
+        self.reject_native_rewind(thread_id).await?;
         lifecycle::rewind_and_edit(self, thread_id, message_id, text, user).await
     }
 
@@ -356,6 +367,7 @@ impl AgentManager {
         message_id: &str,
         user: &CurrentUser,
     ) -> Result<(), ServerError> {
+        self.reject_native_rewind(thread_id).await?;
         lifecycle::rewind_to_turn(self, thread_id, message_id, user).await
     }
 
@@ -551,6 +563,22 @@ impl AgentManager {
         };
         if let Some(session_id) = session_id.as_ref() {
             bindings::set_session(&self.inner.pool, thread_id, session_id.0.as_str()).await?;
+            // A turn that was driving this thread when the process stopped
+            // leaves the flag behind; the adapter is not driving it now.
+            sqlx::query("UPDATE agent_bindings SET peer_active = 0 WHERE thread_id = ?")
+                .bind(thread_id)
+                .execute(&self.inner.pool)
+                .await?;
+            if !reset_context {
+                // Another client may have advanced the native session while
+                // this thread was stopped. Import those turns before the first
+                // prompt so the transcript is not missing them.
+                if let Err(error) =
+                    native::backfill(self, thread_id, &mut *harness, session_id).await
+                {
+                    tracing::warn!(thread_id, %error, "could not backfill the native session");
+                }
+            }
         }
         if reset_context {
             let _ = self

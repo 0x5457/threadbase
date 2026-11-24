@@ -681,6 +681,11 @@ pub async fn fork(
     policy: &PermissionPolicy,
 ) -> Result<ThreadDto, ServerError> {
     authz::require_write_role(pool, thread_id, user).await?;
+    if crate::agents::native::is_native_thread(pool, thread_id).await {
+        return Err(ServerError(ApiError::validation(
+            "this thread continues a native agent session; fork it in the agent itself",
+        )));
+    }
     let source = load_row(pool, thread_id).await?;
     let project = projects::row(pool, &source.project_id).await?;
     let project_root = PathBuf::from(&project.path);

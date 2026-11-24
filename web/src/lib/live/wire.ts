@@ -67,6 +67,7 @@ export function parseThreadState(value: unknown): ThreadState | null {
     pendingElicitations: asNumber(record.pendingElicitations) ?? 0,
     queuedInputs: asNumber(record.queuedInputs) ?? 0,
     activeSubagents: asNumber(record.activeSubagents) ?? 0,
+    peerActive: record.peerActive === true,
     placement: (placement ?? "active") as ThreadState["placement"],
     section: (section ?? "active") as ThreadState["section"],
     snoozeUntil: asNumber(record.snoozeUntil),
