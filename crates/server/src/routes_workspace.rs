@@ -223,9 +223,24 @@ async fn list_agent_sessions(
     let agent = query.agent.as_deref().unwrap_or("codex");
     let sessions =
         crate::agents::native::list(&state.agents, agent, FsPath::new(&project.path)).await?;
+    // A bound session is already a thread. Offering it again can only race the
+    // duplicate-session guard, so the picker and the sidebar list the rest.
+    let bound: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT b.session_id FROM agent_bindings b
+           JOIN threads t ON t.id = b.thread_id
+          WHERE t.project_id = ? AND b.agent = ? AND b.native = 1
+            AND b.session_id IS NOT NULL",
+    )
+    .bind(&project_id)
+    .bind(agent)
+    .fetch_all(&state.pool)
+    .await?
+    .into_iter()
+    .collect();
     Ok(Json(AgentSessionsResponse {
         sessions: sessions
             .into_iter()
+            .filter(|session| !bound.contains(&session.id))
             .map(|session| AgentSessionDto {
                 id: session.id,
                 title: session.title,

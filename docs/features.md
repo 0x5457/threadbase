@@ -101,6 +101,10 @@ pi speak ACP (`opencode acp`, `pi-acp`); only missing npm adapters fall back to
 `npx`, which adds about a second per start — `threadbase doctor` flags adapters
 still on npx.
 
+An expanded project lists its five most recent importable sessions in the
+sidebar; picking one creates the thread. The project menu and the new-thread
+dialog open the full searchable picker.
+
 - **Lazy start.** Creating a thread does not start a process; the first
   prompt does. The message that starts the adapter is not shown as queued: it
   is the thing being started, and the thread reads `preparing` until the turn
