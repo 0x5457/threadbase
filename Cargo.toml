@@ -24,7 +24,7 @@ threadbase-draft = { path = "crates/draft" }
 threadbase-agent = { path = "crates/agent" }
 threadbase-workspace = { path = "crates/workspace" }
 
-agent-client-protocol = { version = "5.1", features = ["process", "unstable_subagents", "unstable_end_turn_token_usage"] }
+agent-client-protocol = { version = "5.4", features = ["process", "unstable_subagents", "unstable_end_turn_token_usage", "unstable_plan_operations", "unstable_protocol_v2"] }
 anyhow = "1.0"
 async-trait = "0.1"
 base64 = "0.22"

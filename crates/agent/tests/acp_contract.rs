@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use serde_json::Value;
 use threadbase_agent::{
-    AcpHarness, AgentProfile, Capabilities, Harness, HarnessError, LaunchCtx, NewSession,
-    PromptPart, RawAgentEvent, SteeringOutcome,
+    AcpHarness, AgentProfile, Capabilities, ForegroundState, Harness, HarnessError, LaunchCtx,
+    MessageRole, NewSession, PromptPart, RawAgentEvent, SteeringOutcome,
 };
 use threadbase_shared::{
     ApprovalDecision, ElicitationAction, PermissionMode, PlanPriority, PlanStatus, SubagentStatus,
@@ -160,18 +160,25 @@ async fn journal_entry(path: &Path, mut predicate: impl FnMut(&Value) -> bool) -
 
 async fn expect_prompt_done(events: &mut broadcast::Receiver<RawAgentEvent>) -> String {
     match expect_event(events, |event| {
-        matches!(event, RawAgentEvent::PromptDone { .. })
+        matches!(
+            event,
+            RawAgentEvent::Foreground {
+                state: ForegroundState::Idle { .. }
+            }
+        )
     })
     .await
     {
-        RawAgentEvent::PromptDone { stop_reason } => stop_reason,
-        _ => unreachable!("filtered for prompt completion"),
+        RawAgentEvent::Foreground {
+            state: ForegroundState::Idle { stop_reason, .. },
+        } => stop_reason.unwrap_or_default(),
+        _ => unreachable!("filtered for an idle foreground state"),
     }
 }
 
 async fn expect_selected_option(events: &mut broadcast::Receiver<RawAgentEvent>) -> String {
     loop {
-        if let RawAgentEvent::ToolCallUpdate { call } = next_event(events).await {
+        if let RawAgentEvent::ToolUpsert { call } = next_event(events).await {
             let Some(output) = call.output.as_deref() else {
                 continue;
             };
@@ -261,23 +268,23 @@ async fn prompt_streams_text_tools_plan_usage_and_completion() {
 
     let event = expect_event(
         &mut test.events,
-        |event| matches!(event, RawAgentEvent::AgentMessageChunk { text } if text == "Hello"),
+        |event| matches!(event, RawAgentEvent::MessageChunk { role: MessageRole::Agent, text, .. } if text == "Hello"),
     )
     .await;
-    assert!(matches!(event, RawAgentEvent::AgentMessageChunk { .. }));
+    assert!(matches!(event, RawAgentEvent::MessageChunk { .. }));
 
     expect_event(
         &mut test.events,
-        |event| matches!(event, RawAgentEvent::AgentThoughtChunk { text } if text == "Considering"),
+        |event| matches!(event, RawAgentEvent::MessageChunk { role: MessageRole::Thought, text, .. } if text == "Considering"),
     )
     .await;
 
     let call = expect_event(
         &mut test.events,
-        |event| matches!(event, RawAgentEvent::ToolCall { call } if call.id == "call-1"),
+        |event| matches!(event, RawAgentEvent::ToolUpsert { call } if call.id == "call-1"),
     )
     .await;
-    let RawAgentEvent::ToolCall { call } = call else {
+    let RawAgentEvent::ToolUpsert { call } = call else {
         unreachable!("filtered for a tool call")
     };
     assert_eq!(call.title, "Run tests");
@@ -300,12 +307,12 @@ async fn prompt_streams_text_tools_plan_usage_and_completion() {
     let update = expect_event(&mut test.events, |event| {
         matches!(
             event,
-            RawAgentEvent::ToolCallUpdate { call }
+            RawAgentEvent::ToolUpsert { call }
                 if call.id == "call-1" && call.status == ToolStatus::InProgress
         )
     })
     .await;
-    let RawAgentEvent::ToolCallUpdate { call } = update else {
+    let RawAgentEvent::ToolUpsert { call } = update else {
         unreachable!("filtered for a tool call update")
     };
     assert_eq!(call.title, "Run tests");
@@ -314,12 +321,12 @@ async fn prompt_streams_text_tools_plan_usage_and_completion() {
     let completed = expect_event(&mut test.events, |event| {
         matches!(
             event,
-            RawAgentEvent::ToolCallUpdate { call }
+            RawAgentEvent::ToolUpsert { call }
                 if call.id == "call-1" && call.status == ToolStatus::Completed
         )
     })
     .await;
-    let RawAgentEvent::ToolCallUpdate { call } = completed else {
+    let RawAgentEvent::ToolUpsert { call } = completed else {
         unreachable!("filtered for a tool call update")
     };
     assert_eq!(call.output.as_deref(), Some(r#"{"stdout":"ok"}"#));
@@ -385,12 +392,14 @@ async fn load_session_resumes_without_replaying_history() {
         }
         match tokio::time::timeout(remaining, next_event(&mut test.events)).await {
             Err(_) => break,
-            Ok(RawAgentEvent::AgentMessageChunk { text }) => {
+            Ok(RawAgentEvent::MessageChunk {
+                role: MessageRole::Agent,
+                text,
+                ..
+            }) => {
                 panic!("load replay leaked a message chunk: {text:?}")
             }
-            Ok(RawAgentEvent::AgentThoughtChunk { .. })
-            | Ok(RawAgentEvent::ToolCall { .. })
-            | Ok(RawAgentEvent::ToolCallUpdate { .. }) => {
+            Ok(RawAgentEvent::MessageChunk { .. }) | Ok(RawAgentEvent::ToolUpsert { .. }) => {
                 panic!("load replay leaked a conversation event")
             }
             Ok(_) => {}
@@ -404,14 +413,19 @@ async fn load_session_resumes_without_replaying_history() {
         .expect("prompt");
     let first = loop {
         match next_event(&mut test.events).await {
-            event @ RawAgentEvent::AgentMessageChunk { .. } => break event,
-            RawAgentEvent::PromptDone { .. } => {
-                panic!("streaming prompt finished without a message chunk")
-            }
+            event @ RawAgentEvent::MessageChunk { .. } => break event,
+            RawAgentEvent::Foreground {
+                state: ForegroundState::Idle { .. },
+            } => panic!("streaming prompt finished without a message chunk"),
             _ => {}
         }
     };
-    let RawAgentEvent::AgentMessageChunk { text } = first else {
+    let RawAgentEvent::MessageChunk {
+        role: MessageRole::Agent,
+        text,
+        ..
+    } = first
+    else {
         unreachable!("filtered for a message chunk");
     };
     assert_eq!(text, "Hello", "replay must not precede live streaming");
@@ -673,14 +687,14 @@ async fn cancel_stops_the_running_turn() {
 
     expect_event(
         &mut test.events,
-        |event| matches!(event, RawAgentEvent::AgentMessageChunk { text } if text == "working"),
+        |event| matches!(event, RawAgentEvent::MessageChunk { role: MessageRole::Agent, text, .. } if text == "working"),
     )
     .await;
 
     test.harness.cancel(&turn).await.expect("cancel");
     expect_event(
         &mut test.events,
-        |event| matches!(event, RawAgentEvent::AgentMessageChunk { text } if text == "cancelled"),
+        |event| matches!(event, RawAgentEvent::MessageChunk { role: MessageRole::Agent, text, .. } if text == "cancelled"),
     )
     .await;
     assert_eq!(expect_prompt_done(&mut test.events).await, "cancelled");
@@ -789,7 +803,7 @@ async fn elicitation_actions_map_to_protocol_responses() {
             .await
             .expect("respond to elicitation");
         expect_event(&mut test.events, |event| {
-            matches!(event, RawAgentEvent::AgentMessageChunk { text } if *text == format!("elicitation:{expected}"))
+            matches!(event, RawAgentEvent::MessageChunk { role: MessageRole::Agent, text, .. } if *text == format!("elicitation:{expected}"))
         })
         .await;
         assert_eq!(expect_prompt_done(&mut test.events).await, "end_turn");
@@ -879,7 +893,7 @@ async fn nested_subagent_updates_upsert_and_only_declared_children_cancel() {
         .await
         .expect("cancel declared child");
     expect_event(&mut test.events, |event| {
-        matches!(event, RawAgentEvent::AgentMessageChunk { text } if text == "subagent-cancelled:sub-1")
+        matches!(event, RawAgentEvent::MessageChunk { role: MessageRole::Agent, text, .. } if text == "subagent-cancelled:sub-1")
     })
     .await;
 
@@ -923,7 +937,7 @@ async fn malformed_json_rpc_emits_an_error_and_keeps_streaming() {
     assert!(matches!(event, RawAgentEvent::Error { .. }));
 
     expect_event(&mut test.events, |event| {
-        matches!(event, RawAgentEvent::AgentMessageChunk { text } if text == "after malformed")
+        matches!(event, RawAgentEvent::MessageChunk { role: MessageRole::Agent, text, .. } if text == "after malformed")
     })
     .await;
     assert_eq!(expect_prompt_done(&mut test.events).await, "end_turn");

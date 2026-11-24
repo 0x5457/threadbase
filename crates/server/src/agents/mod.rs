@@ -27,9 +27,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use threadbase_agent::profile::Transport;
 use threadbase_agent::{
-    all_profiles, AcpHarness, Harness, LaunchCtx, NewSession, PromptPart, SessionId,
-    SteeringOutcome, TurnHandle,
+    all_profiles, AcpHarness, ClaudeHarness, CodexHarness, Harness, LaunchCtx, NewSession,
+    PromptPart, SessionId, SteeringOutcome, TurnHandle,
 };
 use threadbase_core::permissions::PermissionPolicy;
 use threadbase_core::state::{ApprovalAction, SubagentMachine, ThreadAction};
@@ -496,7 +497,11 @@ impl AgentManager {
                     .cloned()
                     .expect("at least one agent profile")
             });
-        let mut harness = Box::new(AcpHarness::new(profile));
+        let mut harness: Box<dyn Harness> = match profile.transport() {
+            Transport::Codex => Box::new(CodexHarness::new(profile)),
+            Transport::Claude => Box::new(ClaudeHarness::new(profile)),
+            Transport::Acp => Box::new(AcpHarness::new(profile)),
+        };
         let events = harness.events();
         let permission_mode =
             threads::permission_mode(&self.inner.pool, thread_id, &self.inner.policy).await?;

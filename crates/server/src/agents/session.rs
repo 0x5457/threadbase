@@ -17,7 +17,7 @@ pub(crate) struct Session {
     turn: Mutex<TurnSlot>,
     pub(crate) run: Arc<Mutex<RunState>>,
     /// Signalled by the pump task when its event stream closes. A rewind waits
-    /// for this before deleting the tail, so a late `PromptDone` from the old
+    /// for this before deleting the tail, so a late idle update from the old
     /// adapter cannot land after the cut and resurrect part of the turn.
     pub(crate) pump_done: Arc<tokio::sync::Notify>,
     /// Set once the adapter is gone or being torn down, so a process exit is
@@ -317,17 +317,48 @@ impl TurnSlot {
 #[derive(Default)]
 pub(crate) struct RunState {
     pub(crate) turn_id: Option<TurnId>,
-    pub(crate) agent_message_id: Option<MessageId>,
     pub(crate) thinking_id: Option<MessageId>,
-    pub(crate) agent_text: String,
+    /// Agent messages streamed this turn, in arrival order. The protocol names
+    /// each message, so one turn can carry several transcript rows.
+    pub(crate) agent_messages: Vec<(String, OpenMessage)>,
+    /// Tool calls already inserted by this turn, so an upsert knows whether it
+    /// creates the row or patches it.
+    pub(crate) tools: std::collections::HashSet<String>,
     /// Something reached the transcript during this turn. A turn that ends with
     /// `end_turn` and nothing to show for it died upstream.
     pub(crate) saw_output: bool,
 }
 
+/// One agent message being streamed, keyed by the protocol's stable id.
+#[derive(Default)]
+pub(crate) struct OpenMessage {
+    pub(crate) id: MessageId,
+    pub(crate) text: String,
+    /// The text last written to the transcript. An upsert writes immediately;
+    /// the turn end only writes again when the text changed since.
+    pub(crate) completed: Option<String>,
+}
+
 impl RunState {
     pub(crate) fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    /// The transcript row for one protocol message id, created on first sight.
+    pub(crate) fn open_message(&mut self, protocol_id: &str) -> &mut OpenMessage {
+        let index = match self
+            .agent_messages
+            .iter()
+            .position(|(id, _)| id == protocol_id)
+        {
+            Some(index) => index,
+            None => {
+                self.agent_messages
+                    .push((protocol_id.to_owned(), OpenMessage::default()));
+                self.agent_messages.len() - 1
+            }
+        };
+        &mut self.agent_messages[index].1
     }
 }
 

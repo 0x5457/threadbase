@@ -11,8 +11,8 @@ use crate::events::EventMeta;
 use crate::{approvals, elicitations, subagents, threads};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
-use threadbase_agent::RawAgentEvent;
-use threadbase_core::state::ThreadAction;
+use threadbase_agent::{ForegroundState, MessageRole as AgentMessageRole, RawAgentEvent};
+use threadbase_core::state::{ApprovalAction, ThreadAction};
 use threadbase_shared::{
     now_ms, Actor, ApprovalDecision, MessageId, MessageRole, ThreadEvent, ThreadId, ThreadStatus,
 };
@@ -64,7 +64,11 @@ pub(crate) fn spawn(
                 session.touch();
             }
             match received {
-                Ok(RawAgentEvent::AgentThoughtChunk { text }) => {
+                Ok(RawAgentEvent::MessageChunk {
+                    role: AgentMessageRole::Thought,
+                    text,
+                    ..
+                }) => {
                     let message_id = pump.thinking_id().await;
                     match &mut thought {
                         Some((id, buffer)) if *id == message_id => push_delta(buffer, &text),
@@ -112,14 +116,14 @@ fn truncate_summary(message: &str) -> String {
     format!("The agent stopped with an error: {text}")
 }
 
-/// Events that put a row in the transcript. `AgentThoughtChunk` is folded and
-/// flushed separately, so it is counted there instead.
+/// Events that put a row in the transcript. Thought chunks are folded and
+/// flushed separately, so they are counted there instead.
 fn is_visible(event: &RawAgentEvent) -> bool {
     matches!(
         event,
-        RawAgentEvent::AgentMessageChunk { .. }
-            | RawAgentEvent::ToolCall { .. }
-            | RawAgentEvent::ToolCallUpdate { .. }
+        RawAgentEvent::MessageChunk { .. }
+            | RawAgentEvent::MessageUpsert { .. }
+            | RawAgentEvent::ToolUpsert { .. }
             | RawAgentEvent::Plan { .. }
             | RawAgentEvent::PermissionRequest { .. }
             | RawAgentEvent::ElicitationRequest { .. }
@@ -210,15 +214,16 @@ impl Pump {
             self.run.lock().await.saw_output = true;
         }
         match event {
-            RawAgentEvent::AgentMessageChunk { text } => {
+            RawAgentEvent::MessageChunk {
+                role: AgentMessageRole::Agent,
+                message_id,
+                text,
+            } => {
                 let message_id = {
                     let mut run = self.run.lock().await;
-                    let id = run
-                        .agent_message_id
-                        .get_or_insert_with(MessageId::new)
-                        .clone();
-                    run.agent_text.push_str(&text);
-                    id
+                    let message = run.open_message(&message_id);
+                    message.text.push_str(&text);
+                    message.id.clone()
                 };
                 self.append(ThreadEvent::MessageDelta {
                     message_id,
@@ -228,20 +233,67 @@ impl Pump {
                 })
                 .await
             }
-            RawAgentEvent::AgentThoughtChunk { text } => {
+            RawAgentEvent::MessageChunk {
+                role: AgentMessageRole::Thought,
+                text,
+                ..
+            } => {
                 let message_id = self.thinking_id().await;
                 self.append(ThreadEvent::ThinkingDelta { message_id, text })
                     .await
             }
-            RawAgentEvent::ToolCall { call } => {
-                let call = tool_data(&self.thread_id, call);
-                self.tool_subagent(&call).await?;
-                self.append(ThreadEvent::ToolCall { call }).await
+            RawAgentEvent::MessageUpsert {
+                role: AgentMessageRole::Agent,
+                message_id,
+                text: Some(text),
+            } => {
+                // A whole-message upsert replaces the message text. The transcript can
+                // only replace a row with a completed message, so the row is
+                // written now and not again at the turn end if unchanged.
+                let (message_id, turn_id) = {
+                    let mut run = self.run.lock().await;
+                    let turn_id = run.turn_id.clone();
+                    let message = run.open_message(&message_id);
+                    message.text.clone_from(&text);
+                    message.completed = Some(text.clone());
+                    (message.id.clone(), turn_id)
+                };
+                let message = message_dto(&self.thread_id, message_id, turn_id, text);
+                self.append(ThreadEvent::MessageCompleted { message }).await
             }
-            RawAgentEvent::ToolCallUpdate { call } => {
+            // Thoughts arrive as chunks; an upsert for one carries no event
+            // shape the transcript can replace. A text-less upsert only
+            // patches metadata the transcript does not keep.
+            RawAgentEvent::MessageUpsert { .. } => Ok(()),
+            RawAgentEvent::ToolUpsert { call } => {
                 let call = tool_data(&self.thread_id, call);
                 self.tool_subagent(&call).await?;
-                self.append(ThreadEvent::ToolCallUpdate { call }).await
+                let created = {
+                    let mut run = self.run.lock().await;
+                    run.tools.insert(call.id.0.clone())
+                };
+                if created {
+                    self.append(ThreadEvent::ToolCall { call }).await
+                } else {
+                    self.append(ThreadEvent::ToolCallUpdate { call }).await
+                }
+            }
+            RawAgentEvent::Foreground { state } => self.foreground(state).await,
+            RawAgentEvent::NativeTurn { id } => {
+                crate::bindings::set_native_turn(&self.inner.pool, &self.thread_id, &id).await?;
+                Ok(())
+            }
+            RawAgentEvent::PeerActivity { active } => {
+                sqlx::query("UPDATE agent_bindings SET peer_active = ? WHERE thread_id = ?")
+                    .bind(i64::from(active))
+                    .bind(&self.thread_id)
+                    .execute(&self.inner.pool)
+                    .await?;
+                self.inner.projection.publish(&self.thread_id).await;
+                Ok(())
+            }
+            RawAgentEvent::PermissionCancelled { request_id } => {
+                self.permission_cancelled(&request_id).await
             }
             RawAgentEvent::Plan { entries } => {
                 self.append(ThreadEvent::PlanUpdated { entries }).await
@@ -306,7 +358,6 @@ impl Pump {
             RawAgentEvent::Usage { usage } => {
                 self.append(ThreadEvent::UsageUpdated { usage }).await
             }
-            RawAgentEvent::PromptDone { stop_reason } => self.finish_turn(stop_reason).await,
             RawAgentEvent::Error { message } => {
                 self.abort_turn(ThreadAction::TurnError, message).await
             }
@@ -402,7 +453,7 @@ impl Pump {
                 tool_call_id: None,
                 agent: self.agent.clone(),
                 title: request.title,
-                description: None,
+                description: request.description.clone(),
                 kind: tool_kind(request.kind).to_owned(),
                 command: request.command.clone(),
                 cwd: request.cwd.clone(),
@@ -503,24 +554,71 @@ impl Pump {
             .await
     }
 
+    /// The agent's foreground state. Idle is the completion signal; the rest
+    /// is informational because the thread state machine already models
+    /// running work, pending approvals and questions.
+    async fn foreground(&self, state: ForegroundState) -> Result<(), ServerError> {
+        match state {
+            ForegroundState::Idle { stop_reason, usage } => {
+                if let Some(usage) = usage {
+                    self.append(ThreadEvent::UsageUpdated { usage }).await?;
+                }
+                self.finish_turn(stop_reason.unwrap_or_else(|| "end_turn".to_owned()))
+                    .await
+            }
+            ForegroundState::Unknown => {
+                self.append(ThreadEvent::SystemNotice {
+                    level: "info".to_owned(),
+                    message: "The agent can no longer report what it is doing; its next update replaces this state.".to_owned(),
+                })
+                .await
+            }
+            ForegroundState::Running | ForegroundState::RequiresAction => Ok(()),
+        }
+    }
+
+    /// The agent withdrew a permission request it had sent, so the stored
+    /// approval must not stay pending.
+    async fn permission_cancelled(&self, approval_id: &str) -> Result<(), ServerError> {
+        if approvals::transition(
+            &self.inner.pool,
+            &self.inner.projection,
+            &self.thread_id,
+            approval_id,
+            ApprovalAction::Cancel,
+        )
+        .await
+        .is_ok()
+        {
+            self.append(ThreadEvent::PermissionCancelled {
+                approval_id: approval_id.into(),
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn finish_turn(&self, stop_reason: String) -> Result<(), ServerError> {
         self.inner.clear_turn(&self.thread_id).await;
-        let (turn_id, message_id, text, silent) = {
+        let (turn_id, messages, silent) = {
             let mut run = self.run.lock().await;
             run.thinking_id = None;
             (
                 run.turn_id.take(),
-                run.agent_message_id.take(),
-                std::mem::take(&mut run.agent_text),
+                std::mem::take(&mut run.agent_messages),
                 !std::mem::take(&mut run.saw_output),
             )
         };
-        if let Some(message_id) = message_id {
-            if !text.is_empty() {
-                let message = message_dto(&self.thread_id, message_id, turn_id.clone(), text);
-                self.append(ThreadEvent::MessageCompleted { message })
-                    .await?;
+        for (_, message) in messages {
+            if message.text.is_empty() {
+                continue;
             }
+            if message.completed.as_deref() == Some(message.text.as_str()) {
+                continue;
+            }
+            let dto = message_dto(&self.thread_id, message.id, turn_id.clone(), message.text);
+            self.append(ThreadEvent::MessageCompleted { message: dto })
+                .await?;
         }
         // Adapters report `end_turn` even for a turn that died upstream: pi
         // turns a provider error (a 402, an expired key) into an empty
@@ -578,6 +676,15 @@ impl Pump {
                     .await;
             }
         }
+        // The transcript has everything up to this turn, so the next resume
+        // imports only newer native turns.
+        let _ = sqlx::query(
+            "UPDATE agent_bindings SET native_synced_at = ? WHERE thread_id = ? AND native = 1",
+        )
+        .bind(now_ms())
+        .bind(&self.thread_id)
+        .execute(&self.inner.pool)
+        .await;
         // A finished turn proves the adapter is healthy; forget earlier crashes.
         self.inner.restarts.lock().await.remove(&self.thread_id);
         let _ = self.inner.queue_tx.send(self.thread_id.clone());

@@ -6,6 +6,16 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 use threadbase_shared::PermissionMode;
 
+/// How the harness talks to this agent. ACP stays for adapters that only
+/// speak the stable protocol; Codex has its own app-server with the thread
+/// API a shared session needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    Acp,
+    Claude,
+    Codex,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentProfile {
     pub id: String,
@@ -25,6 +35,20 @@ pub struct AgentProfile {
 }
 
 impl AgentProfile {
+    /// The transport that can drive this agent. Tests and custom agents pin
+    /// ACP through `THREADBASE_ACP_COMMAND`, which points at an ACP fixture.
+    #[must_use]
+    pub fn transport(&self) -> Transport {
+        if std::env::var_os("THREADBASE_ACP_COMMAND").is_some() {
+            return Transport::Acp;
+        }
+        match self.id.as_str() {
+            "claude" => Transport::Claude,
+            "codex" => Transport::Codex,
+            _ => Transport::Acp,
+        }
+    }
+
     /// A workspace-configured agent. It has no provider-side session modes,
     /// so the server's policy answers every permission request itself.
     #[must_use]
@@ -94,18 +118,18 @@ static PROFILES: LazyLock<Vec<AgentProfile>> = LazyLock::new(|| {
         built_in(
             "codex",
             "Codex",
-            "codex-acp",
+            "codex",
             &[],
-            Some(("@agentclientprotocol/codex-acp", "2.6.0")),
+            None,
             CODEX_MODES,
             CODEX_PERMISSION_MODES,
         ),
         built_in(
             "claude",
             "Claude Code",
-            "claude-agent-acp",
+            "claude",
             &[],
-            Some(("@agentclientprotocol/claude-agent-acp", "0.101.0")),
+            None,
             CLAUDE_MODES,
             CLAUDE_PERMISSION_MODES,
         ),
@@ -246,8 +270,33 @@ mod tests {
 
     #[test]
     fn resolve_falls_back_to_pinned_npx() {
-        let resolved = resolve(&codex_with("definitely-not-installed-threadbase"));
+        let claude = AgentProfile {
+            command: "definitely-not-installed-threadbase".to_owned(),
+            npm_package: Some("@agentclientprotocol/claude-agent-acp".to_owned()),
+            npm_version: Some("0.109.0".to_owned()),
+            ..find_profile("claude").expect("claude profile").clone()
+        };
+        let resolved = resolve(&claude);
         assert!(resolved.via_npx);
-        assert_eq!(resolved.args[1], "@agentclientprotocol/codex-acp@2.6.0");
+        assert_eq!(
+            resolved.args[1],
+            "@agentclientprotocol/claude-agent-acp@0.109.0"
+        );
+    }
+
+    #[test]
+    fn codex_and_pi_pick_their_transports() {
+        if std::env::var_os("THREADBASE_ACP_COMMAND").is_some() {
+            return;
+        }
+        assert_eq!(
+            find_profile("codex").expect("codex").transport(),
+            Transport::Codex
+        );
+        assert_eq!(
+            find_profile("claude").expect("claude").transport(),
+            Transport::Claude
+        );
+        assert_eq!(find_profile("pi").expect("pi").transport(), Transport::Acp);
     }
 }
