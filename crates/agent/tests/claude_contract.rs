@@ -20,7 +20,6 @@ fn profile() -> AgentProfile {
         npm_package: None,
         npm_version: None,
         default_model: None,
-        modes: &[],
         permission_modes: &[],
     }
 }

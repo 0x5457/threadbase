@@ -1,9 +1,8 @@
 //! ACP v1 harness: the transport for adapters that only speak the stable
 //! protocol (pi today).
 //!
-//! v1 has no message ids, no foreground state and no structured diffs, so this
-//! module synthesizes the minimum the event model needs and leaves the rest to
-//! the adapter. Protocol types stay here: everything the server sees is a
+//! v1 has no message ids or foreground state, so this module synthesizes the
+//! minimum the event model needs and leaves the rest to the adapter. Protocol types stay here: everything the server sees is a
 //! [`RawAgentEvent`].
 
 use std::collections::{BTreeMap, HashMap};
@@ -40,8 +39,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use similar::{ChangeTag, TextDiff};
 use threadbase_shared::{
-    ApprovalDecision, DiffChangeDto, DiffSummary, ElicitationAction, PlanEntry, PlanPriority,
-    PlanStatus, SubagentStatus, ToolKind, ToolLocation, ToolStatus, Usage,
+    ApprovalDecision, DiffSummary, ElicitationAction, PlanEntry, PlanPriority, PlanStatus,
+    SubagentStatus, ToolKind, ToolLocation, ToolStatus, Usage,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -454,10 +453,6 @@ impl Harness for AcpHarness {
         self.capabilities = Capabilities {
             steering,
             images: response.agent_capabilities.prompt_capabilities.image,
-            subagents: ctx.subagents,
-            elicitation_form: true,
-            elicitation_url: false,
-            terminal: false,
         };
         self.cwd = Some(ctx.cwd);
         self.connection = Some(connection);
@@ -1402,16 +1397,10 @@ fn diff_summary(content: &[ToolCallContent]) -> Option<DiffSummary> {
         let mut patch = format!("--- a/{path}\n+++ b/{path}\n");
         patch.push_str(&changes.unified_diff().context_radius(3).to_string());
         return Some(DiffSummary {
-            path: path.clone(),
+            path,
             additions: u32::try_from(additions).unwrap_or(u32::MAX),
             deletions: u32::try_from(deletions).unwrap_or(u32::MAX),
             patch: Some(patch),
-            changes: vec![DiffChangeDto {
-                operation: "modify".to_owned(),
-                path,
-                old_path: None,
-                file_type: Some("text".to_owned()),
-            }],
         });
     }
     None

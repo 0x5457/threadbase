@@ -23,7 +23,6 @@ fn fake_profile() -> AgentProfile {
         npm_package: None,
         npm_version: None,
         default_model: None,
-        modes: &[],
         permission_modes: &[
             (PermissionMode::Supervised, Some("ask")),
             (PermissionMode::AutoEdit, Some("acceptEdits")),
@@ -56,7 +55,6 @@ fn unmapped_profile() -> AgentProfile {
         npm_package: None,
         npm_version: None,
         default_model: None,
-        modes: &[],
         permission_modes: &[],
     }
 }
@@ -196,10 +194,6 @@ async fn expect_selected_option(events: &mut broadcast::Receiver<RawAgentEvent>)
 async fn start_advertises_documented_client_capabilities() {
     let mut test = start(true).await;
     assert!(test.capabilities.steering);
-    assert!(test.capabilities.subagents);
-    assert!(test.capabilities.elicitation_form);
-    assert!(!test.capabilities.elicitation_url);
-    assert!(!test.capabilities.terminal);
 
     let info = test.harness.agent_info().expect("agent identity");
     assert_eq!(info.name, "fake-agent");
@@ -240,7 +234,6 @@ async fn start_advertises_documented_client_capabilities() {
 #[tokio::test]
 async fn start_without_subagent_opt_in_omits_the_capability() {
     let mut test = start(false).await;
-    assert!(!test.capabilities.subagents);
 
     let initialize = journal_entry(&test.journal, |message| {
         message.get("method").and_then(Value::as_str) == Some("initialize")

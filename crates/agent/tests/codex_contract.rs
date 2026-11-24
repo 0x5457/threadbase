@@ -20,7 +20,6 @@ fn profile() -> AgentProfile {
         npm_package: None,
         npm_version: None,
         default_model: None,
-        modes: &[],
         permission_modes: &[],
     }
 }
@@ -167,7 +166,7 @@ async fn the_codex_client_mirrors_a_turn_and_answers_approvals() {
     expect(&mut events, |event| {
         matches!(
             event,
-            RawAgentEvent::MessageUpsert { text: Some(text), .. } if text == "Hello world"
+            RawAgentEvent::MessageUpsert { text, .. } if text == "Hello world"
         )
     })
     .await;

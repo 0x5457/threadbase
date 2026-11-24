@@ -25,7 +25,6 @@ pub struct AgentProfile {
     pub npm_package: Option<String>,
     pub npm_version: Option<String>,
     pub default_model: Option<String>,
-    pub modes: &'static [&'static str],
     /// Provider session-mode id for each of our permission modes.
     ///
     /// `None` means the provider has no equivalent, so the server's own policy
@@ -67,14 +66,10 @@ impl AgentProfile {
             npm_package: None,
             npm_version: None,
             default_model,
-            modes: &[],
             permission_modes: &[],
         }
     }
 }
-
-const CODEX_MODES: &[&str] = &["read-only", "workspace-write", "agent", "agent-full-access"];
-const CLAUDE_MODES: &[&str] = &["default", "acceptEdits", "plan", "bypassPermissions"];
 
 /// Codex has no "accept edits but ask for commands" step: `agent` asks, and
 /// `agent-full-access` does not. Auto-accept edits therefore falls back to the
@@ -97,7 +92,6 @@ fn built_in(
     command: &str,
     args: &[&str],
     npm: Option<(&str, &str)>,
-    modes: &'static [&'static str],
     permission_modes: &'static [(PermissionMode, Option<&'static str>)],
 ) -> AgentProfile {
     AgentProfile {
@@ -108,41 +102,23 @@ fn built_in(
         npm_package: npm.map(|(package, _)| package.to_owned()),
         npm_version: npm.map(|(_, version)| version.to_owned()),
         default_model: None,
-        modes,
         permission_modes,
     }
 }
 
 static PROFILES: LazyLock<Vec<AgentProfile>> = LazyLock::new(|| {
     vec![
-        built_in(
-            "codex",
-            "Codex",
-            "codex",
-            &[],
-            None,
-            CODEX_MODES,
-            CODEX_PERMISSION_MODES,
-        ),
+        built_in("codex", "Codex", "codex", &[], None, CODEX_PERMISSION_MODES),
         built_in(
             "claude",
             "Claude Code",
             "claude",
             &[],
             None,
-            CLAUDE_MODES,
             CLAUDE_PERMISSION_MODES,
         ),
-        built_in("opencode", "opencode", "opencode", &["acp"], None, &[], &[]),
-        built_in(
-            "pi",
-            "pi",
-            "pi-acp",
-            &[],
-            Some(("pi-acp", "0.0.34")),
-            &[],
-            &[],
-        ),
+        built_in("opencode", "opencode", "opencode", &["acp"], None, &[]),
+        built_in("pi", "pi", "pi-acp", &[], Some(("pi-acp", "0.0.34")), &[]),
     ]
 });
 
@@ -250,7 +226,6 @@ mod tests {
             vec!["acp".to_owned()],
             None,
         );
-        assert_eq!(profile.modes.len(), 0);
         assert_eq!(provider_mode(&profile, PermissionMode::FullAccess), None);
     }
 
@@ -270,18 +245,13 @@ mod tests {
 
     #[test]
     fn resolve_falls_back_to_pinned_npx() {
-        let claude = AgentProfile {
+        let pi = AgentProfile {
             command: "definitely-not-installed-threadbase".to_owned(),
-            npm_package: Some("@agentclientprotocol/claude-agent-acp".to_owned()),
-            npm_version: Some("0.109.0".to_owned()),
-            ..find_profile("claude").expect("claude profile").clone()
+            ..find_profile("pi").expect("pi profile").clone()
         };
-        let resolved = resolve(&claude);
+        let resolved = resolve(&pi);
         assert!(resolved.via_npx);
-        assert_eq!(
-            resolved.args[1],
-            "@agentclientprotocol/claude-agent-acp@0.109.0"
-        );
+        assert_eq!(resolved.args[1], "pi-acp@0.0.34");
     }
 
     #[test]

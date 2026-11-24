@@ -73,7 +73,7 @@ async fn wait_for(
 }
 
 #[tokio::test]
-#[ignore = "requires codex-acp and a logged-in Codex account"]
+#[ignore = "requires the codex CLI and a logged-in Codex account"]
 async fn real_codex_streams_a_reply() {
     std::env::remove_var("THREADBASE_ACP_COMMAND");
     let repo = TempDir::new().unwrap();
@@ -134,7 +134,7 @@ async fn real_codex_streams_a_reply() {
         .agents
         .ensure_started(thread.id.as_str())
         .await
-        .expect("codex-acp should start");
+        .expect("codex should start");
     state
         .agents
         .send(
