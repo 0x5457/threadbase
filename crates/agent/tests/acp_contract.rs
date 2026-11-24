@@ -352,6 +352,38 @@ async fn prompt_streams_text_tools_plan_usage_and_completion() {
     test.harness.shutdown().await.expect("shutdown");
 }
 
+/// Regression: pi-acp reports automatic retries and compaction as assistant
+/// text, so "Retrying (attempt 1/3, waiting 2s)..." landed inside the reply it
+/// interrupted and stayed there in the persisted message.
+#[tokio::test]
+async fn adapter_status_lines_go_to_the_agent_log() {
+    let mut test = start(false).await;
+    new_session(&mut test).await;
+    test.harness
+        .prompt(vec![PromptPart::Text("status-lines".to_owned())])
+        .await
+        .expect("prompt");
+
+    for line in [
+        "Retrying (attempt 1/3, waiting 2s)...",
+        "Retry finished, resuming.",
+    ] {
+        expect_event(
+            &mut test.events,
+            |event| matches!(event, RawAgentEvent::AgentLog { text, .. } if text == line),
+        )
+        .await;
+    }
+    expect_event(&mut test.events, |event| {
+        matches!(
+            event,
+            RawAgentEvent::MessageChunk { role: MessageRole::Agent, text, .. } if text == "reply"
+        )
+    })
+    .await;
+    assert_eq!(expect_prompt_done(&mut test.events).await, "end_turn");
+}
+
 #[tokio::test]
 async fn load_session_resumes_without_replaying_history() {
     let mut test = start(true).await;
