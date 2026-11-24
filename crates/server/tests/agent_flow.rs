@@ -194,6 +194,19 @@ async fn max_seq(pool: &SqlitePool, thread_id: &str) -> i64 {
         .unwrap()
 }
 
+async fn wait_for_status(pool: &SqlitePool, thread_id: &str, expected: ThreadStatus) {
+    for _ in 0..200 {
+        if threads::status(pool, thread_id).await.ok() == Some(expected) {
+            return;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "thread status never became {expected:?}: {:?}",
+        threads::status(pool, thread_id).await
+    );
+}
+
 async fn wait_for(
     pool: &SqlitePool,
     thread_id: &str,
@@ -286,12 +299,9 @@ async fn a_turn_without_output_is_reported_as_a_failure() {
         message.contains("without any output"),
         "unexpected message: {message}"
     );
-    assert_eq!(
-        threads::status(&fixture.state.pool, thread_id)
-            .await
-            .unwrap(),
-        ThreadStatus::Error
-    );
+    // The event log and the thread row are separate writes; the row lands
+    // just after the event.
+    wait_for_status(&fixture.state.pool, thread_id, ThreadStatus::Error).await;
 
     // The thread stays usable: the next prompt runs again.
     let after = max_seq(&fixture.state.pool, thread_id).await;
@@ -448,6 +458,8 @@ async fn a_choice_uses_the_exact_option_id_not_the_decision_kind() {
     .await;
 }
 
+/// A finished message can arrive as a whole-message upsert. The transcript
+/// must replace the text the stream already wrote, not keep both.
 #[tokio::test]
 async fn fake_agent_streams_tools_and_permissions() {
     let Some(fixture) = fixture().await else {
@@ -2299,6 +2311,8 @@ async fn queued_input_runs_when_the_thread_is_idle() {
     .await;
 }
 
+/// Prompts are accepted while foreground work runs, so steering a queued
+/// message joins the running turn instead of interrupting it.
 #[tokio::test]
 async fn send_now_interrupts_a_non_steering_agent() {
     use axum::body::Body;

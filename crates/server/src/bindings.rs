@@ -61,6 +61,100 @@ pub async fn copy(
     Ok(())
 }
 
+/// Completion time (Unix ms) of the newest native turn this thread has seen.
+pub async fn native_synced_at(pool: &SqlitePool, thread_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT native_synced_at FROM agent_bindings WHERE thread_id = ?")
+        .bind(thread_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(0)
+}
+
+/// The newest native turn this thread has imported or mirrored.
+pub async fn native_turn_id(pool: &SqlitePool, thread_id: &str) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT native_turn_id FROM agent_bindings WHERE thread_id = ?",
+    )
+    .bind(thread_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+}
+
+pub async fn set_native_turn(
+    pool: &SqlitePool,
+    thread_id: &str,
+    turn_id: &str,
+) -> Result<(), ServerError> {
+    sqlx::query(
+        "UPDATE agent_bindings SET native_turn_id = ?, native_synced_at = ? WHERE thread_id = ?",
+    )
+    .bind(turn_id)
+    .bind(threadbase_shared::now_ms())
+    .bind(thread_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Advance the native cursor and the timestamp fallback in one write.
+pub async fn set_native_progress(
+    pool: &SqlitePool,
+    thread_id: &str,
+    synced_at: i64,
+    turn_id: Option<&str>,
+) -> Result<(), ServerError> {
+    sqlx::query(
+        "UPDATE agent_bindings SET native_synced_at = ?, native_turn_id = ? WHERE thread_id = ?",
+    )
+    .bind(synced_at)
+    .bind(turn_id)
+    .bind(thread_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_native_synced(
+    pool: &SqlitePool,
+    thread_id: &str,
+    at: i64,
+) -> Result<(), ServerError> {
+    sqlx::query(
+        "UPDATE agent_bindings SET native_synced_at = ? WHERE thread_id = ? AND native = 1",
+    )
+    .bind(at)
+    .bind(thread_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Mark a thread as continuing the agent's own session, starting from the
+/// completion time of what was just imported.
+pub async fn mark_native(
+    pool: &SqlitePool,
+    thread_id: &str,
+    synced_at: i64,
+    turn_id: Option<&str>,
+) -> Result<(), ServerError> {
+    sqlx::query(
+        "UPDATE agent_bindings
+         SET native = 1, native_synced_at = ?, native_turn_id = ?, peer_active = 0
+         WHERE thread_id = ?",
+    )
+    .bind(synced_at)
+    .bind(turn_id)
+    .bind(thread_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn set_session(
     pool: &SqlitePool,
     thread_id: &str,
