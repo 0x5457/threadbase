@@ -1381,24 +1381,6 @@ pub struct ToolLocation {
     pub line: Option<u32>,
 }
 
-/// One file-level operation in an agent-reported diff. Agents can report
-/// structured changes, so the transcript shows what happened without parsing
-/// the patch text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct DiffChangeDto {
-    /// `add`, `delete`, `modify`, `move`, `copy` or an agent extension.
-    pub operation: String,
-    pub path: String,
-    /// Source path for `move` and `copy`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub old_path: Option<String>,
-    /// `text`, `binary`, `directory` or `symlink` when the agent said so.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub file_type: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -1407,10 +1389,6 @@ pub struct DiffSummary {
     pub additions: u32,
     pub deletions: u32,
     pub patch: Option<String>,
-    /// Structured file operations. Empty when the agent did not report any,
-    /// so old event logs still deserialize.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub changes: Vec<DiffChangeDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

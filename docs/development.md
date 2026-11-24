@@ -32,8 +32,7 @@ pnpm --dir web doctor:ci        # React Doctor, correctness errors only
 pnpm --dir web build
 ```
 
-A real-adapter smoke test exists for Codex (needs `codex-acp` and a signed-in
-CLI):
+A real-adapter smoke test exists for Codex (needs the `codex` CLI signed in):
 
 ```bash
 cargo test -p threadbase --test real_codex -- --ignored --nocapture
@@ -46,7 +45,7 @@ crates/shared    wire + domain types; ts-rs generates web/src/api/types
 crates/core      pure policy: state machines, delivery, permissions
 crates/workspace paths, git worktrees, file browsing
 crates/draft      Yjs draft documents
-crates/agent      ACP harness, adapter profiles
+crates/agent      agent transports (ACP, Codex, Claude), profiles
 crates/server     HTTP/WS service, SQLite event log, routes
 web/              Vite + React 19 + Mantine client, embedded into the binary
 ```

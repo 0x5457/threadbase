@@ -30,8 +30,8 @@ use crate::{
     SteeringOutcome, ToolCallEvent, TurnHandle,
 };
 use threadbase_shared::{
-    AgentConfigOptionDto, AgentConfigValueDto, ApprovalDecision, DiffChangeDto, DiffSummary,
-    PlanEntry, PlanPriority, PlanStatus, ToolKind, ToolLocation, ToolStatus, Usage,
+    AgentConfigOptionDto, AgentConfigValueDto, ApprovalDecision, DiffSummary, PlanEntry,
+    PlanPriority, PlanStatus, ToolKind, ToolLocation, ToolStatus, Usage,
 };
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -245,10 +245,6 @@ impl Harness for CodexHarness {
         self.capabilities = Capabilities {
             steering: true,
             images: false,
-            subagents: false,
-            elicitation_form: false,
-            elicitation_url: false,
-            terminal: false,
         };
         Ok(self.capabilities)
     }
@@ -1203,7 +1199,7 @@ fn handle_notification(state: &Mutex<State>, bus: &EventBus, method: &str, param
                     bus.send(RawAgentEvent::MessageUpsert {
                         role: MessageRole::Agent,
                         message_id: id.to_owned(),
-                        text: Some(text.to_owned()),
+                        text: text.to_owned(),
                     });
                 }
                 return;
@@ -1478,41 +1474,27 @@ fn tool_event(item: &Value) -> ToolCallEvent {
 
 fn diff_from_changes(changes: &[Value]) -> DiffSummary {
     let mut patch = String::new();
-    let mut operations = Vec::new();
+    let mut path = None;
     for change in changes {
-        let path = change
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
+        if path.is_none() {
+            path = change
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
         if let Some(diff) = change.get("diff").and_then(Value::as_str) {
             patch.push_str(diff);
             if !diff.ends_with('\n') {
                 patch.push('\n');
             }
         }
-        operations.push(DiffChangeDto {
-            operation: match change.get("kind").and_then(Value::as_str) {
-                Some("add") => "add",
-                Some("delete") => "delete",
-                _ => "modify",
-            }
-            .to_owned(),
-            path,
-            old_path: None,
-            file_type: Some("text".to_owned()),
-        });
     }
     let (additions, deletions) = patch_line_counts(&patch);
     DiffSummary {
-        path: operations
-            .first()
-            .map(|change| change.path.clone())
-            .unwrap_or_default(),
+        path: path.unwrap_or_default(),
         additions,
         deletions,
         patch: (!patch.is_empty()).then_some(patch),
-        changes: operations,
     }
 }
 
@@ -1552,7 +1534,7 @@ mod tests {
     }
 
     #[test]
-    fn file_changes_become_a_structured_diff() {
+    fn file_changes_become_a_diff() {
         let changes = vec![json!({
             "path": "/tmp/a.rs",
             "kind": "update",
@@ -1561,7 +1543,6 @@ mod tests {
         let diff = diff_from_changes(&changes);
         assert_eq!(diff.path, "/tmp/a.rs");
         assert_eq!((diff.additions, diff.deletions), (1, 1));
-        assert_eq!(diff.changes[0].operation, "modify");
     }
 
     #[test]

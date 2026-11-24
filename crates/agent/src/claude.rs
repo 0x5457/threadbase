@@ -351,10 +351,6 @@ impl Harness for ClaudeHarness {
         self.capabilities = Capabilities {
             steering: true,
             images: true,
-            subagents: false,
-            elicitation_form: false,
-            elicitation_url: false,
-            terminal: false,
         };
         Ok(self.capabilities)
     }
@@ -889,7 +885,7 @@ fn assistant_message(state: &Shared, bus: &EventBus, message: &Value) {
                         bus.send(RawAgentEvent::MessageUpsert {
                             role: MessageRole::Agent,
                             message_id: uuid.clone(),
-                            text: Some(text.to_owned()),
+                            text: text.to_owned(),
                         });
                     }
                 }

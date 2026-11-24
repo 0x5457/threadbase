@@ -1,7 +1,9 @@
-//! Agent harness abstraction and ACP adapter profiles.
+//! Agent harness abstraction and transport profiles.
 //!
-//! The server never talks to an SDK type directly: ACP updates are normalized
-//! into [`RawAgentEvent`] and persisted by the thread event log.
+//! Codex and Claude Code speak their native protocols; ACP keeps pi, opencode,
+//! and custom adapters. The server never talks to a protocol type directly:
+//! every transport normalizes updates into [`RawAgentEvent`], which the thread
+//! event log persists.
 
 pub mod acp;
 mod bus;
@@ -98,12 +100,10 @@ impl PromptPart {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Capabilities {
+    /// The agent accepts new input while a turn is still running.
     pub steering: bool,
+    /// The agent accepts image prompt parts.
     pub images: bool,
-    pub subagents: bool,
-    pub elicitation_form: bool,
-    pub elicitation_url: bool,
-    pub terminal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,11 +230,6 @@ pub enum MessageRole {
 )]
 pub enum ForegroundState {
     Running,
-    /// Foreground work is blocked on user action. Informational: the thread
-    /// state machine already models pending approvals and elicitations.
-    RequiresAction,
-    /// The agent can no longer report foreground activity.
-    Unknown,
     /// Foreground work ended. `stop_reason` is the agent's idle stop reason;
     /// `usage` carries end-of-turn usage when the adapter reported it.
     Idle {
@@ -257,12 +252,11 @@ pub enum RawAgentEvent {
         message_id: String,
         text: String,
     },
-    /// Replace a message's text (whole-message upsert). `None` patches
-    /// only metadata and changes nothing the transcript shows.
+    /// Replace a message's text (whole-message upsert).
     MessageUpsert {
         role: MessageRole,
         message_id: String,
-        text: Option<String>,
+        text: String,
     },
     /// Full tool-call snapshot after the harness applied the protocol's
     /// upsert. The first upsert for an id creates the tool call.

@@ -16,7 +16,7 @@ use crate::{
     ExternalSession, HarnessError, HarnessResult, MessageRole, SessionHistory, SessionItem,
     SessionTurn, ToolCallEvent,
 };
-use threadbase_shared::{DiffChangeDto, DiffSummary, ToolKind, ToolLocation, ToolStatus};
+use threadbase_shared::{DiffSummary, ToolKind, ToolLocation, ToolStatus};
 
 const MAX_SESSION_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -395,12 +395,6 @@ fn tool_diff(name: &str, input: &Value) -> Option<DiffSummary> {
         additions: u32::try_from(additions).unwrap_or(u32::MAX),
         deletions: u32::try_from(deletions).unwrap_or(u32::MAX),
         patch: Some(patch),
-        changes: vec![DiffChangeDto {
-            operation: if old.is_empty() { "add" } else { "modify" }.to_owned(),
-            path: path.to_owned(),
-            old_path: None,
-            file_type: Some("text".to_owned()),
-        }],
     })
 }
 

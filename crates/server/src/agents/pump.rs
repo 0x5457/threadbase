@@ -245,7 +245,7 @@ impl Pump {
             RawAgentEvent::MessageUpsert {
                 role: AgentMessageRole::Agent,
                 message_id,
-                text: Some(text),
+                text,
             } => {
                 // A whole-message upsert replaces the message text. The transcript can
                 // only replace a row with a completed message, so the row is
@@ -262,8 +262,7 @@ impl Pump {
                 self.append(ThreadEvent::MessageCompleted { message }).await
             }
             // Thoughts arrive as chunks; an upsert for one carries no event
-            // shape the transcript can replace. A text-less upsert only
-            // patches metadata the transcript does not keep.
+            // shape the transcript can replace.
             RawAgentEvent::MessageUpsert { .. } => Ok(()),
             RawAgentEvent::ToolUpsert { call } => {
                 let call = tool_data(&self.thread_id, call);
@@ -566,14 +565,7 @@ impl Pump {
                 self.finish_turn(stop_reason.unwrap_or_else(|| "end_turn".to_owned()))
                     .await
             }
-            ForegroundState::Unknown => {
-                self.append(ThreadEvent::SystemNotice {
-                    level: "info".to_owned(),
-                    message: "The agent can no longer report what it is doing; its next update replaces this state.".to_owned(),
-                })
-                .await
-            }
-            ForegroundState::Running | ForegroundState::RequiresAction => Ok(()),
+            ForegroundState::Running => Ok(()),
         }
     }
 
