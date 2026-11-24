@@ -685,9 +685,13 @@ impl AgentManager {
                 "this agent does not accept images",
             )));
         }
+        // An adapter that is finishing a turn of its own is busy even though
+        // no turn is recorded here, and a prompt would take that turn's
+        // completion for its own.
         let running = session
             .observe_running(status == ThreadStatus::Running)
-            .await;
+            .await
+            || session.unowned_turn();
         let action = resolve_delivery(
             delivery.unwrap_or(DeliveryMode::Auto),
             DeliveryContext {
@@ -767,9 +771,15 @@ impl AgentManager {
                 }
             }
             SendAction::StopAndSend => {
-                if let Some(turn) = session.take_turn().await {
-                    let _ = session.harness.lock().await.cancel(&turn).await;
-                }
+                // A turn Threadbase does not own has no handle to cancel, and
+                // prompting into it would land on its completion; queue behind
+                // it instead.
+                let Some(turn) = session.take_turn().await else {
+                    return self
+                        .queue(thread_id, user, text, authors, attachments)
+                        .await;
+                };
+                let _ = session.harness.lock().await.cancel(&turn).await;
                 self.start_turn(
                     &session,
                     TurnStart {
@@ -827,7 +837,8 @@ impl AgentManager {
         let status = threads::status(&self.inner.pool, thread_id).await?;
         let running = session
             .observe_running(status == ThreadStatus::Running)
-            .await;
+            .await
+            || session.unowned_turn();
         if !running {
             return Err(ServerError(ApiError::conflict(
                 "no turn is running; the message stays queued",

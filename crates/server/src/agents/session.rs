@@ -11,6 +11,11 @@ use threadbase_core::state::{TurnAction, TurnMachine};
 use threadbase_shared::{now_ms, MessageId, TurnId, TurnState};
 use tokio::sync::{Mutex, OwnedSemaphorePermit};
 
+/// How long adapter output without a recorded turn still counts as that turn
+/// running. Long enough to cover a slow tool call, short enough that a message
+/// queued behind such a turn does not wait minutes.
+const UNOWNED_TURN_MS: i64 = 15_000;
+
 pub(crate) struct Session {
     pub(crate) capabilities: Capabilities,
     pub(crate) harness: Mutex<Box<dyn Harness>>,
@@ -27,6 +32,11 @@ pub(crate) struct Session {
     /// thread's inherited transcript. Taken once, so a resumed session that
     /// already knows the conversation never gets it twice.
     history: Mutex<Option<String>>,
+    /// Last adapter output that belonged to no recorded turn, in epoch ms.
+    /// An adapter that resumes on its own (a subagent callback, a goal
+    /// continuation) streams such output and ends it without a completion
+    /// Threadbase can match, so recency is the only signal that it is over.
+    unowned_output_ms: AtomicI64,
     /// Last harness interaction, used by the idle-session reaper.
     last_used_ms: AtomicI64,
 }
@@ -45,8 +55,26 @@ impl Session {
             pump_done: Arc::new(tokio::sync::Notify::new()),
             stopped: AtomicBool::new(false),
             history: Mutex::new(None),
+            unowned_output_ms: AtomicI64::new(0),
             last_used_ms: AtomicI64::new(now_ms()),
         }
+    }
+
+    /// Remember adapter output that belongs to no recorded turn.
+    pub(crate) fn note_unowned_output(&self) {
+        self.unowned_output_ms.store(now_ms(), Ordering::Relaxed);
+    }
+
+    pub(crate) fn clear_unowned_output(&self) {
+        self.unowned_output_ms.store(0, Ordering::Relaxed);
+    }
+
+    /// Whether the adapter is still finishing a turn Threadbase has no record
+    /// of. A prompt issued now would take that turn's completion for its own
+    /// and fail with no output, so callers have to wait instead.
+    pub(crate) fn unowned_turn(&self) -> bool {
+        let at = self.unowned_output_ms.load(Ordering::Relaxed);
+        at != 0 && now_ms().saturating_sub(at) < UNOWNED_TURN_MS
     }
 
     /// Hand the next prompt the transcript this session was forked from.
