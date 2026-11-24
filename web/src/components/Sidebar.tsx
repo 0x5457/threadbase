@@ -400,6 +400,7 @@ export const Sidebar = memo(function Sidebar({
         onImported={(thread) => {
           void queryClient.invalidateQueries({ queryKey: ["projects"] });
           void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
+          void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
           onSelectThread(thread);
           onNavigate();
           setImportProject(null);

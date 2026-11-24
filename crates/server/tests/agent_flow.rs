@@ -252,6 +252,48 @@ async fn wait_for_status(pool: &SqlitePool, thread_id: &str, expected: ThreadSta
     );
 }
 
+async fn native_session_ids(
+    app: &axum::Router,
+    project_id: &str,
+    cookie: &str,
+    agent: &str,
+) -> Vec<String> {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let mut request = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/projects/{project_id}/agent-sessions?agent={agent}"
+        ))
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .header("x-requested-with", "threadbase")
+        .header("cookie", cookie)
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            1234,
+        ))));
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let sessions: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    sessions["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .filter_map(|session| session["id"].as_str().map(str::to_owned))
+        .collect()
+}
+
 async fn wait_for(
     pool: &SqlitePool,
     thread_id: &str,
@@ -2818,32 +2860,8 @@ async fn attaching_a_native_codex_session_imports_its_history() {
     let app = threadbase_server::routes::router(fixture.state.clone());
     let session = session_for(&fixture, "ada").await;
     let cookie = format!("threadbase_session={session}");
-    let list_uri = format!(
-        "/api/projects/{}/agent-sessions?agent=codex",
-        fixture.project.id
-    );
-    let mut request = Request::builder()
-        .method("GET")
-        .uri(list_uri)
-        .header("host", "localhost")
-        .header("origin", "http://localhost")
-        .header("x-requested-with", "threadbase")
-        .header("cookie", cookie.clone())
-        .body(Body::empty())
-        .unwrap();
-    request
-        .extensions_mut()
-        .insert(ConnectInfo(std::net::SocketAddr::from((
-            [127, 0, 0, 1],
-            1234,
-        ))));
-    let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let sessions: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(sessions["sessions"][0]["id"], "thread-0");
+    let sessions = native_session_ids(&app, fixture.project.id.as_str(), &cookie, "codex").await;
+    assert!(sessions.iter().any(|id| id == "thread-0"));
 
     let mut request = Request::builder()
         .method("POST")
@@ -2882,6 +2900,8 @@ async fn attaching_a_native_codex_session_imports_its_history() {
             .unwrap();
     assert_eq!(native, 1);
     assert_eq!(session_id.as_deref(), Some("thread-0"));
+    let remaining = native_session_ids(&app, fixture.project.id.as_str(), &cookie, "codex").await;
+    assert!(!remaining.iter().any(|id| id == "thread-0"));
 
     let texts: Vec<String> = sqlx::query_scalar(
         "SELECT json_extract(payload_json, '$.message.text') FROM events
@@ -2936,7 +2956,7 @@ async fn attaching_a_native_codex_session_imports_its_history() {
         .header("origin", "http://localhost")
         .header("x-requested-with", "threadbase")
         .header("content-type", "application/json")
-        .header("cookie", cookie)
+        .header("cookie", cookie.clone())
         .body(Body::from(
             serde_json::json!({"session_id": "thread-1"}).to_string(),
         ))
@@ -2947,7 +2967,7 @@ async fn attaching_a_native_codex_session_imports_its_history() {
             [127, 0, 0, 1],
             1234,
         ))));
-    let response = app.oneshot(request).await.unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (native, session_id): (i64, Option<String>) =
         sqlx::query_as("SELECT native, session_id FROM agent_bindings WHERE thread_id = ?")
@@ -2965,4 +2985,6 @@ async fn attaching_a_native_codex_session_imports_its_history() {
     .await
     .unwrap();
     assert!(imported >= 2);
+    let remaining = native_session_ids(&app, fixture.project.id.as_str(), &cookie, "codex").await;
+    assert!(!remaining.iter().any(|id| id == "thread-1"));
 }

@@ -21,6 +21,7 @@ import { useNavigate } from "react-router";
 import { memo, useCallback, useState } from "react";
 import type { Project, Subagent, ThreadSummary } from "../../api";
 import { deleteProject } from "../../api/projects";
+import { ProjectSessions } from "./ProjectSessions";
 import { SidebarThreadRow, ThreadShelf } from "./ThreadRow";
 import { ThreadActionSheet } from "./ThreadActionSheet";
 import { useLongPress } from "../../lib/use-long-press";
@@ -213,6 +214,15 @@ export const ProjectNode = memo(function ProjectNode({
               >
                 {settled.map(row)}
               </ThreadShelf>
+
+              <ProjectSessions
+                project={project}
+                onOpen={(thread) => {
+                  onSelectThread(thread);
+                  onNavigate();
+                }}
+                onMore={() => onImportSession(project)}
+              />
               {!threadsLoading && threads.length === 0 ? (
                 <Text size="xs" c="dimmed" pl={10} py={4}>
                   No threads yet
