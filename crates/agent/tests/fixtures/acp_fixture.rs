@@ -140,6 +140,13 @@ struct Fixture {
     current_model: String,
     current_effort: String,
     current_mode: String,
+    /// Output the adapter streams once the turn has already settled, the way
+    /// pi continues on its own after a subagent callback. Delivered when the
+    /// next request arrives so the ordering is not a race.
+    deferred_chunk: Option<String>,
+    /// Still working on that turn of its own: a prompt arriving now is answered
+    /// with the empty `end_turn` pi replies with when it is busy.
+    own_busy: bool,
 }
 
 impl Fixture {
@@ -153,6 +160,8 @@ impl Fixture {
             current_model: "fake-model-a".to_owned(),
             current_effort: "high".to_owned(),
             current_mode: "ask".to_owned(),
+            deferred_chunk: None,
+            own_busy: false,
         }
     }
 
@@ -276,6 +285,10 @@ impl Fixture {
         out: &mut impl Write,
         message: Value,
     ) -> io::Result<()> {
+        if let Some(text) = self.deferred_chunk.take() {
+            let session = self.root_session.clone();
+            self.chunk(out, &session, &text)?;
+        }
         let method = message
             .get("method")
             .and_then(Value::as_str)
@@ -424,6 +437,9 @@ impl Fixture {
             .and_then(Value::as_str)
             .unwrap_or("sess-1")
             .to_owned();
+        if self.own_busy {
+            return self.respond(out, id, json!({"stopReason": "end_turn"}));
+        }
         match text.trim() {
             "stream" => self.stream(out, id, &session),
             "demo" => self.demo(out, id, &session),
@@ -439,6 +455,13 @@ impl Fixture {
             "subagents" => self.subagents(out, id, &session),
             "agent-message" => self.agent_message(out, id, &session),
             "malformed" => self.malformed(out, id, &session),
+            "own-turn" => {
+                self.chunk(out, &session, "settling")?;
+                self.respond(out, id, json!({"stopReason": "end_turn"}))?;
+                self.deferred_chunk = Some("continuing on my own".to_owned());
+                self.own_busy = true;
+                Ok(())
+            }
             "crash" => {
                 self.chunk(out, &session, "crashing")?;
                 process::exit(7);

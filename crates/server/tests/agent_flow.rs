@@ -11,7 +11,9 @@ use threadbase_server::{agents, auth, db, projects, queue, threads};
 use threadbase_shared::api::{
     CreateProjectRequest, CreateThreadRequest, ForkThreadRequest, UpdateThreadRequest,
 };
-use threadbase_shared::{ApprovalDecision, ElicitationAction, ThreadEvent, ThreadStatus};
+use threadbase_shared::{
+    ApprovalDecision, ElicitationAction, MessageRole, ThreadEvent, ThreadStatus,
+};
 use tokio::time::{sleep, Duration};
 
 fn policy() -> threadbase_core::permissions::PermissionPolicy {
@@ -402,6 +404,111 @@ async fn a_turn_without_output_is_reported_as_a_failure() {
         matches!(event, ThreadEvent::TurnEnded { .. })
     })
     .await;
+}
+
+/// Regression: pi answers a prompt it does not run with an immediate empty
+/// `end_turn` while streaming a turn of its own (a subagent callback), so the
+/// message failed with "ended the turn without any output" and the thread sat
+/// in `error` for the rest of the work.
+#[tokio::test]
+async fn a_prompt_waits_for_a_turn_the_adapter_started_itself() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str();
+    fixture
+        .state
+        .agents
+        .ensure_started(thread_id)
+        .await
+        .unwrap();
+    let before = max_seq(&fixture.state.pool, thread_id).await;
+
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "own-turn", None)
+        .await
+        .unwrap();
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::TurnEnded { .. })
+    })
+    .await;
+    // The turn is over, but the adapter keeps working on its own and surfaces
+    // the output with the next request it handles.
+    fixture
+        .state
+        .agents
+        .set_config(thread_id, Some("fake-model-b"), None)
+        .await
+        .unwrap();
+    wait_for_after(&fixture.state.pool, thread_id, before, |event| {
+        matches!(event, ThreadEvent::MessageDelta { text, .. } if text == "continuing on my own")
+    })
+    .await;
+    let after = max_seq(&fixture.state.pool, thread_id).await;
+
+    // A prompt now would be answered by the adapter's empty `end_turn`; the
+    // message has to join the turn that is actually running.
+    fixture
+        .state
+        .agents
+        .send(thread_id, &fixture.user, "hello", None)
+        .await
+        .unwrap();
+
+    sleep(Duration::from_millis(300)).await;
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT payload_json FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC",
+    )
+    .bind(thread_id)
+    .bind(after)
+    .fetch_all(&fixture.state.pool)
+    .await
+    .unwrap();
+    let events: Vec<ThreadEvent> = rows
+        .iter()
+        .map(|json| serde_json::from_str(json).unwrap())
+        .collect();
+    let failed: Vec<&ThreadEvent> = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                ThreadEvent::TurnStarted { .. } | ThreadEvent::TurnError { .. }
+            )
+        })
+        .collect();
+    assert!(
+        failed.is_empty(),
+        "the message must not become a turn of its own: {failed:?}"
+    );
+    // Steering adapters take it into the running turn; the rest queue it behind
+    // that turn, which the queue worker starts once the adapter is quiet.
+    let joined = events.iter().any(|event| {
+        matches!(
+            event,
+            ThreadEvent::MessageCompleted { message }
+                if message.role == MessageRole::User && message.text == "hello"
+        )
+    });
+    let queued = events.iter().any(|event| {
+        matches!(
+            event,
+            ThreadEvent::QueueUpdated { items } if items.iter().any(|item| item.text == "hello")
+        )
+    });
+    assert!(
+        joined || queued,
+        "the message must join the running turn or queue behind it: {events:?}"
+    );
+    assert_ne!(
+        threads::status(&fixture.state.pool, thread_id)
+            .await
+            .unwrap(),
+        ThreadStatus::Error
+    );
 }
 
 /// Regression: the adapter named permission requests with a per-session counter

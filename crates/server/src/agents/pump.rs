@@ -178,7 +178,16 @@ async fn flush_thought(pump: &Pump, thought: &mut Option<(MessageId, String)>) {
     if text.is_empty() {
         return;
     }
-    pump.run.lock().await.saw_output = true;
+    let unowned = {
+        let mut run = pump.run.lock().await;
+        run.saw_output = true;
+        run.turn_id.is_none()
+    };
+    if unowned {
+        if let Some(session) = pump.session.upgrade() {
+            session.note_unowned_output();
+        }
+    }
     if let Err(error) = pump
         .append(ThreadEvent::ThinkingDelta { message_id, text })
         .await
@@ -210,8 +219,20 @@ impl Pump {
     }
 
     async fn handle(&self, event: RawAgentEvent) -> Result<(), ServerError> {
-        if is_visible(&event) {
-            self.run.lock().await.saw_output = true;
+        {
+            let mut run = self.run.lock().await;
+            if is_visible(&event) {
+                run.saw_output = true;
+            }
+            // Visible output with no turn recorded means the adapter is running
+            // a turn of its own; the next prompt has to wait for it. Usage and
+            // config updates after a turn do not count: they are stragglers, and
+            // treating them as a running turn would delay the next message.
+            if run.turn_id.is_none() && is_visible(&event) {
+                if let Some(session) = self.session.upgrade() {
+                    session.note_unowned_output();
+                }
+            }
         }
         match event {
             RawAgentEvent::MessageChunk {
@@ -592,6 +613,9 @@ impl Pump {
 
     async fn finish_turn(&self, stop_reason: String) -> Result<(), ServerError> {
         self.inner.clear_turn(&self.thread_id).await;
+        if let Some(session) = self.session.upgrade() {
+            session.clear_unowned_output();
+        }
         let (turn_id, messages, silent) = {
             let mut run = self.run.lock().await;
             run.thinking_id = None;
