@@ -27,6 +27,7 @@ pub struct ApprovalRow {
     pub tool_call_id: Option<String>,
     pub agent: String,
     pub title: String,
+    pub description: Option<String>,
     pub kind: String,
     pub command: Option<String>,
     pub cwd: Option<String>,
@@ -42,7 +43,7 @@ pub struct ApprovalRow {
 }
 
 const SELECT: &str =
-    "SELECT id, thread_id, subagent_id, turn_id, tool_call_id, agent, title, kind, command,
+    "SELECT id, thread_id, subagent_id, turn_id, tool_call_id, agent, title, description, kind, command,
             cwd, paths_json, options_json, input_json, status, decision, scope, decided_by,
             decided_at, created_at
      FROM approvals";
@@ -56,6 +57,7 @@ pub struct NewApproval {
     pub tool_call_id: Option<String>,
     pub agent: String,
     pub title: String,
+    pub description: Option<String>,
     pub kind: String,
     pub command: Option<String>,
     pub cwd: Option<String>,
@@ -124,8 +126,8 @@ pub async fn insert(
         .map_err(|error| ServerError::internal(error.to_string()))?;
     sqlx::query(
         "INSERT INTO approvals(id, thread_id, subagent_id, turn_id, tool_call_id, agent, title,
-            kind, command, cwd, paths_json, options_json, input_json, status, created_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            description, kind, command, cwd, paths_json, options_json, input_json, status, created_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&approval.id)
     .bind(&approval.thread_id)
@@ -134,6 +136,7 @@ pub async fn insert(
     .bind(approval.tool_call_id.as_deref())
     .bind(&approval.agent)
     .bind(&approval.title)
+    .bind(approval.description.as_deref())
     .bind(&approval.kind)
     .bind(approval.command.as_deref())
     .bind(approval.cwd.as_deref())
@@ -484,6 +487,7 @@ fn to_dto(row: ApprovalRow) -> ApprovalDto {
         tool_call_id: row.tool_call_id.map(ToolCallId::from),
         agent: row.agent,
         title: row.title,
+        description: row.description,
         kind: parse_kind(&row.kind),
         command: row.command,
         cwd: row.cwd,

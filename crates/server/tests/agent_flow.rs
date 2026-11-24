@@ -1385,6 +1385,7 @@ async fn agent_prompt_includes_state_summary_when_pending() {
             tool_call_id: None,
             agent: "codex".to_owned(),
             title: "Write file".to_owned(),
+            description: None,
             kind: "file_write".to_owned(),
             command: Some("echo hi".to_owned()),
             cwd: None,

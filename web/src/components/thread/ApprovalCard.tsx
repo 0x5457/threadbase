@@ -87,6 +87,11 @@ export function ApprovalCard({
             <Text size="md" fw={500} mb={4}>
               {approval.title}
             </Text>
+            {approval.description ? (
+              <Text size="sm" c="dimmed" mb={6}>
+                {approval.description}
+              </Text>
+            ) : null}
             {approval.paths.length ? (
               <Text size="sm" c="dimmed" className="approval-path">
                 {approval.paths.join(", ")}

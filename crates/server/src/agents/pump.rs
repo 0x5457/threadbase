@@ -402,6 +402,7 @@ impl Pump {
                 tool_call_id: None,
                 agent: self.agent.clone(),
                 title: request.title,
+                description: None,
                 kind: tool_kind(request.kind).to_owned(),
                 command: request.command.clone(),
                 cwd: request.cwd.clone(),

@@ -1426,6 +1426,7 @@ fn diff_summary(content: &[ToolCallContent]) -> Option<DiffSummary> {
             additions: u32::try_from(additions).unwrap_or(u32::MAX),
             deletions: u32::try_from(deletions).unwrap_or(u32::MAX),
             patch: Some(patch),
+            changes: Vec::new(),
         });
     }
     None
