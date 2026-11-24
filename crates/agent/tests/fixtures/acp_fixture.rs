@@ -454,6 +454,7 @@ impl Fixture {
             "elicit" => self.elicitation(reader, out, id, &session),
             "subagents" => self.subagents(out, id, &session),
             "agent-message" => self.agent_message(out, id, &session),
+            "status-lines" => self.status_lines(out, id, &session),
             "malformed" => self.malformed(out, id, &session),
             "own-turn" => {
                 self.chunk(out, &session, "settling")?;
@@ -817,6 +818,14 @@ impl Fixture {
                 "content": [{"type": "text", "text": "peer message"}],
             }),
         )?;
+        self.respond(out, id, json!({"stopReason": "end_turn"}))
+    }
+
+    /// The status lines pi-acp delivers as assistant text, then a real chunk.
+    fn status_lines(&self, out: &mut impl Write, id: &Value, session: &str) -> io::Result<()> {
+        self.chunk(out, session, "Retrying (attempt 1/3, waiting 2s)...")?;
+        self.chunk(out, session, "Retry finished, resuming.")?;
+        self.chunk(out, session, "reply")?;
         self.respond(out, id, json!({"stopReason": "end_turn"}))
     }
 

@@ -1128,12 +1128,22 @@ fn handle_session_notification(
                 return;
             }
             if let Some(text) = content_text(&chunk.content) {
-                let message_id = message_id(&mut lock_state(state), MessageRole::Agent);
-                bus.send(RawAgentEvent::MessageChunk {
-                    role: MessageRole::Agent,
-                    message_id,
-                    text,
-                });
+                // Adapter status lines arrive as assistant text and would be
+                // glued into the reply they interrupt. The agent log keeps
+                // them readable without letting them reach the transcript.
+                if adapter_status(&text) {
+                    bus.send(RawAgentEvent::AgentLog {
+                        level: "info".to_owned(),
+                        text,
+                    });
+                } else {
+                    let message_id = message_id(&mut lock_state(state), MessageRole::Agent);
+                    bus.send(RawAgentEvent::MessageChunk {
+                        role: MessageRole::Agent,
+                        message_id,
+                        text,
+                    });
+                }
             }
         }
         SessionUpdate::AgentThoughtChunk(chunk) => {
@@ -1238,6 +1248,20 @@ fn handle_session_notification(
         }
         _ => {}
     }
+}
+
+/// Status lines pi-acp 0.0.34 delivers as `agent_message_chunk` instead of a
+/// notice: automatic retry and compaction. New adapter wording belongs here,
+/// or it shows up inside the reply it interrupts.
+fn adapter_status(text: &str) -> bool {
+    (text.starts_with("Retrying (attempt ") && text.ends_with(")..."))
+        || matches!(
+            text,
+            "Retrying..."
+                | "Retry finished, resuming."
+                | "Context nearing limit, running automatic compaction..."
+                | "Automatic compaction finished; context was summarized to continue the session."
+        )
 }
 
 fn content_text(block: &ContentBlock) -> Option<String> {
