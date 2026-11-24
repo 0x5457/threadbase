@@ -4,6 +4,10 @@
 //! into [`RawAgentEvent`] and persisted by the thread event log.
 
 pub mod acp;
+mod bus;
+pub mod claude;
+pub mod claude_sessions;
+pub mod codex;
 pub mod profile;
 
 use async_trait::async_trait;
@@ -16,11 +20,40 @@ use threadbase_shared::{
 };
 use tokio::sync::broadcast;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_profile_has_a_unique_id() {
+        let mut ids = std::collections::HashSet::new();
+        for profile in all_profiles() {
+            assert!(ids.insert(profile.id.as_str()));
+        }
+    }
+
+    #[test]
+    fn profiles_cover_documented_agents() {
+        for id in ["codex", "claude", "opencode", "pi"] {
+            assert!(find_profile(id).is_some(), "missing profile {id}");
+        }
+    }
+}
+
 pub use acp::AcpHarness;
+pub use claude::ClaudeHarness;
+pub use codex::CodexHarness;
 pub use profile::{all_profiles, find_profile, AgentProfile};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionId(pub String);
+
+/// Identity the adapter reported during its handshake.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentIdentity {
+    pub name: String,
+    pub version: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchCtx {
@@ -91,6 +124,8 @@ pub struct PermissionOption {
 pub struct PermissionRequest {
     pub id: String,
     pub title: String,
+    /// Supporting copy for the decision, from the agent's permission request.
+    pub description: Option<String>,
     pub kind: ToolKind,
     pub command: Option<String>,
     pub cwd: Option<String>,
@@ -126,6 +161,44 @@ pub struct ToolCallEvent {
     pub raw: Value,
 }
 
+/// A native session the agent still knows about, for attaching a threadbase
+/// thread to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalSession {
+    pub id: String,
+    pub title: String,
+    pub cwd: String,
+    /// Unix ms.
+    pub updated_at: i64,
+}
+
+/// A native conversation in transcript shape. Transports that can read one
+/// return it on attach so the thread log starts with the real history.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SessionHistory {
+    pub turns: Vec<SessionTurn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SessionTurn {
+    /// The agent's own turn id when it has one (Codex UUIDv7). It is the
+    /// cursor incremental import uses; timestamps are only a fallback.
+    pub id: Option<String>,
+    /// The turn's user message; empty for agent-initiated turns.
+    pub user: String,
+    pub items: Vec<SessionItem>,
+    /// When the agent finished the turn, in Unix ms. `None` while it is still
+    /// running or when the source does not report it.
+    pub completed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionItem {
+    Message { role: MessageRole, text: String },
+    Tool(Box<ToolCallEvent>),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentEvent {
@@ -139,6 +212,37 @@ pub struct SubagentEvent {
     pub usage: Option<Usage>,
 }
 
+/// Which conversation stream a message belongs to. The agent owns message
+/// identity (`messageId`); threadbase maps it onto its own transcript rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MessageRole {
+    Agent,
+    Thought,
+}
+
+/// Foreground activity reported by the agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ForegroundState {
+    Running,
+    /// Foreground work is blocked on user action. Informational: the thread
+    /// state machine already models pending approvals and elicitations.
+    RequiresAction,
+    /// The agent can no longer report foreground activity.
+    Unknown,
+    /// Foreground work ended. `stop_reason` is the agent's idle stop reason;
+    /// `usage` carries end-of-turn usage when the adapter reported it.
+    Idle {
+        stop_reason: Option<String>,
+        usage: Option<Usage>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -146,23 +250,50 @@ pub struct SubagentEvent {
     rename_all_fields = "camelCase"
 )]
 pub enum RawAgentEvent {
-    AgentMessageChunk {
+    /// Append one chunk to a message identified by the agent's stable id.
+    /// Chunks of different messages interleave freely; the id places them.
+    MessageChunk {
+        role: MessageRole,
+        message_id: String,
         text: String,
     },
-    AgentThoughtChunk {
-        text: String,
+    /// Replace a message's text (whole-message upsert). `None` patches
+    /// only metadata and changes nothing the transcript shows.
+    MessageUpsert {
+        role: MessageRole,
+        message_id: String,
+        text: Option<String>,
     },
-    ToolCall {
+    /// Full tool-call snapshot after the harness applied the protocol's
+    /// upsert. The first upsert for an id creates the tool call.
+    ToolUpsert {
         call: ToolCallEvent,
     },
-    ToolCallUpdate {
-        call: ToolCallEvent,
+    /// Foreground state change; `Idle` is the completion signal. A prompt
+    /// response only acknowledges insertion.
+    Foreground {
+        state: ForegroundState,
     },
     Plan {
         entries: Vec<PlanEntry>,
     },
     PermissionRequest {
         request: PermissionRequest,
+    },
+    /// Another client owns the native session's turn. Only transports with a
+    /// shared session (Codex) report it.
+    PeerActivity {
+        active: bool,
+    },
+    /// The agent finished the turn with this id. A stable cursor for
+    /// incremental import, unlike second-precision timestamps.
+    NativeTurn {
+        id: String,
+    },
+    /// The agent cancelled a pending permission request itself. The stored
+    /// approval must not stay pending.
+    PermissionCancelled {
+        request_id: String,
     },
     ElicitationRequest {
         request: ElicitationRequest,
@@ -178,9 +309,6 @@ pub enum RawAgentEvent {
     },
     Usage {
         usage: Usage,
-    },
-    PromptDone {
-        stop_reason: String,
     },
     Error {
         message: String,
@@ -284,6 +412,22 @@ pub trait Harness: Send + Sync {
     async fn shutdown(&mut self) -> HarnessResult<()>;
     fn events(&self) -> broadcast::Receiver<RawAgentEvent>;
 
+    /// Native sessions this agent can still open. Transports without a session
+    /// store return an empty list.
+    async fn list_sessions(
+        &mut self,
+        _cwd: Option<&std::path::Path>,
+    ) -> HarnessResult<Vec<ExternalSession>> {
+        Ok(Vec::new())
+    }
+
+    /// Read one native conversation so a new thread can start with it.
+    async fn read_history(&mut self, _id: &SessionId) -> HarnessResult<SessionHistory> {
+        Err(HarnessError::Unavailable(
+            "this transport cannot read native sessions".to_owned(),
+        ))
+    }
+
     /// Deliver input into the running turn without starting a new one.
     ///
     /// Harnesses that do not implement the steering extension return
@@ -292,25 +436,5 @@ pub trait Harness: Send + Sync {
         Err(HarnessError::Unavailable(
             "this harness does not support steering".to_owned(),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_profile_has_a_unique_id() {
-        let mut ids = std::collections::HashSet::new();
-        for profile in all_profiles() {
-            assert!(ids.insert(profile.id.as_str()));
-        }
-    }
-
-    #[test]
-    fn profiles_cover_documented_agents() {
-        for id in ["codex", "claude", "opencode", "pi"] {
-            assert!(find_profile(id).is_some(), "missing profile {id}");
-        }
     }
 }

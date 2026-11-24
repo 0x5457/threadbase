@@ -10,11 +10,13 @@ threadbase-shared.workspace = true
 agent-client-protocol.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
+jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 similar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 which.workspace = true
@@ -26,6 +28,22 @@ tempfile.workspace = true
 [[bin]]
 name = "threadbase_acp_fixture"
 path = "tests/fixtures/acp_fixture.rs"
+test = false
+bench = false
+doc = false
+
+# Scripted Codex app-server used by the native codex contract tests.
+[[bin]]
+name = "threadbase_codex_fixture"
+path = "tests/fixtures/codex_fixture.rs"
+test = false
+bench = false
+doc = false
+
+# Scripted Claude CLI used by the native claude contract tests.
+[[bin]]
+name = "threadbase_claude_fixture"
+path = "tests/fixtures/claude_fixture.rs"
 test = false
 bench = false
 doc = false

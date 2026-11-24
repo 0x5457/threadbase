@@ -1,8 +1,10 @@
-//! Production ACP harness.
+//! ACP v1 harness: the transport for adapters that only speak the stable
+//! protocol (pi today).
 //!
-//! One [`AcpHarness`] owns one adapter subprocess and one ACP v1 connection.
-//! Protocol types stay in this module: everything the rest of the server sees
-//! is a [`RawAgentEvent`].
+//! v1 has no message ids, no foreground state and no structured diffs, so this
+//! module synthesizes the minimum the event model needs and leaves the rest to
+//! the adapter. Protocol types stay here: everything the server sees is a
+//! [`RawAgentEvent`].
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
@@ -38,33 +40,26 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use similar::{ChangeTag, TextDiff};
 use threadbase_shared::{
-    ApprovalDecision, DiffSummary, ElicitationAction, PlanEntry, PlanPriority, PlanStatus,
-    SubagentStatus, ToolKind, ToolLocation, ToolStatus, Usage,
+    ApprovalDecision, DiffChangeDto, DiffSummary, ElicitationAction, PlanEntry, PlanPriority,
+    PlanStatus, SubagentStatus, ToolKind, ToolLocation, ToolStatus, Usage,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, oneshot, watch};
 
+use crate::bus::EventBus;
 use crate::profile::{self, AgentProfile, ResolvedProfile};
 use crate::{
-    Capabilities, Harness, HarnessError, HarnessResult, LaunchCtx, NewSession, PermissionOption,
-    PermissionRequest, PromptPart, RawAgentEvent, SessionId, SteeringOutcome, SubagentEvent,
-    ToolCallEvent, TurnHandle,
+    AgentIdentity, Capabilities, ForegroundState, Harness, HarnessError, HarnessResult, LaunchCtx,
+    MessageRole, NewSession, PermissionOption, PermissionRequest, PromptPart, RawAgentEvent,
+    SessionId, SteeringOutcome, SubagentEvent, ToolCallEvent, TurnHandle,
 };
 
-const EVENT_CHANNEL_CAPACITY: usize = 1024;
 const MAX_READ_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_WRITE_BYTES: usize = 4 * 1024 * 1024;
 
 type OutgoingLines = Pin<Box<dyn Sink<String, Error = io::Error> + Send>>;
 type IncomingLines = Pin<Box<dyn Stream<Item = io::Result<String>> + Send>>;
-
-/// Identity reported by the adapter during `initialize`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentIdentity {
-    pub name: String,
-    pub version: String,
-}
 
 /// ACP v1 harness driving one adapter subprocess.
 pub struct AcpHarness {
@@ -699,8 +694,12 @@ impl Harness for AcpHarness {
             let turn_id = format!("turn-{}", state.turn_seq);
             state.running_turn = Some(turn_id.clone());
             state.replaying = false;
+            end_turn(&mut state);
             turn_id
         };
+        self.bus.send(RawAgentEvent::Foreground {
+            state: ForegroundState::Running,
+        });
         let handle = TurnHandle {
             turn_id: turn_id.clone(),
         };
@@ -711,13 +710,11 @@ impl Harness for AcpHarness {
         tokio::spawn(async move {
             let result = connection.send_request(request).block_task().await;
             if let Ok(response) = &result {
-                if let Some(usage) = &response.usage {
-                    bus.send(RawAgentEvent::Usage {
-                        usage: usage_from_acp(usage),
-                    });
-                }
-                bus.send(RawAgentEvent::PromptDone {
-                    stop_reason: stop_reason_name(&response.stop_reason),
+                bus.send(RawAgentEvent::Foreground {
+                    state: ForegroundState::Idle {
+                        stop_reason: Some(stop_reason_name(&response.stop_reason)),
+                        usage: response.usage.as_ref().map(usage_from_acp),
+                    },
                 });
             }
             if let Err(error) = result {
@@ -729,6 +726,7 @@ impl Harness for AcpHarness {
             if state.running_turn.as_deref() == Some(turn_id.as_str()) {
                 state.running_turn = None;
             }
+            end_turn(&mut state);
         });
         Ok(handle)
     }
@@ -746,6 +744,7 @@ impl Harness for AcpHarness {
                 }
             }
             state.running_turn = None;
+            end_turn(&mut state);
             for (_, pending) in state.permissions.drain() {
                 let _ = pending.responder.respond(RequestPermissionResponse::new(
                     RequestPermissionOutcome::Cancelled,
@@ -932,6 +931,9 @@ struct HarnessState {
     session_modes: Option<agent_client_protocol::v1::schema::SessionModeState>,
     turn_seq: u64,
     running_turn: Option<String>,
+    /// v1 streams chunks with no ids, so the harness mints one per role and
+    /// rotates it when the turn ends.
+    message_ids: HashMap<MessageRole, String>,
     /// Set while `session/load` replays stored history so replayed output is
     /// not mistaken for live output. Cleared by the first `prompt` or a new
     /// session.
@@ -945,6 +947,20 @@ struct HarnessState {
 struct PendingPermission {
     responder: Responder<RequestPermissionResponse>,
     options: Vec<(PermissionOptionKind, PermissionOptionId)>,
+}
+
+fn message_id(state: &mut HarnessState, role: MessageRole) -> String {
+    if let Some(id) = state.message_ids.get(&role) {
+        return id.clone();
+    }
+    let id = format!("msg-{}", ulid::Ulid::new());
+    state.message_ids.insert(role, id.clone());
+    id
+}
+
+/// The next chunk starts a fresh transcript row.
+fn end_turn(state: &mut HarnessState) {
+    state.message_ids.clear();
 }
 
 struct PendingElicitation {
@@ -962,52 +978,6 @@ fn reset_session(state: &mut HarnessState, session: &str) {
     state.tools.clear();
     state.subagents.clear();
     state.running_turn = None;
-}
-
-#[derive(Clone)]
-struct EventBus {
-    sender: Arc<Mutex<Option<broadcast::Sender<RawAgentEvent>>>>,
-}
-
-impl EventBus {
-    fn new() -> Self {
-        let (sender, _receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-        Self {
-            sender: Arc::new(Mutex::new(Some(sender))),
-        }
-    }
-
-    fn send(&self, event: RawAgentEvent) {
-        let sender = self
-            .sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(sender) = sender.as_ref() {
-            let _ = sender.send(event);
-        }
-    }
-
-    fn subscribe(&self) -> broadcast::Receiver<RawAgentEvent> {
-        let sender = self
-            .sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match sender.as_ref() {
-            Some(sender) => sender.subscribe(),
-            None => {
-                let (sender, receiver) = broadcast::channel(1);
-                drop(sender);
-                receiver
-            }
-        }
-    }
-
-    fn close(&self) {
-        self.sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-    }
 }
 
 fn spawn_adapter(resolved: &ResolvedProfile, ctx: &LaunchCtx) -> HarnessResult<Child> {
@@ -1163,7 +1133,12 @@ fn handle_session_notification(
                 return;
             }
             if let Some(text) = content_text(&chunk.content) {
-                bus.send(RawAgentEvent::AgentMessageChunk { text });
+                let message_id = message_id(&mut lock_state(state), MessageRole::Agent);
+                bus.send(RawAgentEvent::MessageChunk {
+                    role: MessageRole::Agent,
+                    message_id,
+                    text,
+                });
             }
         }
         SessionUpdate::AgentThoughtChunk(chunk) => {
@@ -1171,7 +1146,12 @@ fn handle_session_notification(
                 return;
             }
             if let Some(text) = content_text(&chunk.content) {
-                bus.send(RawAgentEvent::AgentThoughtChunk { text });
+                let message_id = message_id(&mut lock_state(state), MessageRole::Thought);
+                bus.send(RawAgentEvent::MessageChunk {
+                    role: MessageRole::Thought,
+                    message_id,
+                    text,
+                });
             }
         }
         SessionUpdate::ToolCall(call) => {
@@ -1182,7 +1162,7 @@ fn handle_session_notification(
             lock_state(state)
                 .tools
                 .insert(event.id.clone(), event.clone());
-            bus.send(RawAgentEvent::ToolCall { call: event });
+            bus.send(RawAgentEvent::ToolUpsert { call: event });
         }
         SessionUpdate::ToolCallUpdate(update) => {
             if replaying {
@@ -1193,7 +1173,7 @@ fn handle_session_notification(
             let event = apply_tool_update(state.tools.remove(&id), &update);
             state.tools.insert(id, event.clone());
             drop(state);
-            bus.send(RawAgentEvent::ToolCallUpdate { call: event });
+            bus.send(RawAgentEvent::ToolUpsert { call: event });
         }
         SessionUpdate::Plan(plan) => {
             bus.send(RawAgentEvent::Plan {
@@ -1422,11 +1402,16 @@ fn diff_summary(content: &[ToolCallContent]) -> Option<DiffSummary> {
         let mut patch = format!("--- a/{path}\n+++ b/{path}\n");
         patch.push_str(&changes.unified_diff().context_radius(3).to_string());
         return Some(DiffSummary {
-            path,
+            path: path.clone(),
             additions: u32::try_from(additions).unwrap_or(u32::MAX),
             deletions: u32::try_from(deletions).unwrap_or(u32::MAX),
             patch: Some(patch),
-            changes: Vec::new(),
+            changes: vec![DiffChangeDto {
+                operation: "modify".to_owned(),
+                path,
+                old_path: None,
+                file_type: Some("text".to_owned()),
+            }],
         });
     }
     None
@@ -1597,6 +1582,7 @@ fn build_permission_request(
             .clone()
             .or_else(|| previous.map(|call| call.title.clone()))
             .unwrap_or_else(|| "Permission requested".to_owned()),
+        description: None,
         kind: tool_call
             .fields
             .kind

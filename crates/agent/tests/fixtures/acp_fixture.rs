@@ -19,6 +19,18 @@ fn main() {
 }
 
 fn run() -> io::Result<()> {
+    // Let a test hold the adapter in its start window on purpose: the marker
+    // says the process exists (so the caller's start lock is held), the delay
+    // keeps the handshake open while the test acts inside that window.
+    if let Some(path) = std::env::var_os("FAKE_AGENT_START_MARKER") {
+        let _ = std::fs::write(path, b"");
+    }
+    if let Some(ms) = std::env::var("FAKE_AGENT_START_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
