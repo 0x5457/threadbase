@@ -27,6 +27,7 @@ import {
   type ThreadSummary,
 } from "../api";
 import { AddProjectModal } from "./AddProjectModal";
+import { ImportSessionModal } from "./ImportSessionModal";
 import { NewThreadModal } from "./NewThreadModal";
 import { ProjectSettingsModal } from "./ProjectSettingsModal";
 import { initials } from "../lib/initials";
@@ -79,6 +80,7 @@ export const Sidebar = memo(function Sidebar({
   const [addOpen, add] = useDisclosure(false);
   const [added, setAdded] = useState<Project[]>([]);
   const [newThreadProject, setNewThreadProject] = useState<Project | null>(null);
+  const [importProject, setImportProject] = useState<Project | null>(null);
   const [settingsProject, setSettingsProject] = useState<Project | null>(null);
 
   const me = useQuery({
@@ -323,6 +325,7 @@ export const Sidebar = memo(function Sidebar({
                 onSelectThread={onSelectThread}
                 onSelectSubagent={onSelectSubagent}
                 onNewThread={setNewThreadProject}
+                onImportSession={setImportProject}
                 onSettings={setSettingsProject}
               />
             ))}
@@ -383,6 +386,23 @@ export const Sidebar = memo(function Sidebar({
           onSelectThread(thread);
           onNavigate();
           setNewThreadProject(null);
+        }}
+        onImport={(project) => {
+          setNewThreadProject(null);
+          setImportProject(project);
+        }}
+      />
+
+      <ImportSessionModal
+        opened={importProject !== null}
+        project={importProject}
+        onClose={() => setImportProject(null)}
+        onImported={(thread) => {
+          void queryClient.invalidateQueries({ queryKey: ["projects"] });
+          void queryClient.invalidateQueries({ queryKey: ["threads-all"] });
+          onSelectThread(thread);
+          onNavigate();
+          setImportProject(null);
         }}
       />
 

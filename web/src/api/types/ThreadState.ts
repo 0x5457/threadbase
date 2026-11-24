@@ -28,6 +28,10 @@ export type ThreadState = {
   queuedInputs: number;
   activeSubagents: number;
   /**
+   * Another client is driving this thread's native session.
+   */
+  peerActive: boolean;
+  /**
    * Where the thread sits between turns, and the row it renders in. Both are
    * server-owned: the sidebar never derives them from status strings.
    */

@@ -13,6 +13,7 @@ import {
   IconDots,
   IconFolder,
   IconPlus,
+  IconHistory,
   IconSettings,
   IconTrash,
 } from "@tabler/icons-react";
@@ -44,6 +45,7 @@ export const ProjectNode = memo(function ProjectNode({
   onSelectThread,
   onSelectSubagent,
   onNewThread,
+  onImportSession,
   onSettings,
 }: {
   /** Phone viewport: expand the project in place instead of navigating. */
@@ -60,6 +62,7 @@ export const ProjectNode = memo(function ProjectNode({
   onSelectThread: (thread: ThreadSummary) => void;
   onSelectSubagent: (thread: ThreadSummary, subagent: Subagent) => void;
   onNewThread: (project: Project) => void;
+  onImportSession: (project: Project) => void;
   onSettings: (project: Project) => void;
 }) {
   const active = activeProjectId === project.id;
@@ -241,6 +244,12 @@ export const ProjectNode = memo(function ProjectNode({
               New thread
             </Menu.Item>
             <Menu.Item
+              leftSection={<IconHistory size={12} stroke={1.5} />}
+              onClick={() => onImportSession(project)}
+            >
+              Continue a session
+            </Menu.Item>
+            <Menu.Item
               leftSection={<IconSettings size={12} stroke={1.5} />}
               onClick={() => onSettings(project)}
             >
@@ -267,6 +276,11 @@ export const ProjectNode = memo(function ProjectNode({
               label: "New thread",
               icon: <IconPlus size={17} stroke={1.5} />,
               onSelect: () => onNewThread(project),
+            },
+            {
+              label: "Continue a session",
+              icon: <IconHistory size={17} stroke={1.5} />,
+              onSelect: () => onImportSession(project),
             },
             {
               label: "Project settings",

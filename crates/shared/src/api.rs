@@ -170,6 +170,36 @@ pub struct CreateThreadRequest {
     pub worktree: Option<bool>,
 }
 
+/// One native agent session that can be attached to a new thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentSessionDto {
+    pub id: String,
+    pub title: String,
+    pub cwd: String,
+    /// Unix ms.
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentSessionsResponse {
+    pub sessions: Vec<AgentSessionDto>,
+}
+
+/// Bind a new thread to an existing native agent session. The thread runs in
+/// the session's own working directory, so it never gets a worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AttachThreadRequest {
+    pub session_id: String,
+    pub agent: Option<String>,
+    pub title: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -423,6 +453,9 @@ pub struct ThreadState {
     pub pending_elicitations: u32,
     pub queued_inputs: u32,
     pub active_subagents: u32,
+    /// Another client is driving this thread's native session.
+    #[serde(default)]
+    pub peer_active: bool,
     /// Where the thread sits between turns, and the row it renders in. Both are
     /// server-owned: the sidebar never derives them from status strings.
     pub placement: crate::model::ThreadPlacement,

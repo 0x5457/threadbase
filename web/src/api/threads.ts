@@ -134,6 +134,33 @@ export function getCommitFileDiff(threadId: string, sha: string, path: string) {
   );
 }
 
+/** Native agent sessions the project directory can still be attached to. */
+export function listAgentSessions(projectId: string, agent: string) {
+  return request<import("./types/AgentSessionsResponse").AgentSessionsResponse>(
+    `/api/projects/${projectId}/agent-sessions?agent=${encodeURIComponent(agent)}`,
+  );
+}
+
+/**
+ * Create a thread bound to an existing native session. It runs in the
+ * session's directory, so the conversation is shared with the agent's own CLI.
+ */
+export function attachThread(
+  projectId: string,
+  input: { sessionId: string; agent?: string; title?: string },
+) {
+  const body: import("./types/AttachThreadRequest").AttachThreadRequest = {
+    sessionId: input.sessionId,
+    agent: input.agent ?? null,
+    title: input.title?.trim() || null,
+  };
+  return jsonRequest<ThreadResponse>(
+    `/api/projects/${projectId}/threads/attach`,
+    "POST",
+    body,
+  );
+}
+
 export function createThread(projectId: string, input: CreateThreadInput) {
   const body: CreateThreadRequest = {
     title: input.title?.trim() || null,
