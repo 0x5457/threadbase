@@ -21,12 +21,69 @@ fn policy() -> threadbase_core::permissions::PermissionPolicy {
 }
 
 struct Fixture {
+    /// Restores the adapter environment when the test ends.
+    _environment: Environment,
     repo: TempDir,
     data: TempDir,
     state: AppState,
     user: CurrentUser,
     project: threadbase_shared::ProjectDto,
     thread: threadbase_shared::ThreadDto,
+}
+
+/// The fixture hands its adapter a command, a journal path and a few switches
+/// through the process environment, which is shared by every test in this
+/// binary: concurrent fixtures would rewrite each other's adapter config, and
+/// tests that flip a capability would flip it for everyone. Nextest runs one
+/// test per process, so this lock only serializes a plain `cargo test`.
+static FIXTURE_ENVIRONMENT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Everything a fixture may rewrite; the values come back when it drops.
+const FIXTURE_KEYS: [&str; 6] = [
+    "THREADBASE_ACP_COMMAND",
+    "THREADBASE_NATIVE_FIXTURE",
+    "THREADBASE_CODEX_BIN",
+    "CODEX_FIXTURE_CWD",
+    "FAKE_AGENT_JOURNAL",
+    "FAKE_AGENT_STEERING",
+];
+
+/// The fixture's exclusive claim on the process environment, plus the values it
+/// has to put back. A test that leaves a capability flipped would otherwise
+/// decide how every later test's adapter behaves.
+struct Environment {
+    _lock: tokio::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl Environment {
+    /// Takes the environment and remembers what to put back. Callers change it
+    /// only afterwards: a value written before the snapshot would survive the
+    /// test and decide how the next one's adapter behaves.
+    async fn acquire() -> Self {
+        let lock = FIXTURE_ENVIRONMENT.lock().await;
+        let saved = FIXTURE_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var_os(key)))
+            .collect();
+        Self { _lock: lock, saved }
+    }
+
+    fn set(&self, key: &str, value: &str) {
+        debug_assert!(FIXTURE_KEYS.contains(&key), "{key} would not be restored");
+        std::env::set_var(key, value);
+    }
+}
+
+impl Drop for Environment {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 }
 
 /// Locates the scripted adapter.
@@ -99,8 +156,7 @@ fn codex_fixture_binary() -> Option<PathBuf> {
 
 /// A fixture that runs the codex profile natively against the codex fixture.
 async fn fixture_native() -> Option<Fixture> {
-    std::env::set_var("THREADBASE_NATIVE_FIXTURE", "1");
-    fixture().await
+    fixture_configured(|environment| environment.set("THREADBASE_NATIVE_FIXTURE", "1")).await
 }
 
 /// Issues a real session cookie value for an identity created by `fixture`.
@@ -123,6 +179,14 @@ async fn session_for(fixture: &Fixture, login: &str) -> String {
 }
 
 async fn fixture() -> Option<Fixture> {
+    fixture_configured(|_| {}).await
+}
+
+/// A fixture whose environment the caller finishes setting up after the values
+/// to restore are already recorded.
+async fn fixture_configured(configure: impl FnOnce(&Environment)) -> Option<Fixture> {
+    let environment = Environment::acquire().await;
+    configure(&environment);
     let native = std::env::var_os("THREADBASE_NATIVE_FIXTURE").is_some();
     let repo = TempDir::new().unwrap();
     init_repo(repo.path());
@@ -193,6 +257,7 @@ async fn fixture() -> Option<Fixture> {
     .await
     .unwrap();
     Some(Fixture {
+        _environment: environment,
         repo,
         data,
         state,
@@ -2515,8 +2580,11 @@ async fn send_now_interrupts_a_non_steering_agent() {
     use tower::ServiceExt;
 
     // Model an adapter that refuses mid-turn input.
-    std::env::set_var("FAKE_AGENT_STEERING", "0");
-    let Some(fixture) = fixture().await else {
+    let Some(fixture) = fixture_configured(|environment| {
+        environment.set("FAKE_AGENT_STEERING", "0");
+    })
+    .await
+    else {
         eprintln!("skipping: ACP fixture binary could not be built");
         return;
     };
