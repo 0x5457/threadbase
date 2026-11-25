@@ -601,37 +601,33 @@ function Workspace() {
     if (!phone) nav.close();
   }, [phone]);
 
-  // iOS keeps the keyboard up while the transcript scrolls underneath it.
-  // Blur the composer on a real drag, but never on the keyboard's own resize
-  // scroll or when the pointer went down inside the composer.
+  // iOS keeps the keyboard up while the transcript scrolls underneath it, so a
+  // drag on the content dismisses it. Only a press that is still down counts;
+  // the keyboard's own reveal scroll lands after pointerup and is not a drag.
   useEffect(() => {
-    let armed = false;
-    let timer = 0;
-    const arm = (event: PointerEvent) => {
+    let pressed = false;
+    const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
-      if (
+      pressed =
         target instanceof Element &&
-        target.closest(".composer, .terminal-drawer")
-      ) {
-        return;
-      }
-      armed = true;
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        armed = false;
-      }, 1_500);
+        !target.closest(".composer, .terminal-drawer");
+    };
+    // A pan cancels the pointer instead of ending it with pointerup, so the
+    // press survives exactly long enough for the scroll to dismiss.
+    const onPointerUp = () => {
+      pressed = false;
     };
     const onScroll = () => {
-      if (!armed) return;
-      armed = false;
-      window.clearTimeout(timer);
+      if (!pressed) return;
+      pressed = false;
       blurActiveInput();
     };
-    document.addEventListener("pointerdown", arm, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointerup", onPointerUp, true);
     document.addEventListener("scroll", onScroll, true);
     return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("pointerdown", arm, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointerup", onPointerUp, true);
       document.removeEventListener("scroll", onScroll, true);
     };
   }, []);
