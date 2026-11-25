@@ -328,7 +328,13 @@ impl Fixture {
                         "configOptions": self.config(),
                         "modes": self.modes(),
                     }),
-                )
+                )?;
+                // pi streams its skills banner before any prompt; the harness
+                // has to keep that out of the transcript.
+                if std::env::var_os("FAKE_AGENT_STARTUP_BANNER").is_some() {
+                    self.chunk(out, &self.root_session, "pi v0.0.0\n---\n## Skills")?;
+                }
+                Ok(())
             }
             (Some("session/load"), Some(id)) => {
                 let session = params

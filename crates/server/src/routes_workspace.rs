@@ -9,6 +9,8 @@ use crate::events::EventMeta;
 use crate::projects;
 use crate::threads;
 use axum::extract::{Path, Query, State};
+use axum::http::{header, HeaderMap, HeaderValue};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
@@ -44,6 +46,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/threads/{thread_id}/events/older",
             get(thread_events_older),
+        )
+        .route(
+            "/api/threads/{thread_id}/events/{seq}/images/{index}",
+            get(thread_event_image),
         )
         .route("/api/projects", get(list_projects).post(create_project))
         .route(
@@ -124,6 +130,37 @@ async fn thread_events_older(
         .older_page(&ThreadId::from(thread_id), query.before)
         .await?;
     Ok(Json(page))
+}
+
+/// One tool image, addressed by the event row that stores it. Replays carry
+/// `url` instead of `data`; the bytes only travel when the image is shown.
+async fn thread_event_image(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((thread_id, seq, index)): Path<(String, u64, usize)>,
+) -> Result<Response, ServerError> {
+    authz::require_read(&state.pool, &thread_id, &user).await?;
+    let image = state
+        .events
+        .image(&ThreadId::from(thread_id), seq, index)
+        .await?
+        .ok_or_else(|| ServerError(ApiError::not_found("image not found")))?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&image.mime_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    // Event sequences are never reused, so one seq always names one image.
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    Ok((headers, image.bytes).into_response())
 }
 
 async fn list_projects(

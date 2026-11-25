@@ -1,5 +1,6 @@
 //! Append-only event log with per-thread sequencing and replay.
 
+use base64::Engine;
 use sqlx::{FromRow, SqlitePool};
 use threadbase_core::state::{delivery_str, parse_delivery};
 use threadbase_shared::{
@@ -7,6 +8,12 @@ use threadbase_shared::{
     ThreadEvent, ThreadId,
 };
 use tokio::sync::broadcast;
+
+/// One image an adapter returned with a tool call, decoded on demand.
+pub struct EventImage {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum EventStoreError {
@@ -196,6 +203,10 @@ impl EventStore {
             .await?
         };
         let oldest_seq = first_seq;
+        let mut events = events;
+        for event in &mut events {
+            offload_tool_images(event);
+        }
         Ok(EventsPageDto {
             thread_id: thread_id.clone(),
             events,
@@ -235,7 +246,13 @@ impl EventStore {
             .into_iter()
             .map(EventRow::into_envelope)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(trim_history(compact_history(events)))
+        let mut events = compact_history(events);
+        // Strip image bytes before the budget check: a turn that read a few
+        // screenshots is otherwise far over HISTORY_BYTES on its own.
+        for event in &mut events {
+            offload_tool_images(event);
+        }
+        Ok(trim_history(events))
     }
 
     /// One slice of events older than `before_seq`, compacted the same way as a
@@ -290,8 +307,12 @@ impl EventStore {
         .bind(i64::try_from(oldest_seq).unwrap_or(0))
         .fetch_one(&self.pool)
         .await?;
+        let mut events = compact_history(events);
+        for event in &mut events {
+            offload_tool_images(event);
+        }
         Ok(OlderEventsDto {
-            events: compact_history(events),
+            events,
             oldest_seq,
             has_more,
         })
@@ -315,6 +336,63 @@ impl EventStore {
             .map(EventRow::into_envelope)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(compact_history(events))
+    }
+
+    /// One image block from a stored tool call. The client only gets a URL in
+    /// the transcript; the bytes stay in the row and are fetched when the
+    /// image scrolls into view.
+    pub async fn image(
+        &self,
+        thread_id: &ThreadId,
+        seq: u64,
+        index: usize,
+    ) -> Result<Option<EventImage>, EventStoreError> {
+        let row =
+            sqlx::query_as::<_, EventRow>("SELECT * FROM events WHERE thread_id = ? AND seq = ?")
+                .bind(thread_id.as_str())
+                .bind(i64::try_from(seq).unwrap_or(i64::MAX))
+                .fetch_optional(&self.pool)
+                .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let (ThreadEvent::ToolCall { call } | ThreadEvent::ToolCallUpdate { call }) =
+            row.into_envelope()?.payload
+        else {
+            return Ok(None);
+        };
+        let Some(output) = call.output else {
+            return Ok(None);
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&output) else {
+            return Ok(None);
+        };
+        let Some(block) = value
+            .get("content")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|content| content.get(index))
+        else {
+            return Ok(None);
+        };
+        if block.get("type").and_then(serde_json::Value::as_str) != Some("image") {
+            return Ok(None);
+        }
+        let Some(mime_type) = block.get("mimeType").and_then(serde_json::Value::as_str) else {
+            return Ok(None);
+        };
+        if !crate::attachments::is_image_mime(mime_type) {
+            return Ok(None);
+        }
+        let Some(data) = block.get("data").and_then(serde_json::Value::as_str) else {
+            return Ok(None);
+        };
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
+            return Ok(None);
+        };
+        Ok(Some(EventImage {
+            mime_type: mime_type.to_owned(),
+            bytes,
+        }))
     }
 
     pub async fn last_seq(&self, thread_id: &ThreadId) -> Result<u64, EventStoreError> {
@@ -646,6 +724,78 @@ fn compact_history(events: Vec<EventEnvelope>) -> Vec<EventEnvelope> {
         out.push(event);
     }
     out
+}
+
+/// Replace inline image bytes with the URL that serves them. Tool images are
+/// the bulk of a transcript that read screenshots, and every replay would pay
+/// for them again; the row keeps the bytes, so nothing is lost.
+pub(crate) fn offload_tool_images(event: &mut EventEnvelope) {
+    let (ThreadEvent::ToolCall { call } | ThreadEvent::ToolCallUpdate { call }) =
+        &mut event.payload
+    else {
+        return;
+    };
+    let Some(output) = call.output.as_mut() else {
+        return;
+    };
+    if !output.contains("structuredContent") && !output.contains("\"type\":\"image\"") {
+        return;
+    }
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(output) else {
+        return;
+    };
+    let mut changed = false;
+    // pi mirrors the image in `structuredContent`. The transcript renders
+    // `content` only, so the copy is pure weight on the wire; the stored row
+    // still has both.
+    if let Some(object) = value.as_object_mut() {
+        changed = object.remove("structuredContent").is_some();
+    }
+    let Some(content) = value
+        .get_mut("content")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        if changed {
+            if let Ok(serialized) = serde_json::to_string(&value) {
+                *output = serialized;
+            }
+        }
+        return;
+    };
+    for (index, block) in content.iter_mut().enumerate() {
+        let Some(object) = block.as_object_mut() else {
+            continue;
+        };
+        if object.get("type").and_then(serde_json::Value::as_str) != Some("image") {
+            continue;
+        }
+        let Some(mime_type) = object.get("mimeType").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !crate::attachments::is_image_mime(mime_type)
+            || object
+                .get("data")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+        {
+            continue;
+        }
+        object.remove("data");
+        object.insert(
+            "url".to_owned(),
+            serde_json::Value::String(format!(
+                "/api/threads/{}/events/{}/images/{index}",
+                event.thread_id.as_str(),
+                event.seq
+            )),
+        );
+        changed = true;
+    }
+    if changed {
+        if let Ok(serialized) = serde_json::to_string(&value) {
+            *output = serialized;
+        }
+    }
 }
 
 /// Keeps the newest whole turns until the page fits the transfer budget. The
@@ -1044,6 +1194,70 @@ mod tests {
             panic!("expected the last tool update");
         };
         assert_eq!(call.status, ToolStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn cold_page_serves_tool_images_by_url() {
+        let (store, thread) = store().await;
+        let output = r#"{"content":[
+            {"type":"text","text":"Read image file [image/png]"},
+            {"type":"image","mimeType":"image/png","data":"aGVsbG8="}
+        ],"structuredContent":
+            {"type":"image","mimeType":"image/png","data":"aGVsbG8="}}"#;
+        let call = ToolCallData {
+            id: threadbase_shared::ToolCallId::from("call-1".to_owned()),
+            thread_id: thread.clone(),
+            title: "read".into(),
+            kind: ToolKind::Read,
+            status: ToolStatus::Completed,
+            input: None,
+            output: Some(output.to_owned()),
+            locations: Vec::new(),
+            diff: None,
+            terminal_id: None,
+            subagent_id: None,
+            created_at: now_ms(),
+            updated_at: now_ms(),
+        };
+        let appended = store
+            .append(
+                &thread,
+                Actor::agent("Agent"),
+                ThreadEvent::ToolCallUpdate { call },
+                EventMeta::default(),
+            )
+            .await
+            .unwrap();
+
+        let page = store.page(&thread, 0, 500).await.unwrap();
+        let ThreadEvent::ToolCallUpdate { call } = &page.events[0].payload else {
+            panic!("expected the tool update");
+        };
+        let wire = call.output.as_deref().unwrap();
+        assert!(
+            !wire.contains("aGVsbG8="),
+            "the page must not carry the image bytes: {wire}"
+        );
+        assert!(
+            !wire.contains("structuredContent"),
+            "the redundant structured copy must not ride along: {wire}"
+        );
+        assert!(
+            wire.contains(&format!(
+                "/api/threads/{}/events/{}/images/1",
+                thread.as_str(),
+                appended.seq
+            )),
+            "the image keeps an address: {wire}"
+        );
+
+        let image = store
+            .image(&thread, appended.seq, 1)
+            .await
+            .unwrap()
+            .expect("the stored row still serves the image");
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(image.bytes, b"hello");
     }
 
     #[tokio::test]
