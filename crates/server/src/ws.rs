@@ -144,8 +144,12 @@ async fn handle_socket(socket: WebSocket, state: AppState, user: CurrentUser) {
             }
             event = events.recv() => {
                 match event {
-                    Ok(event) => {
+                    Ok(mut event) => {
                         if subscriptions.contains_key(event.thread_id.as_str()) {
+                            // Same wire shape as a replay: the image bytes are
+                            // fetched from the event, not pushed to every
+                            // viewer of the stream.
+                            crate::events::offload_tool_images(&mut event);
                             if send_json(&mut sender, &ServerWsMessage::Event { event: event.clone() }).await.is_err() {
                                 break;
                             }

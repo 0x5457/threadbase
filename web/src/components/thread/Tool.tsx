@@ -104,7 +104,7 @@ function describeCall(call: ToolCallData): {
 
 type OutputBlock =
   | { type: "text"; text: string }
-  | { type: "image"; mimeType: string; data: string };
+  | { type: "image"; mimeType: string; data?: string; url?: string };
 
 type EditHunk = { removed: string[]; added: string[] };
 
@@ -193,10 +193,15 @@ function parseOutput(raw: string | null | undefined): OutputBlock[] | null {
       blocks.push({ type: "text", text: block.text });
     } else if (
       block.type === "image" &&
-      typeof block.data === "string" &&
-      typeof block.mimeType === "string"
+      typeof block.mimeType === "string" &&
+      (typeof block.url === "string" || typeof block.data === "string")
     ) {
-      blocks.push({ type: "image", mimeType: block.mimeType, data: block.data });
+      blocks.push({
+        type: "image",
+        mimeType: block.mimeType,
+        data: typeof block.data === "string" ? block.data : undefined,
+        url: typeof block.url === "string" ? block.url : undefined,
+      });
     }
   }
   return blocks.length > 0 ? blocks : null;
@@ -436,7 +441,13 @@ export const Tool = memo(function Tool({
       {outputImages.length > 0 ? (
         <div className="tool-images">
           {outputImages.map((image, index) => {
-            const src = `data:${image.mimeType};base64,${image.data}`;
+            // Replays carry a URL so a screenshot-heavy turn does not ship its
+            // bytes again; a live event may still carry the data inline.
+            const src =
+              image.url ?? `data:${image.mimeType};base64,${image.data ?? ""}`;
+            const size = image.data
+              ? ` · ${Math.round((image.data.length * 3) / 4 / 1024)} KB`
+              : "";
             return (
               <button
                 type="button"
@@ -446,7 +457,7 @@ export const Tool = memo(function Tool({
                 className="tool-image"
                 aria-label={`Preview image output (${image.mimeType})`}
                 onClick={() => setLightbox(src)}
-                title={`${image.mimeType} · ${Math.round((image.data.length * 3) / 4 / 1024)} KB`}
+                title={`${image.mimeType}${size}`}
               >
                 <img src={src} alt="" loading="lazy" />
               </button>

@@ -1120,7 +1120,10 @@ fn handle_session_notification(
     bus: &EventBus,
     notification: SessionNotification,
 ) {
-    let replaying = lock_state(state).replaying;
+    let (replaying, prompted) = {
+        let state = lock_state(state);
+        (state.replaying, state.turn_seq > 0)
+    };
     let origin = notification.session_id.0.to_string();
     match notification.update {
         SessionUpdate::AgentMessageChunk(chunk) => {
@@ -1128,10 +1131,11 @@ fn handle_session_notification(
                 return;
             }
             if let Some(text) = content_text(&chunk.content) {
-                // Adapter status lines arrive as assistant text and would be
-                // glued into the reply they interrupt. The agent log keeps
-                // them readable without letting them reach the transcript.
-                if adapter_status(&text) {
+                // No prompt has been sent yet, so this cannot be a reply. pi
+                // streams its skills banner on session/new; left in the
+                // transcript it reads as agent output and holds the first
+                // prompt for the unowned-turn window.
+                if !prompted || adapter_status(&text) {
                     bus.send(RawAgentEvent::AgentLog {
                         level: "info".to_owned(),
                         text,

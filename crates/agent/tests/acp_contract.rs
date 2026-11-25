@@ -69,8 +69,23 @@ async fn start_with_profile(
     model: Option<&str>,
     effort: Option<&str>,
 ) -> TestHarness {
+    start_with_env(profile, subagents, model, effort, Vec::new()).await
+}
+
+async fn start_with_env(
+    profile: AgentProfile,
+    subagents: bool,
+    model: Option<&str>,
+    effort: Option<&str>,
+    extra_env: Vec<(String, String)>,
+) -> TestHarness {
     let dir = tempfile::tempdir().expect("temp directory");
     let journal = dir.path().join("journal.jsonl");
+    let mut env = vec![(
+        "FAKE_AGENT_JOURNAL".to_owned(),
+        journal.to_string_lossy().into_owned(),
+    )];
+    env.extend(extra_env);
     let ctx = LaunchCtx {
         thread_id: "thread-1".to_owned(),
         cwd: dir.path().to_path_buf(),
@@ -79,10 +94,7 @@ async fn start_with_profile(
         effort: effort.map(str::to_owned),
         subagents,
         permission_mode: None,
-        env: vec![(
-            "FAKE_AGENT_JOURNAL".to_owned(),
-            journal.to_string_lossy().into_owned(),
-        )],
+        env,
     };
     let mut harness = AcpHarness::new(profile);
     let events = harness.events();
@@ -228,6 +240,25 @@ async fn start_advertises_documented_client_capabilities() {
         .is_some());
     assert!(capabilities.pointer("/elicitation/form").is_some());
 
+    test.harness.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn output_before_the_first_prompt_is_logged_not_streamed() {
+    let mut test = start_with_env(
+        fake_profile(),
+        true,
+        None,
+        None,
+        vec![("FAKE_AGENT_STARTUP_BANNER".to_owned(), "1".to_owned())],
+    )
+    .await;
+    let _ = new_session(&mut test).await;
+    let event = next_event(&mut test.events).await;
+    assert!(
+        matches!(&event, RawAgentEvent::AgentLog { text, .. } if text.contains("Skills")),
+        "startup output belongs in the log, not the transcript: {event:?}"
+    );
     test.harness.shutdown().await.expect("shutdown");
 }
 
