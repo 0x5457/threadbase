@@ -1093,6 +1093,11 @@ impl AgentManager {
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<bool, ServerError> {
+        // Wait out a start that is already in flight. That start read the
+        // thread row before this patch and is not in the session map yet, so
+        // an unguarded lookup drops the change while the new session keeps
+        // the model it read.
+        let _start = self.inner.starts.lock(thread_id).await;
         let Some(session) = self.inner.session(thread_id).await else {
             return Ok(false);
         };
@@ -1408,12 +1413,18 @@ async fn prepare_and_prompt(
             },
         )
         .await?;
-    sqlx::query("UPDATE threads SET current_turn_id = ?, updated_at = ? WHERE id = ?")
-        .bind(turn_id.as_str())
-        .bind(now_ms())
-        .bind(start.thread_id)
-        .execute(&inner.pool)
-        .await?;
+    // Work starting is a shelf move: the key the sidebar sorts the live group
+    // by is refreshed here and then stays put while the turn streams deltas.
+    let now = now_ms();
+    sqlx::query(
+        "UPDATE threads SET current_turn_id = ?, placement_at = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(turn_id.as_str())
+    .bind(now)
+    .bind(now)
+    .bind(start.thread_id)
+    .execute(&inner.pool)
+    .await?;
     let turn_id_for_error = turn_id.clone();
     {
         let mut run = session.run.lock().await;

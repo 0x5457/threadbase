@@ -46,6 +46,9 @@ export type ThreadDto = {
    * The list row this thread belongs in, computed by the server.
    */
   section: ThreadSection;
+  /**
+   * The shelf sort key: the last placement change, including a turn start.
+   */
   placementAt: number;
   /**
    * Unix ms when a snoozed thread wakes. `None` for other placements.

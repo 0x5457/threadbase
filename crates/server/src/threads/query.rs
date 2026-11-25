@@ -294,7 +294,19 @@ fn sort_for_sidebar(threads: &mut [ThreadDto]) {
         attention(right)
             .cmp(&attention(left))
             .then_with(|| {
-                let at = |thread: &ThreadDto| thread.placement_at.max(thread.updated_at);
+                let at = |thread: &ThreadDto| {
+                    // A running turn bumps `updated_at` with every streamed
+                    // delta, so keying live rows on it reshuffles the group on
+                    // each poll. They sort by when the work started instead.
+                    if matches!(
+                        thread.status,
+                        ThreadStatus::Preparing | ThreadStatus::Running
+                    ) {
+                        thread.placement_at
+                    } else {
+                        thread.placement_at.max(thread.updated_at)
+                    }
+                };
                 at(right).cmp(&at(left))
             })
             .then_with(|| left.id.as_str().cmp(right.id.as_str()))

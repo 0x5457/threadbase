@@ -19,7 +19,9 @@ Each thread has two orthogonal states, each defined in exactly one place:
 status, queued input, and live subagents, with one priority order
 (`archived > pinned > snoozed > settled > working > active`). Within a
 section, threads that need a human (unanswered approvals/questions, errors,
-interruptions) come first. Sorting is computed once, server-side.
+interruptions) come first. Live rows then sort by when their turn started, so
+a streaming turn cannot reshuffle the group on every poll; everything else
+sorts by last activity. Sorting is computed once, server-side.
 
 Placement commands: `POST /api/threads/{id}/placement` with
 `settle / unsettle / snooze / wake` (and `until` for `snooze`; the server

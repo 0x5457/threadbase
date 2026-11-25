@@ -67,11 +67,16 @@ export const ProjectNode = memo(function ProjectNode({
   onSettings: (project: Project) => void;
 }) {
   const active = activeProjectId === project.id;
+  // Each route into this project reveals its rows once, but collapsing the
+  // project you are reading stays collapsed: expansion is user state, not
+  // something the active route pins open.
+  const reveal = active ? (selectedThreadId ?? project.id) : null;
+  const [revealed, setRevealed] = useState(reveal);
   const [opened, setOpened] = useState(active);
-  // The active project is always expanded so its threads explain the current
-  // route; the query has to follow the same state or a deep link paints an
-  // open project with no rows.
-  const expanded = opened || active;
+  if (reveal !== revealed) {
+    setRevealed(reveal);
+    if (reveal !== null) setOpened(true);
+  }
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
@@ -178,15 +183,17 @@ export const ProjectNode = memo(function ProjectNode({
           }
           title={project.path}
           leftSection={<IconFolder size={13} stroke={1.5} />}
-          opened={expanded}
+          opened={opened}
           onChange={(next) => {
             setOpened(next);
-            if (next && !phone) onProjectOpen(project.id);
+            // Re-expanding the project you are already reading must not bounce
+            // the route away from the thread that made it active.
+            if (next && !phone && !active) onProjectOpen(project.id);
           }}
           childrenOffset={12}
           {...projectPress}
         >
-          {expanded ? (
+          {opened ? (
             <>
               {threadsLoading && threads.length === 0 ? (
                 <span className="sidebar-thread-skeleton" aria-busy="true">

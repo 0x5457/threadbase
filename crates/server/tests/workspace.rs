@@ -1743,3 +1743,63 @@ async fn title_backfill_repairs_paste_markup() {
     // Nothing left to repair, and a title that reads fine is never touched.
     assert_eq!(threads::backfill_titles(&fixture.pool).await.unwrap(), 0);
 }
+
+/// Regression: a running turn bumps `updated_at` with every streamed delta, so
+/// sorting the live group by it reshuffled the sidebar on each poll while two
+/// agents worked. Live rows sort by when the work started, which holds still.
+#[tokio::test]
+async fn the_working_group_keeps_its_order_while_turns_stream() {
+    use threadbase_shared::ThreadSection;
+
+    let fixture = fixture().await;
+    let project = create_project(&fixture).await;
+    let older = create_thread(&fixture, project.id.as_str()).await;
+    let newer = create_thread(&fixture, project.id.as_str()).await;
+    let idle = create_thread(&fixture, project.id.as_str()).await;
+    for (id, status, placement_at) in [
+        (older.id.as_str(), "running", 1_000),
+        (newer.id.as_str(), "running", 2_000),
+        (idle.id.as_str(), "idle", 3_000),
+    ] {
+        sqlx::query("UPDATE threads SET status = ?, placement_at = ?, updated_at = ? WHERE id = ?")
+            .bind(status)
+            .bind(placement_at)
+            .bind(placement_at)
+            .bind(id)
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+    }
+
+    let working = |threads: &[threadbase_shared::ThreadDto]| -> Vec<String> {
+        threads
+            .iter()
+            .filter(|thread| thread.section == ThreadSection::Working)
+            .map(|thread| thread.id.to_string())
+            .collect()
+    };
+    let before = threads::list_all(&fixture.pool, false, &fixture.current, &policy())
+        .await
+        .unwrap();
+    assert_eq!(
+        working(&before),
+        vec![newer.id.to_string(), older.id.to_string()],
+        "newest work first"
+    );
+
+    // Deltas keep arriving for the older turn; its row must not jump.
+    sqlx::query("UPDATE threads SET updated_at = ? WHERE id = ?")
+        .bind(9_000)
+        .bind(older.id.as_str())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let after = threads::list_all(&fixture.pool, false, &fixture.current, &policy())
+        .await
+        .unwrap();
+    assert_eq!(
+        working(&after),
+        vec![newer.id.to_string(), older.id.to_string()],
+        "streaming deltas must not reorder the live group"
+    );
+}

@@ -3019,6 +3019,79 @@ async fn a_permission_mode_is_applied_to_the_agent() {
         "supervised maps to the agent mode:\n{after}"
     );
 }
+#[tokio::test]
+async fn a_model_change_during_adapter_start_reaches_the_new_session() {
+    let Some(fixture) = fixture().await else {
+        eprintln!("skipping: ACP fixture binary could not be built");
+        return;
+    };
+    let thread_id = fixture.thread.id.as_str().to_owned();
+    let marker = fixture.data.path().join("starting.marker");
+    std::env::set_var("FAKE_AGENT_START_DELAY_MS", "1000");
+    std::env::set_var("FAKE_AGENT_START_MARKER", &marker);
+    {
+        let request = UpdateThreadRequest {
+            title: None,
+            pinned: None,
+            archived: None,
+            model: Some("fake-model-a".into()),
+            effort: None,
+            auto_settle: None,
+            permission_mode: None,
+        };
+        threads::update(
+            &fixture.state.pool,
+            &fixture.state.projection,
+            &thread_id,
+            &fixture.user,
+            &request,
+            &policy(),
+        )
+        .await
+        .unwrap();
+    }
+
+    // A cold thread starts its adapter in the background, so this returns while
+    // the start is still opening the session and applying `fake-model-a`.
+    fixture
+        .state
+        .agents
+        .send(&thread_id, &fixture.user, "hello", None)
+        .await
+        .unwrap();
+    // The marker means the adapter process exists, which means the start holds
+    // its lock: the change is guaranteed to land in the window, not by timing.
+    for _ in 0..200 {
+        if marker.is_file() {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert!(marker.is_file(), "the adapter never started");
+    let changed = fixture
+        .state
+        .agents
+        .set_config(&thread_id, Some("fake-model-b"), None)
+        .await
+        .unwrap();
+    std::env::remove_var("FAKE_AGENT_START_DELAY_MS");
+    std::env::remove_var("FAKE_AGENT_START_MARKER");
+    assert!(
+        changed,
+        "the session that is starting must be the one that receives the change"
+    );
+
+    let journal = std::fs::read_to_string(fixture.data.path().join("journal.log")).unwrap();
+    assert!(
+        journal.contains("fake-model-a"),
+        "the start applied the value it read from the row:\n{journal}"
+    );
+    assert!(
+        journal.contains("fake-model-b"),
+        "the change made during the start must reach the adapter:\n{journal}"
+    );
+}
+
 /// Attaching a native Codex session copies its transcript, binds the thread to
 /// the same native id, and never creates a worktree.
 #[tokio::test]
