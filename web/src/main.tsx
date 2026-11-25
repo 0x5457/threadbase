@@ -42,7 +42,6 @@ import "./styles/empty.css";
 import "./styles/frame.css";
 import "./styles/goal.css";
 import "./styles/responsive.css";
-import "./styles/halo.css";
 import "./styles/loading.css";
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {

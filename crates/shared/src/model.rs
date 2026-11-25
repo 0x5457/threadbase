@@ -959,6 +959,7 @@ pub struct ThreadDto {
     pub placement: ThreadPlacement,
     /// The list row this thread belongs in, computed by the server.
     pub section: ThreadSection,
+    /// The shelf sort key: the last placement change, including a turn start.
     pub placement_at: i64,
     /// Unix ms when a snoozed thread wakes. `None` for other placements.
     pub snooze_until: Option<i64>,
